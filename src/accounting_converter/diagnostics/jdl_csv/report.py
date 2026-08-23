@@ -27,8 +27,12 @@ class JdlCsvDiagnosticReportGenerator:
             "物理行:",
             str(analysis.total_physical_lines),
             "",
-            "データ行:",
-            str(analysis.data_line_count),
+            "データレコード件数:",
+            str(analysis.data_record_count),
+            "仕訳件数:",
+            "未確定",
+            "診断件数:",
+            str(len(analysis.diagnostic_message_lines)),
             "",
             "構造:",
             f"Header columns: {analysis.header_column_count}",
@@ -53,8 +57,48 @@ class JdlCsvDiagnosticReportGenerator:
                     f"BOM: {analysis.observed_schema.has_bom}",
                     f"line_ending: {analysis.observed_schema.line_ending}",
                     f"journal_column_count: {analysis.observed_schema.journal_column_count}",
-                    f"journal_count: {analysis.observed_schema.journal_count}",
+                    f"data_record_count: {analysis.data_record_count}",
+                    f"identifier_flag_meaning_status: {analysis.observed_schema.identifier_flag_meaning_status.value}",
                     "formal_format_profile: false",
+                ]
+            )
+            if analysis.identifier_flag_counts:
+                lines.extend(["", "識別フラグ内訳:"])
+                lines.extend(
+                    f"{flag}: {count} records (meaning unresolved)"
+                    for flag, count in analysis.identifier_flag_counts
+                )
+
+        grouping = analysis.observed_grouping_summary
+        if grouping.total_candidate_count:
+            lines.extend(
+                [
+                    "",
+                    "Observed journal group candidates:",
+                    f"Single-record candidates: {grouping.single_record_candidate_count}",
+                    f"Multi-record candidates: {grouping.multi_record_candidate_count}",
+                    f"Total candidates: {grouping.total_candidate_count}",
+                ]
+            )
+            if grouping.multi_record_candidate_count:
+                total = grouping.multi_record_candidate_count
+                lines.extend(
+                    [
+                        "",
+                        "Multi-record candidate validation:",
+                        f"Valid sequence: {grouping.valid_multi_record_sequence_count} / {total}",
+                        f"Same voucher number: {grouping.same_voucher_number_count} / {total}",
+                        f"Same date: {grouping.same_date_count} / {total}",
+                        f"Balanced: {grouping.balanced_multi_record_candidate_count} / {total}",
+                    ]
+                )
+            if grouping.unresolved_candidate_count:
+                lines.append(f"Unresolved candidates: {grouping.unresolved_candidate_count}")
+            lines.extend(
+                [
+                    "",
+                    "注意:",
+                    "識別フラグの正式意味は未確認です。",
                 ]
             )
 
@@ -108,6 +152,7 @@ class JdlCsvDiagnosticReportGenerator:
                 judgment,
                 "",
                 "※JDL自体の障害を断定するものではありません。",
+                "※正式なJDL取込可否を断定しません。",
             ]
         )
         return "\n".join(lines)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass, field
+from decimal import Decimal
 from enum import Enum
 
 from accounting_converter.domain.mapping import MappingValue
@@ -49,6 +50,17 @@ class FieldResolutionStatus(str, Enum):
     FROM_OBSERVED_SCHEMA = "FROM_OBSERVED_SCHEMA"
     FROM_FORMAT_PROFILE = "FROM_FORMAT_PROFILE"
     FIELD_UNRESOLVED = "FIELD_UNRESOLVED"
+
+
+class IdentifierFlagMeaningStatus(str, Enum):
+    OBSERVED_ONLY = "OBSERVED_ONLY"
+    UNRESOLVED = "UNRESOLVED"
+
+
+class ObservedJournalGroupStatus(str, Enum):
+    OBSERVED_SINGLE_RECORD = "OBSERVED_SINGLE_RECORD"
+    OBSERVED_MULTI_RECORD_SEQUENCE = "OBSERVED_MULTI_RECORD_SEQUENCE"
+    UNRESOLVED = "UNRESOLVED"
 
 
 @dataclass(frozen=True)
@@ -208,6 +220,96 @@ class MasterMismatchSummary:
 
 
 @dataclass(frozen=True)
+class ObservedJournalGroupCandidate:
+    candidate_id: str
+    start_record_index: int
+    end_record_index: int
+    record_count: int
+    identifier_flags: tuple[str, ...]
+    voucher_number: str | None
+    date: str | None
+    debit_total: Decimal
+    credit_total: Decimal
+    balanced: bool
+    grouping_confidence: str
+    grouping_basis: tuple[str, ...]
+    status: ObservedJournalGroupStatus
+    valid_sequence: bool | None = None
+    same_voucher_number: bool | None = None
+    same_date: bool | None = None
+    warnings: tuple[str, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
+class ObservedJournalGroupingSummary:
+    candidates: tuple[ObservedJournalGroupCandidate, ...] = field(default_factory=tuple)
+
+    @property
+    def total_candidate_count(self) -> int:
+        return len(self.candidates)
+
+    @property
+    def single_record_candidate_count(self) -> int:
+        return sum(
+            1
+            for candidate in self.candidates
+            if candidate.status is ObservedJournalGroupStatus.OBSERVED_SINGLE_RECORD
+        )
+
+    @property
+    def multi_record_candidate_count(self) -> int:
+        return sum(
+            1
+            for candidate in self.candidates
+            if candidate.identifier_flags[:1] == ("1110",)
+        )
+
+    @property
+    def valid_multi_record_sequence_count(self) -> int:
+        return sum(
+            1
+            for candidate in self.candidates
+            if candidate.identifier_flags[:1] == ("1110",)
+            and candidate.valid_sequence is True
+        )
+
+    @property
+    def same_voucher_number_count(self) -> int:
+        return sum(
+            1
+            for candidate in self.candidates
+            if candidate.identifier_flags[:1] == ("1110",)
+            and candidate.same_voucher_number is True
+        )
+
+    @property
+    def same_date_count(self) -> int:
+        return sum(
+            1
+            for candidate in self.candidates
+            if candidate.identifier_flags[:1] == ("1110",)
+            and candidate.same_date is True
+        )
+
+    @property
+    def balanced_multi_record_candidate_count(self) -> int:
+        return sum(
+            1
+            for candidate in self.candidates
+            if candidate.identifier_flags[:1] == ("1110",)
+            and candidate.balanced
+        )
+
+    @property
+    def unresolved_candidate_count(self) -> int:
+        return sum(
+            1
+            for candidate in self.candidates
+            if candidate.status is ObservedJournalGroupStatus.UNRESOLVED
+        )
+
+
+@dataclass(frozen=True)
 class ObservedJdlSchema:
     product: str
     observed_version: str
@@ -218,6 +320,10 @@ class ObservedJdlSchema:
     observed_header: tuple[str, ...]
     journal_count: int
     field_names: dict[str, str] = field(default_factory=dict)
+    observed_identifier_flags: tuple[str, ...] = field(default_factory=tuple)
+    identifier_flag_meaning_status: IdentifierFlagMeaningStatus = (
+        IdentifierFlagMeaningStatus.OBSERVED_ONLY
+    )
     observed_behavior: tuple[str, ...] = field(default_factory=tuple)
     is_formal_format_profile: bool = False
 
@@ -303,6 +409,7 @@ class JdlCsvAnalysisResult:
     header_row_number: int | None
     header_columns: tuple[str, ...]
     data_line_count: int
+    identifier_flag_counts: tuple[tuple[str, int], ...]
     line_column_counts: tuple[tuple[int, int], ...]
     max_column_count: int
     min_column_count: int
@@ -326,6 +433,13 @@ class JdlCsvAnalysisResult:
         )
     )
     observed_schema: ObservedJdlSchema | None = None
+    observed_grouping_summary: ObservedJournalGroupingSummary = field(
+        default_factory=ObservedJournalGroupingSummary
+    )
+
+    @property
+    def data_record_count(self) -> int:
+        return self.data_line_count
 
     @property
     def metadata_line_count(self) -> int:

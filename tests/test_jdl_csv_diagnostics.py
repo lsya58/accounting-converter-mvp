@@ -10,7 +10,12 @@ from accounting_converter.diagnostics.jdl_csv import (
     JdlCsvFingerprintComparator,
     JdlMasterType,
     JdlCsvStructuralAnalyzer,
+    ObservedJournalGroupStatus,
     ObservedJdlSchema,
+    analysis_to_dict,
+)
+from accounting_converter.diagnostics.jdl_csv.observed_schemas import (
+    jdl_ibex_cashbook_35_5_observed_schema,
 )
 
 
@@ -19,60 +24,11 @@ class JdlCsvDiagnosticsTests(unittest.TestCase):
         self.analyzer = JdlCsvStructuralAnalyzer()
 
     def observed_jdl_ibex_schema(self) -> ObservedJdlSchema:
-        header = (
-            "伝票日付",
-            "借方科目コード",
-            "借方科目",
-            "借方補助",
-            "貸方科目コード",
-            "貸方科目",
-            "貸方補助",
-            "金額",
-            "摘要",
-            "部門",
-            "税区分",
-            "列12",
-            "列13",
-            "列14",
-            "列15",
-            "列16",
-            "列17",
-            "列18",
-            "列19",
-            "列20",
-            "列21",
-            "列22",
-            "列23",
-            "列24",
-            "列25",
-            "列26",
-            "列27",
-            "列28",
-            "列29",
-            "列30",
-        )
-        return ObservedJdlSchema(
-            product="JDL IBEX 出納帳",
-            observed_version="35.5",
-            encoding="cp932",
-            has_bom=False,
-            line_ending="CRLF",
-            journal_column_count=30,
-            observed_header=header,
-            journal_count=1271,
-            field_names={
-                "debit_account": "借方科目",
-                "debit_account_code": "借方科目コード",
-                "debit_sub_account": "借方補助",
-                "credit_account": "貸方科目",
-                "credit_account_code": "貸方科目コード",
-                "credit_sub_account": "貸方補助",
-            },
-            observed_behavior=("diagnostic_message_follows_journal_record",),
-        )
+        return jdl_ibex_cashbook_35_5_observed_schema()
 
     def record30(
         self,
+        identifier: str = "1000",
         debit_code: str = "",
         debit_account: str = "売掛金",
         debit_sub: str = "",
@@ -80,16 +36,26 @@ class JdlCsvDiagnosticsTests(unittest.TestCase):
         credit_account: str = "現金",
         credit_sub: str = "",
         amount: str = "100",
+        voucher: str = "0",
+        date: str = "20260821",
+        debit_amount: str | None = None,
+        credit_amount: str | None = None,
     ) -> str:
         columns = [""] * 30
-        columns[0] = "2026/08/21"
-        columns[1] = debit_code
-        columns[2] = debit_account
-        columns[3] = debit_sub
-        columns[4] = credit_code
-        columns[5] = credit_account
-        columns[6] = credit_sub
-        columns[7] = amount
+        columns[0] = identifier
+        columns[1] = voucher
+        columns[2] = date
+        columns[3] = debit_code
+        columns[4] = debit_account
+        columns[6] = "1" if debit_sub else ""
+        columns[7] = debit_sub
+        columns[11] = debit_amount if debit_amount is not None else amount
+        columns[13] = credit_code
+        columns[14] = credit_account
+        columns[16] = "1" if credit_sub else ""
+        columns[17] = credit_sub
+        columns[21] = credit_amount if credit_amount is not None else amount
+        columns[23] = "架空摘要"
         return ",".join(columns)
 
     def padded_diagnostic30(self, label: str, tail: tuple[str, ...] = ()) -> str:
@@ -100,6 +66,10 @@ class JdlCsvDiagnosticsTests(unittest.TestCase):
 
     def observed_analyzer(self) -> JdlCsvStructuralAnalyzer:
         return JdlCsvStructuralAnalyzer(observed_schema=self.observed_jdl_ibex_schema())
+
+    def analyze_observed_records(self, records: list[str]):
+        header = ",".join(self.observed_jdl_ibex_schema().observed_header)
+        return self.observed_analyzer().analyze_text("\r\n".join([header] + records))
 
     def test_valid_csv_syntax(self) -> None:
         result = self.analyzer.analyze_text(
@@ -444,6 +414,46 @@ class JdlCsvDiagnosticsTests(unittest.TestCase):
         )
         self.assertEqual(result.diagnostic_issues[0].source_value, "PayPay")
 
+    def test_slash_identifier_flag_observed_header_is_header_not_metadata(self) -> None:
+        header = ",".join(self.observed_jdl_ibex_schema().observed_header)
+        text = "\r\n".join([header, self.record30(debit_sub="PayPay")])
+
+        result = self.observed_analyzer().analyze_text(text)
+
+        self.assertEqual(result.header_row_number, 1)
+        self.assertEqual(
+            result.line_observations[0].classification,
+            CsvLineClassification.HEADER,
+        )
+        self.assertEqual(result.metadata_line_count, 0)
+        self.assertEqual(result.data_record_count, 1)
+        self.assertEqual(
+            result.line_observations[1].classification,
+            CsvLineClassification.JOURNAL_RECORD,
+        )
+
+    def test_identifier_flags_are_counted_but_meaning_is_not_confirmed(self) -> None:
+        header = ",".join(self.observed_jdl_ibex_schema().observed_header)
+        records = [
+            self.record30(identifier="1000"),
+            self.record30(identifier="1100"),
+            self.record30(identifier="1110"),
+            self.record30(identifier="1101"),
+            self.record30(identifier="1111"),
+        ]
+
+        result = self.observed_analyzer().analyze_text("\r\n".join([header] + records))
+
+        self.assertEqual(
+            dict(result.identifier_flag_counts),
+            {"1000": 1, "1100": 1, "1110": 1, "1101": 1, "1111": 1},
+        )
+        self.assertEqual(
+            result.observed_schema.identifier_flag_meaning_status.value,
+            "OBSERVED_ONLY",
+        )
+        self.assertFalse(result.observed_schema.is_formal_format_profile)
+
     def test_one_column_diagnostic_message_is_detected(self) -> None:
         header = ",".join(self.observed_jdl_ibex_schema().observed_header)
         text = "\r\n".join(
@@ -599,7 +609,7 @@ class JdlCsvDiagnosticsTests(unittest.TestCase):
 
         result = self.observed_analyzer().analyze_text("\r\n".join(rows))
 
-        nonempty_count = sum(1 for line in result.journal_record_lines if line.columns[3])
+        nonempty_count = sum(1 for line in result.journal_record_lines if line.columns[7])
         self.assertEqual(nonempty_count, 4)
         self.assertEqual(result.master_mismatch_summary.total_count, nonempty_count)
 
@@ -633,6 +643,174 @@ class JdlCsvDiagnosticsTests(unittest.TestCase):
         self.assertEqual(result.data_line_count, 2)
         self.assertEqual(len(result.diagnostic_message_lines), 2)
         self.assertEqual(len(result.line_observations), 5)
+
+    def test_observed_grouping_1000_single_candidate(self) -> None:
+        result = self.analyze_observed_records([self.record30(identifier="1000")])
+
+        grouping = result.observed_grouping_summary
+        self.assertEqual(grouping.total_candidate_count, 1)
+        self.assertEqual(grouping.single_record_candidate_count, 1)
+        candidate = grouping.candidates[0]
+        self.assertEqual(
+            candidate.status,
+            ObservedJournalGroupStatus.OBSERVED_SINGLE_RECORD,
+        )
+        self.assertEqual(candidate.identifier_flags, ("1000",))
+        self.assertTrue(candidate.balanced)
+        self.assertIn("observed_identifier_flag:1000", candidate.grouping_basis)
+
+    def test_observed_grouping_1110_to_1101_candidate(self) -> None:
+        result = self.analyze_observed_records(
+            [
+                self.record30(identifier="1110", voucher="10", debit_amount="100", credit_amount="0"),
+                self.record30(identifier="1101", voucher="10", debit_amount="0", credit_amount="100"),
+            ]
+        )
+
+        grouping = result.observed_grouping_summary
+        self.assertEqual(grouping.total_candidate_count, 1)
+        self.assertEqual(grouping.multi_record_candidate_count, 1)
+        self.assertEqual(grouping.valid_multi_record_sequence_count, 1)
+        self.assertEqual(grouping.same_voucher_number_count, 1)
+        self.assertEqual(grouping.same_date_count, 1)
+        self.assertEqual(grouping.balanced_multi_record_candidate_count, 1)
+        self.assertEqual(
+            grouping.candidates[0].status,
+            ObservedJournalGroupStatus.OBSERVED_MULTI_RECORD_SEQUENCE,
+        )
+
+    def test_observed_grouping_1110_1100_1101_candidate(self) -> None:
+        result = self.analyze_observed_records(
+            [
+                self.record30(identifier="1110", voucher="11", debit_amount="100", credit_amount="0"),
+                self.record30(identifier="1100", voucher="11", debit_amount="50", credit_amount="0"),
+                self.record30(identifier="1101", voucher="11", debit_amount="0", credit_amount="150"),
+            ]
+        )
+
+        candidate = result.observed_grouping_summary.candidates[0]
+        self.assertEqual(candidate.record_count, 3)
+        self.assertEqual(candidate.identifier_flags, ("1110", "1100", "1101"))
+        self.assertEqual(candidate.debit_total, candidate.credit_total)
+
+    def test_observed_grouping_allows_multiple_1100_records(self) -> None:
+        result = self.analyze_observed_records(
+            [
+                self.record30(identifier="1110", voucher="12", debit_amount="100", credit_amount="0"),
+                self.record30(identifier="1100", voucher="12", debit_amount="25", credit_amount="0"),
+                self.record30(identifier="1100", voucher="12", debit_amount="25", credit_amount="0"),
+                self.record30(identifier="1101", voucher="12", debit_amount="0", credit_amount="150"),
+            ]
+        )
+
+        candidate = result.observed_grouping_summary.candidates[0]
+        self.assertEqual(candidate.record_count, 4)
+        self.assertEqual(
+            candidate.status,
+            ObservedJournalGroupStatus.OBSERVED_MULTI_RECORD_SEQUENCE,
+        )
+
+    def test_observed_grouping_missing_1101_is_unresolved(self) -> None:
+        result = self.analyze_observed_records(
+            [
+                self.record30(identifier="1110", voucher="13", debit_amount="100", credit_amount="0"),
+                self.record30(identifier="1100", voucher="13", debit_amount="0", credit_amount="100"),
+            ]
+        )
+
+        candidate = result.observed_grouping_summary.candidates[0]
+        self.assertEqual(candidate.status, ObservedJournalGroupStatus.UNRESOLVED)
+        self.assertFalse(candidate.valid_sequence)
+        self.assertIn("invalid_observed_identifier_sequence", candidate.warnings)
+
+    def test_observed_grouping_unexpected_flag_inside_sequence_is_unresolved(self) -> None:
+        result = self.analyze_observed_records(
+            [
+                self.record30(identifier="1110", voucher="14", debit_amount="100", credit_amount="0"),
+                self.record30(identifier="9999", voucher="14", debit_amount="0", credit_amount="0"),
+                self.record30(identifier="1101", voucher="14", debit_amount="0", credit_amount="100"),
+            ]
+        )
+
+        candidate = result.observed_grouping_summary.candidates[0]
+        self.assertEqual(candidate.identifier_flags, ("1110", "9999", "1101"))
+        self.assertEqual(candidate.status, ObservedJournalGroupStatus.UNRESOLVED)
+        self.assertFalse(candidate.valid_sequence)
+
+    def test_observed_grouping_voucher_mismatch_is_unresolved(self) -> None:
+        result = self.analyze_observed_records(
+            [
+                self.record30(identifier="1110", voucher="15", debit_amount="100", credit_amount="0"),
+                self.record30(identifier="1101", voucher="16", debit_amount="0", credit_amount="100"),
+            ]
+        )
+
+        candidate = result.observed_grouping_summary.candidates[0]
+        self.assertEqual(candidate.status, ObservedJournalGroupStatus.UNRESOLVED)
+        self.assertFalse(candidate.same_voucher_number)
+        self.assertIn("voucher_number_not_consistent", candidate.warnings)
+
+    def test_observed_grouping_date_mismatch_is_unresolved(self) -> None:
+        result = self.analyze_observed_records(
+            [
+                self.record30(identifier="1110", voucher="17", date="20260821", debit_amount="100", credit_amount="0"),
+                self.record30(identifier="1101", voucher="17", date="20260822", debit_amount="0", credit_amount="100"),
+            ]
+        )
+
+        candidate = result.observed_grouping_summary.candidates[0]
+        self.assertEqual(candidate.status, ObservedJournalGroupStatus.UNRESOLVED)
+        self.assertFalse(candidate.same_date)
+        self.assertIn("date_not_consistent", candidate.warnings)
+
+    def test_observed_grouping_unbalanced_candidate_is_unresolved(self) -> None:
+        result = self.analyze_observed_records(
+            [
+                self.record30(identifier="1110", voucher="18", debit_amount="100", credit_amount="0"),
+                self.record30(identifier="1101", voucher="18", debit_amount="0", credit_amount="99"),
+            ]
+        )
+
+        candidate = result.observed_grouping_summary.candidates[0]
+        self.assertEqual(candidate.status, ObservedJournalGroupStatus.UNRESOLVED)
+        self.assertFalse(candidate.balanced)
+        self.assertIn("debit_credit_not_balanced", candidate.warnings)
+
+    def test_observed_grouping_1111_single_candidate(self) -> None:
+        result = self.analyze_observed_records([self.record30(identifier="1111")])
+
+        candidate = result.observed_grouping_summary.candidates[0]
+        self.assertEqual(
+            candidate.status,
+            ObservedJournalGroupStatus.OBSERVED_SINGLE_RECORD,
+        )
+        self.assertEqual(candidate.identifier_flags, ("1111",))
+        self.assertIn("observed_identifier_flag:1111", candidate.grouping_basis)
+
+    def test_observed_grouping_candidate_count(self) -> None:
+        result = self.analyze_observed_records(
+            [
+                self.record30(identifier="1000"),
+                self.record30(identifier="1110", voucher="19", debit_amount="100", credit_amount="0"),
+                self.record30(identifier="1100", voucher="19", debit_amount="20", credit_amount="0"),
+                self.record30(identifier="1101", voucher="19", debit_amount="0", credit_amount="120"),
+                self.record30(identifier="1111"),
+            ]
+        )
+
+        grouping = result.observed_grouping_summary
+        self.assertEqual(result.data_record_count, 5)
+        self.assertEqual(grouping.total_candidate_count, 3)
+        self.assertEqual(grouping.single_record_candidate_count, 2)
+        self.assertEqual(grouping.multi_record_candidate_count, 1)
+
+    def test_observed_grouping_is_not_promoted_to_formal_journal_entry(self) -> None:
+        result = self.analyze_observed_records([self.record30(identifier="1000")])
+
+        self.assertIsNone(getattr(result, "journal_entries", None))
+        self.assertIsNotNone(result.observed_grouping_summary)
+        self.assertIsNone(analysis_to_dict(result)["journal_count"])
+        self.assertFalse(result.observed_schema.is_formal_format_profile)
 
 
 if __name__ == "__main__":

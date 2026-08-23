@@ -10,6 +10,7 @@ from .models import (
     DiagnosticIssueCategory,
     DiagnosticMappingCandidate,
     FieldResolutionStatus,
+    IdentifierFlagMeaningStatus,
     JdlMasterType,
     JdlCsvAnalysisResult,
     JdlCsvLineObservation,
@@ -18,10 +19,14 @@ from .models import (
     MasterMismatchSummary,
     MasterMismatchSummaryItem,
     MasterReferenceIssue,
+    ObservedJournalGroupCandidate,
+    ObservedJournalGroupingSummary,
+    ObservedJournalGroupStatus,
     ObservedJdlSchema,
 )
 from .message_parser import JdlImportDiagnosticMessageParser
 from .report import JdlCsvDiagnosticReportGenerator
+from .serialization import analysis_to_dict
 
 __all__ = [
     "AccountingSide",
@@ -31,6 +36,7 @@ __all__ = [
     "DiagnosticIssueCategory",
     "DiagnosticMappingCandidate",
     "FieldResolutionStatus",
+    "IdentifierFlagMeaningStatus",
     "JdlCsvAnalysisResult",
     "JdlCsvDiagnosticReportGenerator",
     "JdlCsvFingerprintComparator",
@@ -43,5 +49,9 @@ __all__ = [
     "MasterMismatchSummary",
     "MasterMismatchSummaryItem",
     "MasterReferenceIssue",
+    "ObservedJournalGroupCandidate",
+    "ObservedJournalGroupingSummary",
+    "ObservedJournalGroupStatus",
     "ObservedJdlSchema",
+    "analysis_to_dict",
 ]

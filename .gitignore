@@ -27,6 +27,7 @@ Thumbs.db
 
 # Accounting / customer data
 *.csv
+!tests/fixtures/jdl/*.csv
 *.xlsx
 *.xls
 
