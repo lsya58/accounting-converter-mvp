@@ -4,7 +4,7 @@ from collections import Counter
 
 from accounting_converter.domain.validation import Severity
 
-from .models import AccountingSide, JdlCsvAnalysisResult, JdlMasterType
+from .models import AccountingSide, JdlCsvAnalysisResult, JdlMasterType, MasterMismatchSummaryItem
 
 
 class JdlCsvDiagnosticReportGenerator:
@@ -42,6 +42,22 @@ class JdlCsvDiagnosticReportGenerator:
         else:
             lines.append("0: 0 records")
 
+        if analysis.observed_schema is not None:
+            lines.extend(
+                [
+                    "",
+                    "Observed Schema:",
+                    f"product: {analysis.observed_schema.product}",
+                    f"observed_version: {analysis.observed_schema.observed_version}",
+                    f"encoding: {analysis.observed_schema.encoding}",
+                    f"BOM: {analysis.observed_schema.has_bom}",
+                    f"line_ending: {analysis.observed_schema.line_ending}",
+                    f"journal_column_count: {analysis.observed_schema.journal_column_count}",
+                    f"journal_count: {analysis.observed_schema.journal_count}",
+                    "formal_format_profile: false",
+                ]
+            )
+
         lines.extend(["", "検出事項:"])
         if not analysis.validation_results:
             lines.append("INFO: 本システムが検証可能なCSV構造上の問題は検出されませんでした。")
@@ -62,13 +78,13 @@ class JdlCsvDiagnosticReportGenerator:
                     "検出されたマスター不一致:",
                 ]
             )
+            for master_type, count in analysis.master_mismatch_summary.counts_by_master_type:
+                lines.append(f"{self._display_master_type(master_type)}: {count}件")
+            lines.extend(["", "借方/貸方別内訳:"])
             for type_key, count in analysis.master_mismatch_summary.counts_by_type:
                 lines.append(f"{self._display_type_key(type_key)}: {count}件")
             lines.extend(["", "主な不一致値:"])
-            for item in analysis.master_mismatch_summary.items:
-                value = item.source_value or "(値未特定)"
-                account = f" / 勘定科目: {item.account_value}" if item.account_value else ""
-                lines.append(f"{value}: {item.count}件{account}")
+            lines.extend(self._format_mismatch_items(analysis.master_mismatch_summary.items))
             lines.extend(
                 [
                     "",
@@ -108,3 +124,44 @@ class JdlCsvDiagnosticReportGenerator:
             JdlMasterType.TAX_CATEGORY.value: "税区分",
         }
         return labels.get(type_key, type_key)
+
+    def _display_master_type(self, master_type: str) -> str:
+        labels = {
+            JdlMasterType.ACCOUNT.value: "科目不一致",
+            JdlMasterType.SUB_ACCOUNT.value: "補助科目不一致",
+            JdlMasterType.DEPARTMENT.value: "部門不一致",
+            JdlMasterType.TAX_CATEGORY.value: "税区分不一致",
+        }
+        return labels.get(master_type, master_type)
+
+    def _format_mismatch_items(
+        self, items: tuple[MasterMismatchSummaryItem, ...]
+    ) -> list[str]:
+        grouped: dict[tuple[JdlMasterType, str | None], list[MasterMismatchSummaryItem]] = {}
+        for item in items:
+            grouped.setdefault((item.master_type, item.account_value), []).append(item)
+
+        lines: list[str] = []
+        for (master_type, account_value), group_items in sorted(
+            grouped.items(),
+            key=lambda entry: (
+                entry[0][0].value,
+                entry[0][1] or "",
+            ),
+        ):
+            if master_type is JdlMasterType.SUB_ACCOUNT and account_value:
+                lines.append(f"{account_value}:")
+            for item in sorted(group_items, key=lambda value: (-value.count, value.first_row)):
+                value = item.source_value or "(値未特定)"
+                side = self._display_side(item.side)
+                lines.append(f"{value}: {item.count}件 ({side})")
+        return lines
+
+    def _display_side(self, side: AccountingSide) -> str:
+        labels = {
+            AccountingSide.DEBIT: "借方",
+            AccountingSide.CREDIT: "貸方",
+            AccountingSide.NONE: "共通",
+            AccountingSide.UNKNOWN: "不明",
+        }
+        return labels.get(side, side.value)

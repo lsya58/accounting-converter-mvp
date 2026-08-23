@@ -25,7 +25,7 @@ class JdlDiagnosticMessagePattern:
     @property
     def pattern(self) -> re.Pattern[str]:
         return re.compile(
-            rf"【{re.escape(self.label)}】"
+            rf"(?:【|\[){re.escape(self.label)}(?:】|\])"
             r"(?:(?P<value>.+?)に一致する)?"
             r".*見つかりません"
         )
@@ -39,7 +39,19 @@ DEFAULT_MASTER_MISMATCH_PATTERNS: tuple[JdlDiagnosticMessagePattern, ...] = (
         field="debit_account",
     ),
     JdlDiagnosticMessagePattern(
+        label="借方科目",
+        side=AccountingSide.DEBIT,
+        master_type=JdlMasterType.ACCOUNT,
+        field="debit_account",
+    ),
+    JdlDiagnosticMessagePattern(
         label="貸方勘定科目",
+        side=AccountingSide.CREDIT,
+        master_type=JdlMasterType.ACCOUNT,
+        field="credit_account",
+    ),
+    JdlDiagnosticMessagePattern(
+        label="貸方科目",
         side=AccountingSide.CREDIT,
         master_type=JdlMasterType.ACCOUNT,
         field="credit_account",

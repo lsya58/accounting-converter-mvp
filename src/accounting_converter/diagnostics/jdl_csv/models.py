@@ -46,6 +46,7 @@ class DiagnosticAssociationStatus(str, Enum):
 
 class FieldResolutionStatus(str, Enum):
     FROM_MESSAGE = "FROM_MESSAGE"
+    FROM_OBSERVED_SCHEMA = "FROM_OBSERVED_SCHEMA"
     FROM_FORMAT_PROFILE = "FROM_FORMAT_PROFILE"
     FIELD_UNRESOLVED = "FIELD_UNRESOLVED"
 
@@ -121,6 +122,7 @@ class MasterMismatchSummaryItem:
 @dataclass(frozen=True)
 class MasterMismatchSummary:
     total_count: int
+    counts_by_master_type: tuple[tuple[str, int], ...]
     counts_by_type: tuple[tuple[str, int], ...]
     items: tuple[MasterMismatchSummaryItem, ...]
     mapping_candidates: tuple[DiagnosticMappingCandidate, ...]
@@ -136,6 +138,9 @@ class MasterMismatchSummary:
         )
         type_counts = Counter(
             cls._type_key(issue.side, issue.master_type) for issue in master_issues
+        )
+        master_type_counts = Counter(
+            issue.master_type.value for issue in master_issues
         )
         grouped: dict[
             tuple[AccountingSide, JdlMasterType, str | None, str | None],
@@ -189,6 +194,7 @@ class MasterMismatchSummary:
 
         return cls(
             total_count=len(master_issues),
+            counts_by_master_type=tuple(sorted(master_type_counts.items())),
             counts_by_type=tuple(sorted(type_counts.items())),
             items=items,
             mapping_candidates=tuple(candidates_by_key.values()),
@@ -199,6 +205,30 @@ class MasterMismatchSummary:
         if side in {AccountingSide.DEBIT, AccountingSide.CREDIT}:
             return f"{side.value}:{master_type.value}"
         return master_type.value
+
+
+@dataclass(frozen=True)
+class ObservedJdlSchema:
+    product: str
+    observed_version: str
+    encoding: str
+    has_bom: bool
+    line_ending: str
+    journal_column_count: int
+    observed_header: tuple[str, ...]
+    journal_count: int
+    field_names: dict[str, str] = field(default_factory=dict)
+    observed_behavior: tuple[str, ...] = field(default_factory=tuple)
+    is_formal_format_profile: bool = False
+
+    def column_index_for(self, field: str) -> int | None:
+        header_name = self.field_names.get(field)
+        if header_name is None:
+            return None
+        try:
+            return self.observed_header.index(header_name)
+        except ValueError:
+            return None
 
 
 @dataclass(frozen=True)
@@ -289,11 +319,13 @@ class JdlCsvAnalysisResult:
     master_mismatch_summary: MasterMismatchSummary = field(
         default_factory=lambda: MasterMismatchSummary(
             total_count=0,
+            counts_by_master_type=(),
             counts_by_type=(),
             items=(),
             mapping_candidates=(),
         )
     )
+    observed_schema: ObservedJdlSchema | None = None
 
     @property
     def metadata_line_count(self) -> int:

@@ -10,12 +10,96 @@ from accounting_converter.diagnostics.jdl_csv import (
     JdlCsvFingerprintComparator,
     JdlMasterType,
     JdlCsvStructuralAnalyzer,
+    ObservedJdlSchema,
 )
 
 
 class JdlCsvDiagnosticsTests(unittest.TestCase):
     def setUp(self) -> None:
         self.analyzer = JdlCsvStructuralAnalyzer()
+
+    def observed_jdl_ibex_schema(self) -> ObservedJdlSchema:
+        header = (
+            "伝票日付",
+            "借方科目コード",
+            "借方科目",
+            "借方補助",
+            "貸方科目コード",
+            "貸方科目",
+            "貸方補助",
+            "金額",
+            "摘要",
+            "部門",
+            "税区分",
+            "列12",
+            "列13",
+            "列14",
+            "列15",
+            "列16",
+            "列17",
+            "列18",
+            "列19",
+            "列20",
+            "列21",
+            "列22",
+            "列23",
+            "列24",
+            "列25",
+            "列26",
+            "列27",
+            "列28",
+            "列29",
+            "列30",
+        )
+        return ObservedJdlSchema(
+            product="JDL IBEX 出納帳",
+            observed_version="35.5",
+            encoding="cp932",
+            has_bom=False,
+            line_ending="CRLF",
+            journal_column_count=30,
+            observed_header=header,
+            journal_count=1271,
+            field_names={
+                "debit_account": "借方科目",
+                "debit_account_code": "借方科目コード",
+                "debit_sub_account": "借方補助",
+                "credit_account": "貸方科目",
+                "credit_account_code": "貸方科目コード",
+                "credit_sub_account": "貸方補助",
+            },
+            observed_behavior=("diagnostic_message_follows_journal_record",),
+        )
+
+    def record30(
+        self,
+        debit_code: str = "",
+        debit_account: str = "売掛金",
+        debit_sub: str = "",
+        credit_code: str = "",
+        credit_account: str = "現金",
+        credit_sub: str = "",
+        amount: str = "100",
+    ) -> str:
+        columns = [""] * 30
+        columns[0] = "2026/08/21"
+        columns[1] = debit_code
+        columns[2] = debit_account
+        columns[3] = debit_sub
+        columns[4] = credit_code
+        columns[5] = credit_account
+        columns[6] = credit_sub
+        columns[7] = amount
+        return ",".join(columns)
+
+    def padded_diagnostic30(self, label: str, tail: tuple[str, ...] = ()) -> str:
+        columns = [f"// [{label}]に一致する補助が見つかりません"] + [""] * 29
+        for index, value in enumerate(tail, start=1):
+            columns[index] = value
+        return ",".join(columns)
+
+    def observed_analyzer(self) -> JdlCsvStructuralAnalyzer:
+        return JdlCsvStructuralAnalyzer(observed_schema=self.observed_jdl_ibex_schema())
 
     def test_valid_csv_syntax(self) -> None:
         result = self.analyzer.analyze_text(
@@ -334,6 +418,221 @@ class JdlCsvDiagnosticsTests(unittest.TestCase):
         self.assertIn("借方補助: 2件", report)
         self.assertIn("(値未特定): 2件", report)
         self.assertIn("JDL自体の障害を断定するものではありません。", report)
+
+    def test_padded_30_column_diagnostic_message_is_detected_by_first_cell(self) -> None:
+        header = ",".join(self.observed_jdl_ibex_schema().observed_header)
+        text = "\r\n".join(
+            [
+                header,
+                self.record30(debit_sub="PayPay"),
+                self.padded_diagnostic30("借方補助"),
+            ]
+        )
+
+        result = self.observed_analyzer().analyze_text(
+            text,
+            encoding="cp932",
+            has_bom=False,
+        )
+
+        self.assertEqual(result.data_line_count, 1)
+        self.assertEqual(len(result.diagnostic_message_lines), 1)
+        self.assertEqual(result.diagnostic_message_lines[0].column_count, 30)
+        self.assertEqual(
+            result.diagnostic_issues[0].field_resolution_status,
+            FieldResolutionStatus.FROM_OBSERVED_SCHEMA,
+        )
+        self.assertEqual(result.diagnostic_issues[0].source_value, "PayPay")
+
+    def test_one_column_diagnostic_message_is_detected(self) -> None:
+        header = ",".join(self.observed_jdl_ibex_schema().observed_header)
+        text = "\r\n".join(
+            [
+                header,
+                self.record30(debit_sub="PayPay"),
+                "// [借方補助]に一致する補助が見つかりません",
+            ]
+        )
+
+        result = self.observed_analyzer().analyze_text(text, encoding="cp932")
+
+        self.assertEqual(result.data_line_count, 1)
+        self.assertEqual(result.diagnostic_message_lines[0].column_count, 1)
+        self.assertEqual(
+            result.diagnostic_issues[0].association_status,
+            DiagnosticAssociationStatus.LINKED_TO_PREVIOUS_RECORD,
+        )
+
+    def test_padded_diagnostic_with_nonempty_tail_warns(self) -> None:
+        header = ",".join(self.observed_jdl_ibex_schema().observed_header)
+        text = "\r\n".join(
+            [
+                header,
+                self.record30(debit_sub="PayPay"),
+                self.padded_diagnostic30("借方補助", tail=("unexpected",)),
+            ]
+        )
+
+        result = self.observed_analyzer().analyze_text(text)
+
+        self.assertTrue(
+            any(
+                warning.rule_id == "JDLCSV-DIAGNOSTIC-NONEMPTY-TAIL"
+                for warning in result.analysis_warnings
+            )
+        )
+        self.assertEqual(len(result.line_observations), 3)
+
+    def test_diagnostic_links_to_previous_journal_record_as_observed_behavior(self) -> None:
+        header = ",".join(self.observed_jdl_ibex_schema().observed_header)
+        text = "\r\n".join(
+            [
+                header,
+                self.record30(debit_sub="クレジット"),
+                "// [借方補助]に一致する補助が見つかりません",
+            ]
+        )
+
+        result = self.observed_analyzer().analyze_text(text)
+
+        issue = result.diagnostic_issues[0]
+        self.assertEqual(issue.related_record_row, 2)
+        self.assertEqual(issue.source_value, "クレジット")
+        self.assertIn(
+            "diagnostic_message_follows_journal_record",
+            result.observed_schema.observed_behavior,
+        )
+
+    def test_1271_journal_count_is_tracked(self) -> None:
+        header = ",".join(self.observed_jdl_ibex_schema().observed_header)
+        records = [self.record30(amount=str(index)) for index in range(1271)]
+        text = "\r\n".join([header] + records)
+
+        result = self.observed_analyzer().analyze_text(
+            text,
+            encoding="cp932",
+            has_bom=False,
+        )
+
+        self.assertEqual(result.data_line_count, 1271)
+        self.assertEqual(result.schema_fingerprint.record_column_counts, ((30, 1271),))
+        self.assertEqual(result.observed_schema.journal_count, 1271)
+        self.assertEqual(result.observed_schema.journal_column_count, 30)
+        self.assertEqual(result.observed_schema.encoding, "cp932")
+        self.assertFalse(result.observed_schema.has_bom)
+        self.assertEqual(result.observed_schema.line_ending, "CRLF")
+
+    def test_observed_sub_account_mismatch_summary(self) -> None:
+        header = ",".join(self.observed_jdl_ibex_schema().observed_header)
+        rows = [
+            header,
+            self.record30(debit_sub="クレジット"),
+            "// [借方補助]に一致する補助が見つかりません",
+            self.record30(debit_sub="クレジット"),
+            "// [借方補助]に一致する補助が見つかりません",
+            self.record30(credit_sub="PayPay"),
+            "// [貸方補助]に一致する補助が見つかりません",
+        ]
+
+        result = self.observed_analyzer().analyze_text("\r\n".join(rows))
+        report = JdlCsvDiagnosticReportGenerator().generate_text(result)
+
+        self.assertEqual(result.master_mismatch_summary.total_count, 3)
+        self.assertIn(("SUB_ACCOUNT", 3), result.master_mismatch_summary.counts_by_master_type)
+        self.assertTrue(
+            any(
+                item.account_value == "売掛金"
+                and item.source_value == "クレジット"
+                and item.count == 2
+                and item.side is AccountingSide.DEBIT
+                for item in result.master_mismatch_summary.items
+            )
+        )
+        self.assertIn("補助科目不一致: 3件", report)
+        self.assertIn("売掛金:", report)
+        self.assertIn("クレジット: 2件 (借方)", report)
+        self.assertIn("PayPay: 1件 (貸方)", report)
+
+    def test_observed_account_mismatch_summary(self) -> None:
+        header = ",".join(self.observed_jdl_ibex_schema().observed_header)
+        rows = [
+            header,
+            self.record30(debit_code="863", debit_account="顧問料"),
+            "// [借方科目]に一致する科目が見つかりません",
+            self.record30(debit_code="863", debit_account="顧問料"),
+            "// [借方科目]に一致する科目が見つかりません",
+            self.record30(credit_code="185", credit_account="未収入金"),
+            "// [貸方科目]に一致する科目が見つかりません",
+        ]
+
+        result = self.observed_analyzer().analyze_text("\r\n".join(rows))
+        report = JdlCsvDiagnosticReportGenerator().generate_text(result)
+
+        self.assertIn(("ACCOUNT", 3), result.master_mismatch_summary.counts_by_master_type)
+        self.assertTrue(
+            any(
+                item.source_value == "863 顧問料"
+                and item.count == 2
+                and item.side is AccountingSide.DEBIT
+                for item in result.master_mismatch_summary.items
+            )
+        )
+        self.assertTrue(
+            any(
+                item.source_value == "185 未収入金"
+                and item.count == 1
+                and item.side is AccountingSide.CREDIT
+                for item in result.master_mismatch_summary.items
+            )
+        )
+        self.assertIn("科目不一致: 3件", report)
+        self.assertIn("863 顧問料: 2件 (借方)", report)
+        self.assertIn("185 未収入金: 1件 (貸方)", report)
+
+    def test_all_nonempty_sub_accounts_become_mismatches_in_observed_case(self) -> None:
+        header = ",".join(self.observed_jdl_ibex_schema().observed_header)
+        rows = [header]
+        nonempty_subs = ("クレジット", "PayPay", "リクルート", "auPay①")
+        for sub_account in nonempty_subs:
+            rows.append(self.record30(debit_sub=sub_account))
+            rows.append("// [借方補助]に一致する補助が見つかりません")
+
+        result = self.observed_analyzer().analyze_text("\r\n".join(rows))
+
+        nonempty_count = sum(1 for line in result.journal_record_lines if line.columns[3])
+        self.assertEqual(nonempty_count, 4)
+        self.assertEqual(result.master_mismatch_summary.total_count, nonempty_count)
+
+    def test_observed_schema_is_not_formal_format_profile(self) -> None:
+        header = ",".join(self.observed_jdl_ibex_schema().observed_header)
+        result = self.observed_analyzer().analyze_text(
+            "\r\n".join([header, self.record30()]),
+            encoding="cp932",
+            has_bom=False,
+        )
+
+        self.assertIsNotNone(result.observed_schema)
+        self.assertEqual(result.observed_schema.product, "JDL IBEX 出納帳")
+        self.assertEqual(result.observed_schema.observed_version, "35.5")
+        self.assertFalse(result.observed_schema.is_formal_format_profile)
+
+    def test_diagnostic_rows_are_not_counted_as_journals_and_not_silently_deleted(self) -> None:
+        header = ",".join(self.observed_jdl_ibex_schema().observed_header)
+        text = "\r\n".join(
+            [
+                header,
+                self.record30(debit_sub="PayPay"),
+                self.padded_diagnostic30("借方補助"),
+                self.record30(debit_sub="auPay①"),
+                "// [借方補助]に一致する補助が見つかりません",
+            ]
+        )
+
+        result = self.observed_analyzer().analyze_text(text)
+
+        self.assertEqual(result.data_line_count, 2)
+        self.assertEqual(len(result.diagnostic_message_lines), 2)
+        self.assertEqual(len(result.line_observations), 5)
 
 
 if __name__ == "__main__":

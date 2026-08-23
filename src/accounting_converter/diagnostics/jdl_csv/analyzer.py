@@ -9,6 +9,7 @@ from accounting_converter.domain.validation import Severity, ValidationResult
 
 from .message_parser import JdlImportDiagnosticMessageParser
 from .models import (
+    AccountingSide,
     CsvLineClassification,
     DiagnosticAssociationStatus,
     DiagnosticIssue,
@@ -19,6 +20,7 @@ from .models import (
     JdlMasterType,
     MasterMismatchSummary,
     MasterReferenceIssue,
+    ObservedJdlSchema,
 )
 
 
@@ -38,10 +40,12 @@ class JdlCsvStructuralAnalyzer:
         delimiter: str = ",",
         encodings: tuple[str, ...] = ("utf-8-sig", "utf-8", "cp932"),
         message_parser: JdlImportDiagnosticMessageParser | None = None,
+        observed_schema: ObservedJdlSchema | None = None,
     ) -> None:
         self.delimiter = delimiter
         self.encodings = encodings
         self.message_parser = message_parser or JdlImportDiagnosticMessageParser()
+        self.observed_schema = observed_schema
 
     def analyze_path(self, path: Path) -> JdlCsvAnalysisResult:
         raw = path.read_bytes()
@@ -137,6 +141,19 @@ class JdlCsvStructuralAnalyzer:
                             observation.master_reference_issue.field,
                             observation.master_reference_issue.message,
                             "JDL側マスターとCSV上の値の対応を確認してください。",
+                        )
+                    )
+                if self._has_nonempty_diagnostic_tail(observation.columns):
+                    warnings.append(
+                        self._result(
+                            Severity.WARNING,
+                            "JDLCSV-DIAGNOSTIC-NONEMPTY-TAIL",
+                            "JDL診断コメント行の後続列に非空値があります。",
+                            file_name,
+                            row_number,
+                            "diagnostic_tail",
+                            observation.columns[1:],
+                            "診断コメント行か通常データ行かを実ファイルで確認してください。",
                         )
                     )
             elif observation.classification is CsvLineClassification.METADATA:
@@ -302,6 +319,13 @@ class JdlCsvStructuralAnalyzer:
             master_mismatch_summary=MasterMismatchSummary.from_issues(
                 diagnostic_issues
             ),
+            observed_schema=self._build_observed_schema(
+                header_columns=header_columns,
+                journal_count=len(journal_record_lines),
+                encoding=encoding,
+                has_bom=has_bom,
+                line_ending=line_ending,
+            ),
         )
         return JdlCsvAnalysisResult(
             **{
@@ -339,9 +363,10 @@ class JdlCsvStructuralAnalyzer:
                 classification=CsvLineClassification.INVALID_CSV,
                 csv_error=str(error),
             )
-        diagnostic_issue = self.message_parser.parse(raw_line, row_number)
+        first_cell = columns[0] if columns else raw_line
+        diagnostic_issue = self.message_parser.parse(first_cell, row_number)
         issue = self._to_master_reference_issue(row_number, raw_line, diagnostic_issue)
-        if diagnostic_issue is not None or self._looks_like_jdl_message(raw_line):
+        if diagnostic_issue is not None or self._looks_like_jdl_message(first_cell):
             return JdlCsvLineObservation(
                 row_number=row_number,
                 raw_text=raw_line,
@@ -436,26 +461,44 @@ class JdlCsvStructuralAnalyzer:
         if related_record is None:
             return observation
 
-        # Without a formal JDL FormatProfile, the previous record can be linked,
-        # but its accounting fields cannot be resolved from column positions.
+        source_value = issue.source_value
+        account_value = issue.account_value
+        field_resolution_status = issue.field_resolution_status
+        if (
+            self.observed_schema is not None
+            and issue.field is not None
+            and source_value is None
+        ):
+            source_value = self._value_from_observed_schema(
+                related_record.columns,
+                issue.field,
+            )
+            if issue.master_type is JdlMasterType.ACCOUNT:
+                source_value = self._account_display_value_from_observed_schema(
+                    related_record.columns,
+                    issue.side,
+                    source_value,
+                )
+            account_value = self._account_value_from_observed_schema(
+                related_record.columns,
+                issue.side,
+            )
+            if source_value is not None:
+                field_resolution_status = FieldResolutionStatus.FROM_OBSERVED_SCHEMA
         _ = header_columns
         enriched_issue = DiagnosticIssue(
             category=issue.category,
             side=issue.side,
             master_type=issue.master_type,
             source_row=issue.source_row,
-            source_value=issue.source_value,
+            source_value=source_value,
             raw_message=issue.raw_message,
             severity=issue.severity,
             field=issue.field,
             related_record_row=related_record.row_number,
-            account_value=issue.account_value,
+            account_value=account_value,
             association_status=DiagnosticAssociationStatus.LINKED_TO_PREVIOUS_RECORD,
-            field_resolution_status=(
-                issue.field_resolution_status
-                if issue.field_resolution_status is FieldResolutionStatus.FROM_MESSAGE
-                else FieldResolutionStatus.FIELD_UNRESOLVED
-            ),
+            field_resolution_status=field_resolution_status,
         )
         return JdlCsvLineObservation(
             row_number=observation.row_number,
@@ -491,6 +534,77 @@ class JdlCsvStructuralAnalyzer:
 
     def _looks_like_jdl_message(self, raw_line: str) -> bool:
         return any(marker in raw_line for marker in DIAGNOSTIC_MESSAGE_MARKERS)
+
+    def _has_nonempty_diagnostic_tail(self, columns: tuple[str, ...]) -> bool:
+        return any(column.strip() for column in columns[1:])
+
+    def _value_from_observed_schema(
+        self,
+        record_columns: tuple[str, ...],
+        field: str,
+    ) -> str | None:
+        if self.observed_schema is None:
+            return None
+        index = self.observed_schema.column_index_for(field)
+        if index is None or index >= len(record_columns):
+            return None
+        value = record_columns[index].strip()
+        return value or None
+
+    def _account_value_from_observed_schema(
+        self,
+        record_columns: tuple[str, ...],
+        side: AccountingSide,
+    ) -> str | None:
+        if side is AccountingSide.DEBIT:
+            return self._value_from_observed_schema(record_columns, "debit_account")
+        if side is AccountingSide.CREDIT:
+            return self._value_from_observed_schema(record_columns, "credit_account")
+        return None
+
+    def _account_display_value_from_observed_schema(
+        self,
+        record_columns: tuple[str, ...],
+        side: AccountingSide,
+        account_name: str | None,
+    ) -> str | None:
+        if side is AccountingSide.DEBIT:
+            account_code = self._value_from_observed_schema(
+                record_columns, "debit_account_code"
+            )
+        elif side is AccountingSide.CREDIT:
+            account_code = self._value_from_observed_schema(
+                record_columns, "credit_account_code"
+            )
+        else:
+            account_code = None
+        if account_code and account_name:
+            return f"{account_code} {account_name}"
+        return account_name or account_code
+
+    def _build_observed_schema(
+        self,
+        header_columns: tuple[str, ...],
+        journal_count: int,
+        encoding: str,
+        has_bom: bool,
+        line_ending: str,
+    ) -> ObservedJdlSchema | None:
+        if self.observed_schema is None:
+            return None
+        return ObservedJdlSchema(
+            product=self.observed_schema.product,
+            observed_version=self.observed_schema.observed_version,
+            encoding=encoding,
+            has_bom=has_bom,
+            line_ending=line_ending,
+            journal_column_count=len(header_columns),
+            observed_header=header_columns,
+            journal_count=journal_count,
+            field_names=dict(self.observed_schema.field_names),
+            observed_behavior=self.observed_schema.observed_behavior,
+            is_formal_format_profile=False,
+        )
 
     def _duplicate_values(self, values: tuple[str, ...]) -> list[str]:
         counts = Counter(values)

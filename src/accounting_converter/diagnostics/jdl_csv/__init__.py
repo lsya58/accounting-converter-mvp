@@ -18,6 +18,7 @@ from .models import (
     MasterMismatchSummary,
     MasterMismatchSummaryItem,
     MasterReferenceIssue,
+    ObservedJdlSchema,
 )
 from .message_parser import JdlImportDiagnosticMessageParser
 from .report import JdlCsvDiagnosticReportGenerator
@@ -42,4 +43,5 @@ __all__ = [
     "MasterMismatchSummary",
     "MasterMismatchSummaryItem",
     "MasterReferenceIssue",
+    "ObservedJdlSchema",
 ]
