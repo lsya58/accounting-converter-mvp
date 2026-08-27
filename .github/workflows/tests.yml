@@ -1,0 +1,36 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  unittest:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Ensure private data is not tracked
+        run: |
+          disallowed_csv="$(git ls-files '*.csv' | grep -v '^tests/fixtures/' || true)"
+          if [ -n "$disallowed_csv" ]; then
+            echo "Tracked CSV files are allowed only under tests/fixtures/."
+            echo "$disallowed_csv"
+            exit 1
+          fi
+          disallowed_private="$(git ls-files | grep -E '(^data/private/|実顧客|実JDL.*\.csv|実弥生.*\.csv|顧客.*\.csv)' || true)"
+          if [ -n "$disallowed_private" ]; then
+            echo "Private or real customer data appears to be tracked by Git."
+            echo "$disallowed_private"
+            exit 1
+          fi
+
+      - name: Run tests
+        run: env PYTHONPATH=src python3 -m unittest discover -s tests -v

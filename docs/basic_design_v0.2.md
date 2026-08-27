@@ -1,10 +1,11 @@
 # 会計ソフト間仕訳データ変換システム 基本設計書
 
-- 文書バージョン: 0.2
+- 文書バージョン: 0.3
 - 対象リリース: MVP
-- 上位文書: 要求仕様書 v0.4 / 要件定義書 v0.4
+- 上位文書: 要求仕様書 v0.5 / 要件定義書 v0.5
 - 対象変換: 弥生会計 → JDL
-- ステータス: 実装着手版
+- ステータス: 実装進行・実データ検証待ち
+- 最終更新日: 2026年8月27日
 
 ## 1. 設計目的
 本設計は、弥生会計の仕訳データを共通仕訳モデルへ正規化し、検証・マッピング後にJDL取込形式へ出力するローカル変換アプリケーションを定義する。
@@ -18,6 +19,9 @@
 6. 検証レポートを任意保存でき、保存をUI上で推奨する。
 7. 会計データを外部送信しない。
 8. MVPでは弥生1形式・JDL1形式のみ正式対応する。
+9. 公式ドキュメント仕様、Observed Behavior、正式FormatProfileを分離する。
+10. Application層はオーケストレーションに徹し、CSV列変換や会計ソフト固有仕様を持たない。
+11. 部分出力とSilent Failureを禁止する。
 
 ## 2. アーキテクチャ
 
@@ -45,10 +49,12 @@ JDL Output Adapter
   v
 Output Validation
   |
-  +--> JDL取込CSV
+  +--> Atomic Save -> JDL取込CSV
   |
   +--> Verification Report
 ```
+
+現在の実装では、正式YayoiInputAdapterと正式JDLOutputAdapterは未実装である。ConversionServiceはDemo AdapterによりE2Eテスト済みであり、正式Adapterは実データ取得後に接続する。
 
 ### 2.1 Validationの二段階化
 
@@ -81,6 +87,10 @@ MVPでは以下を1形式ずつ正式対応する。
 - JDL: 1製品/1取込形式
 
 対象製品・バージョンは実データ確認後にFormatProfileとして確定する。
+
+現在、弥生については公式サポート文書「弥生取り込み（インポート）形式（弥生会計05以降）」の25項目仕様を `OFFICIAL_DOCUMENTED` / `REAL_DATA_VERIFICATION_PENDING` として保持している。これは正式FormatProfileではない。
+
+JDLについては、JDL IBEX出納帳 35.5 の実データからObserved SchemaとObserved Behaviorを診断機能で確認している。これは正式JDL FormatProfileではない。
 
 ### 3.2 FormatProfile
 ソフト固有のフォーマット差異をAdapter内部のif分岐へ埋め込まず、FormatProfileとして分離する。
@@ -123,6 +133,15 @@ FormatProfile
 - 仕訳識別情報取得
 - 複合構造候補検出
 
+現在は未有効化。実データ取得後に正式実装する。
+
+### CMP-04a YayoiOfficialSpecification
+- 弥生公式ドキュメント上の25項目仕様を保持
+- 識別フラグ `2000` / `2111` / `2110` / `2100` / `2101` を保持
+- `OFFICIAL_DOCUMENTED`
+- `REAL_DATA_VERIFICATION_PENDING`
+- 正式YayoiInputAdapterとしては有効化しない
+
 ### CMP-05 JournalBuilder
 - 入力レコード群からJournalEntryを構築
 
@@ -149,6 +168,23 @@ FormatProfile
 - 一時データ
 - セッション内マッピング
 - 終了時削除
+
+### CMP-13 ConversionService
+- InputAdapter、Validation、Mapping、OutputAdapter、OutputValidator、VerificationReportGeneratorを統括
+- CSV列変換や会計ソフト固有仕様を持たない
+- Error/Fatal/未解決Mapping/Output Validation失敗時は正式出力しない
+- 一時ファイルへ出力後、成功時のみatomic replace
+- 既存出力ファイルはデフォルトで上書きしない
+- input path == output pathを拒否
+
+### CMP-14 JdlCsvDiagnosticAnalyzer
+- JDL取込失敗CSVの構造診断
+- JDL診断メッセージ解析
+- マスター不一致候補集計
+- Schema Fingerprint生成
+- Observed Schema保持
+- Observed Journal Group Candidate検出
+- 変換コアや正式JDL Output Adapterとは独立
 
 ## 5. 共通仕訳モデル
 
@@ -297,9 +333,15 @@ Business Validation
 JDL Output Adapter
  |
  v
+Temporary Output File
+ |
+ v
 Output Validation
  |
  +--> Error -> Output failure
+ |
+ v
+Atomic Replace
  |
  v
 Result Preview
@@ -308,6 +350,19 @@ Result Preview
  |
  +--> Save Verification Report
 ```
+
+正式出力停止条件:
+
+- Structural Error >= 1
+- Fatal >= 1
+- unresolved mapping >= 1
+- Business Error >= 1
+- Output Validation失敗
+- 予期しない例外
+- 既存出力ファイルがあり、上書き許可がない
+- input path == output path
+
+停止時は正式出力を生成せず、一時ファイルを削除する。正常な一部仕訳だけを部分出力しない。
 
 ## 11. 画面構成
 
@@ -364,6 +419,8 @@ Error=0の場合のみ生成可能。
 - Error/Warning件数
 - 未解決Mapping件数
 - JDL形式検証結果
+- ConversionStatus
+- Output Validation結果
 
 会計本文は原則含めない。
 
@@ -444,27 +501,38 @@ TaxInfoで意味を保持し、単純なsource_tax_category -> target_tax_catego
 ## 17. 論理ディレクトリ
 
 ```text
-app/
-├─ ui/
-├─ application/
-├─ domain/
-│  ├─ journal/
-│  ├─ mapping/
-│  └─ validation/
+src/accounting_converter/
 ├─ adapters/
-│  ├─ input/
-│  │  └─ yayoi/
-│  └─ output/
-│     └─ jdl/
+│  ├─ input/base.py
+│  └─ output/base.py
+├─ application/
+│  ├─ conversion.py
+│  ├─ mapping_engine.py
+│  ├─ output_validation.py
+│  ├─ validation_pipeline.py
+│  └─ verification_report.py
+├─ diagnostics/
+│  └─ jdl_csv/
+├─ domain/
+│  ├─ journal.py
+│  ├─ mapping.py
+│  ├─ profile.py
+│  └─ validation.py
 ├─ profiles/
-│  ├─ yayoi/
-│  └─ jdl/
-├─ reports/
-├─ infrastructure/
-│  ├─ files/
-│  ├─ encoding/
-│  └─ logging/
-└─ tests/
+│  └─ yayoi_official.py
+└─ infrastructure/
+
+tests/
+├─ fixtures/
+│  ├─ jdl/
+│  └─ yayoi/
+├─ support/
+├─ test_conversion_service_e2e.py
+├─ test_jdl_csv_diagnostics.py
+├─ test_jdl_csv_diagnostics_integration.py
+├─ test_yayoi_official_spec.py
+├─ test_journal.py
+└─ test_validation.py
 ```
 
 ## 18. テスト方針
@@ -472,7 +540,7 @@ app/
 ### Unit
 - CSV
 - FormatProfile
-- Yayoi Adapter
+- 弥生公式仕様モデル
 - JournalBuilder
 - Mapping
 - Structural Validation
@@ -486,9 +554,23 @@ app/
 - 共通モデル→Mapping→Validation
 - 共通モデル→JDL CSV
 - VerificationReport内容検証
+- JDL CSV Diagnostic Analyzer
+- Demo CSV→ConversionService→Demo Output
 
 ### E2E
-匿名化弥生CSV → アプリ → JDL取込。
+実データ取得前は完全架空デモデータでConversionServiceのE2Eを検証する。
+
+実データ取得後に、匿名化弥生CSV → アプリ → JDL取込を追加する。
+
+### CI
+
+GitHub Actionsでpush / pull_request時に以下を実行する。
+
+```bash
+env PYTHONPATH=src python3 -m unittest discover -s tests -v
+```
+
+Git管理対象CSVは `tests/fixtures/` 配下のみ許可する。実顧客CSV、実JDL CSV、実弥生CSV、`data/private/` 配下はGit管理対象にしない。
 
 ## 19. 技術方針
 - Windowsデスクトップを第一候補
@@ -539,3 +621,26 @@ app/
 9. テスト骨格
 
 弥生/JDL固有の列マッピングは実CSV確認後に実装する。
+
+---
+
+## 23. 現在の実装状態
+
+2026年8月27日時点:
+
+- 自動テスト: 80件成功
+- ConversionService E2E: 完全架空デモデータで確認済み
+- JDL診断: デモデータとJDL IBEX出納帳35.5実データでObserved Behavior確認済み
+- 弥生仕様: 公式ドキュメント25項目仕様を仕様モデルとして保持、正式Adapter未有効化
+- CI: Python 3.12、unittest、CSV漏洩防止チェック
+
+未確定:
+
+- 使用中の弥生製品・バージョン
+- 弥生実出力CSV
+- JDL正式取込仕様
+- JDL正常取込サンプル
+- 税区分・補助科目・部門の実マッピング
+- 複合仕訳採否
+
+これらの確定後、正式YayoiInputAdapter、正式JDLOutputAdapter、正式FormatProfileを実装する。
