@@ -24,6 +24,7 @@
 - JDL CSV Diagnostic Analyzer
 - JDL IBEX出納帳35.5のObserved Behavior診断
 - 弥生公式ドキュメント上のインポート形式仕様モデル
+- 弥生CSV Observation / Diagnostics
 - Demo AdapterによるConversionService E2E
 - GitHub Actions
 
@@ -32,6 +33,8 @@
 `accounting_converter.profiles.yayoi_official` には、弥生株式会社公式サポートで公開されている「弥生取り込み（インポート）形式（弥生会計05以降）」の25項目仕様を `OFFICIAL_DOCUMENTED` / `REAL_DATA_VERIFICATION_PENDING` として保持しています。
 
 これは実データ検証済みの正式 `YayoiInputAdapter` や正式 `FormatProfile` ではありません。現在、使用中の弥生製品、バージョン、実際の出力CSVは未確認です。実データ取得後に、公式ドキュメントとの差分を確認したうえで正式FormatProfileを確定します。
+
+`accounting_converter.diagnostics.yayoi_csv` には、任意の弥生CSV候補を観測し、公式25項目仕様との構造差分を確認する診断機能があります。これは正式変換ではなく、`MATCH_CANDIDATE` / `STRUCTURAL_DIFFERENCE` / `INSUFFICIENT_EVIDENCE` のような人間レビュー前提の判定だけを行います。摘要本文、取引先名、生CSV行全文は既定のテキストレポート/JSONへ出力しません。
 
 ## JDL診断機能の現在位置
 
@@ -66,6 +69,13 @@ ConversionService自身には、弥生/JDL固有のCSV列変換や識別フラ�
 PYTHONPATH=src python -m unittest discover -s tests -v
 ```
 
-現在のテスト数は80件です。
+弥生CSV候補の観測CLI:
+
+```bash
+PYTHONPATH=src python3 -m accounting_converter.cli diagnose-yayoi <csv-path>
+PYTHONPATH=src python3 -m accounting_converter.cli diagnose-yayoi <csv-path> --format json
+```
+
+現在のテスト数は85件以上です。
 
 GitHub ActionsではPython 3.12で同じテストを実行し、`tests/fixtures/` 配下以外のCSVがGit管理対象に含まれていないことを確認します。
