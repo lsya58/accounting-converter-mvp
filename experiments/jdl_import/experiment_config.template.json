@@ -1,0 +1,16 @@
+{
+  "debit_account_code": "取込先JDLで確認した借方科目コードを入力",
+  "debit_account_name": "取込先JDLで確認した借方科目名を入力",
+  "credit_account_code": "取込先JDLで確認した貸方科目コードを入力",
+  "credit_account_name": "取込先JDLで確認した貸方科目名を入力",
+  "amount": "1000",
+  "date": "2026/08/27",
+  "voucher_start": 9001,
+  "description": "完全架空JDL取込実験",
+  "tax_category": "取込先JDLで確認した税区分を入力",
+  "tax_amount": "100",
+  "existing_subaccount_code": "事前登録した完全架空補助コードを入力",
+  "existing_subaccount_name": "事前登録した完全架空補助名を入力",
+  "nonexistent_subaccount_code": "X999",
+  "nonexistent_subaccount_name": "存在しない架空補助"
+}
