@@ -17,6 +17,11 @@ from accounting_converter.diagnostics.yayoi_csv import (
     YayoiCsvDiagnosticReportGenerator,
     yayoi_analysis_to_dict,
 )
+from accounting_converter.infrastructure.conversion_profile_store import (
+    ConversionProfileStore,
+    ConversionProfileStoreError,
+    default_profile_store_dir,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -41,11 +46,30 @@ def main(argv: list[str] | None = None) -> int:
         help="Output format.",
     )
 
+    profile_parser = subparsers.add_parser("profile")
+    profile_parser.add_argument(
+        "--store-dir",
+        type=Path,
+        default=default_profile_store_dir(),
+        help="Local conversion profile store directory.",
+    )
+    profile_subparsers = profile_parser.add_subparsers(
+        dest="profile_command",
+        required=True,
+    )
+    profile_subparsers.add_parser("list")
+    profile_inspect_parser = profile_subparsers.add_parser("inspect")
+    profile_inspect_parser.add_argument("profile_id")
+    profile_validate_parser = profile_subparsers.add_parser("validate")
+    profile_validate_parser.add_argument("json_path", type=Path)
+
     args = parser.parse_args(argv)
     if args.command == "diagnose":
         return _diagnose(args.csv_path, args.format)
     if args.command == "diagnose-yayoi":
         return _diagnose_yayoi(args.csv_path, args.format)
+    if args.command == "profile":
+        return _profile_command(args)
     parser.error("unknown command")
     return 2
 
@@ -71,6 +95,27 @@ def _diagnose_yayoi(csv_path: Path, output_format: str) -> int:
     else:
         print(YayoiCsvDiagnosticReportGenerator().generate_text(analysis))
     return 0
+
+
+def _profile_command(args: argparse.Namespace) -> int:
+    store = ConversionProfileStore(args.store_dir)
+    try:
+        if args.profile_command == "list":
+            for profile in store.list():
+                print(f"{profile.profile_id}\t{profile.profile_name}")
+            return 0
+        if args.profile_command == "inspect":
+            profile = store.get(args.profile_id)
+            print(store.to_json_text(profile), end="")
+            return 0
+        if args.profile_command == "validate":
+            store.from_json_text(args.json_path.read_text(encoding="utf-8"))
+            print("OK")
+            return 0
+    except ConversionProfileStoreError as error:
+        print(f"ERROR: {error}")
+        return 1
+    return 2
 
 
 if __name__ == "__main__":

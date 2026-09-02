@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from enum import Enum
 
 
@@ -28,6 +29,9 @@ class YayoiOfficialImportSpecification:
     statuses: tuple[DocumentedSpecificationStatus, ...]
     columns: tuple[YayoiOfficialColumnDefinition, ...]
     identifier_flags: tuple[str, ...]
+    retrieved_at: date | None = None
+    verified_at: date | None = None
+    evidence_level: str = "OFFICIAL_DOCUMENTED"
     is_formal_format_profile: bool = False
 
     @property
@@ -80,7 +84,10 @@ def yayoi_accounting_05_official_import_spec() -> YayoiOfficialImportSpecificati
             "仕訳データの項目と記述形式"
             "（他製品から仕訳データをインポートする場合など）"
         ),
-        source_url="https://support.yayoi-kk.co.jp/subcontents.html?page_id=18545",
+        source_url="https://support.yayoi-kk.co.jp/faq_Subcontents.html?page_id=18545",
+        retrieved_at=date(2026, 9, 2),
+        verified_at=None,
+        evidence_level="OFFICIAL_DOCUMENTED",
         statuses=(
             DocumentedSpecificationStatus.OFFICIAL_DOCUMENTED,
             DocumentedSpecificationStatus.REAL_DATA_VERIFICATION_PENDING,

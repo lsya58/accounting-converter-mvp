@@ -12,6 +12,9 @@ env/
 .pytest_cache/
 .coverage
 htmlcov/
+build/
+dist/
+*.spec
 
 # IDE
 .vscode/

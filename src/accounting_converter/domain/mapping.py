@@ -6,6 +6,7 @@ class MappingStatus(str, Enum):
     RESOLVED = "RESOLVED"
     UNRESOLVED = "UNRESOLVED"
     USER_CONFIRMED = "USER_CONFIRMED"
+    OBSOLETE = "OBSOLETE"
 
 
 @dataclass

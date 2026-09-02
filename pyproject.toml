@@ -8,5 +8,8 @@ version = "0.1.0"
 description = "Local accounting journal converter MVP"
 requires-python = ">=3.12"
 
+[project.optional-dependencies]
+build = ["pyinstaller>=6"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
