@@ -31,9 +31,13 @@
 - 弥生CSV Observation / Diagnostics
 - Conversion Profile要件
 - Conversion Profileローカル永続化基盤
+- Mapping Requirement Extraction / Mapping Review基盤
+- Mapping Confirmation Service
 - Format Identity / Capability / Schema基盤
 - Format Registry
 - Compatibility Diff / Transformation Plan基盤
+- Conversion Preparation / Readiness判定基盤
+- Adapter Registry基盤
 - Adapter Contract Test helper
 - Canonical Synthetic Dataset
 - Demo AdapterによるConversionService E2E
@@ -70,6 +74,10 @@ ConversionService自身には、弥生/JDL固有のCSV列変換や識別フラ�
 Profileには仕訳本文、金額データ、摘要本文、実会計ファイルそのものを保存しません。クラウド同期や外部送信も行いません。
 
 保存済みProfileの既知Mappingは自動適用できますが、未知Mappingが出現した場合は推測補完せず、変換停止、ユーザー確認、Profile更新、再実行の流れで扱います。
+
+補助科目Mappingは、同名の補助科目が親勘定科目によって異なる意味を持つ可能性があるため、`MappingKey(mapping_type=SUBACCOUNT, source_value, parent_account)` によるcontext-aware keyを利用できます。借方/貸方のsideは出現位置の観測情報としてReviewには表示できますが、Mapping identityには含めません。既存の `schema_version=1` / `2` Profileは、この意味変更を黙って読み替えずunsupportedとして扱います。現在のConversion Profile schema versionは `3` です。
+
+`MappingRequirementExtractor` はCommon Journal Modelから、今回のファイルで確認が必要になり得る勘定科目、補助科目、部門、税区分を抽出します。Review結果には科目系の値、出現回数、確認状態だけを保持し、摘要全文、金額、個別仕訳本文は保持しません。
 
 開発者向けProfile CLI:
 
@@ -109,6 +117,37 @@ GUIは生CSV全文、摘要全文、個別仕訳全文、個別金額を既定�
 
 `FormatRegistry` は候補とconfidenceを返しますが、CSVだけを見て製品やバージョンを自動確定しません。`FormatCompatibilityAnalyzer` はSource/Target Schemaの差分からTransformation Planを作りますが、科目・税区分などのMapping値は推測しません。
 
+## Conversion Preparation / Readiness
+
+`ConversionPreparationService` は正式変換前に以下をまとめて確認します。
+
+- Compatibility分析
+- TransformationPlan生成
+- Mapping requirement抽出
+- 保存済みProfileとのPreflight
+- TransformationStepの実行可能性評価
+- AdapterRegistryによるInput/Output Adapter可用性確認
+- Lossy変換の停止判定
+
+Readiness status:
+
+- `READY`
+- `REQUIRES_MAPPING`
+- `REQUIRES_CONFIRMATION`
+- `FORMAT_MISMATCH`
+- `PROFILE_INVALID`
+- `ADAPTER_UNAVAILABLE`
+- `UNSUPPORTED_TRANSFORMATION`
+- `LOSSY_CONFIRMATION_REQUIRED`
+- `VALIDATION_FAILED`
+- `UNKNOWN`
+
+`TransformationPlan` にStepが存在しても、それだけで実装済みとは扱いません。`MASTER_MAPPING` / `TAX_MAPPING` は確認済みConversion Profileがある場合のみ `SUPPORTED_WITH_PROFILE` になり、`UNKNOWN` / `UNSUPPORTED` / lossyな変換は通常のREADYにしません。
+
+`AdapterRegistry` は `FormatIdentity` のexact/candidate/unavailableを区別します。Candidateは自動採用しません。JDLのようなOutput Adapterは、原則として `VERIFIED_BY_REAL_IMPORT` のEvidenceを持つ正式Adapterだけを本番変換可能とします。現在のproduction registryにはDemo Adapterを登録しません。
+
+Preparationが `READY` になった場合のみ、薄い実行層が既存 `ConversionService` を呼び出します。ConversionService内のstructural / mapping / business / output validation、atomic output、overwrite safety、Verification Reportは引き続き残り、二重安全性を維持します。
+
 ## まだ実装していないもの
 
 - 実データ検証済みの弥生CSV列定義
@@ -135,7 +174,7 @@ PYTHONPATH=src python3 -m accounting_converter.cli diagnose-yayoi <csv-path>
 PYTHONPATH=src python3 -m accounting_converter.cli diagnose-yayoi <csv-path> --format json
 ```
 
-現在のテスト数は150件です。
+現在のテスト数は187件です。
 
 ## Windows Packaging PoC
 

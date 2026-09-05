@@ -9,6 +9,10 @@ from accounting_converter.application.profile_preflight import (
     ObservedMappingRequirements,
     ProfilePreflightStatus,
 )
+from accounting_converter.application.conversion_preparation import (
+    ConversionReadinessResult,
+    ConversionReadinessStatus,
+)
 from accounting_converter.diagnostics.jdl_csv import JdlCsvStructuralAnalyzer
 from accounting_converter.diagnostics.jdl_csv.observed_schemas import (
     jdl_ibex_cashbook_35_5_observed_schema,
@@ -41,6 +45,19 @@ PREFLIGHT_MESSAGES = {
     ProfilePreflightStatus.PROFILE_INVALID: "変換設定を確認してください。",
     ProfilePreflightStatus.UNSUPPORTED: "この変換設定のバージョンには対応していません。",
     ProfilePreflightStatus.UNKNOWN: "変換可否をまだ判定できません。",
+}
+
+READINESS_MESSAGES = {
+    ConversionReadinessStatus.READY: "変換準備ができています。",
+    ConversionReadinessStatus.REQUIRES_MAPPING: "確認が必要な対応項目があります。",
+    ConversionReadinessStatus.REQUIRES_CONFIRMATION: "実行前に確認が必要です。",
+    ConversionReadinessStatus.FORMAT_MISMATCH: "選択した変換設定とファイル形式が一致しません。",
+    ConversionReadinessStatus.PROFILE_INVALID: "変換設定を確認してください。",
+    ConversionReadinessStatus.ADAPTER_UNAVAILABLE: "現在この形式の正式変換Adapterは未登録です。",
+    ConversionReadinessStatus.UNSUPPORTED_TRANSFORMATION: "現在未対応の変換手順があります。",
+    ConversionReadinessStatus.LOSSY_CONFIRMATION_REQUIRED: "情報欠落の可能性があるため確認が必要です。",
+    ConversionReadinessStatus.VALIDATION_FAILED: "検証で問題が検出されました。",
+    ConversionReadinessStatus.UNKNOWN: "変換可否をまだ判定できません。",
 }
 
 
@@ -85,6 +102,20 @@ class AccountingConverterController:
                 else "保存済み変換設定を読み込みました。"
             ),
             developer_error=None,
+        )
+        return self.state
+
+    def apply_readiness_result(
+        self,
+        readiness: ConversionReadinessResult,
+    ) -> AppState:
+        self.state = replace(
+            self.state,
+            preflight_status=readiness.status.value,
+            conversion_available=readiness.conversion_enabled,
+            user_message=READINESS_MESSAGES[readiness.status],
+            developer_error=None,
+            messages=readiness.blocking_reasons,
         )
         return self.state
 
@@ -266,4 +297,3 @@ class AccountingConverterController:
             developer_error=error.__class__.__name__,
         )
         return self.state
-

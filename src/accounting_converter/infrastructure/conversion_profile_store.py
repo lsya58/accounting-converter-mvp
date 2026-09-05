@@ -18,7 +18,7 @@ from accounting_converter.domain.format_metadata import (
     SemanticField,
     SourceProvenance,
 )
-from accounting_converter.domain.mapping import MappingStatus, MappingValue
+from accounting_converter.domain.mapping import MappingKey, MappingStatus, MappingType, MappingValue
 from accounting_converter.domain.normalization import (
     NormalizationRule,
     NormalizationScope,
@@ -112,6 +112,15 @@ class ConversionProfileStore:
             payload = json.loads(text)
         except json.JSONDecodeError as exc:
             raise ConversionProfileStoreError("malformed profile JSON") from exc
+        if isinstance(payload, dict):
+            schema_version = payload.get("schema_version")
+            if (
+                schema_version is not None
+                and str(schema_version) != CURRENT_CONVERSION_PROFILE_SCHEMA_VERSION
+            ):
+                raise UnsupportedProfileVersionError(
+                    f"unsupported profile schema_version: {schema_version}"
+                )
         profile = _profile_from_dict(payload)
         self._validate_profile(profile)
         return profile
@@ -150,6 +159,10 @@ class ConversionProfileStore:
             ("tax_mappings", profile.tax_mappings),
         ):
             _validate_mapping_dict(mapping_name, mappings)
+        _validate_context_mapping_dict(
+            "subaccount_context_mappings",
+            profile.subaccount_context_mappings,
+        )
 
     def _validate_profile_id(self, profile_id: str) -> None:
         allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
@@ -180,6 +193,9 @@ def _profile_to_dict(profile: ConversionProfile) -> dict[str, Any]:
         "target_format_identity": _identity_to_dict(profile.target_format_identity),
         "account_mappings": _mappings_to_list(profile.account_mappings),
         "subaccount_mappings": _mappings_to_list(profile.subaccount_mappings),
+        "subaccount_context_mappings": _context_mappings_to_list(
+            profile.subaccount_context_mappings
+        ),
         "department_mappings": _mappings_to_list(profile.department_mappings),
         "tax_mappings": _mappings_to_list(profile.tax_mappings),
         "normalization_rules": [
@@ -214,6 +230,9 @@ def _profile_from_dict(payload: Any) -> ConversionProfile:
         target_format_identity=_identity_from_dict(payload["target_format_identity"]),
         account_mappings=_mappings_from_list(payload.get("account_mappings", [])),
         subaccount_mappings=_mappings_from_list(payload.get("subaccount_mappings", [])),
+        subaccount_context_mappings=_context_mappings_from_list(
+            payload.get("subaccount_context_mappings", [])
+        ),
         department_mappings=_mappings_from_list(payload.get("department_mappings", [])),
         tax_mappings=_mappings_from_list(payload.get("tax_mappings", [])),
         normalization_rules=tuple(
@@ -331,6 +350,8 @@ def _mappings_to_list(mappings: dict[str, MappingValue]) -> list[dict[str, Any]]
             "source_value": mapping.source_value,
             "target_value": mapping.target_value,
             "status": mapping.status.value,
+            "parent_account": mapping.parent_account,
+            "metadata": dict(mapping.metadata),
         }
         for _, mapping in sorted(mappings.items())
     ]
@@ -348,6 +369,11 @@ def _mappings_from_list(payload: Any) -> dict[str, MappingValue]:
                 source_value=str(item["source_value"]),
                 target_value=item.get("target_value"),
                 status=MappingStatus(item["status"]),
+                parent_account=item.get("parent_account"),
+                metadata={
+                    str(key): str(value)
+                    for key, value in item.get("metadata", {}).items()
+                },
             )
         except (KeyError, ValueError) as exc:
             raise ConversionProfileStoreError("invalid mapping item") from exc
@@ -364,6 +390,67 @@ def _mappings_from_list(payload: Any) -> dict[str, MappingValue]:
                 f"duplicate mapping for source_value: {mapping.source_value}"
             )
         values[mapping.source_value] = mapping
+    return values
+
+
+def _context_mappings_to_list(
+    mappings: dict[MappingKey, MappingValue],
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "mapping_type": key.mapping_type.value,
+            "source_value": key.source_value,
+            "parent_account": key.parent_account,
+            "target_value": mapping.target_value,
+            "status": mapping.status.value,
+            "metadata": dict(mapping.metadata),
+        }
+        for key, mapping in sorted(mappings.items(), key=lambda item: item[0].stable_key)
+    ]
+
+
+def _context_mappings_from_list(payload: Any) -> dict[MappingKey, MappingValue]:
+    if not isinstance(payload, list):
+        raise ConversionProfileStoreError("context mapping section must be a list")
+    values: dict[MappingKey, MappingValue] = {}
+    for item in payload:
+        if not isinstance(item, dict):
+            raise ConversionProfileStoreError("context mapping item must be an object")
+        try:
+            if item.get("side") is not None:
+                raise ConversionProfileStoreError(
+                    "context mapping side is occurrence metadata, not profile identity"
+                )
+            key = MappingKey(
+                mapping_type=MappingType(item["mapping_type"]),
+                source_value=str(item["source_value"]),
+                parent_account=item.get("parent_account"),
+            )
+            mapping = MappingValue(
+                source_value=key.source_value,
+                target_value=item.get("target_value"),
+                status=MappingStatus(item["status"]),
+                parent_account=key.parent_account,
+                metadata={
+                    str(meta_key): str(meta_value)
+                    for meta_key, meta_value in item.get("metadata", {}).items()
+                },
+            )
+        except (KeyError, ValueError) as exc:
+            raise ConversionProfileStoreError("invalid context mapping item") from exc
+        existing = values.get(key)
+        if existing is not None:
+            if (
+                existing.target_value != mapping.target_value
+                or existing.status is not mapping.status
+            ):
+                raise ConversionProfileStoreError(
+                    f"conflicting context mapping for source_value: {key.source_value}"
+                )
+            raise ConversionProfileStoreError(
+                f"duplicate context mapping for source_value: {key.source_value}"
+            )
+        values[key] = mapping
     return values
 
 
@@ -422,3 +509,35 @@ def _validate_mapping_dict(
                 raise ConversionProfileStoreError(
                     f"{mapping_name} unresolved mapping must not carry target_value"
                 )
+
+
+def _validate_context_mapping_dict(
+    mapping_name: str,
+    mappings: dict[MappingKey, MappingValue],
+) -> None:
+    for key, mapping in mappings.items():
+        if key.mapping_type is not MappingType.SUBACCOUNT:
+            raise ConversionProfileStoreError(
+                f"{mapping_name} supports only SUBACCOUNT keys"
+            )
+        if not key.source_value or key.source_value != mapping.source_value:
+            raise ConversionProfileStoreError(
+                f"{mapping_name} key must match source_value"
+            )
+        if key.side is not None:
+            raise ConversionProfileStoreError(
+                f"{mapping_name} side is occurrence metadata, not profile identity"
+            )
+        if mapping.parent_account != key.parent_account:
+            raise ConversionProfileStoreError(
+                f"{mapping_name} parent_account must match key context"
+            )
+        if mapping.status in {MappingStatus.RESOLVED, MappingStatus.USER_CONFIRMED}:
+            if mapping.target_value is None:
+                raise ConversionProfileStoreError(
+                    f"{mapping_name} resolved mapping requires target_value"
+                )
+        if mapping.status is MappingStatus.UNRESOLVED and mapping.target_value is not None:
+            raise ConversionProfileStoreError(
+                f"{mapping_name} unresolved mapping must not carry target_value"
+            )

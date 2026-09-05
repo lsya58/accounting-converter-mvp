@@ -9,7 +9,7 @@ from accounting_converter.domain.conversion_profile import (
     ProfileVersionStatus,
 )
 from accounting_converter.domain.format_metadata import FormatIdentity
-from accounting_converter.domain.mapping import MappingValue
+from accounting_converter.domain.mapping import MappingKey, MappingValue
 
 from .mapping_engine import MappingRuleSet
 
@@ -29,6 +29,7 @@ class ObservedMappingRequirements:
     subaccounts: frozenset[str] = frozenset()
     departments: frozenset[str] = frozenset()
     tax_categories: frozenset[str] = frozenset()
+    subaccount_contexts: frozenset[MappingKey] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -65,7 +66,17 @@ class ConversionPreflightService:
                     status=ProfilePreflightStatus.REQUIRES_MAPPING,
                     format_match_status=FormatIdentityMatchStatus.UNKNOWN,
                     unknown_accounts=tuple(sorted(observed_mapping_requirements.accounts)),
-                    unknown_subaccounts=tuple(sorted(observed_mapping_requirements.subaccounts)),
+                    unknown_subaccounts=tuple(
+                        sorted(
+                            (
+                                *observed_mapping_requirements.subaccounts,
+                                *(
+                                    key.stable_key
+                                    for key in observed_mapping_requirements.subaccount_contexts
+                                ),
+                            )
+                        )
+                    ),
                     unknown_departments=tuple(sorted(observed_mapping_requirements.departments)),
                     unknown_tax_categories=tuple(sorted(observed_mapping_requirements.tax_categories)),
                     messages=("No saved profile was provided.",),
@@ -105,6 +116,10 @@ class ConversionPreflightService:
             observed_mapping_requirements.subaccounts,
             saved_profile.subaccount_mappings,
         )
+        unknown_subaccount_contexts = self._unknown_context_values(
+            observed_mapping_requirements.subaccount_contexts,
+            saved_profile.subaccount_context_mappings,
+        )
         unknown_departments = self._unknown_values(
             observed_mapping_requirements.departments,
             saved_profile.department_mappings,
@@ -116,6 +131,7 @@ class ConversionPreflightService:
         if (
             unknown_accounts
             or unknown_subaccounts
+            or unknown_subaccount_contexts
             or unknown_departments
             or unknown_tax_categories
         ):
@@ -123,7 +139,9 @@ class ConversionPreflightService:
                 status=ProfilePreflightStatus.REQUIRES_MAPPING,
                 format_match_status=format_match,
                 unknown_accounts=unknown_accounts,
-                unknown_subaccounts=unknown_subaccounts,
+                unknown_subaccounts=tuple(
+                    sorted((*unknown_subaccounts, *unknown_subaccount_contexts))
+                ),
                 unknown_departments=unknown_departments,
                 unknown_tax_categories=unknown_tax_categories,
                 messages=("Unknown mappings require human confirmation.",),
@@ -141,6 +159,7 @@ class ConversionPreflightService:
         return bool(
             requirements.accounts
             or requirements.subaccounts
+            or requirements.subaccount_contexts
             or requirements.departments
             or requirements.tax_categories
         )
@@ -157,6 +176,18 @@ class ConversionPreflightService:
                 unknown.append(value)
         return tuple(sorted(unknown))
 
+    def _unknown_context_values(
+        self,
+        observed_values: frozenset[MappingKey],
+        mappings: dict[MappingKey, MappingValue],
+    ) -> tuple[str, ...]:
+        unknown: list[str] = []
+        for key in observed_values:
+            mapping = mappings.get(key)
+            if mapping is None or not mapping.is_resolved:
+                unknown.append(key.stable_key)
+        return tuple(sorted(unknown))
+
 
 def mapping_rule_set_from_profile(profile: ConversionProfile) -> MappingRuleSet:
     return MappingRuleSet(
@@ -164,4 +195,5 @@ def mapping_rule_set_from_profile(profile: ConversionProfile) -> MappingRuleSet:
         sub_accounts=profile.subaccount_mappings,
         departments=profile.department_mappings,
         tax_categories=profile.tax_mappings,
+        sub_account_contexts=profile.subaccount_context_mappings,
     )

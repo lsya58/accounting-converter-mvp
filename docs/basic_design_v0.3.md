@@ -29,6 +29,7 @@ MVPの対応経路は弥生会計 -> JDLに限定する。一方、製品アー�
 11. FormatIdentityとEvidenceLevelにより、製品・バージョン・方向・根拠を区別する。
 12. Compatibility ReportとTransformation Planは変換要否を示すが、未知Mapping値を推測しない。
 13. Presentation層はApplication層を呼び出すだけとし、CSV parsing、Mapping、Validation、Format判定を重複実装しない。
+14. 変換前準備はCompatibility、Mapping確認、Adapter可用性、Lossinessを統合したReadinessで判定する。
 
 ## 2. アーキテクチャ
 
@@ -239,10 +240,93 @@ ACCOUNTING_SEMANTIC_MAPPINGは、勘定科目、補助科目、税区分、部�
 - RESOLVED
 - UNRESOLVED
 - USER_CONFIRMED
+- OBSOLETE
 
 保存済みProfile内の `RESOLVED` / `USER_CONFIRMED` Mappingは自動適用できる。未登録の入力値が出現した場合は `UNRESOLVED` とし、ConversionServiceは正式出力を停止する。
 
 名称類似、全角/半角、コード類似、AI推定だけで未知Mappingを自動確定しない。
+
+### Context-aware Subaccount Mapping
+
+補助科目は、同じ「本店」「カード」「その他」等の名称でも親勘定科目により意味やコードが異なる可能性がある。このため、補助科目Mappingは必要に応じて以下のcontext-aware keyで扱う。
+
+```text
+MappingKey
+- mapping_type = SUBACCOUNT
+- source_value
+- parent_account
+```
+
+side（DEBIT/CREDIT）は出現位置の観測情報としてMappingRequirement / Reviewへ保持できるが、Mapping identityには含めない。同じ親勘定科目・同じ補助科目であれば、借方/貸方に出現してもユーザーへ二重確認させない。
+
+勘定科目、部門、税区分は現時点では単純なsource_value keyを維持する。補助科目identityの意味変更を旧Profileへ黙って適用しないため、Conversion Profile schema_versionは `3` とし、旧 `1` / `2` はunsupportedとして扱う。
+
+## 9.1 Mapping Review / Confirmation
+
+`MappingRequirementExtractor` はCommon Journal Modelから、今回のファイルでMappingが必要になり得る値を抽出する。
+
+抽出対象:
+
+- accounts
+- subaccounts
+- departments
+- tax_categories
+
+各Requirementはmapping_type、source_value、occurrence_count、current_mapping_status、current_target_value、requires_confirmationを持つ。補助科目はparent_account、observed side、source row reference countを保持できる。
+
+`MappingConfirmationService` はユーザーが明示的にsource -> targetを確認した場合だけ、MappingValueを `USER_CONFIRMED` としてConversionProfileStore経由で保存する。Profile JSONを直接書き換えない。
+
+Mapping Review / Readiness / Compatibility Reportには摘要全文、金額、個別仕訳本文を保存しない。
+
+## 9.2 Conversion Preparation / Readiness
+
+`ConversionPreparationService` はConversionService実行前に以下を行う。
+
+1. Compatibility analyze
+2. TransformationPlan生成
+3. Mapping requirements抽出
+4. Profile preflight
+5. Transformation support評価
+6. Adapter availability確認
+7. Lossiness確認
+8. Readiness判定
+
+Readiness status:
+
+- READY
+- REQUIRES_MAPPING
+- REQUIRES_CONFIRMATION
+- FORMAT_MISMATCH
+- PROFILE_INVALID
+- ADAPTER_UNAVAILABLE
+- UNSUPPORTED_TRANSFORMATION
+- LOSSY_CONFIRMATION_REQUIRED
+- VALIDATION_FAILED
+- UNKNOWN
+
+`TransformationPlan` のStepは、差分や必要処理を示す候補であり、現在実装可能であることを意味しない。`TransformationSupportStatus` により `SUPPORTED`、`SUPPORTED_WITH_PROFILE`、`REQUIRES_CONFIRMATION`、`ADAPTER_RESPONSIBILITY`、`UNSUPPORTED`、`UNKNOWN` を区別する。
+
+CompatibilityReport.overall_lossiness が `LOSSY` の場合、通常のREADYにはせず `LOSSY_CONFIRMATION_REQUIRED` として停止する。
+
+PreparationがREADYでも、ConversionService内のStructural Validation、Mapping block、Business Validation、Output Validation、Atomic Output、Overwrite safety、Verification Reportは削除しない。Defense-in-depthを維持する。
+
+## 9.3 Adapter Registry
+
+`AdapterRegistry` は正式Adapter追加後にvendor/productのif分岐を増やさないための登録・解決基盤である。
+
+最低限以下を提供する。
+
+- register_input
+- register_output
+- get_exact_input
+- get_exact_output
+- find_input_candidates
+- find_output_candidates
+- has_conversion_pair
+
+AdapterはFormatIdentityに紐づくfactoryとして登録する。statefulなAdapter instanceを永続保持しない。exact、candidate、unavailableを区別し、candidateを自動採用しない。
+
+Output Adapterは本番実行では `VERIFIED_BY_REAL_IMPORT` を基本条件とする。`OBSERVED` / `INFERRED` だけのOutput Adapterはproduction conversion可能として扱わない。Input Adapterについては公式ドキュメント仕様で登録できる余地を残すが、実CSV観測やAdapter契約テストで確認する。
 
 ## 10. Validation
 

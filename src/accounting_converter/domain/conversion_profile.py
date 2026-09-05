@@ -5,11 +5,11 @@ from datetime import datetime, timezone
 from enum import Enum
 
 from .format_metadata import FormatIdentity
-from .mapping import MappingValue
+from .mapping import MappingKey, MappingValue
 from .normalization import NormalizationRule
 
 
-CURRENT_CONVERSION_PROFILE_SCHEMA_VERSION = "1"
+CURRENT_CONVERSION_PROFILE_SCHEMA_VERSION = "3"
 
 
 class ProfileVersionStatus(str, Enum):
@@ -32,6 +32,9 @@ class ConversionProfile:
     target_format_identity: FormatIdentity
     account_mappings: dict[str, MappingValue] = field(default_factory=dict)
     subaccount_mappings: dict[str, MappingValue] = field(default_factory=dict)
+    subaccount_context_mappings: dict[MappingKey, MappingValue] = field(
+        default_factory=dict
+    )
     department_mappings: dict[str, MappingValue] = field(default_factory=dict)
     tax_mappings: dict[str, MappingValue] = field(default_factory=dict)
     normalization_rules: tuple[NormalizationRule, ...] = ()

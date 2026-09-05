@@ -1,10 +1,15 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Sequence
 
 from accounting_converter.domain.journal import JournalEntry, JournalLine, TaxInfo
-from accounting_converter.domain.mapping import MappingStatus, MappingValue
+from accounting_converter.domain.mapping import (
+    MappingKey,
+    MappingStatus,
+    MappingType,
+    MappingValue,
+)
 from accounting_converter.domain.validation import Severity, ValidationResult
 
 
@@ -14,6 +19,7 @@ class MappingRuleSet:
     sub_accounts: dict[str, MappingValue]
     departments: dict[str, MappingValue]
     tax_categories: dict[str, MappingValue]
+    sub_account_contexts: dict[MappingKey, MappingValue] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -47,9 +53,12 @@ class MappingEngine:
                     mapping_values=mapping_values,
                     validation_results=validation_results,
                 )
-                sub_account = self._resolve_value(
+                sub_account = self._resolve_sub_account(
                     source=line.sub_account,
                     rules=self._rule_set.sub_accounts,
+                    context_rules=self._rule_set.sub_account_contexts,
+                    parent_account=line.account,
+                    side=line.side.value,
                     field="sub_account",
                     entry=entry,
                     mapping_values=mapping_values,
@@ -84,6 +93,44 @@ class MappingEngine:
             entries=tuple(mapped_entries),
             mapping_values=tuple(mapping_values),
             validation_results=tuple(validation_results),
+        )
+
+    def _resolve_sub_account(
+        self,
+        source: str | None,
+        rules: dict[str, MappingValue],
+        context_rules: dict[MappingKey, MappingValue],
+        parent_account: str | None,
+        side: str,
+        field: str,
+        entry: JournalEntry,
+        mapping_values: list[MappingValue],
+        validation_results: list[ValidationResult],
+    ) -> str | None:
+        if source is None or source == "":
+            return source
+        context_key = MappingKey(
+            mapping_type=MappingType.SUBACCOUNT,
+            source_value=source,
+            parent_account=parent_account,
+            side=side,
+        )
+        mapping = context_rules.get(context_key)
+        if mapping is not None:
+            mapping_values.append(mapping)
+            if mapping.is_resolved:
+                return mapping.target_value
+            validation_results.append(
+                self._unresolved_result(source, field, entry)
+            )
+            return source
+        return self._resolve_value(
+            source=source,
+            rules=rules,
+            field=field,
+            entry=entry,
+            mapping_values=mapping_values,
+            validation_results=validation_results,
         )
 
     def _map_tax_info(
@@ -124,16 +171,22 @@ class MappingEngine:
         if mapping.is_resolved:
             return mapping.target_value
 
-        validation_results.append(
-            ValidationResult(
-                severity=Severity.WARNING,
-                rule_id="MAP-UNRESOLVED",
-                journal_id=entry.id,
-                source_reference=entry.source_reference,
-                field=field,
-                input_value=source,
-                message="未解決のマッピングがあります。",
-                suggested_action="ユーザー確認済みのマッピングを指定してください。",
-            )
-        )
+        validation_results.append(self._unresolved_result(source, field, entry))
         return source
+
+    def _unresolved_result(
+        self,
+        source: str,
+        field: str,
+        entry: JournalEntry,
+    ) -> ValidationResult:
+        return ValidationResult(
+            severity=Severity.WARNING,
+            rule_id="MAP-UNRESOLVED",
+            journal_id=entry.id,
+            source_reference=entry.source_reference,
+            field=field,
+            input_value=source,
+            message="未解決のマッピングがあります。",
+            suggested_action="ユーザー確認済みのマッピングを指定してください。",
+        )
