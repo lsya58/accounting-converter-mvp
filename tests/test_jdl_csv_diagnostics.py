@@ -344,6 +344,37 @@ class JdlCsvDiagnosticsTests(unittest.TestCase):
             any(diff.rule_id == "JDLCSV-CMP-HEADER" for diff in comparison.differences)
         )
 
+    def test_compare_identical_fingerprints_has_no_differences(self) -> None:
+        baseline = self.analyzer.analyze_text(
+            "// metadata\n日付,借方補助,金額\n2026/08/21,補助A,100\n",
+            encoding="cp932",
+        ).schema_fingerprint
+        target = self.analyzer.analyze_text(
+            "// metadata\n日付,借方補助,金額\n2026/08/21,補助B,200\n",
+            encoding="cp932",
+        ).schema_fingerprint
+
+        comparison = JdlCsvFingerprintComparator().compare(baseline, target)
+
+        self.assertFalse(comparison.has_differences)
+
+    def test_compare_fingerprint_metadata_and_column_count_differences(self) -> None:
+        baseline = self.analyzer.analyze_text(
+            "// metadata\n日付,借方補助,金額\n2026/08/21,補助A,100\n",
+            encoding="cp932",
+        ).schema_fingerprint
+        target = self.analyzer.analyze_text(
+            "日付,借方補助,金額,摘要\n2026/08/21,補助A,100,架空摘要\n",
+            encoding="cp932",
+        ).schema_fingerprint
+
+        comparison = JdlCsvFingerprintComparator().compare(baseline, target)
+        fields = {difference.field for difference in comparison.differences}
+
+        self.assertIn("metadata_pattern", fields)
+        self.assertIn("column_count", fields)
+        self.assertIn("record_column_counts", fields)
+
     def test_errors_do_not_silently_delete_rows(self) -> None:
         text = (
             "// metadata\n"

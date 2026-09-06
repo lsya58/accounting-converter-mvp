@@ -109,6 +109,8 @@ MVPでは以下を1形式ずつ正式対応する。
 
 JDLについては、JDL IBEX出納帳 35.5 の実データからObserved SchemaとObserved Behaviorを診断機能で確認している。これは正式JDL FormatProfileではない。
 
+JDL診断では、schema-independentな構造観測と、明示的に選択したObserved Schemaとの比較を分離する。`//識別フラグ` で始まる30列header familyはヘッダーとして観測できるが、それだけでJDL IBEX出納帳35.5の証拠として自動統合しない。version unknownのJDL由来CSVは、Evidence Log上でも35.5 confirmed evidenceとは分けて扱う。
+
 ### 3.2 FormatProfile
 
 ソフト固有のフォーマット差異をAdapter内部のif分岐へ埋め込まず、FormatProfileとして分離する。

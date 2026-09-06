@@ -26,7 +26,7 @@ from .models import (
 )
 from .message_parser import JdlImportDiagnosticMessageParser
 from .report import JdlCsvDiagnosticReportGenerator
-from .serialization import analysis_to_dict
+from .serialization import analysis_to_dict, analysis_to_privacy_safe_dict
 
 __all__ = [
     "AccountingSide",
@@ -54,4 +54,5 @@ __all__ = [
     "ObservedJournalGroupStatus",
     "ObservedJdlSchema",
     "analysis_to_dict",
+    "analysis_to_privacy_safe_dict",
 ]

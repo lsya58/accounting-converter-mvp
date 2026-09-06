@@ -589,9 +589,9 @@ class JdlCsvStructuralAnalyzer:
         return any(marker in raw_line for marker in DIAGNOSTIC_MESSAGE_MARKERS)
 
     def _is_observed_header(self, columns: list[str]) -> bool:
-        if self.observed_schema is None:
-            return False
-        return tuple(columns) == self.observed_schema.observed_header
+        if self.observed_schema is not None:
+            return tuple(columns) == self.observed_schema.observed_header
+        return len(columns) > 1 and columns[0].strip() == "//識別フラグ"
 
     def _has_nonempty_diagnostic_tail(self, columns: tuple[str, ...]) -> bool:
         return any(column.strip() for column in columns[1:])

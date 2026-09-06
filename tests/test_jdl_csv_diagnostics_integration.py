@@ -12,6 +12,7 @@ from accounting_converter.diagnostics.jdl_csv import (
     JdlCsvStructuralAnalyzer,
     JdlMasterType,
     analysis_to_dict,
+    analysis_to_privacy_safe_dict,
 )
 from accounting_converter.diagnostics.jdl_csv.observed_schemas import (
     jdl_ibex_cashbook_35_5_observed_schema,
@@ -137,6 +138,8 @@ class JdlCsvDiagnosticsIntegrationTests(unittest.TestCase):
                 "accounting_converter.cli",
                 "diagnose",
                 str(FIXTURE_DIR / "subaccount_mismatch.csv"),
+                "--compare-observed",
+                "jdl-ibex-cashbook-35.5",
             ],
             check=True,
             text=True,
@@ -155,6 +158,8 @@ class JdlCsvDiagnosticsIntegrationTests(unittest.TestCase):
                 "accounting_converter.cli",
                 "diagnose",
                 str(FIXTURE_DIR / "mixed_errors.csv"),
+                "--compare-observed",
+                "jdl-ibex-cashbook-35.5",
                 "--format",
                 "json",
             ],
@@ -173,6 +178,114 @@ class JdlCsvDiagnosticsIntegrationTests(unittest.TestCase):
             4,
         )
         self.assertIsNone(data["journal_count"])
+
+    def test_synthetic_preamble_export_fixture_preserves_structural_observations(self) -> None:
+        result = self.analyze_fixture("synthetic_preamble_export.csv")
+
+        self.assertEqual(result.encoding, "cp932")
+        self.assertEqual(result.line_ending, "CRLF")
+        self.assertFalse(result.has_bom)
+        self.assertEqual(result.metadata_line_count, 2)
+        self.assertEqual(len(result.empty_lines), 1)
+        self.assertEqual(result.header_row_number, 4)
+        self.assertEqual(result.header_column_count, 30)
+        self.assertEqual(result.data_record_count, 5)
+        self.assertEqual(result.schema_fingerprint.record_column_counts, ((30, 5),))
+        self.assertEqual(
+            dict(result.identifier_flag_counts),
+            {"1000": 1, "1100": 1, "1101": 1, "1110": 1, "1111": 1},
+        )
+        grouping = result.observed_grouping_summary
+        self.assertEqual(grouping.total_candidate_count, 3)
+        self.assertEqual(grouping.single_record_candidate_count, 2)
+        self.assertEqual(grouping.multi_record_candidate_count, 1)
+        self.assertEqual(grouping.valid_multi_record_sequence_count, 1)
+        self.assertEqual(grouping.same_voucher_number_count, 1)
+        self.assertEqual(grouping.same_date_count, 1)
+        self.assertEqual(grouping.balanced_multi_record_candidate_count, 1)
+
+    def test_schema_independent_diagnose_does_not_label_unknown_version_as_35_5(self) -> None:
+        result = JdlCsvStructuralAnalyzer().analyze_path(
+            FIXTURE_DIR / "synthetic_preamble_export.csv"
+        )
+
+        self.assertEqual(result.header_row_number, 4)
+        self.assertEqual(result.header_column_count, 30)
+        self.assertEqual(result.data_record_count, 5)
+        self.assertIsNone(result.observed_schema)
+        self.assertEqual(
+            result.observed_grouping_summary.total_candidate_count,
+            0,
+        )
+
+    def test_explicit_observed_schema_comparison_enables_grouping(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "accounting_converter.cli",
+                "diagnose-jdl",
+                str(FIXTURE_DIR / "synthetic_preamble_export.csv"),
+                "--compare-observed",
+                "jdl-ibex-cashbook-35.5",
+                "--format",
+                "json",
+            ],
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
+        data = json.loads(completed.stdout)
+        self.assertEqual(data["observed_schema"]["observed_version"], "35.5")
+        self.assertEqual(
+            data["observed_grouping_summary"]["total_candidate_count"],
+            3,
+        )
+        self.assertFalse(data["observed_schema"]["is_formal_format_profile"])
+
+    def test_privacy_safe_serialization_omits_journal_body_values(self) -> None:
+        result = self.analyze_fixture("synthetic_preamble_export.csv")
+
+        data = analysis_to_privacy_safe_dict(result)
+        serialized = json.dumps(data, ensure_ascii=False)
+
+        self.assertIsNone(data["file_name"])
+        self.assertEqual(data["header_column_count"], 30)
+        self.assertEqual(data["data_record_count"], 5)
+        self.assertEqual(
+            data["observed_grouping_summary"]["total_candidate_count"],
+            3,
+        )
+        self.assertNotIn("9001", serialized)
+        self.assertNotIn("2099/01/01", serialized)
+        self.assertNotIn("1000.0", serialized)
+        self.assertNotIn("架空摘要", serialized)
+        self.assertNotIn("架空借方科目", serialized)
+
+    def test_compare_jdl_cli_reports_schema_differences_only(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "accounting_converter.cli",
+                "compare-jdl",
+                str(FIXTURE_DIR / "valid_simple.csv"),
+                str(FIXTURE_DIR / "synthetic_preamble_export.csv"),
+                "--format",
+                "json",
+            ],
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
+        data = json.loads(completed.stdout)
+        self.assertTrue(data["has_differences"])
+        fields = {difference["field"] for difference in data["differences"]}
+        self.assertIn("metadata_pattern", fields)
+        self.assertIn("record_column_counts", fields)
+        self.assertIn("構造差分のみ", data["judgment"])
 
 
 if __name__ == "__main__":

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from accounting_converter.domain.validation import Severity
+
 from .models import JdlCsvAnalysisResult
 
 
@@ -78,6 +80,66 @@ def analysis_to_dict(analysis: JdlCsvAnalysisResult) -> dict[str, Any]:
     }
 
 
+def analysis_to_privacy_safe_dict(
+    analysis: JdlCsvAnalysisResult,
+    include_file_name: bool = False,
+) -> dict[str, Any]:
+    """Return a shareable structural summary without journal-body values."""
+    diagnostics_by_category: dict[str, int] = {}
+    diagnostics_by_type: dict[str, int] = {}
+    for issue in analysis.diagnostic_issues:
+        diagnostics_by_category[issue.category.value] = (
+            diagnostics_by_category.get(issue.category.value, 0) + 1
+        )
+        type_key = f"{issue.side.value}:{issue.master_type.value}"
+        diagnostics_by_type[type_key] = diagnostics_by_type.get(type_key, 0) + 1
+
+    validation_counts: dict[str, int] = {}
+    validation_rule_counts: dict[str, int] = {}
+    for result in analysis.validation_results:
+        validation_counts[result.severity.value] = (
+            validation_counts.get(result.severity.value, 0) + 1
+        )
+        validation_rule_counts[result.rule_id] = (
+            validation_rule_counts.get(result.rule_id, 0) + 1
+        )
+
+    payload: dict[str, Any] = {
+        "file_name": analysis.file_name if include_file_name else None,
+        "encoding": analysis.encoding,
+        "delimiter": analysis.delimiter,
+        "has_bom": analysis.has_bom,
+        "line_ending": analysis.line_ending,
+        "total_physical_lines": analysis.total_physical_lines,
+        "metadata_line_count": analysis.metadata_line_count,
+        "blank_line_count": len(analysis.empty_lines),
+        "header_row_number": analysis.header_row_number,
+        "header_column_count": analysis.header_column_count,
+        "header_names": list(analysis.header_columns),
+        "data_record_count": analysis.data_record_count,
+        "journal_count": None,
+        "record_column_counts": [
+            {"column_count": column_count, "record_count": record_count}
+            for column_count, record_count in (
+                analysis.schema_fingerprint.record_column_counts
+                if analysis.schema_fingerprint is not None
+                else ()
+            )
+        ],
+        "identifier_flag_counts": dict(analysis.identifier_flag_counts),
+        "observed_schema": _privacy_safe_observed_schema(analysis),
+        "observed_grouping_summary": _privacy_safe_grouping_summary(analysis),
+        "diagnostic_count": len(analysis.diagnostic_message_lines),
+        "diagnostic_issue_counts_by_category": diagnostics_by_category,
+        "diagnostic_issue_counts_by_type": diagnostics_by_type,
+        "error_count": validation_counts.get(Severity.ERROR.value, 0)
+        + validation_counts.get(Severity.FATAL.value, 0),
+        "warning_count": validation_counts.get(Severity.WARNING.value, 0),
+        "validation_rule_counts": validation_rule_counts,
+    }
+    return payload
+
+
 def _fingerprint_to_dict(analysis: JdlCsvAnalysisResult) -> dict[str, Any] | None:
     fingerprint = analysis.schema_fingerprint
     if fingerprint is None:
@@ -98,6 +160,28 @@ def _fingerprint_to_dict(analysis: JdlCsvAnalysisResult) -> dict[str, Any] | Non
 
 
 def _observed_schema_to_dict(analysis: JdlCsvAnalysisResult) -> dict[str, Any] | None:
+    schema = analysis.observed_schema
+    if schema is None:
+        return None
+    return {
+        "product": schema.product,
+        "observed_version": schema.observed_version,
+        "encoding": schema.encoding,
+        "has_bom": schema.has_bom,
+        "line_ending": schema.line_ending,
+        "journal_column_count": schema.journal_column_count,
+        "observed_header": list(schema.observed_header),
+        "journal_count": schema.journal_count,
+        "observed_identifier_flags": list(schema.observed_identifier_flags),
+        "identifier_flag_meaning_status": schema.identifier_flag_meaning_status.value,
+        "observed_behavior": list(schema.observed_behavior),
+        "is_formal_format_profile": schema.is_formal_format_profile,
+    }
+
+
+def _privacy_safe_observed_schema(
+    analysis: JdlCsvAnalysisResult,
+) -> dict[str, Any] | None:
     schema = analysis.observed_schema
     if schema is None:
         return None
@@ -156,4 +240,22 @@ def _observed_grouping_summary_to_dict(
             }
             for candidate in summary.candidates
         ],
+    }
+
+
+def _privacy_safe_grouping_summary(analysis: JdlCsvAnalysisResult) -> dict[str, Any]:
+    summary = analysis.observed_grouping_summary
+    return {
+        "total_candidate_count": summary.total_candidate_count,
+        "single_record_candidate_count": summary.single_record_candidate_count,
+        "multi_record_candidate_count": summary.multi_record_candidate_count,
+        "valid_multi_record_sequence_count": (
+            summary.valid_multi_record_sequence_count
+        ),
+        "same_voucher_number_count": summary.same_voucher_number_count,
+        "same_date_count": summary.same_date_count,
+        "balanced_multi_record_candidate_count": (
+            summary.balanced_multi_record_candidate_count
+        ),
+        "unresolved_candidate_count": summary.unresolved_candidate_count,
     }

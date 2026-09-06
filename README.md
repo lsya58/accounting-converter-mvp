@@ -59,6 +59,17 @@
 
 JDL IBEX出納帳 35.5の実データでObserved Behaviorは再現できていますが、正式JDL FormatProfileや正式JDLOutputAdapterへは昇格していません。
 
+JDL診断CLIは、schema未指定の純粋観測と、明示的なObserved Schema比較を分けています。バージョン未確認のJDL由来CSVを、黙って35.5 evidenceとして扱いません。
+
+```bash
+PYTHONPATH=src python3 -m accounting_converter.cli diagnose-jdl <csv-path>
+PYTHONPATH=src python3 -m accounting_converter.cli diagnose-jdl <csv-path> --compare-observed jdl-ibex-cashbook-35.5
+PYTHONPATH=src python3 -m accounting_converter.cli diagnose-jdl <csv-path> --format privacy-json
+PYTHONPATH=src python3 -m accounting_converter.cli compare-jdl <baseline-csv> <target-csv>
+```
+
+`privacy-json` と `compare-jdl` は、構造・件数・識別フラグ・診断カテゴリ集計を中心に出力し、伝番、日付、金額、摘要、個別科目/補助科目名、CSV本文は出力しない方針です。詳細JSONはローカル調査用であり、共有用Evidenceには使用しません。
+
 ## Application層の現在位置
 
 `ConversionService` は、InputAdapter、Structural Validation、Mapping、Business Validation、OutputAdapter、OutputValidation、VerificationReportを統括します。
@@ -199,3 +210,9 @@ python -m PyInstaller --windowed --name "AccountingConverter" --paths "src" --co
 `dist/`、`build/`、`*.spec` はGit管理対象外です。Linux/WSL上でWindows `.exe` が生成できるとは仮定しません。現開発環境ではWindows実機ビルドは未検証です。
 
 GitHub ActionsではPython 3.12で同じテストを実行し、`tests/fixtures/` 配下以外のCSVがGit管理対象に含まれていないことを確認します。
+
+## JDL実機Import Testの準備
+
+`experiments/jdl_import/` には、JDL IBEX出納帳35.5のObserved Schemaを使った研究用CSV generatorがあります。これは正式JDLOutputAdapterではなく、完全架空データでJDL実機の取込条件を確認するための実験環境です。
+
+次にJDL実機が使えるときは、テスト用JDLマスターに存在する架空科目を指定してEXP-01から生成し、JDLへ取り込み、結果を`experiments/jdl_import/output/experiment_manifest.json`へ`PASS` / `REJECTED` / `UNTESTED`として記録します。JDLエラーログや実機結果の詳細は`data/private/`配下に保存し、Gitには追加しません。

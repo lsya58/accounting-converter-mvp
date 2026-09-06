@@ -14,9 +14,6 @@ from accounting_converter.application.conversion_preparation import (
     ConversionReadinessStatus,
 )
 from accounting_converter.diagnostics.jdl_csv import JdlCsvStructuralAnalyzer
-from accounting_converter.diagnostics.jdl_csv.observed_schemas import (
-    jdl_ibex_cashbook_35_5_observed_schema,
-)
 from accounting_converter.diagnostics.yayoi_csv import YayoiCsvAnalyzer
 from accounting_converter.domain.conversion_profile import ConversionProfile
 from accounting_converter.infrastructure.conversion_profile_store import (
@@ -75,9 +72,7 @@ class AccountingConverterController:
         )
         self.preflight_service = preflight_service or ConversionPreflightService()
         self.formal_conversion_adapter_registered = formal_conversion_adapter_registered
-        self.jdl_analyzer = jdl_analyzer or JdlCsvStructuralAnalyzer(
-            observed_schema=jdl_ibex_cashbook_35_5_observed_schema()
-        )
+        self.jdl_analyzer = jdl_analyzer or JdlCsvStructuralAnalyzer()
         self.yayoi_analyzer = yayoi_analyzer or YayoiCsvAnalyzer()
         self.state = AppState()
 
