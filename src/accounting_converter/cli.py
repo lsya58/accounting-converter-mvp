@@ -22,6 +22,7 @@ from accounting_converter.diagnostics.yayoi_csv import (
     YayoiCsvAnalyzer,
     YayoiCsvDiagnosticReportGenerator,
     yayoi_analysis_to_dict,
+    yayoi_analysis_to_privacy_safe_dict,
 )
 from accounting_converter.infrastructure.conversion_profile_store import (
     ConversionProfileStore,
@@ -76,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
     diagnose_yayoi_parser.add_argument("csv_path", type=Path)
     diagnose_yayoi_parser.add_argument(
         "--format",
-        choices=("text", "json"),
+        choices=("text", "json", "privacy-json"),
         default="text",
         help="Output format.",
     )
@@ -235,6 +236,14 @@ def _diagnose_yayoi(csv_path: Path, output_format: str) -> int:
 
     if output_format == "json":
         print(json.dumps(yayoi_analysis_to_dict(analysis), ensure_ascii=False, indent=2))
+    elif output_format == "privacy-json":
+        print(
+            json.dumps(
+                yayoi_analysis_to_privacy_safe_dict(analysis),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
     else:
         print(YayoiCsvDiagnosticReportGenerator().generate_text(analysis))
     return 0

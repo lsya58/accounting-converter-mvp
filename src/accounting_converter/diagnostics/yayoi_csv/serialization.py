@@ -7,6 +7,7 @@ from .models import YayoiCsvAnalysisResult
 
 def yayoi_analysis_to_dict(analysis: YayoiCsvAnalysisResult) -> dict[str, Any]:
     amount = analysis.amount_observation
+    field_population = analysis.field_population_observation
     return {
         "file_name": analysis.file_name,
         "encoding": analysis.encoding,
@@ -116,6 +117,7 @@ def yayoi_analysis_to_dict(analysis: YayoiCsvAnalysisResult) -> dict[str, Any]:
                 amount.amount_field_parseable_positions
             ),
         },
+        "field_population": _field_population_to_dict(field_population),
         "validation_results": [
             {
                 "severity": result.severity.value,
@@ -130,4 +132,120 @@ def yayoi_analysis_to_dict(analysis: YayoiCsvAnalysisResult) -> dict[str, Any]:
             }
             for result in analysis.validation_results
         ],
+    }
+
+
+def yayoi_analysis_to_privacy_safe_dict(
+    analysis: YayoiCsvAnalysisResult,
+    include_file_name: bool = False,
+) -> dict[str, Any]:
+    amount = analysis.amount_observation
+    validation_rule_counts: dict[str, int] = {}
+    validation_severity_counts: dict[str, int] = {}
+    for result in analysis.validation_results:
+        validation_rule_counts[result.rule_id] = (
+            validation_rule_counts.get(result.rule_id, 0) + 1
+        )
+        validation_severity_counts[result.severity.value] = (
+            validation_severity_counts.get(result.severity.value, 0) + 1
+        )
+    return {
+        "file_name": analysis.file_name if include_file_name else None,
+        "encoding": analysis.encoding,
+        "encoding_candidates": list(analysis.encoding_candidates),
+        "delimiter": analysis.delimiter,
+        "has_bom": analysis.has_bom,
+        "line_ending": analysis.line_ending,
+        "total_physical_lines": analysis.total_physical_lines,
+        "empty_line_count": analysis.empty_line_count,
+        "csv_parseable": analysis.csv_parseable,
+        "data_record_count": analysis.data_record_count,
+        "logical_record_candidate_count": analysis.group_candidate_count,
+        "row_column_count_distribution": [
+            {"column_count": count, "row_count": row_count}
+            for count, row_count in analysis.row_column_count_distribution
+        ],
+        "dominant_column_count": analysis.dominant_column_count,
+        "header_observation": {
+            "detected": analysis.header_observation.detected,
+            "row_number": analysis.header_observation.row_number,
+            "exact_official_header": analysis.header_observation.exact_official_header,
+            "column_count": analysis.header_observation.column_count,
+            "matched_column_names_count": (
+                analysis.header_observation.matched_column_names_count
+            ),
+        },
+        "official_comparison": {
+            "official_column_count": (
+                analysis.official_comparison.official_column_count
+            ),
+            "observed_dominant_column_count": (
+                analysis.official_comparison.observed_dominant_column_count
+            ),
+            "structural_match_status": (
+                analysis.official_comparison.structural_match_status.value
+            ),
+            "possible_official_25_column_format": (
+                analysis.official_comparison.possible_official_25_column_format
+            ),
+            "formal_profile_ready": analysis.official_comparison.formal_profile_ready,
+            "human_review_required": analysis.official_comparison.human_review_required,
+        },
+        "flags": {
+            "official_flag_counts": dict(
+                analysis.flag_observation.official_flag_counts
+            ),
+            "unknown_flag_counts": dict(analysis.flag_observation.unknown_flag_counts),
+        },
+        "grouping": {
+            "candidate_count": analysis.group_candidate_count,
+            "single_record_candidate_count": analysis.single_record_candidate_count,
+            "multi_record_candidate_count": analysis.multi_record_candidate_count,
+            "malformed_group_candidate_count": (
+                analysis.malformed_group_candidate_count
+            ),
+        },
+        "accounting_safety": {
+            "balanced": amount.balanced,
+            "amount_parse_error_count": amount.amount_parse_error_count,
+            "amount_unknown_count": amount.amount_unknown_count,
+            "date_parse_candidate_error_count": (
+                amount.date_parse_candidate_error_count
+            ),
+            "date_format_candidates": list(amount.date_format_candidates),
+            "amount_field_parseable_positions": list(
+                amount.amount_field_parseable_positions
+            ),
+        },
+        "field_population": _field_population_to_dict(
+            analysis.field_population_observation
+        ),
+        "validation_rule_counts": validation_rule_counts,
+        "validation_severity_counts": validation_severity_counts,
+        "judgment": (
+            "Official documented evidenceとObserved evidenceの構造比較です。"
+            "正式YayoiInputAdapterの可否は断定しません。"
+        ),
+    }
+
+
+def _field_population_to_dict(field_population) -> dict[str, Any]:
+    return {
+        "empty_field_counts_by_position": [
+            {"position": position, "count": count}
+            for position, count in field_population.empty_field_counts_by_position
+        ],
+        "nonempty_field_counts_by_position": [
+            {"position": position, "count": count}
+            for position, count in field_population.nonempty_field_counts_by_position
+        ],
+        "trailing_empty_field_count_distribution": [
+            {"trailing_empty_fields": trailing, "record_count": count}
+            for trailing, count in (
+                field_population.trailing_empty_field_count_distribution
+            )
+        ],
+        "tax_field_nonempty_counts": dict(
+            field_population.tax_field_nonempty_counts
+        ),
     }

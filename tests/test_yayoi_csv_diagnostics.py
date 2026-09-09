@@ -13,6 +13,7 @@ from accounting_converter.diagnostics.yayoi_csv import (
     YayoiCsvAnalyzer,
     YayoiCsvDiagnosticReportGenerator,
     yayoi_analysis_to_dict,
+    yayoi_analysis_to_privacy_safe_dict,
 )
 from accounting_converter.diagnostics.yayoi_csv.models import (
     YayoiGroupCandidateStatus,
@@ -182,6 +183,117 @@ class YayoiCsvDiagnosticsTests(unittest.TestCase):
 
         self.assertEqual(result, 0)
         self.assertEqual(json.loads(output.getvalue())["data_record_count"], 1)
+
+    def test_japanese_era_date_candidate_is_observed_without_formal_conversion(self) -> None:
+        row = list(self._row("2000"))
+        row[3] = "H.31/01/15"
+        text = self._csv_text([tuple(row)])
+
+        analysis = self.analyzer.analyze_text(text)
+
+        self.assertIn(
+            "JAPANESE_ERA_DOT_SLASH",
+            analysis.amount_observation.date_format_candidates,
+        )
+        self.assertEqual(
+            analysis.amount_observation.date_parse_candidate_error_count,
+            0,
+        )
+        self.assertFalse(analysis.official_comparison.formal_profile_ready)
+
+    def test_field_population_observes_tax_and_trailing_empty_fields_without_values(self) -> None:
+        row = self._row("2000", tax_category="架空税区分")
+        text = self._csv_text([row])
+
+        analysis = self.analyzer.analyze_text(text)
+        population = analysis.field_population_observation
+
+        self.assertEqual(dict(population.tax_field_nonempty_counts)["debit_tax_category"], 1)
+        self.assertEqual(dict(population.tax_field_nonempty_counts)["credit_tax_category"], 1)
+        self.assertIn((8, 1), population.nonempty_field_counts_by_position)
+        self.assertIn((18, 1), population.empty_field_counts_by_position)
+        self.assertEqual(
+            dict(population.trailing_empty_field_count_distribution),
+            {8: 1},
+        )
+
+    def test_ae19_observed_synthetic_fixture_matches_25_field_raw_export_shape(self) -> None:
+        path = Path("tests/fixtures/yayoi/ae19_observed_single_synthetic.txt")
+        raw = path.read_bytes()
+
+        analysis = self.analyzer.analyze_path(path)
+
+        self.assertFalse(raw.startswith(b"\xef\xbb\xbf"))
+        self.assertEqual(analysis.encoding, "cp932")
+        self.assertEqual(analysis.line_ending, "CRLF")
+        self.assertEqual(analysis.total_physical_lines, 1)
+        self.assertEqual(analysis.data_record_count, 1)
+        self.assertEqual(analysis.dominant_column_count, 25)
+        self.assertEqual(analysis.row_column_count_distribution, ((25, 1),))
+        self.assertEqual(dict(analysis.flag_observation.official_flag_counts), {"2000": 1})
+        self.assertEqual(analysis.single_record_candidate_count, 1)
+        self.assertTrue(analysis.amount_observation.balanced)
+        self.assertEqual(
+            dict(
+                analysis.field_population_observation.trailing_empty_field_count_distribution
+            ),
+            {0: 1},
+        )
+        self.assertIn(
+            (20, 1),
+            analysis.field_population_observation.nonempty_field_counts_by_position,
+        )
+        self.assertIn(
+            (25, 1),
+            analysis.field_population_observation.nonempty_field_counts_by_position,
+        )
+        self.assertIn(
+            "JAPANESE_ERA_DOT_SLASH",
+            analysis.amount_observation.date_format_candidates,
+        )
+        self.assertEqual(
+            analysis.official_comparison.structural_match_status,
+            YayoiStructuralMatchStatus.MATCH_CANDIDATE,
+        )
+        self.assertFalse(analysis.official_comparison.formal_profile_ready)
+
+    def test_yayoi_privacy_safe_serialization_omits_accounting_body_values(self) -> None:
+        path = Path("tests/fixtures/yayoi/ae19_observed_single_synthetic.txt")
+        analysis = self.analyzer.analyze_path(path)
+
+        payload = yayoi_analysis_to_privacy_safe_dict(analysis)
+        serialized = json.dumps(payload, ensure_ascii=False)
+
+        self.assertIsNone(payload["file_name"])
+        self.assertEqual(payload["dominant_column_count"], 25)
+        self.assertEqual(payload["flags"]["official_flag_counts"], {"2000": 1})
+        self.assertNotIn("架空観測摘要", serialized)
+        self.assertNotIn("架空費用科目", serialized)
+        self.assertNotIn("H.31/01/15", serialized)
+        self.assertNotIn("1234", serialized)
+
+    def test_yayoi_text_report_redacts_totals_for_single_record_files(self) -> None:
+        path = Path("tests/fixtures/yayoi/ae19_observed_single_synthetic.txt")
+        analysis = self.analyzer.analyze_path(path)
+
+        report = YayoiCsvDiagnosticReportGenerator().generate_text(analysis)
+
+        self.assertIn("debit total: redacted", report)
+        self.assertNotIn("1234", report)
+        self.assertNotIn("架空観測摘要", report)
+
+    def test_cli_diagnose_yayoi_privacy_json(self) -> None:
+        path = Path("tests/fixtures/yayoi/ae19_observed_single_synthetic.txt")
+        output = StringIO()
+        with redirect_stdout(output):
+            result = main(["diagnose-yayoi", str(path), "--format", "privacy-json"])
+
+        data = json.loads(output.getvalue())
+
+        self.assertEqual(result, 0)
+        self.assertEqual(data["data_record_count"], 1)
+        self.assertEqual(data["flags"]["official_flag_counts"], {"2000": 1})
+        self.assertNotIn("架空観測摘要", output.getvalue())
 
     def _row(
         self,

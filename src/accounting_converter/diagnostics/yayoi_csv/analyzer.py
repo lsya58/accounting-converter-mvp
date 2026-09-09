@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import re
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
@@ -19,6 +20,7 @@ from .models import (
     YayoiCsvAnalysisResult,
     YayoiCsvLineObservation,
     YayoiFlagObservation,
+    YayoiFieldPopulationObservation,
     YayoiGroupCandidate,
     YayoiGroupCandidateStatus,
     YayoiHeaderObservation,
@@ -110,6 +112,7 @@ class YayoiCsvAnalyzer:
             data_rows=data_rows,
         )
         amount_observation = self._observe_accounting_safety(data_rows, comparison)
+        field_population_observation = self._observe_field_population(data_rows)
         validation_results = self._validation_results(
             file_name=file_name,
             parsed_rows=parsed_rows,
@@ -144,6 +147,7 @@ class YayoiCsvAnalyzer:
             flag_observation=flag_observation,
             group_candidates=groups,
             amount_observation=amount_observation,
+            field_population_observation=field_population_observation,
             official_comparison=comparison,
             validation_results=validation_results,
         )
@@ -485,7 +489,48 @@ class YayoiCsvAnalyzer:
             except ValueError:
                 continue
             return fmt
+        if re.fullmatch(r"[HRS]\.\d{1,2}/\d{1,2}/\d{1,2}", value):
+            return "JAPANESE_ERA_DOT_SLASH"
         return None
+
+    def _observe_field_population(
+        self,
+        rows: tuple[_ParsedRow, ...],
+    ) -> YayoiFieldPopulationObservation:
+        empty_counts = Counter()
+        nonempty_counts = Counter()
+        trailing_empty_counts = Counter()
+        tax_positions = {
+            8: "debit_tax_category",
+            10: "debit_tax_amount",
+            14: "credit_tax_category",
+            16: "credit_tax_amount",
+        }
+        tax_nonempty_counts = Counter()
+        for row in rows:
+            if len(row.columns) != self.official_spec.column_count:
+                continue
+            trailing = 0
+            for value in reversed(row.columns):
+                if value.strip():
+                    break
+                trailing += 1
+            trailing_empty_counts[trailing] += 1
+            for position, value in enumerate(row.columns, start=1):
+                if value.strip():
+                    nonempty_counts[position] += 1
+                    if position in tax_positions:
+                        tax_nonempty_counts[tax_positions[position]] += 1
+                else:
+                    empty_counts[position] += 1
+        return YayoiFieldPopulationObservation(
+            empty_field_counts_by_position=tuple(sorted(empty_counts.items())),
+            nonempty_field_counts_by_position=tuple(sorted(nonempty_counts.items())),
+            trailing_empty_field_count_distribution=tuple(
+                sorted(trailing_empty_counts.items())
+            ),
+            tax_field_nonempty_counts=tuple(sorted(tax_nonempty_counts.items())),
+        )
 
     def _validation_results(
         self,

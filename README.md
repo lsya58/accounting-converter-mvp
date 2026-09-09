@@ -183,9 +183,10 @@ PYTHONPATH=src python -m unittest discover -s tests -v
 ```bash
 PYTHONPATH=src python3 -m accounting_converter.cli diagnose-yayoi <csv-path>
 PYTHONPATH=src python3 -m accounting_converter.cli diagnose-yayoi <csv-path> --format json
+PYTHONPATH=src python3 -m accounting_converter.cli diagnose-yayoi <csv-path> --format privacy-json
 ```
 
-現在のテスト数は187件です。
+現在のテスト数は200件です。
 
 ## Windows Packaging PoC
 

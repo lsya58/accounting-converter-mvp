@@ -38,6 +38,7 @@
 ```bash
 PYTHONPATH=src python3 -m accounting_converter.cli diagnose-yayoi tests/fixtures/yayoi/official_import_demo.csv
 PYTHONPATH=src python3 -m accounting_converter.cli diagnose-yayoi tests/fixtures/yayoi/official_import_demo.csv --format json
+PYTHONPATH=src python3 -m accounting_converter.cli diagnose-yayoi tests/fixtures/yayoi/ae19_observed_single_synthetic.txt --format privacy-json
 ```
 
 ## 実CSV取得後に確認する差分
@@ -51,6 +52,24 @@ PYTHONPATH=src python3 -m accounting_converter.cli diagnose-yayoi tests/fixtures
 - 日付形式。
 - 公式ドキュメントにない追加列や製品グレード差。
 - 実データ上のJournalEntry数とrecord数の関係。
+
+### 弥生AE19 direct export raw file確認
+
+`data/private/` にraw exportが置かれたら、まず `diagnose-yayoi --format privacy-json` で解析する。Excel等で再保存したファイルをEvidenceとして使わない。
+
+確認項目:
+
+- raw bytes上のencoding、BOM、改行コード
+- physical line count
+- data record count / logical record candidate count
+- dominant column count
+- identifier flag counts
+- 日付候補形式
+- 金額parse可否と貸借一致
+- 税関連欄の空/非空集計
+- 末尾空欄数
+
+1サンプル・1仕訳だけでは正式YayoiInputAdapterへ昇格しない。
 
 ## 注意
 

@@ -82,12 +82,20 @@ class YayoiCsvDiagnosticReportGenerator:
             [
                 "",
                 "会計安全性チェック:",
-                f"debit total: {amount.debit_total}",
-                f"credit total: {amount.credit_total}",
+                "debit total: redacted",
+                "credit total: redacted",
                 f"balanced: {amount.balanced}",
                 f"amount parse errors: {amount.amount_parse_error_count}",
                 f"amount unknowns: {amount.amount_unknown_count}",
                 f"date parse candidate errors: {amount.date_parse_candidate_error_count}",
+            ]
+        )
+        lines.extend(
+            [
+                "",
+                "項目入力状況:",
+                f"trailing empty fields: {dict(analysis.field_population_observation.trailing_empty_field_count_distribution)}",
+                f"tax field nonempty counts: {dict(analysis.field_population_observation.tax_field_nonempty_counts)}",
             ]
         )
 
@@ -105,7 +113,7 @@ class YayoiCsvDiagnosticReportGenerator:
                 "",
                 "注意:",
                 "本診断は弥生公式ドキュメント上の25項目仕様との構造比較です。",
-                "使用中の弥生製品・バージョン・実CSVは未確認として扱います。",
+                "製品・バージョン・実CSVの確認状態はEvidenceごとに分離して扱います。",
                 "正式YayoiFormatProfileへは自動昇格しません。",
                 "会計本文、摘要全文、取引先名、個別仕訳金額はレポートへ出力しません。",
             ]

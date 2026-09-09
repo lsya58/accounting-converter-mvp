@@ -5,6 +5,7 @@ from .models import (
     YayoiAmountObservation,
     YayoiCsvAnalysisResult,
     YayoiCsvLineObservation,
+    YayoiFieldPopulationObservation,
     YayoiFlagObservation,
     YayoiGroupCandidate,
     YayoiHeaderObservation,
@@ -12,13 +13,14 @@ from .models import (
     YayoiStructuralMatchStatus,
 )
 from .report import YayoiCsvDiagnosticReportGenerator
-from .serialization import yayoi_analysis_to_dict
+from .serialization import yayoi_analysis_to_dict, yayoi_analysis_to_privacy_safe_dict
 
 __all__ = [
     "YayoiAmountObservation",
     "YayoiCsvAnalysisResult",
     "YayoiCsvAnalyzer",
     "YayoiCsvDiagnosticReportGenerator",
+    "YayoiFieldPopulationObservation",
     "YayoiCsvLineObservation",
     "YayoiFlagObservation",
     "YayoiGroupCandidate",
@@ -26,4 +28,5 @@ __all__ = [
     "YayoiOfficialComparison",
     "YayoiStructuralMatchStatus",
     "yayoi_analysis_to_dict",
+    "yayoi_analysis_to_privacy_safe_dict",
 ]

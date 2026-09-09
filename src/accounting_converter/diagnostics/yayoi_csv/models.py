@@ -82,6 +82,14 @@ class YayoiAmountObservation:
 
 
 @dataclass(frozen=True)
+class YayoiFieldPopulationObservation:
+    empty_field_counts_by_position: tuple[tuple[int, int], ...] = ()
+    nonempty_field_counts_by_position: tuple[tuple[int, int], ...] = ()
+    trailing_empty_field_count_distribution: tuple[tuple[int, int], ...] = ()
+    tax_field_nonempty_counts: tuple[tuple[str, int], ...] = ()
+
+
+@dataclass(frozen=True)
 class YayoiOfficialComparison:
     official_column_count: int
     observed_dominant_column_count: int | None
@@ -116,6 +124,7 @@ class YayoiCsvAnalysisResult:
     flag_observation: YayoiFlagObservation
     group_candidates: tuple[YayoiGroupCandidate, ...]
     amount_observation: YayoiAmountObservation
+    field_population_observation: YayoiFieldPopulationObservation
     official_comparison: YayoiOfficialComparison
     validation_results: tuple[ValidationResult, ...] = field(default_factory=tuple)
 
