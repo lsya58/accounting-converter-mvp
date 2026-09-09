@@ -51,6 +51,57 @@
   - no claim is made that all Yayoi products or versions use this exact shape
   - detailed semantic mapping of every field remains pending additional samples
 
+## EVID-YAYOI-AE19-002
+
+- source: fully fictional Yayoi AE 19 direct export raw file
+- product reported: 弥生会計 AE 19
+- installer version reported: 25.1.1
+- export route reported: 仕訳日記帳 -> エクスポート -> 弥生インポート形式
+- evidence level: `OBSERVED`
+- raw byte verification status: verified locally
+- relationship to EVID-YAYOI-AE19-001:
+  - same direct export route family
+  - adds multiple independent single-record journals
+- observed structure:
+  - CP932
+  - CRLF
+  - BOMなし
+  - 4 physical lines
+  - 4 data records / 4 single-record candidates
+  - every record has 25 fields
+  - no header row observed
+  - identifier flag `2000` observed in all records
+  - voucher-like field was populated in all records
+  - date representation matched a Japanese-era dot/slash candidate shape
+  - debit/credit amount fields were parseable in all records
+  - debit/credit totals were balanced in aggregate
+  - tax category and tax amount fields were non-empty in all records
+  - description field was blank in one record and non-empty in three records
+  - one description field required CSV quoting for comma and double quote characters
+  - trailing empty field count was zero for all records
+- official comparison:
+  - official documented column count and observed dominant column count both 25
+  - observed identifier flag is in the official documented flag set
+  - structural status remains `MATCH_CANDIDATE`
+  - `formal_profile_ready` remains false
+- limits:
+  - all observed records are `2000`; no `2111` or `2110/2100/2101` evidence yet
+  - subaccount and department populated cases remain unverified in raw AE19 evidence
+  - multiple tax strings were observed, but tax semantic mapping is not established
+  - no claim is made that all Yayoi products or versions use this exact shape
+
+## Internal Parser Status
+
+- `YayoiObservedSingleRecordParser` can parse only the narrow observed subset:
+  - CP932 path input
+  - 25 fields
+  - identifier flag `2000`
+  - parseable date
+  - parseable debit/credit amounts
+  - balanced single-record journals
+- It is diagnostics/internal infrastructure, not a production `YayoiInputAdapter`.
+- Unknown flags, unknown column counts, unparseable dates, unparseable amounts, and unbalanced records are blocking errors.
+
 ## Required Additional Yayoi Evidence
 
 Before implementing a production `YayoiInputAdapter`, collect at least:

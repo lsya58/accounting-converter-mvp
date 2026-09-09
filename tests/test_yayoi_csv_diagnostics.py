@@ -282,6 +282,60 @@ class YayoiCsvDiagnosticsTests(unittest.TestCase):
         self.assertNotIn("1234", report)
         self.assertNotIn("架空観測摘要", report)
 
+    def test_ae19_observed_multi_synthetic_fixture_preserves_multi_record_shape(self) -> None:
+        path = Path("tests/fixtures/yayoi/ae19_observed_multi_synthetic.txt")
+        raw = path.read_bytes()
+
+        analysis = self.analyzer.analyze_path(path)
+
+        self.assertFalse(raw.startswith(b"\xef\xbb\xbf"))
+        self.assertEqual(analysis.encoding, "cp932")
+        self.assertEqual(analysis.line_ending, "CRLF")
+        self.assertEqual(analysis.total_physical_lines, 4)
+        self.assertTrue(analysis.csv_parseable)
+        self.assertEqual(analysis.data_record_count, 4)
+        self.assertEqual(analysis.group_candidate_count, 4)
+        self.assertEqual(analysis.single_record_candidate_count, 4)
+        self.assertEqual(analysis.dominant_column_count, 25)
+        self.assertEqual(analysis.row_column_count_distribution, ((25, 4),))
+        self.assertEqual(dict(analysis.flag_observation.official_flag_counts), {"2000": 4})
+        self.assertEqual(
+            dict(
+                analysis.field_population_observation.trailing_empty_field_count_distribution
+            ),
+            {0: 4},
+        )
+        self.assertIn(
+            (17, 1),
+            analysis.field_population_observation.empty_field_counts_by_position,
+        )
+        self.assertEqual(
+            dict(analysis.field_population_observation.tax_field_nonempty_counts),
+            {
+                "credit_tax_amount": 4,
+                "credit_tax_category": 4,
+                "debit_tax_amount": 4,
+                "debit_tax_category": 4,
+            },
+        )
+        self.assertTrue(analysis.amount_observation.balanced)
+        self.assertEqual(analysis.validation_results, ())
+
+    def test_ae19_multi_privacy_safe_serialization_omits_description_and_amounts(self) -> None:
+        path = Path("tests/fixtures/yayoi/ae19_observed_multi_synthetic.txt")
+        analysis = self.analyzer.analyze_path(path)
+
+        serialized = json.dumps(
+            yayoi_analysis_to_privacy_safe_dict(analysis),
+            ensure_ascii=False,
+        )
+
+        self.assertIn('"data_record_count": 4', serialized)
+        self.assertNotIn("架空,摘要", serialized)
+        self.assertNotIn("架空借方科目", serialized)
+        self.assertNotIn("1100", serialized)
+        self.assertNotIn("H.31/02", serialized)
+
     def test_cli_diagnose_yayoi_privacy_json(self) -> None:
         path = Path("tests/fixtures/yayoi/ae19_observed_single_synthetic.txt")
         output = StringIO()

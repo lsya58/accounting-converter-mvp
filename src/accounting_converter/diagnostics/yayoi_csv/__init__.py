@@ -1,6 +1,10 @@
 """Yayoi CSV observation and diagnostics package."""
 
 from .analyzer import YayoiCsvAnalyzer
+from .internal_parser import (
+    YayoiObservedSingleRecordParser,
+    YayoiObservedSingleRecordParserError,
+)
 from .models import (
     YayoiAmountObservation,
     YayoiCsvAnalysisResult,
@@ -21,6 +25,8 @@ __all__ = [
     "YayoiCsvAnalyzer",
     "YayoiCsvDiagnosticReportGenerator",
     "YayoiFieldPopulationObservation",
+    "YayoiObservedSingleRecordParser",
+    "YayoiObservedSingleRecordParserError",
     "YayoiCsvLineObservation",
     "YayoiFlagObservation",
     "YayoiGroupCandidate",

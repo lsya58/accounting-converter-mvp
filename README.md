@@ -186,7 +186,7 @@ PYTHONPATH=src python3 -m accounting_converter.cli diagnose-yayoi <csv-path> --f
 PYTHONPATH=src python3 -m accounting_converter.cli diagnose-yayoi <csv-path> --format privacy-json
 ```
 
-現在のテスト数は200件です。
+現在のテスト数は209件です。
 
 ## Windows Packaging PoC
 
