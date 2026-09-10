@@ -122,14 +122,99 @@ class YayoiObservedSingleRecordParserTests(unittest.TestCase):
         self.assertFalse(entries[0].is_compound())
         self.assertFalse(entries[0].metadata["production_adapter"])
 
-    def test_unobserved_multi_record_flag_still_blocks(self) -> None:
+    def test_parse_observed_multi_record_voucher_group(self) -> None:
+        rows = [
+            self._row(flag="2110", voucher="9", debit_amount="1000", credit_account="", credit_amount="0", description=""),
+            self._row(flag="2100", voucher="9", debit_amount="2000", credit_account="", credit_amount="0", description=""),
+            self._row(flag="2101", voucher="9", debit_account="", debit_amount="0", credit_amount="3000"),
+        ]
+
+        entries = self.parser.parse_text(self._csv_text(rows))
+
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].metadata["identifier_flags"], ("2110", "2100", "2101"))
+        self.assertEqual(entries[0].metadata["grouping_basis"], "OBSERVED_MULTI_RECORD_SEQUENCE")
+        self.assertTrue(entries[0].is_compound())
+        self.assertTrue(entries[0].is_balanced())
+        self.assertEqual(len(entries[0].lines), 3)
+        self.assertEqual(sum(1 for line in entries[0].lines if line.side is Side.DEBIT), 2)
+        self.assertEqual(sum(1 for line in entries[0].lines if line.side is Side.CREDIT), 1)
+        self.assertFalse(entries[0].metadata["production_adapter"])
+
+    def test_unclosed_multi_record_voucher_blocks(self) -> None:
         row = self._row(flag="2110")
 
         with self.assertRaisesRegex(
             YayoiObservedSingleRecordParserError,
-            "unsupported identifier flag",
+            "not closed by 2101",
         ):
             self.parser.parse_text(self._csv_text([row]))
+
+    def test_multi_record_voucher_mismatched_voucher_blocks(self) -> None:
+        rows = [
+            self._row(flag="2110", voucher="9", debit_amount="1000", credit_account="", credit_amount="0", description=""),
+            self._row(flag="2100", voucher="10", debit_amount="2000", credit_account="", credit_amount="0", description=""),
+            self._row(flag="2101", voucher="9", debit_account="", debit_amount="0", credit_amount="3000"),
+        ]
+
+        with self.assertRaisesRegex(
+            YayoiObservedSingleRecordParserError,
+            "inconsistent voucher number",
+        ):
+            self.parser.parse_text(self._csv_text(rows))
+
+    def test_multi_record_voucher_mismatched_date_blocks(self) -> None:
+        rows = [
+            self._row(flag="2110", date_value="H.31/01/15", debit_amount="1000", credit_account="", credit_amount="0", description=""),
+            self._row(flag="2100", date_value="H.31/01/16", debit_amount="2000", credit_account="", credit_amount="0", description=""),
+            self._row(flag="2101", date_value="H.31/01/15", debit_account="", debit_amount="0", credit_amount="3000"),
+        ]
+
+        with self.assertRaisesRegex(
+            YayoiObservedSingleRecordParserError,
+            "inconsistent date",
+        ):
+            self.parser.parse_text(self._csv_text(rows))
+
+    def test_multi_record_voucher_unbalanced_blocks(self) -> None:
+        rows = [
+            self._row(flag="2110", debit_amount="1000", credit_account="", credit_amount="0", description=""),
+            self._row(flag="2100", debit_amount="2000", credit_account="", credit_amount="0", description=""),
+            self._row(flag="2101", debit_account="", debit_amount="0", credit_amount="2999"),
+        ]
+
+        with self.assertRaisesRegex(
+            YayoiObservedSingleRecordParserError,
+            "not balanced",
+        ):
+            self.parser.parse_text(self._csv_text(rows))
+
+    def test_multi_record_voucher_unexpected_middle_flag_blocks(self) -> None:
+        rows = [
+            self._row(flag="2110", debit_amount="1000", credit_account="", credit_amount="0", description=""),
+            self._row(flag="2111", debit_amount="2000", credit_account="", credit_amount="0", description=""),
+            self._row(flag="2101", debit_account="", debit_amount="0", credit_amount="3000"),
+        ]
+
+        with self.assertRaisesRegex(
+            YayoiObservedSingleRecordParserError,
+            "unexpected flag",
+        ):
+            self.parser.parse_text(self._csv_text(rows))
+
+    def test_multi_record_voucher_multiple_middle_rows_blocks_until_observed(self) -> None:
+        rows = [
+            self._row(flag="2110", voucher="9", debit_amount="1000", credit_account="", credit_amount="0", description=""),
+            self._row(flag="2100", voucher="9", debit_amount="1000", credit_account="", credit_amount="0", description=""),
+            self._row(flag="2100", voucher="9", debit_amount="1000", credit_account="", credit_amount="0", description=""),
+            self._row(flag="2101", voucher="9", debit_account="", debit_amount="0", credit_amount="3000"),
+        ]
+
+        with self.assertRaisesRegex(
+            YayoiObservedSingleRecordParserError,
+            "unsupported flag sequence",
+        ):
+            self.parser.parse_text(self._csv_text(rows))
 
     def test_unknown_flag_blocks_without_silent_fallback(self) -> None:
         row = list(self._row())
@@ -194,28 +279,35 @@ class YayoiObservedSingleRecordParserTests(unittest.TestCase):
     def _row(
         self,
         flag: str = "2000",
+        voucher: str = "1",
+        date_value: str = "H.31/01/15",
+        debit_account: str = "架空借方科目",
         debit_sub_account: str = "",
-        credit_sub_account: str = "",
         debit_department: str = "",
+        debit_amount: str = "1000",
+        credit_account: str = "架空貸方科目",
+        credit_sub_account: str = "",
         credit_department: str = "",
+        credit_amount: str = "1000",
+        description: str = "架空摘要",
     ) -> tuple[str, ...]:
         row = [""] * self.spec.column_count
         row[0] = flag
-        row[1] = "1"
-        row[3] = "H.31/01/15"
-        row[4] = "架空借方科目"
+        row[1] = voucher
+        row[3] = date_value
+        row[4] = debit_account
         row[5] = debit_sub_account
         row[6] = debit_department
         row[7] = "架空税区分"
-        row[8] = "1000"
+        row[8] = debit_amount
         row[9] = "74"
-        row[10] = "架空貸方科目"
+        row[10] = credit_account
         row[11] = credit_sub_account
         row[12] = credit_department
         row[13] = "架空対象外"
-        row[14] = "1000"
+        row[14] = credit_amount
         row[15] = "0"
-        row[16] = "架空摘要"
+        row[16] = description
         row[19] = "0"
         row[22] = "0"
         row[23] = "0"

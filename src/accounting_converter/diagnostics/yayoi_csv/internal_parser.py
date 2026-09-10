@@ -34,11 +34,12 @@ class YayoiObservedSingleRecordRow:
 
 
 class YayoiObservedSingleRecordParser:
-    """Strict internal parser for observed Yayoi single-record rows.
+    """Strict internal parser for narrow observed Yayoi AE19 rows.
 
     This is not a production YayoiInputAdapter. It exists to validate whether the
     current official + observed evidence can safely produce Common Journal Model
-    objects for the narrow observed single-record subset.
+    objects for the narrow observed subset. The class name is retained for
+    compatibility with earlier single-record-only diagnostics.
     """
 
     SUPPORTED_SINGLE_RECORD_FLAGS = frozenset({"2000", "2111"})
@@ -68,7 +69,23 @@ class YayoiObservedSingleRecordParser:
         entries: list[JournalEntry] = []
         for row in rows:
             self._validate_row(row)
-            entries.append(self._entry_from_row(file_name, row))
+        index = 0
+        while index < len(rows):
+            row = rows[index]
+            flag = row.value(1)
+            if flag in self.SUPPORTED_SINGLE_RECORD_FLAGS:
+                entries.append(self._entry_from_rows(file_name, (row,)))
+                index += 1
+                continue
+            if flag == "2110":
+                group, index = self._read_observed_multi_record_group(rows, index)
+                self._validate_observed_multi_record_group(group)
+                entries.append(self._entry_from_rows(file_name, group))
+                continue
+            raise YayoiObservedSingleRecordParserError(
+                f"Yayoi observed row {row.row_number} has unsupported "
+                f"identifier flag: {flag or '(blank)'}"
+            )
         return tuple(entries)
 
     def _read_rows(self, text: str) -> tuple[YayoiObservedSingleRecordRow, ...]:
@@ -102,65 +119,162 @@ class YayoiObservedSingleRecordParser:
                 f"Yayoi observed row {row.row_number} is a header row, not data"
             )
         flag = row.value(1)
-        if flag not in self.SUPPORTED_SINGLE_RECORD_FLAGS:
+        if (
+            flag not in self.SUPPORTED_SINGLE_RECORD_FLAGS
+            and flag not in {"2110", "2100", "2101"}
+        ):
             raise YayoiObservedSingleRecordParserError(
                 f"Yayoi observed row {row.row_number} has unsupported "
                 f"identifier flag: {flag or '(blank)'}"
             )
 
-    def _entry_from_row(
+    def _read_observed_multi_record_group(
+        self,
+        rows: tuple[YayoiObservedSingleRecordRow, ...],
+        start_index: int,
+    ) -> tuple[tuple[YayoiObservedSingleRecordRow, ...], int]:
+        group = [rows[start_index]]
+        index = start_index + 1
+        while index < len(rows):
+            row = rows[index]
+            flag = row.value(1)
+            group.append(row)
+            index += 1
+            if flag == "2101":
+                return tuple(group), index
+            if flag != "2100":
+                raise YayoiObservedSingleRecordParserError(
+                    f"Yayoi observed multi-record voucher starting at row "
+                    f"{rows[start_index].row_number} has unexpected flag at "
+                    f"row {row.row_number}: {flag or '(blank)'}"
+                )
+        raise YayoiObservedSingleRecordParserError(
+            f"Yayoi observed multi-record voucher starting at row "
+            f"{rows[start_index].row_number} is not closed by 2101"
+        )
+
+    def _validate_observed_multi_record_group(
+        self,
+        rows: tuple[YayoiObservedSingleRecordRow, ...],
+    ) -> None:
+        flags = tuple(row.value(1) for row in rows)
+        if flags != ("2110", "2100", "2101"):
+            raise YayoiObservedSingleRecordParserError(
+                f"Yayoi observed multi-record voucher at row "
+                f"{rows[0].row_number} has unsupported flag sequence: {flags}"
+            )
+        vouchers = {row.value(self._position("伝票No.")) for row in rows}
+        if len(vouchers) != 1 or "" in vouchers:
+            raise YayoiObservedSingleRecordParserError(
+                f"Yayoi observed multi-record voucher at row "
+                f"{rows[0].row_number} has inconsistent voucher number"
+            )
+        dates = {row.value(self._position("取引日付")) for row in rows}
+        if len(dates) != 1 or "" in dates:
+            raise YayoiObservedSingleRecordParserError(
+                f"Yayoi observed multi-record voucher at row "
+                f"{rows[0].row_number} has inconsistent date"
+            )
+
+    def _entry_from_rows(
         self,
         file_name: str,
-        row: YayoiObservedSingleRecordRow,
+        rows: tuple[YayoiObservedSingleRecordRow, ...],
     ) -> JournalEntry:
-        entry_id = self._entry_id(row)
+        first = rows[0]
+        entry_id = self._entry_id(first)
         source = SourceReference(
             file_name=file_name,
-            row_number=row.row_number,
+            row_number=first.row_number,
             source_journal_id=entry_id,
         )
-        debit = self._line_from_row(
-            row=row,
-            side=Side.DEBIT,
-            source=source,
-            account_position=self._position("借方勘定科目"),
-            sub_account_position=self._position("借方補助科目"),
-            department_position=self._position("借方部門"),
-            tax_category_position=self._position("借方税区分"),
-            amount_position=self._position("借方金額"),
-            tax_amount_position=self._position("借方税金額"),
+        lines: list[JournalLine] = []
+        for row in rows:
+            lines.extend(self._lines_from_row(file_name, row))
+        if not lines:
+            raise YayoiObservedSingleRecordParserError(
+                f"Yayoi observed row {first.row_number} produced no journal lines"
+            )
+        descriptions = tuple(
+            dict.fromkeys(
+                row.value(self._position("摘要"))
+                for row in rows
+                if row.value(self._position("摘要"))
+            )
         )
-        credit = self._line_from_row(
-            row=row,
-            side=Side.CREDIT,
-            source=source,
-            account_position=self._position("貸方勘定科目"),
-            sub_account_position=self._position("貸方補助科目"),
-            department_position=self._position("貸方部門"),
-            tax_category_position=self._position("貸方税区分"),
-            amount_position=self._position("貸方金額"),
-            tax_amount_position=self._position("貸方税金額"),
-        )
+        if len(descriptions) > 1:
+            raise YayoiObservedSingleRecordParserError(
+                f"Yayoi observed journal starting at row {first.row_number} "
+                "has multiple distinct descriptions"
+            )
         entry = JournalEntry(
             id=entry_id,
             source_reference=source,
-            date=self._date(row.value(self._position("取引日付")), row.row_number),
-            description=row.value(self._position("摘要")) or None,
-            lines=[debit, credit],
+            date=self._date(
+                first.value(self._position("取引日付")),
+                first.row_number,
+            ),
+            description=descriptions[0] if descriptions else None,
+            lines=lines,
             metadata={
                 "source": "yayoi_ae19_observed_internal_parser",
-                "identifier_flags": (row.value(1),),
+                "identifier_flags": tuple(row.value(1) for row in rows),
+                "grouping_basis": (
+                    "OBSERVED_MULTI_RECORD_SEQUENCE"
+                    if len(rows) > 1
+                    else "OBSERVED_SINGLE_RECORD"
+                ),
                 "evidence_level": "OBSERVED",
                 "production_adapter": False,
             },
         )
         if not entry.is_balanced():
             raise YayoiObservedSingleRecordParserError(
-                f"Yayoi observed row {row.row_number} is not balanced"
+                f"Yayoi observed journal starting at row "
+                f"{first.row_number} is not balanced"
             )
         return entry
 
-    def _line_from_row(
+    def _lines_from_row(
+        self,
+        file_name: str,
+        row: YayoiObservedSingleRecordRow,
+    ) -> list[JournalLine]:
+        source = SourceReference(
+            file_name=file_name,
+            row_number=row.row_number,
+            source_journal_id=self._entry_id(row),
+        )
+        lines: list[JournalLine] = []
+        lines.extend(
+            self._line_from_side(
+                row=row,
+                side=Side.DEBIT,
+                source=source,
+                account_position=self._position("借方勘定科目"),
+                sub_account_position=self._position("借方補助科目"),
+                department_position=self._position("借方部門"),
+                tax_category_position=self._position("借方税区分"),
+                amount_position=self._position("借方金額"),
+                tax_amount_position=self._position("借方税金額"),
+            )
+        )
+        lines.extend(
+            self._line_from_side(
+                row=row,
+                side=Side.CREDIT,
+                source=source,
+                account_position=self._position("貸方勘定科目"),
+                sub_account_position=self._position("貸方補助科目"),
+                department_position=self._position("貸方部門"),
+                tax_category_position=self._position("貸方税区分"),
+                amount_position=self._position("貸方金額"),
+                tax_amount_position=self._position("貸方税金額"),
+            )
+        )
+        return lines
+
+    def _line_from_side(
         self,
         row: YayoiObservedSingleRecordRow,
         side: Side,
@@ -171,35 +285,39 @@ class YayoiObservedSingleRecordParser:
         tax_category_position: int,
         amount_position: int,
         tax_amount_position: int,
-    ) -> JournalLine:
+    ) -> list[JournalLine]:
         account = row.value(account_position)
-        if not account:
-            raise YayoiObservedSingleRecordParserError(
-                f"Yayoi observed row {row.row_number} has blank account on "
-                f"{side.value}"
-            )
         amount = self._required_amount(
             row.value(amount_position),
             row.row_number,
             f"{side.value}_amount",
         )
-        return JournalLine(
-            side=side,
-            account=account,
-            sub_account=row.value(sub_account_position) or None,
-            department=row.value(department_position) or None,
-            amount=amount,
-            tax_info=TaxInfo(
-                category=row.value(tax_category_position) or None,
-                tax_amount=self._optional_amount(
-                    row.value(tax_amount_position),
-                    row.row_number,
-                    f"{side.value}_tax_amount",
+        if not account and amount == Decimal("0"):
+            return []
+        if not account:
+            raise YayoiObservedSingleRecordParserError(
+                f"Yayoi observed row {row.row_number} has blank account on "
+                f"{side.value}"
+            )
+        return [
+            JournalLine(
+                side=side,
+                account=account,
+                sub_account=row.value(sub_account_position) or None,
+                department=row.value(department_position) or None,
+                amount=amount,
+                tax_info=TaxInfo(
+                    category=row.value(tax_category_position) or None,
+                    tax_amount=self._optional_amount(
+                        row.value(tax_amount_position),
+                        row.row_number,
+                        f"{side.value}_tax_amount",
+                    ),
+                    metadata={"source": "yayoi_ae19_observed"},
                 ),
-                metadata={"source": "yayoi_ae19_observed"},
-            ),
-            source_reference=source,
-        )
+                source_reference=source,
+            )
+        ]
 
     def _entry_id(self, row: YayoiObservedSingleRecordRow) -> str:
         voucher = row.value(self._position("伝票No."))

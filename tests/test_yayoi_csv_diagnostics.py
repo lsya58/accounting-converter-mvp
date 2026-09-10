@@ -119,6 +119,29 @@ class YayoiCsvDiagnosticsTests(unittest.TestCase):
         self.assertEqual(analysis.multi_record_candidate_count, 1)
         self.assertEqual(analysis.group_candidates[0].middle_2100_count, 1)
 
+    def test_multi_sequence_makes_record_count_different_from_candidate_count(self) -> None:
+        text = self._csv_text(
+            [
+                self._row("2000"),
+                self._row("2111"),
+                self._row("2110", debit=300),
+                self._row("2100", debit=700),
+                self._row("2101", credit=1000),
+            ]
+        )
+
+        analysis = self.analyzer.analyze_text(text)
+
+        self.assertEqual(analysis.data_record_count, 5)
+        self.assertEqual(analysis.group_candidate_count, 3)
+        self.assertEqual(analysis.single_record_candidate_count, 2)
+        self.assertEqual(analysis.multi_record_candidate_count, 1)
+        self.assertEqual(
+            dict(analysis.flag_observation.official_flag_counts),
+            {"2000": 1, "2100": 1, "2101": 1, "2110": 1, "2111": 1},
+        )
+        self.assertFalse(analysis.official_comparison.formal_profile_ready)
+
     def test_amount_parse_error_is_not_converted_to_zero(self) -> None:
         row = list(self._row("2000"))
         row[8] = "not-an-amount"

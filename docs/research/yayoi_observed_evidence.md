@@ -267,18 +267,65 @@
   - no import success into Yayoi has been verified from generated output
   - no claim is made that all Yayoi products or versions use this exact shape
 
+## EVID-YAYOI-AE19-007
+
+- source: fully fictional Yayoi AE 19 direct export raw file
+- product reported: 弥生会計 AE 19
+- installer version reported: 25.1.1
+- export route reported: 仕訳日記帳 -> エクスポート -> 弥生インポート形式
+- evidence level: `OBSERVED`
+- raw byte verification status: verified locally
+- purpose:
+  - observe a multi-record voucher-style journal sequence and journal grouping candidate
+- observed structure:
+  - file size: 1057 bytes
+  - CP932
+  - CRLF
+  - BOMなし
+  - 8 physical lines
+  - 8 data records
+  - 6 journal candidates
+  - every record has 25 fields
+  - no header row observed
+  - identifier flags observed: `2000` in 4 records, `2111` in 1 record, `2110` in 1 record, `2100` in 1 record, and `2101` in 1 record
+  - the first five records match EVID-YAYOI-AE19-006
+  - one multi-record sequence was observed as `2110 -> 2100 -> 2101`
+  - all records in the multi-record sequence had the same voucher-like field
+  - all records in the multi-record sequence had the same date field
+  - multi-record sequence debit total and credit total were balanced
+  - debit-only records were represented with debit account/amount populated and credit account blank with zero amount
+  - credit-only record was represented with credit account/amount populated and debit account blank with zero amount
+  - tax category and tax amount fields were non-empty in all records
+  - description field was populated on the closing `2101` record in the observed multi-record sequence
+  - trailing empty field count was zero for all records
+- official comparison:
+  - `2110`, `2100`, and `2101` are in the official documented identifier flag set
+  - official documented column count and observed dominant column count both 25
+  - structural status remains `MATCH_CANDIDATE`
+  - `formal_profile_ready` remains false
+- privacy note:
+  - account names, subaccount names, department names, description text, individual dates, individual amounts, and raw rows are not recorded here
+- limits:
+  - only one `2110 -> 2100 -> 2101` sequence has been observed
+  - multiple `2100` middle rows remain unverified in raw AE19 evidence
+  - no import success into Yayoi has been verified from generated output
+  - no claim is made that all Yayoi products or versions use this exact shape
+
 ## Internal Parser Status
 
 - `YayoiObservedSingleRecordParser` can parse only the narrow observed subset:
   - CP932 path input
   - 25 fields
   - identifier flag `2000` or observed one-line `2111`
+  - observed multi-record sequence `2110 -> 2100 -> 2101`
+  - same non-blank voucher-like field across a multi-record sequence
+  - same non-blank date field across a multi-record sequence
   - parseable date
   - parseable debit/credit amounts
-  - balanced single-record journals
+  - balanced single-record journals or balanced multi-record sequence totals
   - optional debit/credit subaccount and department values, mapped by the official documented column names
 - It is diagnostics/internal infrastructure, not a production `YayoiInputAdapter`.
-- Unknown flags, unobserved multi-record flags, unknown column counts, unparseable dates, unparseable amounts, and unbalanced records are blocking errors.
+- Unknown flags, malformed multi-record sequences, voucher/date mismatches, unknown column counts, unparseable dates, unparseable amounts, and unbalanced records are blocking errors.
 
 ## Required Additional Yayoi Evidence
 
@@ -288,11 +335,12 @@ Before implementing a production `YayoiInputAdapter`, collect at least:
 2. Multiple tax category and tax amount patterns.
 3. Blank description.
 4. Description with comma and quotes.
-5. `2110 -> 2100* -> 2101` compound voucher.
-6. Debit multi-line voucher.
-7. Credit multi-line voucher.
+5. Multi-record voucher with multiple `2100` middle rows.
+6. Debit multi-line voucher variations.
+7. Credit multi-line voucher variations.
 8. Empty optional trailing fields.
-9. Export files from the exact production Yayoi product/version intended for MVP.
+9. Import success verification for generated output.
+10. Export files from the exact production Yayoi product/version intended for MVP.
 
 ## Current Boundary
 
