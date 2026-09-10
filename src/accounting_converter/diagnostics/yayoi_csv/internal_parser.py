@@ -121,29 +121,29 @@ class YayoiObservedSingleRecordParser:
             row=row,
             side=Side.DEBIT,
             source=source,
-            account_position=5,
-            sub_account_position=6,
-            department_position=7,
-            tax_category_position=8,
-            amount_position=9,
-            tax_amount_position=10,
+            account_position=self._position("借方勘定科目"),
+            sub_account_position=self._position("借方補助科目"),
+            department_position=self._position("借方部門"),
+            tax_category_position=self._position("借方税区分"),
+            amount_position=self._position("借方金額"),
+            tax_amount_position=self._position("借方税金額"),
         )
         credit = self._line_from_row(
             row=row,
             side=Side.CREDIT,
             source=source,
-            account_position=11,
-            sub_account_position=12,
-            department_position=13,
-            tax_category_position=14,
-            amount_position=15,
-            tax_amount_position=16,
+            account_position=self._position("貸方勘定科目"),
+            sub_account_position=self._position("貸方補助科目"),
+            department_position=self._position("貸方部門"),
+            tax_category_position=self._position("貸方税区分"),
+            amount_position=self._position("貸方金額"),
+            tax_amount_position=self._position("貸方税金額"),
         )
         entry = JournalEntry(
             id=entry_id,
             source_reference=source,
-            date=self._date(row.value(4), row.row_number),
-            description=row.value(17) or None,
+            date=self._date(row.value(self._position("取引日付")), row.row_number),
+            description=row.value(self._position("摘要")) or None,
             lines=[debit, credit],
             metadata={
                 "source": "yayoi_ae19_observed_internal_parser",
@@ -200,8 +200,16 @@ class YayoiObservedSingleRecordParser:
         )
 
     def _entry_id(self, row: YayoiObservedSingleRecordRow) -> str:
-        voucher = row.value(2)
+        voucher = row.value(self._position("伝票No."))
         return voucher or f"ROW-{row.row_number}"
+
+    def _position(self, name: str) -> int:
+        for column in self.spec.columns:
+            if column.name == name:
+                return column.position
+        raise YayoiObservedSingleRecordParserError(
+            f"Yayoi official documented column is not available: {name}"
+        )
 
     def _date(self, value: str, row_number: int) -> date:
         if not value:

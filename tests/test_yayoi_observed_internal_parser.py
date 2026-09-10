@@ -42,6 +42,32 @@ class YayoiObservedSingleRecordParserTests(unittest.TestCase):
         self.assertIn(",", entries[3].description)
         self.assertIn('"', entries[3].description)
 
+    def test_parse_debit_sub_account_and_blank_credit_sub_account(self) -> None:
+        row = self._row(
+            debit_sub_account="架空銀行補助",
+            credit_sub_account="",
+        )
+
+        entries = self.parser.parse_text(self._csv_text([row]))
+
+        self.assertEqual(len(entries), 1)
+        debit, credit = entries[0].lines
+        self.assertEqual(debit.sub_account, "架空銀行補助")
+        self.assertIsNone(credit.sub_account)
+        self.assertTrue(entries[0].is_balanced())
+        self.assertFalse(entries[0].metadata["production_adapter"])
+
+    def test_parse_subaccount_synthetic_fixture(self) -> None:
+        entries = self.parser.parse_path(
+            FIXTURE_DIR / "ae19_observed_subaccount_synthetic.txt"
+        )
+
+        self.assertEqual(len(entries), 1)
+        debit, credit = entries[0].lines
+        self.assertEqual(debit.sub_account, "架空補助A")
+        self.assertIsNone(credit.sub_account)
+        self.assertTrue(entries[0].is_balanced())
+
     def test_unknown_flag_blocks_without_silent_fallback(self) -> None:
         row = list(self._row())
         row[0] = "2999"
@@ -102,16 +128,22 @@ class YayoiObservedSingleRecordParserTests(unittest.TestCase):
             ):
                 self.parser.parse_path(path)
 
-    def _row(self) -> tuple[str, ...]:
+    def _row(
+        self,
+        debit_sub_account: str = "",
+        credit_sub_account: str = "",
+    ) -> tuple[str, ...]:
         row = [""] * self.spec.column_count
         row[0] = "2000"
         row[1] = "1"
         row[3] = "H.31/01/15"
         row[4] = "架空借方科目"
+        row[5] = debit_sub_account
         row[7] = "架空税区分"
         row[8] = "1000"
         row[9] = "74"
         row[10] = "架空貸方科目"
+        row[11] = credit_sub_account
         row[13] = "架空対象外"
         row[14] = "1000"
         row[15] = "0"
@@ -131,4 +163,3 @@ class YayoiObservedSingleRecordParserTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

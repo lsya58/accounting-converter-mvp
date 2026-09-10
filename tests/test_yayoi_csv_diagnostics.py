@@ -321,6 +321,56 @@ class YayoiCsvDiagnosticsTests(unittest.TestCase):
         self.assertTrue(analysis.amount_observation.balanced)
         self.assertEqual(analysis.validation_results, ())
 
+    def test_sub_account_population_is_observed_without_values(self) -> None:
+        rows = [
+            self._row("2000", sub_account=""),
+            self._row("2000", sub_account="架空補助科目"),
+        ]
+
+        analysis = self.analyzer.analyze_text(self._csv_text(rows))
+        population = dict(
+            analysis.field_population_observation.sub_account_field_population_counts
+        )
+
+        self.assertEqual(
+            population,
+            {
+                "credit_sub_account": {"blank": 2, "nonempty": 0},
+                "debit_sub_account": {"blank": 1, "nonempty": 1},
+            },
+        )
+        serialized = json.dumps(
+            yayoi_analysis_to_privacy_safe_dict(analysis),
+            ensure_ascii=False,
+        )
+        self.assertIn("debit_sub_account", serialized)
+        self.assertNotIn("架空補助科目", serialized)
+
+    def test_ae19_observed_subaccount_synthetic_fixture_preserves_subaccount_shape(self) -> None:
+        path = Path("tests/fixtures/yayoi/ae19_observed_subaccount_synthetic.txt")
+        raw = path.read_bytes()
+
+        analysis = self.analyzer.analyze_path(path)
+        population = dict(
+            analysis.field_population_observation.sub_account_field_population_counts
+        )
+
+        self.assertFalse(raw.startswith(b"\xef\xbb\xbf"))
+        self.assertEqual(analysis.encoding, "cp932")
+        self.assertEqual(analysis.line_ending, "CRLF")
+        self.assertEqual(analysis.data_record_count, 1)
+        self.assertEqual(analysis.dominant_column_count, 25)
+        self.assertEqual(dict(analysis.flag_observation.official_flag_counts), {"2000": 1})
+        self.assertEqual(
+            population,
+            {
+                "credit_sub_account": {"blank": 1, "nonempty": 0},
+                "debit_sub_account": {"blank": 0, "nonempty": 1},
+            },
+        )
+        self.assertTrue(analysis.amount_observation.balanced)
+        self.assertFalse(analysis.official_comparison.formal_profile_ready)
+
     def test_ae19_multi_privacy_safe_serialization_omits_description_and_amounts(self) -> None:
         path = Path("tests/fixtures/yayoi/ae19_observed_multi_synthetic.txt")
         analysis = self.analyzer.analyze_path(path)

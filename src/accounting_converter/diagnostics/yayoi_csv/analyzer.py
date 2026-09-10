@@ -506,7 +506,15 @@ class YayoiCsvAnalyzer:
             14: "credit_tax_category",
             16: "credit_tax_amount",
         }
+        sub_account_positions = {
+            6: "debit_sub_account",
+            12: "credit_sub_account",
+        }
         tax_nonempty_counts = Counter()
+        sub_account_population: dict[str, Counter[str]] = {
+            name: Counter({"blank": 0, "nonempty": 0})
+            for name in sub_account_positions.values()
+        }
         for row in rows:
             if len(row.columns) != self.official_spec.column_count:
                 continue
@@ -521,8 +529,16 @@ class YayoiCsvAnalyzer:
                     nonempty_counts[position] += 1
                     if position in tax_positions:
                         tax_nonempty_counts[tax_positions[position]] += 1
+                    if position in sub_account_positions:
+                        sub_account_population[sub_account_positions[position]][
+                            "nonempty"
+                        ] += 1
                 else:
                     empty_counts[position] += 1
+                    if position in sub_account_positions:
+                        sub_account_population[sub_account_positions[position]][
+                            "blank"
+                        ] += 1
         return YayoiFieldPopulationObservation(
             empty_field_counts_by_position=tuple(sorted(empty_counts.items())),
             nonempty_field_counts_by_position=tuple(sorted(nonempty_counts.items())),
@@ -530,6 +546,10 @@ class YayoiCsvAnalyzer:
                 sorted(trailing_empty_counts.items())
             ),
             tax_field_nonempty_counts=tuple(sorted(tax_nonempty_counts.items())),
+            sub_account_field_population_counts=tuple(
+                (field_name, dict(counts))
+                for field_name, counts in sorted(sub_account_population.items())
+            ),
         )
 
     def _validation_results(

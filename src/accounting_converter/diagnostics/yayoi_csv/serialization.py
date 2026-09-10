@@ -248,4 +248,10 @@ def _field_population_to_dict(field_population) -> dict[str, Any]:
         "tax_field_nonempty_counts": dict(
             field_population.tax_field_nonempty_counts
         ),
+        "sub_account_field_population_counts": {
+            field_name: dict(counts)
+            for field_name, counts in (
+                field_population.sub_account_field_population_counts
+            )
+        },
     }

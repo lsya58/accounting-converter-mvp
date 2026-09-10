@@ -75,17 +75,22 @@ PYTHONPATH=src python3 -m accounting_converter.cli diagnose-yayoi tests/fixtures
 
 複数の独立した `2000` 単一仕訳について、25項目、CP932、CRLF、BOMなし、ヘッダーなし、貸借一致候補、摘要空欄、摘要中のカンマ/ダブルクォートquote、税関連欄の空/非空集計をObserved Evidenceとして確認する。
 
+### 弥生AE19 subaccount evidence
+
+借方補助科目が入力された `2000` 単一仕訳について、25項目、CP932、CRLF、BOMなし、ヘッダーなし、貸借一致候補をObserved Evidenceとして確認した。診断結果では補助科目欄の空/非空件数だけを保持し、補助科目名そのものはprivacy-safe reportへ出力しない。
+
 このEvidenceで進められること:
 
 - `2000` 単一仕訳だけを対象にした内部parserの安全性確認
 - Common Journal Modelへの局所的なparse可否評価
 - privacy-safe reportの回帰確認
+- 借方補助科目の有無をblank/nonemptyとして区別する回帰確認
 
 まだ正式Adapterに不足すること:
 
 - `2111`
 - `2110 -> 2100* -> 2101`
-- 補助科目あり
+- 貸方補助科目あり
 - 部門あり
 - 借方複数行 / 貸方複数行
 - 実MVP対象の本番弥生データとの差分確認

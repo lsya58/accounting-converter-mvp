@@ -96,6 +96,7 @@ class YayoiCsvDiagnosticReportGenerator:
                 "項目入力状況:",
                 f"trailing empty fields: {dict(analysis.field_population_observation.trailing_empty_field_count_distribution)}",
                 f"tax field nonempty counts: {dict(analysis.field_population_observation.tax_field_nonempty_counts)}",
+                f"sub account field population counts: {dict(analysis.field_population_observation.sub_account_field_population_counts)}",
             ]
         )
 
