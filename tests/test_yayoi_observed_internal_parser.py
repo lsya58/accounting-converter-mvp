@@ -94,6 +94,23 @@ class YayoiObservedSingleRecordParserTests(unittest.TestCase):
         self.assertIsNone(credit.department)
         self.assertTrue(entries[0].is_balanced())
 
+    def test_parse_credit_sub_account_and_credit_department(self) -> None:
+        row = self._row(
+            credit_sub_account="架空貸方補助",
+            credit_department="架空貸方部門",
+        )
+
+        entries = self.parser.parse_text(self._csv_text([row]))
+
+        self.assertEqual(len(entries), 1)
+        debit, credit = entries[0].lines
+        self.assertIsNone(debit.sub_account)
+        self.assertIsNone(debit.department)
+        self.assertEqual(credit.sub_account, "架空貸方補助")
+        self.assertEqual(credit.department, "架空貸方部門")
+        self.assertTrue(entries[0].is_balanced())
+        self.assertFalse(entries[0].metadata["production_adapter"])
+
     def test_unknown_flag_blocks_without_silent_fallback(self) -> None:
         row = list(self._row())
         row[0] = "2999"

@@ -421,6 +421,45 @@ class YayoiCsvDiagnosticsTests(unittest.TestCase):
         self.assertTrue(analysis.amount_observation.balanced)
         self.assertFalse(analysis.official_comparison.formal_profile_ready)
 
+    def test_credit_field_population_is_observed_without_values(self) -> None:
+        blank_row = list(self._row("2000", sub_account="", department=""))
+        credit_row = list(self._row("2000", sub_account="", department=""))
+        credit_row[11] = "架空貸方補助科目"
+        credit_row[12] = "架空貸方部門"
+
+        analysis = self.analyzer.analyze_text(
+            self._csv_text([tuple(blank_row), tuple(credit_row)])
+        )
+        sub_account_population = dict(
+            analysis.field_population_observation.sub_account_field_population_counts
+        )
+        department_population = dict(
+            analysis.field_population_observation.department_field_population_counts
+        )
+
+        self.assertEqual(
+            sub_account_population,
+            {
+                "credit_sub_account": {"blank": 1, "nonempty": 1},
+                "debit_sub_account": {"blank": 2, "nonempty": 0},
+            },
+        )
+        self.assertEqual(
+            department_population,
+            {
+                "credit_department": {"blank": 1, "nonempty": 1},
+                "debit_department": {"blank": 2, "nonempty": 0},
+            },
+        )
+        serialized = json.dumps(
+            yayoi_analysis_to_privacy_safe_dict(analysis),
+            ensure_ascii=False,
+        )
+        self.assertIn("credit_sub_account", serialized)
+        self.assertIn("credit_department", serialized)
+        self.assertNotIn("架空貸方補助科目", serialized)
+        self.assertNotIn("架空貸方部門", serialized)
+
     def test_ae19_multi_privacy_safe_serialization_omits_description_and_amounts(self) -> None:
         path = Path("tests/fixtures/yayoi/ae19_observed_multi_synthetic.txt")
         analysis = self.analyzer.analyze_path(path)
