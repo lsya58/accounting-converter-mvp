@@ -88,6 +88,7 @@ class YayoiFieldPopulationObservation:
     trailing_empty_field_count_distribution: tuple[tuple[int, int], ...] = ()
     tax_field_nonempty_counts: tuple[tuple[str, int], ...] = ()
     sub_account_field_population_counts: tuple[tuple[str, dict[str, int]], ...] = ()
+    department_field_population_counts: tuple[tuple[str, dict[str, int]], ...] = ()
 
 
 @dataclass(frozen=True)

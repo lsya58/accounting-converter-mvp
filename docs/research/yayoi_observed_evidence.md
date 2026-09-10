@@ -132,6 +132,52 @@
   - all observed records are still `2000`; no `2111` or `2110/2100/2101` evidence yet
   - no claim is made that all Yayoi products or versions use this exact shape
 
+## EVID-YAYOI-AE19-004
+
+- source: fully fictional Yayoi AE 19 direct export raw file
+- product reported: 弥生会計 AE 19
+- installer version reported: 25.1.1
+- export route reported: 仕訳日記帳 -> エクスポート -> 弥生インポート形式
+- evidence level: `OBSERVED`
+- raw byte verification status: verified locally
+- purpose:
+  - observe a single-record journal with a populated department field
+- observed structure:
+  - file size: 286 bytes
+  - CP932
+  - CRLF
+  - BOMなし
+  - 2 physical lines
+  - 2 data records / 2 single-record candidates
+  - every record has 25 fields
+  - no header row observed
+  - identifier flag `2000` observed in all records
+  - official documented debit department position was populated in 1 record
+  - official documented credit department position was blank in all records
+  - official documented debit subaccount position was populated in 1 record
+  - official documented credit subaccount position was blank in all records
+  - debit/credit amount fields were parseable in all records
+  - debit/credit totals were balanced in aggregate
+  - tax category and tax amount fields were non-empty in all records
+  - trailing empty field count was zero for all records
+- comparison to EVID-YAYOI-AE19-003:
+  - both evidence files remain CP932, CRLF, BOMなし, 25 fields, no header, and `2000` single-record candidates
+  - EVID-YAYOI-AE19-003 added debit subaccount population
+  - EVID-YAYOI-AE19-004 adds debit department population
+- official comparison:
+  - official documented column count and observed dominant column count both 25
+  - official documented debit department field position matches the observed populated field
+  - observed identifier flag is in the official documented flag set
+  - structural status remains `MATCH_CANDIDATE`
+  - `formal_profile_ready` remains false
+- privacy note:
+  - account names, subaccount names, department names, description text, individual dates, individual amounts, and raw rows are not recorded here
+- limits:
+  - only debit department population was observed; credit department population remains unverified
+  - no department import success into Yayoi has been verified
+  - all observed records are still `2000`; no `2111` or `2110/2100/2101` evidence yet
+  - no claim is made that all Yayoi products or versions use this exact shape
+
 ## Internal Parser Status
 
 - `YayoiObservedSingleRecordParser` can parse only the narrow observed subset:
@@ -151,7 +197,7 @@ Before implementing a production `YayoiInputAdapter`, collect at least:
 
 1. Multiple independent single-line journals.
 2. Credit-side subaccount populated case.
-3. Department populated and blank cases.
+3. Credit-side department populated case.
 4. Multiple tax category and tax amount patterns.
 5. Blank description.
 6. Description with comma and quotes.

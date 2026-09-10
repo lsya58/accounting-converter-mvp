@@ -510,10 +510,18 @@ class YayoiCsvAnalyzer:
             6: "debit_sub_account",
             12: "credit_sub_account",
         }
+        department_positions = {
+            7: "debit_department",
+            13: "credit_department",
+        }
         tax_nonempty_counts = Counter()
         sub_account_population: dict[str, Counter[str]] = {
             name: Counter({"blank": 0, "nonempty": 0})
             for name in sub_account_positions.values()
+        }
+        department_population: dict[str, Counter[str]] = {
+            name: Counter({"blank": 0, "nonempty": 0})
+            for name in department_positions.values()
         }
         for row in rows:
             if len(row.columns) != self.official_spec.column_count:
@@ -533,10 +541,18 @@ class YayoiCsvAnalyzer:
                         sub_account_population[sub_account_positions[position]][
                             "nonempty"
                         ] += 1
+                    if position in department_positions:
+                        department_population[department_positions[position]][
+                            "nonempty"
+                        ] += 1
                 else:
                     empty_counts[position] += 1
                     if position in sub_account_positions:
                         sub_account_population[sub_account_positions[position]][
+                            "blank"
+                        ] += 1
+                    if position in department_positions:
+                        department_population[department_positions[position]][
                             "blank"
                         ] += 1
         return YayoiFieldPopulationObservation(
@@ -549,6 +565,10 @@ class YayoiCsvAnalyzer:
             sub_account_field_population_counts=tuple(
                 (field_name, dict(counts))
                 for field_name, counts in sorted(sub_account_population.items())
+            ),
+            department_field_population_counts=tuple(
+                (field_name, dict(counts))
+                for field_name, counts in sorted(department_population.items())
             ),
         )
 
