@@ -40,6 +40,17 @@ YAYOI_NEXT_SOURCE = SourceProvenance(
     notes="弥生会計 Next。25項目または27項目が公式に示されるため、Yayoi=25列とはしない。",
 )
 
+YAYOI_AE19_OBSERVED_SOURCE = SourceProvenance(
+    title="弥生会計 AE19 direct export observed evidence",
+    url=None,
+    evidence_level=EvidenceLevel.OBSERVED,
+    verified_at=date(2026, 9, 10),
+    notes=(
+        "Fully fictional raw exports from Yayoi AE19 direct export. "
+        "Observed evidence only; not a universal Yayoi specification."
+    ),
+)
+
 JDL_OBSERVED_SOURCE = SourceProvenance(
     title="JDL IBEX 出納帳 35.5 実データ観測",
     url=None,
@@ -164,6 +175,91 @@ def yayoi_desktop_import_25_documented_schema() -> SchemaDefinition:
     )
 
 
+def yayoi_ae19_direct_export_observed_schema() -> SchemaDefinition:
+    spec = yayoi_accounting_05_official_import_spec()
+    fields = tuple(
+        FieldDefinition(
+            field_id=f"yayoi_ae19_observed_col_{column.position:02d}",
+            display_name=column.name,
+            semantic_field=_YAYOI_SEMANTIC_FIELDS.get(
+                column.name,
+                SemanticField.UNKNOWN,
+            ),
+            column_position=column.position,
+            required=column.required,
+            data_type=_data_type(column.data_type),
+            max_length=column.max_length,
+            allowed_values=(
+                spec.identifier_flags if column.position == 1 else ()
+            ),
+            blank_policy=(
+                BlankPolicy.REQUIRED if column.required else BlankPolicy.OPTIONAL
+            ),
+            evidence=EvidenceLevel.OBSERVED,
+            source=YAYOI_AE19_OBSERVED_SOURCE,
+            notes=(
+                "Column meaning is based on the official documented 25-field "
+                "model and the observed AE19 direct export evidence."
+            ),
+        )
+        for column in spec.columns
+    )
+    return SchemaDefinition(
+        identity=FormatIdentity(
+            vendor="Yayoi",
+            product="Yayoi Accounting AE 19",
+            format_name="Yayoi Import Format Direct Export Observed",
+            direction=FormatDirection.INPUT,
+            evidence_level=EvidenceLevel.OBSERVED,
+            major_version="19",
+            source_reference=YAYOI_AE19_OBSERVED_SOURCE,
+            notes=(
+                "Observed from fully fictional AE19 direct export files. "
+                "Keep separate from the official documented desktop import schema."
+            ),
+        ),
+        fields=fields,
+        capabilities=FormatCapabilities(
+            supports_subaccount=Capability(CapabilityStatus.SUPPORTED),
+            supports_department=Capability(CapabilityStatus.SUPPORTED),
+            supports_tax_category=Capability(CapabilityStatus.SUPPORTED),
+            supports_tax_amount=Capability(CapabilityStatus.SUPPORTED),
+            supports_invoice_classification=Capability(CapabilityStatus.UNKNOWN),
+            supports_description=Capability(CapabilityStatus.SUPPORTED),
+            supports_voucher_number=Capability(CapabilityStatus.SUPPORTED),
+            supports_compound_journal=Capability(CapabilityStatus.SUPPORTED),
+            supports_multiple_debit_lines=Capability(CapabilityStatus.SUPPORTED),
+            supports_multiple_credit_lines=Capability(CapabilityStatus.UNKNOWN),
+            supports_header=Capability(
+                CapabilityStatus.UNSUPPORTED,
+                "Observed AE19 direct export samples have no header row.",
+            ),
+            accepted_extensions=(".txt", ".csv"),
+            encoding_candidates=("cp932",),
+            delimiter=",",
+            column_count_rules=(25,),
+            maximum_field_lengths={
+                field.semantic_field: field.max_length
+                for field in fields
+                if field.max_length is not None
+                and field.semantic_field is not SemanticField.UNKNOWN
+            },
+            journal_grouping_strategy=JournalGroupingStrategy.IDENTIFIER_FLAG_SEQUENCE,
+        ),
+        delimiter=",",
+        encoding="cp932",
+        has_header=CapabilityStatus.UNSUPPORTED,
+        column_count=25,
+        date_formats=("JAPANESE_ERA_DOT_SLASH",),
+        numeric_format="integer_yen_observed",
+        blank_representation="empty_field",
+        notes=(
+            "Production input adapter scope is limited to observed AE19 direct "
+            "exports with flags 2000, 2111, and 2110 -> 2100* -> 2101."
+        ),
+    )
+
+
 def yayoi_next_documented_candidate_schema(
     column_count: int,
 ) -> SchemaDefinition:
@@ -266,6 +362,7 @@ def jdl_ibex_cashbook_35_5_observed_schema_definition() -> SchemaDefinition:
 def default_format_schemas() -> tuple[SchemaDefinition, ...]:
     return (
         yayoi_desktop_import_25_documented_schema(),
+        yayoi_ae19_direct_export_observed_schema(),
         yayoi_next_documented_candidate_schema(25),
         yayoi_next_documented_candidate_schema(27),
         jdl_ibex_cashbook_35_5_observed_schema_definition(),

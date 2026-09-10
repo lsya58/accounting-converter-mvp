@@ -2,7 +2,7 @@
 
 **目的:** 弥生CSVに関する実資料・架空テスト資料の観測結果を、公式ドキュメント仕様や正式FormatProfileと混同しない形で記録する。
 
-この文書は研究ログであり、正式YayoiInputAdapter、正式YayoiFormatProfile、万能な弥生CSV仕様ではない。摘要本文、実際の勘定科目名、補助科目名、個別日付、個別金額、raw CSV rowは記録しない。
+この文書は研究ログであり、正式YayoiFormatProfileや万能な弥生CSV仕様ではない。最小YayoiInputAdapterの根拠はこのObserved evidenceの範囲に限定する。摘要本文、実際の勘定科目名、補助科目名、個別日付、個別金額、raw CSV rowは記録しない。
 
 ## Evidence Levels
 
@@ -414,9 +414,17 @@
 - It is diagnostics/internal infrastructure, not a production `YayoiInputAdapter`.
 - Unknown flags, malformed multi-record sequences, voucher/date mismatches, unknown column counts, unparseable dates, unparseable amounts, and unbalanced records are blocking errors.
 
+## Production Input Adapter Status
+
+- A minimal `YayoiInputAdapter` is available for the exact observed AE19 direct export identity only.
+- It uses the official documented 25-field model for column names and the observed AE19 evidence for accepted encoding, header absence, and identifier flag grouping behavior.
+- It does not claim support for all Yayoi products, all versions, or all export routes.
+- It does not enable a production JDL output path. JDL output still requires `VERIFIED_BY_REAL_IMPORT` evidence before production conversion can become ready.
+- It blocks malformed CSV, unknown flags, unknown column counts, unparseable dates, unparseable amounts, malformed `2110 -> 2100* -> 2101` groups, voucher/date mismatches, unbalanced groups, and observed-side semantic ambiguity.
+
 ## Required Additional Yayoi Evidence
 
-Before implementing a production `YayoiInputAdapter`, collect at least:
+Before broadening the minimal AE19 observed `YayoiInputAdapter`, collect at least:
 
 1. Multiple independent single-line journals.
 2. Multiple tax category and tax amount patterns.

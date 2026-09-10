@@ -179,5 +179,24 @@ class AdapterRegistry:
 
 
 def production_adapter_registry() -> AdapterRegistry:
-    return AdapterRegistry()
+    from accounting_converter.adapters.input.yayoi import YayoiInputAdapter
+    from accounting_converter.profiles.known_formats import (
+        yayoi_ae19_direct_export_observed_schema,
+    )
 
+    registry = AdapterRegistry()
+    yayoi_schema = yayoi_ae19_direct_export_observed_schema()
+    registry.register_input(
+        AdapterRegistration(
+            format_identity=yayoi_schema.identity,
+            factory=YayoiInputAdapter,
+            direction=FormatDirection.INPUT,
+            evidence_level=EvidenceLevel.OBSERVED,
+            production_enabled=True,
+            notes=(
+                "Minimal production input adapter for the observed Yayoi AE19 "
+                "direct export subset. Not a universal Yayoi adapter."
+            ),
+        )
+    )
+    return registry

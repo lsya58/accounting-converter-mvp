@@ -49,7 +49,7 @@
 
 `accounting_converter.profiles.yayoi_official` には、弥生株式会社公式サポートで公開されている「弥生取り込み（インポート）形式（弥生会計05以降）」の25項目仕様を `OFFICIAL_DOCUMENTED` / `REAL_DATA_VERIFICATION_PENDING` として保持しています。
 
-これは実データ検証済みの正式 `YayoiInputAdapter` や正式 `FormatProfile` ではありません。現在、使用中の弥生製品、バージョン、実際の出力CSVは未確認です。実データ取得後に、公式ドキュメントとの差分を確認したうえで正式FormatProfileを確定します。
+これは万能な弥生CSV仕様や正式 `FormatProfile` ではありません。現在は、Yayoi AE19 direct exportのObserved evidenceに限定した最小 `YayoiInputAdapter` だけを実装しています。別製品・別バージョン・別エクスポート経路へは一般化しません。
 
 `accounting_converter.diagnostics.yayoi_csv` には、任意の弥生CSV候補を観測し、公式25項目仕様との構造差分を確認する診断機能があります。これは正式変換ではなく、`MATCH_CANDIDATE` / `STRUCTURAL_DIFFERENCE` / `INSUFFICIENT_EVIDENCE` のような人間レビュー前提の判定だけを行います。摘要本文、取引先名、生CSV行全文は既定のテキストレポート/JSONへ出力しません。
 
@@ -118,7 +118,7 @@ PYTHONPATH=src python3 -m accounting_converter.ui.app
 - ConversionPreflightServiceによる事前確認
 - 状態、件数、Error/Warning件数の表示
 
-正式YayoiInputAdapterと正式JDLOutputAdapterは未登録のため、GUIの「変換する」ボタンは有効化しません。ダミーCSVを生成して成功したように見せる処理もありません。
+最小YayoiInputAdapterは登録されていますが、正式JDLOutputAdapterは未登録のため、GUIの「変換する」ボタンは有効化しません。ダミーCSVを生成して成功したように見せる処理もありません。
 
 GUIは生CSV全文、摘要全文、個別仕訳全文、個別金額を既定表示しません。表示するのはファイル名、形式候補、件数、構造状態、Error/Warning件数、Preflight状態などに限定します。
 
@@ -155,14 +155,13 @@ Readiness status:
 
 `TransformationPlan` にStepが存在しても、それだけで実装済みとは扱いません。`MASTER_MAPPING` / `TAX_MAPPING` は確認済みConversion Profileがある場合のみ `SUPPORTED_WITH_PROFILE` になり、`UNKNOWN` / `UNSUPPORTED` / lossyな変換は通常のREADYにしません。
 
-`AdapterRegistry` は `FormatIdentity` のexact/candidate/unavailableを区別します。Candidateは自動採用しません。JDLのようなOutput Adapterは、原則として `VERIFIED_BY_REAL_IMPORT` のEvidenceを持つ正式Adapterだけを本番変換可能とします。現在のproduction registryにはDemo Adapterを登録しません。
+`AdapterRegistry` は `FormatIdentity` のexact/candidate/unavailableを区別します。Candidateは自動採用しません。現在のproduction registryには、Yayoi AE19 direct exportのObserved evidenceに限定した最小 `YayoiInputAdapter` だけを登録します。JDLのようなOutput Adapterは、原則として `VERIFIED_BY_REAL_IMPORT` のEvidenceを持つ正式Adapterだけを本番変換可能とします。Demo Adapterは登録しません。
 
 Preparationが `READY` になった場合のみ、薄い実行層が既存 `ConversionService` を呼び出します。ConversionService内のstructural / mapping / business / output validation、atomic output、overwrite safety、Verification Reportは引き続き残り、二重安全性を維持します。
 
 ## まだ実装していないもの
 
-- 実データ検証済みの弥生CSV列定義
-- 正式YayoiInputAdapter
+- すべての弥生製品/バージョンに対応する汎用YayoiInputAdapter
 - 実際のJDL取込CSV列定義
 - 正式JDLOutputAdapter
 - 正式JDL FormatProfile
@@ -186,7 +185,7 @@ PYTHONPATH=src python3 -m accounting_converter.cli diagnose-yayoi <csv-path> --f
 PYTHONPATH=src python3 -m accounting_converter.cli diagnose-yayoi <csv-path> --format privacy-json
 ```
 
-現在のテスト数は230件です。
+現在のテスト数は250件です。
 
 ## Windows Packaging PoC
 

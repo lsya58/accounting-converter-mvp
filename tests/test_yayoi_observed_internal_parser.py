@@ -126,7 +126,7 @@ class YayoiObservedSingleRecordParserTests(unittest.TestCase):
         rows = [
             self._row(flag="2110", voucher="9", debit_amount="1000", credit_account="", credit_amount="0", description=""),
             self._row(flag="2100", voucher="9", debit_amount="2000", credit_account="", credit_amount="0", description=""),
-            self._row(flag="2101", voucher="9", debit_account="", debit_amount="0", credit_amount="3000"),
+            self._row(flag="2101", voucher="9", debit_account="", debit_amount="0", debit_tax_amount="0", credit_amount="3000"),
         ]
 
         entries = self.parser.parse_text(self._csv_text(rows))
@@ -154,7 +154,7 @@ class YayoiObservedSingleRecordParserTests(unittest.TestCase):
         rows = [
             self._row(flag="2110", voucher="9", debit_amount="1000", credit_account="", credit_amount="0", description=""),
             self._row(flag="2100", voucher="10", debit_amount="2000", credit_account="", credit_amount="0", description=""),
-            self._row(flag="2101", voucher="9", debit_account="", debit_amount="0", credit_amount="3000"),
+            self._row(flag="2101", voucher="9", debit_account="", debit_amount="0", debit_tax_amount="0", credit_amount="3000"),
         ]
 
         with self.assertRaisesRegex(
@@ -167,7 +167,7 @@ class YayoiObservedSingleRecordParserTests(unittest.TestCase):
         rows = [
             self._row(flag="2110", date_value="H.31/01/15", debit_amount="1000", credit_account="", credit_amount="0", description=""),
             self._row(flag="2100", date_value="H.31/01/16", debit_amount="2000", credit_account="", credit_amount="0", description=""),
-            self._row(flag="2101", date_value="H.31/01/15", debit_account="", debit_amount="0", credit_amount="3000"),
+            self._row(flag="2101", date_value="H.31/01/15", debit_account="", debit_amount="0", debit_tax_amount="0", credit_amount="3000"),
         ]
 
         with self.assertRaisesRegex(
@@ -180,7 +180,7 @@ class YayoiObservedSingleRecordParserTests(unittest.TestCase):
         rows = [
             self._row(flag="2110", debit_amount="1000", credit_account="", credit_amount="0", description=""),
             self._row(flag="2100", debit_amount="2000", credit_account="", credit_amount="0", description=""),
-            self._row(flag="2101", debit_account="", debit_amount="0", credit_amount="2999"),
+            self._row(flag="2101", debit_account="", debit_amount="0", debit_tax_amount="0", credit_amount="2999"),
         ]
 
         with self.assertRaisesRegex(
@@ -193,7 +193,7 @@ class YayoiObservedSingleRecordParserTests(unittest.TestCase):
         rows = [
             self._row(flag="2110", debit_amount="1000", credit_account="", credit_amount="0", description=""),
             self._row(flag="2111", debit_amount="2000", credit_account="", credit_amount="0", description=""),
-            self._row(flag="2101", debit_account="", debit_amount="0", credit_amount="3000"),
+            self._row(flag="2101", debit_account="", debit_amount="0", debit_tax_amount="0", credit_amount="3000"),
         ]
 
         with self.assertRaisesRegex(
@@ -207,7 +207,7 @@ class YayoiObservedSingleRecordParserTests(unittest.TestCase):
             self._row(flag="2110", voucher="9", debit_amount="1000", credit_account="", credit_amount="0", description=""),
             self._row(flag="2100", voucher="9", debit_amount="1000", credit_account="", credit_amount="0", description=""),
             self._row(flag="2100", voucher="9", debit_amount="1000", credit_account="", credit_amount="0", description=""),
-            self._row(flag="2101", voucher="9", debit_account="", debit_amount="0", credit_amount="3000"),
+            self._row(flag="2101", voucher="9", debit_account="", debit_amount="0", debit_tax_amount="0", credit_amount="3000"),
         ]
 
         entries = self.parser.parse_text(self._csv_text(rows))
@@ -227,7 +227,7 @@ class YayoiObservedSingleRecordParserTests(unittest.TestCase):
     def test_parse_observed_two_record_voucher_without_middle_row(self) -> None:
         rows = [
             self._row(flag="2110", voucher="9", debit_amount="1000", credit_account="", credit_amount="0", description=""),
-            self._row(flag="2101", voucher="9", debit_account="", debit_amount="0", credit_amount="1000"),
+            self._row(flag="2101", voucher="9", debit_account="", debit_amount="0", debit_tax_amount="0", credit_amount="1000"),
         ]
 
         entries = self.parser.parse_text(self._csv_text(rows))
@@ -310,10 +310,12 @@ class YayoiObservedSingleRecordParserTests(unittest.TestCase):
         debit_sub_account: str = "",
         debit_department: str = "",
         debit_amount: str = "1000",
+        debit_tax_amount: str = "74",
         credit_account: str = "架空貸方科目",
         credit_sub_account: str = "",
         credit_department: str = "",
         credit_amount: str = "1000",
+        credit_tax_amount: str = "0",
         description: str = "架空摘要",
     ) -> tuple[str, ...]:
         row = [""] * self.spec.column_count
@@ -325,13 +327,13 @@ class YayoiObservedSingleRecordParserTests(unittest.TestCase):
         row[6] = debit_department
         row[7] = "架空税区分"
         row[8] = debit_amount
-        row[9] = "74"
+        row[9] = debit_tax_amount
         row[10] = credit_account
         row[11] = credit_sub_account
         row[12] = credit_department
         row[13] = "架空対象外"
         row[14] = credit_amount
-        row[15] = "0"
+        row[15] = credit_tax_amount
         row[16] = description
         row[19] = "0"
         row[22] = "0"

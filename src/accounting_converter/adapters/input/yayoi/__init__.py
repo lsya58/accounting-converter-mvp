@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-from accounting_converter.adapters.input.yayoi.observed_parser import (
+from .adapter import YayoiInputAdapter, YayoiInputAdapterError
+from .observed_parser import (
     YayoiObservedSingleRecordParser,
     YayoiObservedSingleRecordParserError,
     YayoiObservedSingleRecordRow,
 )
 
 __all__ = [
+    "YayoiInputAdapter",
+    "YayoiInputAdapterError",
     "YayoiObservedSingleRecordParser",
     "YayoiObservedSingleRecordParserError",
     "YayoiObservedSingleRecordRow",

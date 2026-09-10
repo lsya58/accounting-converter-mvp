@@ -8,7 +8,7 @@
 
 弥生株式会社公式サポートで公開されている「弥生取り込み（インポート）形式（弥生会計05以降）」の25項目仕様と、今後取得する実CSVの差分を安全に観測する。
 
-本計画は正式なYayoiInputAdapterや正式FormatProfileを確定するものではない。使用中の弥生製品、バージョン、実際の出力CSVは未確認であり、実CSV取得後に正式判断を行う。
+本計画は万能なYayoiInputAdapterや正式FormatProfileを確定するものではない。Yayoi AE19 direct exportのObserved evidenceに限定した最小YayoiInputAdapterとは分離して、追加観測の計画として扱う。
 
 ## 前提
 
@@ -69,7 +69,7 @@ PYTHONPATH=src python3 -m accounting_converter.cli diagnose-yayoi tests/fixtures
 - 税関連欄の空/非空集計
 - 末尾空欄数
 
-1サンプル・1仕訳だけでは正式YayoiInputAdapterへ昇格しない。
+1サンプル・1仕訳だけではYayoiInputAdapterの対応範囲を拡張しない。
 
 ### 弥生AE19 multiple single-record evidence
 
@@ -89,11 +89,11 @@ PYTHONPATH=src python3 -m accounting_converter.cli diagnose-yayoi tests/fixtures
 
 ### 弥生AE19 one-line voucher evidence
 
-1行振替伝票として出力された `2111` recordについて、25項目、CP932、CRLF、BOMなし、ヘッダーなし、貸借一致候補をObserved Evidenceとして確認した。`2111` は公式documented flag集合にも含まれるが、正式YayoiInputAdapterや正式FormatProfileへはまだ昇格しない。
+1行振替伝票として出力された `2111` recordについて、25項目、CP932、CRLF、BOMなし、ヘッダーなし、貸借一致候補をObserved Evidenceとして確認した。`2111` は公式documented flag集合にも含まれるが、正式FormatProfileへはまだ昇格しない。
 
 ### 弥生AE19 multi-record voucher evidence
 
-複数行振替伝票として出力された `2110 -> 2101`、`2110 -> 2100 -> 2101`、`2110 -> 2100 -> 2100 -> 2101` sequenceについて、25項目、CP932、CRLF、BOMなし、ヘッダーなし、同一伝票番号、同一日付、伝票全体の貸借一致をObserved Evidenceとして確認した。これは観測済みsequenceを内部parserで安全に扱うための根拠であり、正式YayoiInputAdapterや万能な複合仕訳仕様ではない。
+複数行振替伝票として出力された `2110 -> 2101`、`2110 -> 2100 -> 2101`、`2110 -> 2100 -> 2100 -> 2101` sequenceについて、25項目、CP932、CRLF、BOMなし、ヘッダーなし、同一伝票番号、同一日付、伝票全体の貸借一致をObserved Evidenceとして確認した。これは観測済みsequenceを内部parserで安全に扱うための根拠であり、万能な複合仕訳仕様ではない。
 
 このEvidenceで進められること:
 
@@ -106,7 +106,7 @@ PYTHONPATH=src python3 -m accounting_converter.cli diagnose-yayoi tests/fixtures
 - 借方部門の有無をblank/nonemptyとして区別する回帰確認
 - 貸方補助科目・貸方部門の有無をblank/nonemptyとして区別する回帰確認
 
-まだ正式Adapterに不足すること:
+まだAdapter対応範囲拡張に不足すること:
 
 - 借方複数行 / 貸方複数行の追加バリエーション
 - 弥生へ生成ファイルを再インポートする成功確認
@@ -114,4 +114,4 @@ PYTHONPATH=src python3 -m accounting_converter.cli diagnose-yayoi tests/fixtures
 
 ## 注意
 
-この計画と診断実装は、弥生CSVを正式に変換できることを保証しない。正式YayoiInputAdapterは、実CSV取得後に差分を確認し、利用者確認済みのFormatProfileとして別途実装する。
+この計画と診断実装は、弥生CSVを万能に変換できることを保証しない。YayoiInputAdapterはObserved evidenceの範囲だけを扱い、実CSV取得後の差分確認なしに対応範囲を拡張しない。
