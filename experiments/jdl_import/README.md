@@ -4,6 +4,26 @@ JDL IBEX 出納帳 35.5の実データから確認したObserved Schemaを使い
 
 これは正式JDLOutputAdapterではありません。Observed仕様を正式FormatProfileへ昇格しません。
 
+## EXP-01 import candidate
+
+EXP-01専用の候補生成器は、Observed Headerと1 data recordだけを生成します。CSV本体に独自コメント行や独自metadata行は追加しません。
+
+設定テンプレート:
+
+```bash
+cp experiments/jdl_import/exp01_config.template.json \
+  data/private/experiments/jdl_import/exp01/config.json
+```
+
+生成:
+
+```bash
+PYTHONPATH=src python3 -m experiments.jdl_import.exp01_candidate \
+  --config data/private/experiments/jdl_import/exp01/config.json
+```
+
+30列すべてを明示設定として扱い、未設定列がある場合は生成をblockします。実機手順は `docs/experiments/jdl_exp01_import_candidate.md` を参照してください。
+
 ## 生成されるもの
 
 `experiments/jdl_import/output/` に以下を生成します。
