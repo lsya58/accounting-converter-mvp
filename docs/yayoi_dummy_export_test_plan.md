@@ -93,13 +93,13 @@ PYTHONPATH=src python3 -m accounting_converter.cli diagnose-yayoi tests/fixtures
 
 ### 弥生AE19 multi-record voucher evidence
 
-複数行振替伝票として出力された `2110 -> 2100 -> 2101` sequence、および `2110 -> 2100 -> 2100 -> 2101` sequenceについて、25項目、CP932、CRLF、BOMなし、ヘッダーなし、同一伝票番号、同一日付、伝票全体の貸借一致をObserved Evidenceとして確認した。これは観測済みsequenceを内部parserで安全に扱うための根拠であり、正式YayoiInputAdapterや万能な複合仕訳仕様ではない。
+複数行振替伝票として出力された `2110 -> 2101`、`2110 -> 2100 -> 2101`、`2110 -> 2100 -> 2100 -> 2101` sequenceについて、25項目、CP932、CRLF、BOMなし、ヘッダーなし、同一伝票番号、同一日付、伝票全体の貸借一致をObserved Evidenceとして確認した。これは観測済みsequenceを内部parserで安全に扱うための根拠であり、正式YayoiInputAdapterや万能な複合仕訳仕様ではない。
 
 このEvidenceで進められること:
 
 - `2000` 単一仕訳だけを対象にした内部parserの安全性確認
 - 観測済み `2111` 1行recordだけを対象にした内部parserの安全性確認
-- 観測済み `2110 -> 2100+ -> 2101` sequenceだけを対象にした内部parserの安全性確認
+- 観測済み `2110 -> 2100* -> 2101` sequenceだけを対象にした内部parserの安全性確認
 - Common Journal Modelへの局所的なparse可否評価
 - privacy-safe reportの回帰確認
 - 借方補助科目の有無をblank/nonemptyとして区別する回帰確認

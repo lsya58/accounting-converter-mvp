@@ -355,13 +355,56 @@
   - generated output import success into Yayoi has not been verified
   - no claim is made that all Yayoi products or versions use this exact shape
 
+## EVID-YAYOI-AE19-009
+
+- source: fully fictional Yayoi AE 19 direct export raw file
+- product reported: 弥生会計 AE 19
+- installer version reported: 25.1.1
+- export route reported: 仕訳日記帳 -> エクスポート -> 弥生インポート形式
+- evidence level: `OBSERVED`
+- raw byte verification status: verified locally
+- purpose:
+  - observe a two-record voucher-style journal sequence without a middle `2100` record
+- observed structure:
+  - file size: 1758 bytes
+  - CP932
+  - CRLF
+  - BOMなし
+  - 14 physical lines
+  - 14 data records
+  - 8 journal candidates
+  - every record has 25 fields
+  - no header row observed
+  - identifier flags observed: `2000` in 4 records, `2111` in 1 record, `2110` in 3 records, `2100` in 3 records, and `2101` in 3 records
+  - the first twelve records match EVID-YAYOI-AE19-008
+  - one additional multi-record sequence was observed as `2110 -> 2101`
+  - all records inside the two-record sequence had the same voucher-like field
+  - all records inside the two-record sequence had the same date field
+  - the two-record sequence debit total and credit total was balanced
+  - the two-record sequence is a multi-record journal candidate, but it produced one debit line and one credit line in the internal parser; record grouping and Common Journal Model compound-line status are distinct concepts
+  - debit-only record was represented with debit account/amount populated and credit account blank with zero amount
+  - credit-only record was represented with credit account/amount populated and debit account blank with zero amount
+  - tax category and tax amount fields were non-empty in all records
+  - description field was populated on the closing `2101` record in the observed two-record sequence
+  - trailing empty field count was zero for all records
+- official comparison:
+  - `2110` and `2101` are in the official documented identifier flag set
+  - official documented column count and observed dominant column count both 25
+  - structural status remains `MATCH_CANDIDATE`
+  - `formal_profile_ready` remains false
+- privacy note:
+  - account names, subaccount names, department names, description text, individual dates, individual amounts, and raw rows are not recorded here
+- limits:
+  - generated output import success into Yayoi has not been verified
+  - no claim is made that all Yayoi products or versions use this exact shape
+
 ## Internal Parser Status
 
 - `YayoiObservedSingleRecordParser` can parse only the narrow observed subset:
   - CP932 path input
   - 25 fields
   - identifier flag `2000` or observed one-line `2111`
-  - observed multi-record sequence `2110 -> 2100+ -> 2101`
+  - observed multi-record sequence `2110 -> 2100* -> 2101`
   - same non-blank voucher-like field across a multi-record sequence
   - same non-blank date field across a multi-record sequence
   - parseable date

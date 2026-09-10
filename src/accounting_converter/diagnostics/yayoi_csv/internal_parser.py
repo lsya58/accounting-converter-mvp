@@ -158,7 +158,7 @@ class YayoiObservedSingleRecordParser:
         rows: tuple[YayoiObservedSingleRecordRow, ...],
     ) -> None:
         flags = tuple(row.value(1) for row in rows)
-        if len(rows) < 3 or flags[0] != "2110" or flags[-1] != "2101":
+        if len(rows) < 2 or flags[0] != "2110" or flags[-1] != "2101":
             raise YayoiObservedSingleRecordParserError(
                 f"Yayoi observed multi-record voucher at row "
                 f"{rows[0].row_number} has unsupported flag sequence: {flags}"
