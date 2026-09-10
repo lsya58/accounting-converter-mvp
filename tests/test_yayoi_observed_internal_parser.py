@@ -111,6 +111,26 @@ class YayoiObservedSingleRecordParserTests(unittest.TestCase):
         self.assertTrue(entries[0].is_balanced())
         self.assertFalse(entries[0].metadata["production_adapter"])
 
+    def test_parse_observed_2111_single_record(self) -> None:
+        row = self._row(flag="2111")
+
+        entries = self.parser.parse_text(self._csv_text([row]))
+
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].metadata["identifier_flags"], ("2111",))
+        self.assertTrue(entries[0].is_balanced())
+        self.assertFalse(entries[0].is_compound())
+        self.assertFalse(entries[0].metadata["production_adapter"])
+
+    def test_unobserved_multi_record_flag_still_blocks(self) -> None:
+        row = self._row(flag="2110")
+
+        with self.assertRaisesRegex(
+            YayoiObservedSingleRecordParserError,
+            "unsupported identifier flag",
+        ):
+            self.parser.parse_text(self._csv_text([row]))
+
     def test_unknown_flag_blocks_without_silent_fallback(self) -> None:
         row = list(self._row())
         row[0] = "2999"
@@ -173,13 +193,14 @@ class YayoiObservedSingleRecordParserTests(unittest.TestCase):
 
     def _row(
         self,
+        flag: str = "2000",
         debit_sub_account: str = "",
         credit_sub_account: str = "",
         debit_department: str = "",
         credit_department: str = "",
     ) -> tuple[str, ...]:
         row = [""] * self.spec.column_count
-        row[0] = "2000"
+        row[0] = flag
         row[1] = "1"
         row[3] = "H.31/01/15"
         row[4] = "架空借方科目"

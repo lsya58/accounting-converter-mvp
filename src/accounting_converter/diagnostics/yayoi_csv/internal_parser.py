@@ -34,12 +34,14 @@ class YayoiObservedSingleRecordRow:
 
 
 class YayoiObservedSingleRecordParser:
-    """Strict internal parser for observed Yayoi 2000 single-record rows.
+    """Strict internal parser for observed Yayoi single-record rows.
 
     This is not a production YayoiInputAdapter. It exists to validate whether the
     current official + observed evidence can safely produce Common Journal Model
-    objects for the narrow 2000 single-record subset.
+    objects for the narrow observed single-record subset.
     """
+
+    SUPPORTED_SINGLE_RECORD_FLAGS = frozenset({"2000", "2111"})
 
     def __init__(
         self,
@@ -100,7 +102,7 @@ class YayoiObservedSingleRecordParser:
                 f"Yayoi observed row {row.row_number} is a header row, not data"
             )
         flag = row.value(1)
-        if flag != "2000":
+        if flag not in self.SUPPORTED_SINGLE_RECORD_FLAGS:
             raise YayoiObservedSingleRecordParserError(
                 f"Yayoi observed row {row.row_number} has unsupported "
                 f"identifier flag: {flag or '(blank)'}"
@@ -147,7 +149,7 @@ class YayoiObservedSingleRecordParser:
             lines=[debit, credit],
             metadata={
                 "source": "yayoi_ae19_observed_internal_parser",
-                "identifier_flags": ("2000",),
+                "identifier_flags": (row.value(1),),
                 "evidence_level": "OBSERVED",
                 "production_adapter": False,
             },

@@ -87,9 +87,14 @@ PYTHONPATH=src python3 -m accounting_converter.cli diagnose-yayoi tests/fixtures
 
 貸方補助科目・貸方部門が入力された `2000` 単一仕訳について、25項目、CP932、CRLF、BOMなし、ヘッダーなし、貸借一致候補をObserved Evidenceとして確認した。診断結果では貸方側の補助科目欄・部門欄の空/非空件数だけを保持し、値そのものはprivacy-safe reportへ出力しない。
 
+### 弥生AE19 one-line voucher evidence
+
+1行振替伝票として出力された `2111` recordについて、25項目、CP932、CRLF、BOMなし、ヘッダーなし、貸借一致候補をObserved Evidenceとして確認した。`2111` は公式documented flag集合にも含まれるが、正式YayoiInputAdapterや正式FormatProfileへはまだ昇格しない。
+
 このEvidenceで進められること:
 
 - `2000` 単一仕訳だけを対象にした内部parserの安全性確認
+- 観測済み `2111` 1行recordだけを対象にした内部parserの安全性確認
 - Common Journal Modelへの局所的なparse可否評価
 - privacy-safe reportの回帰確認
 - 借方補助科目の有無をblank/nonemptyとして区別する回帰確認
@@ -98,7 +103,6 @@ PYTHONPATH=src python3 -m accounting_converter.cli diagnose-yayoi tests/fixtures
 
 まだ正式Adapterに不足すること:
 
-- `2111`
 - `2110 -> 2100* -> 2101`
 - 借方複数行 / 貸方複数行
 - 実MVP対象の本番弥生データとの差分確認

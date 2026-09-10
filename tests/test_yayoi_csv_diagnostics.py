@@ -74,6 +74,20 @@ class YayoiCsvDiagnosticsTests(unittest.TestCase):
             any(result.rule_id == "UNKNOWN_OBSERVED_FLAG" for result in analysis.validation_results)
         )
 
+    def test_2111_is_observed_as_official_single_record_candidate(self) -> None:
+        text = self._csv_text([self._row("2111")])
+
+        analysis = self.analyzer.analyze_text(text)
+
+        self.assertEqual(dict(analysis.flag_observation.official_flag_counts), {"2111": 1})
+        self.assertEqual(analysis.group_candidate_count, 1)
+        self.assertEqual(analysis.single_record_candidate_count, 1)
+        self.assertEqual(
+            analysis.group_candidates[0].status,
+            YayoiGroupCandidateStatus.OBSERVED_SINGLE_RECORD,
+        )
+        self.assertFalse(analysis.official_comparison.formal_profile_ready)
+
     def test_malformed_multi_sequence_is_not_silently_repaired(self) -> None:
         text = self._csv_text([self._row("2110"), self._row("2000")])
 
