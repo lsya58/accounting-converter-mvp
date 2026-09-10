@@ -202,12 +202,32 @@ class YayoiObservedSingleRecordParserTests(unittest.TestCase):
         ):
             self.parser.parse_text(self._csv_text(rows))
 
-    def test_multi_record_voucher_multiple_middle_rows_blocks_until_observed(self) -> None:
+    def test_parse_observed_multi_record_voucher_with_multiple_middle_rows(self) -> None:
         rows = [
             self._row(flag="2110", voucher="9", debit_amount="1000", credit_account="", credit_amount="0", description=""),
             self._row(flag="2100", voucher="9", debit_amount="1000", credit_account="", credit_amount="0", description=""),
             self._row(flag="2100", voucher="9", debit_amount="1000", credit_account="", credit_amount="0", description=""),
             self._row(flag="2101", voucher="9", debit_account="", debit_amount="0", credit_amount="3000"),
+        ]
+
+        entries = self.parser.parse_text(self._csv_text(rows))
+
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(
+            entries[0].metadata["identifier_flags"],
+            ("2110", "2100", "2100", "2101"),
+        )
+        self.assertEqual(entries[0].metadata["grouping_basis"], "OBSERVED_MULTI_RECORD_SEQUENCE")
+        self.assertTrue(entries[0].is_compound())
+        self.assertTrue(entries[0].is_balanced())
+        self.assertEqual(len(entries[0].lines), 4)
+        self.assertEqual(sum(1 for line in entries[0].lines if line.side is Side.DEBIT), 3)
+        self.assertEqual(sum(1 for line in entries[0].lines if line.side is Side.CREDIT), 1)
+
+    def test_multi_record_voucher_without_middle_row_blocks(self) -> None:
+        rows = [
+            self._row(flag="2110", voucher="9", debit_amount="1000", credit_account="", credit_amount="0", description=""),
+            self._row(flag="2101", voucher="9", debit_account="", debit_amount="0", credit_amount="1000"),
         ]
 
         with self.assertRaisesRegex(

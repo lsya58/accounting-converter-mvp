@@ -158,10 +158,15 @@ class YayoiObservedSingleRecordParser:
         rows: tuple[YayoiObservedSingleRecordRow, ...],
     ) -> None:
         flags = tuple(row.value(1) for row in rows)
-        if flags != ("2110", "2100", "2101"):
+        if len(rows) < 3 or flags[0] != "2110" or flags[-1] != "2101":
             raise YayoiObservedSingleRecordParserError(
                 f"Yayoi observed multi-record voucher at row "
                 f"{rows[0].row_number} has unsupported flag sequence: {flags}"
+            )
+        if any(flag != "2100" for flag in flags[1:-1]):
+            raise YayoiObservedSingleRecordParserError(
+                f"Yayoi observed multi-record voucher at row "
+                f"{rows[0].row_number} has unsupported middle flag sequence: {flags}"
             )
         vouchers = {row.value(self._position("伝票No.")) for row in rows}
         if len(vouchers) != 1 or "" in vouchers:
