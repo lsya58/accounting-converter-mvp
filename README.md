@@ -63,6 +63,8 @@ JDL診断CLIは、schema未指定の純粋観測と、明示的なObserved Schem
 
 実運用上は、日常入力にJDL IBEX出納帳 35.5を使い、決算・申告時にserver-sideのJDL財務/会計システムへ移行する流れが観測されています。MVPの直接Import target候補はJDL IBEX出納帳 35.5へ整理し、JDL会計21列仕訳一覧はpost-import verification用のread-only evidence候補として分離します。
 
+JDL IBEX出納帳 35.5では `データ管理・選択 -> CSV入力 -> データ種類: 仕訳データ` のImport flowも観測済みです。退避確認、日付範囲指定、決算整理の含む/含まない選択、rejection時のログ表示が確認されています。ただし、30-column observed CSVがImport形式そのものか、Export/Importが完全対称か、EXP-01 candidateが受理されるかは未検証です。
+
 ```bash
 PYTHONPATH=src python3 -m accounting_converter.cli diagnose-jdl <csv-path>
 PYTHONPATH=src python3 -m accounting_converter.cli diagnose-jdl <csv-path> --compare-observed jdl-ibex-cashbook-35.5
@@ -187,7 +189,7 @@ PYTHONPATH=src python3 -m accounting_converter.cli diagnose-yayoi <csv-path> --f
 PYTHONPATH=src python3 -m accounting_converter.cli diagnose-yayoi <csv-path> --format privacy-json
 ```
 
-現在のテスト数は283件です。
+現在のテスト数は284件です。
 
 ## Windows Packaging PoC
 

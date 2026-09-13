@@ -17,8 +17,21 @@ JDL製品群の実運用上の位置づけを、正式仕様ではなくObserved
   - `1: 入力 [CSVファイル -> 仕訳ファイル]` を観測
   - `2: 出力 [仕訳ファイル -> CSVファイル]` を観測
   - `8: 入力 [入出金明細 -> 仕訳ファイル]` を観測
+  - `データ管理・選択 -> CSV入力` のflowを観測
+  - データ種類 `仕訳データ` を観測
+  - CSVファイルを参照選択するfile chooserを観測
+  - import前の出納帳ファイル退避確認を観測
+  - import対象の日付範囲指定を観測
+  - 集計単位の日単位/月単位選択を観測
+  - 決算整理を含む/含まない選択を観測
+  - rejection時にログ表示ボタンを観測
 - current interpretation:
   - CSVから仕訳ファイルへ変換する入力経路の存在は確認済み
+  - import typeが仕訳データであることは確認済み
+  - visibleなfield mapping UIは今回のflowでは観測されていない
+  - field mapping機能が存在しないとは断定しない
+  - import前/実行時validationでwhole importを拒否する経路は観測済み
+  - partial successは観測されていない
   - 30-column observed CSVがImport形式そのものかは未検証
   - Export CSVとImport CSVの対称性は仮説
   - EXP-01 candidateのImport成功は未検証
@@ -67,3 +80,10 @@ JDL製品群の実運用上の位置づけを、正式仕様ではなくObserved
 - 決算・申告時のJDL server-side移行は既存業務フローに含まれる。
 
 ただし、正式JDLOutputAdapter、正式JDL FormatProfile、`VERIFIED_BY_REAL_IMPORT` への昇格は、EXP-01等の実Import成功確認後にのみ検討する。
+
+## Current Hypotheses
+
+- H1: JDL-origin 30-column CSV family may be a reference/template candidate for the `CSVファイル -> 仕訳ファイル` input route.
+- H2: The prior 1271-record rejection may primarily involve target master mismatches after structural recognition.
+
+Both hypotheses remain unverified. The UI rejection evidence is consistent with H2, but does not prove a single cause.

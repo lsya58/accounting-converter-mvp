@@ -8,6 +8,8 @@ JDL IBEX出納帳 35.5およびJDL会計/server-side財務システムのCSV/仕
 
 最優先対象は、JDL IBEX出納帳 35.5の「会計データ変換」->「1:入力 [CSVファイル -> 仕訳ファイル]」を選択した後の画面である。
 
+次の最優先対象は、JDL IBEX出納帳 35.5の `データ管理・選択 -> CSV入力 -> データ種類: 仕訳データ` のHELPと、rejection時のログ表示内容である。
+
 ## 取得したい画面・情報
 
 - 製品名とVersion情報
@@ -27,6 +29,8 @@ JDL IBEX出納帳 35.5およびJDL会計/server-side財務システムのCSV/仕
 - sample/template出力機能の有無
 - help / manualへの導線
 - error確認画面またはlog出力先
+- CSV入力画面のHELP内容
+- rejection時のログ表示内容
 - JDL server-side financial/accounting systemの製品名/VersionまたはJOBMENU表示
 
 ## 撮影・記録時の注意
@@ -35,6 +39,7 @@ JDL IBEX出納帳 35.5およびJDL会計/server-side財務システムのCSV/仕
 - 実顧客名、実取引先名、実摘要、実金額を画面に出さない。
 - 取込実行ボタンは押さない。
 - `CSVファイル -> 仕訳ファイル` を選択しても、最終実行・登録はしない。
+- HELPやログ表示は、CSV field/layout specificationとエラー詳細が含まれる可能性があるため、画面全体をprivate evidenceとして保存する。
 - 設定値は「見えた事実」と「推測」を分けて記録する。
 - 画面から読み取った内容を正式仕様として扱わない。
 

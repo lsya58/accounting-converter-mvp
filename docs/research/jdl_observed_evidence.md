@@ -33,12 +33,44 @@
   - JDL IBEX出納帳 35.5に「会計データ変換」機能が存在する
   - 「会計データ入出力設定」画面で `CSVファイル -> 仕訳ファイル` の入力経路を観測
   - 同一画面で `仕訳ファイル -> CSVファイル` の出力経路を観測
+  - `データ管理・選択 -> CSV入力` のflowを観測
+  - CSV入力のデータ種類として `仕訳データ` を選択できることを観測
+  - 取り込むCSVファイルを参照して選択するfile chooserを観測
+  - import前に出納帳ファイルを退避する確認画面を観測
+  - import対象の日付範囲指定画面を観測
+  - 集計単位として日単位/月単位を選択するUIを観測
+  - 決算整理を含む/含まない選択を観測
+  - validation failure時にCSV入力全体が拒否され、ログ表示ボタンが提示されることを観測
 - limits:
   - not a formal JDL CSV specification
   - not verified as a successful import file
   - identifier flag meanings remain unresolved
   - export/import symmetry is still a hypothesis
   - EXP-01 generated CSV has not been imported successfully yet
+  - visible field mapping UI was not observed in this flow, but absence of a field mapping feature is not proven
+  - partial success was not observed
+
+## EVID-JDL-001-UI-REJECTION
+
+- source: JDL IBEX出納帳 35.5 CSV入力 rejection UI
+- evidence level: `OBSERVED`
+- observed message family:
+  - CSVファイル内のデータ件数を表示する
+  - 項目その他の相違により取込不可である旨を表示する
+  - ログファイル確認を促す
+  - ログ表示ボタンが存在する
+- relationship to prior 1271-record evidence:
+  - the displayed data count matches the previously analyzed failed-import case count
+  - file identity is not proven by the UI evidence alone
+  - prior diagnostics found master mismatch candidates that are consistent with this rejection family
+  - re-analysis of the prior error CSV observed 1271 data records and 493 master mismatch candidates
+  - mismatch candidate categories included debit/credit account and debit/credit subaccount
+  - this does not prove subaccount mismatch is the only cause
+- interpretation:
+  - JDL IBEX出納帳 performs validation before or during import and can reject the whole import with log guidance
+  - this strengthens the need to preserve whole-file blocking behavior in this project
+  - this does not prove the 30-column export family is the official import layout
+  - target master mismatch is a stronger hypothesis than before, but remains unverified until the JDL log is reviewed
 
 ## EVID-JDL-002
 

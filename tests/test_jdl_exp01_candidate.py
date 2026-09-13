@@ -14,6 +14,7 @@ from accounting_converter.infrastructure.adapter_registry import (
     AdapterAvailabilityStatus,
     production_adapter_registry,
 )
+from accounting_converter.domain.format_metadata import EvidenceLevel
 from accounting_converter.profiles.known_formats import (
     jdl_ibex_cashbook_35_5_observed_schema_definition,
     yayoi_ae19_direct_export_observed_schema,
@@ -196,10 +197,24 @@ class JdlExp01CandidateTests(unittest.TestCase):
         registry = production_adapter_registry()
         jdl_schema = jdl_ibex_cashbook_35_5_observed_schema_definition()
 
+        self.assertEqual(jdl_schema.identity.evidence_level, EvidenceLevel.OBSERVED)
+        self.assertNotEqual(
+            jdl_schema.identity.evidence_level,
+            EvidenceLevel.VERIFIED_BY_REAL_IMPORT,
+        )
         self.assertEqual(
             registry.get_exact_output(jdl_schema.identity).status,
             AdapterAvailabilityStatus.UNAVAILABLE,
         )
+
+    def test_import_route_ui_evidence_does_not_make_exp01_production(self) -> None:
+        entry = build_exp01_common_journal(self.config())
+        jdl_schema = jdl_ibex_cashbook_35_5_observed_schema_definition()
+
+        self.assertEqual(entry.metadata["status"], EXPERIMENT_STATUS)
+        self.assertFalse(entry.metadata["production_adapter"])
+        self.assertEqual(jdl_schema.identity.evidence_level, EvidenceLevel.OBSERVED)
+        self.assertIn("Not verified by successful import", jdl_schema.identity.notes)
 
     def test_yayoi_to_jdl_readiness_is_not_ready(self) -> None:
         registry = production_adapter_registry()

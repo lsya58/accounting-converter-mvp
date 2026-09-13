@@ -8,11 +8,29 @@ EXP-01は、完全架空の最小1仕訳をJDL IBEX出納帳 35.5の「会計デ
 
 UI evidenceにより、JDL IBEX出納帳 35.5にCSVから仕訳ファイルへ変換する入力経路が存在することは確認済み。ただし、30列Observed CSVがそのままImport可能であること、Export CSVとImport CSVが完全対称であること、EXP-01 candidateが受理されることは未検証です。
 
+今回観測した操作flow:
+
+1. `データ管理・選択 -> CSV入力`
+2. データ種類で `仕訳データ` を選択
+3. 取り込むCSVファイルを参照して選択
+4. 出納帳ファイルを退避するか確認
+5. 取込対象の日付範囲を指定
+6. 集計単位と決算整理の扱いを選択
+7. 実行
+
+このflowではvisibleなfield mapping UIは観測されていない。ただしfield mapping機能が存在しないとは断定しない。
+
 ## 安全条件
 
 - 完全架空データのみ使用する。
 - JDL側では必ずテスト会社を使用する。
 - Import前にJDL側データをバックアップする。
+- JDLの退避確認では、必ず出納帳ファイルを退避する。
+- date rangeはEXP-01の対象1仕訳だけに限定する。
+- 決算整理は通常仕訳なら「含まない」を第一候補として人間が確認する。
+- 「含まない」を仕様として自動固定しない。
+- Import rejection時はログ表示からログを保存する。
+- rejection時も元帳/仕訳ファイルに変更がないことを確認する。
 - 実顧客CSV、実顧客名、実顧客の摘要、実金額を使わない。
 - 生成CSVとmanifestは `data/private/experiments/` 配下に置き、Git管理しない。
 - JDLエラーログは `data/private/` 配下に保存する。
@@ -113,6 +131,8 @@ Import失敗時に保存するもの:
 - JDL画面のエラーメッセージ
 - JDLログファイル
 - 生成CSVのprivacy-safe report
+- JDL側で退避/復元したかどうか
+- 元帳/仕訳ファイルの変更有無
 
 失敗ログはGit管理外の `data/private/` 配下へ保存する。
 
@@ -121,6 +141,8 @@ Import失敗時に保存するもの:
 EXP-01は1件の最小候補の実験です。成功しても、JDLの正式CSV仕様、複合仕訳、税区分、補助、部門、月次大量データ、別Version互換性はまだ確定しません。
 
 同一UI内に `CSVファイル -> 仕訳ファイル` と `仕訳ファイル -> CSVファイル` が存在するため、JDL-origin 30-column CSV familyがImport template/referenceになり得る仮説は強くなった。しかし、まだ `VERIFIED_BY_REAL_IMPORT` ではない。
+
+過去の1271件rejection UIと既存診断結果は、CSV構造認識後にtarget master mismatch等でwhole importが拒否された可能性と整合する。ただし、補助科目不一致だけが原因とは断定しない。
 
 ## JDL会計21列仕訳一覧との関係
 
@@ -132,3 +154,9 @@ JDL会計から取得した21列の仕訳一覧CSVは、EXP-01の30列import can
 21列仕訳一覧は、JDLへ取り込んだ後にJDL側で登録された内容をread-onlyに確認するための候補Evidenceであり、30列import formatへ流用しない。
 
 現時点では、21列仕訳一覧から見える項目だけを比較対象候補にする。日付表記、footer行、一覧固有の列、税関連列の意味が未確定な場合は、JDL実機取込後Verificationで `INSUFFICIENT_EVIDENCE` または `PARSE_FAILED` として扱う。
+
+## 次に取得するEvidence
+
+- CSV入力エラー画面の `ログ表示` 内容
+- CSV入力画面の `HELP` 内容
+- HELP内にCSV field/layout specificationがある場合、その内容はUI observed evidenceではなくmanual/documented evidenceとして別管理する
