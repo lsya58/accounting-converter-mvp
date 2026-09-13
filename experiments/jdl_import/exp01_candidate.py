@@ -31,6 +31,13 @@ DEFAULT_OUTPUT_DIR = Path("data/private/experiments/jdl_import/exp01")
 DEFAULT_OUTPUT_NAME = "EXP-01_jdl_import_candidate.csv"
 
 EXPLICIT_CONFIG_REQUIRED_COLUMNS = jdl_ibex_cashbook_35_5_observed_schema().observed_header
+TARGET_MASTER_VALIDATION_KEYS = (
+    "debit_account_exists_in_target_master",
+    "credit_account_exists_in_target_master",
+    "debit_subaccount_blank_or_exists_under_parent",
+    "credit_subaccount_blank_or_exists_under_parent",
+    "no_fuzzy_matching_or_auto_replacement",
+)
 OBSERVED_INVARIANTS = (
     "encoding=cp932",
     "bom=false",
@@ -49,6 +56,7 @@ class JdlExp01CandidateError(ValueError):
 class JdlExp01CandidateConfig:
     jdl_columns: dict[str, str]
     journal_date_iso: str
+    target_master_validation: dict[str, bool]
     output_name: str = DEFAULT_OUTPUT_NAME
     experiment_id: str = EXPERIMENT_ID
     status: str = EXPERIMENT_STATUS
@@ -66,6 +74,7 @@ class JdlExp01ValidationReport:
     identifier_flags: tuple[tuple[str, int], ...]
     balanced: bool
     required_mapping_complete: bool
+    target_master_validation_confirmed: bool
     implicit_default_count: int
     status: str = EXPERIMENT_STATUS
 
@@ -80,6 +89,9 @@ class JdlExp01ValidationReport:
             "identifier_flags": dict(self.identifier_flags),
             "balanced": self.balanced,
             "required_mapping_complete": self.required_mapping_complete,
+            "target_master_validation_confirmed": (
+                self.target_master_validation_confirmed
+            ),
             "implicit_default_count": self.implicit_default_count,
             "errors": list(self.errors),
             "warnings": list(self.warnings),
@@ -99,6 +111,8 @@ class JdlExp01ValidationReport:
             f"identifier_flags: {payload['identifier_flags']}",
             f"balanced: {payload['balanced']}",
             f"required_mapping_complete: {payload['required_mapping_complete']}",
+            "target_master_validation_confirmed: "
+            f"{payload['target_master_validation_confirmed']}",
             f"implicit_default_count: {payload['implicit_default_count']}",
         ]
         if self.errors:
@@ -124,6 +138,7 @@ def load_config(path: Path) -> JdlExp01CandidateConfig:
     return JdlExp01CandidateConfig(
         jdl_columns=dict(payload["jdl_columns"]),
         journal_date_iso=payload["journal_date_iso"],
+        target_master_validation=dict(payload.get("target_master_validation", {})),
         output_name=payload.get("output_name", DEFAULT_OUTPUT_NAME),
         experiment_id=payload.get("experiment_id", EXPERIMENT_ID),
         status=payload.get("status", EXPERIMENT_STATUS),
@@ -293,6 +308,7 @@ def validate_generated_candidate(
         identifier_flags=analysis.identifier_flag_counts,
         balanced=balanced,
         required_mapping_complete=True,
+        target_master_validation_confirmed=_target_master_validation_confirmed(config),
         implicit_default_count=0,
     )
     _ = analysis_to_privacy_safe_dict(analysis)
@@ -361,6 +377,7 @@ def _validate_config(
         raise JdlExp01CandidateError("experiment_id must be EXP-01")
     if config.status != EXPERIMENT_STATUS:
         raise JdlExp01CandidateError("status must be EXPERIMENTAL_NOT_VERIFIED_BY_REAL_IMPORT")
+    _validate_target_master_confirmation(config.target_master_validation)
     columns = config.jdl_columns
     missing = [column for column in observed_header if column not in columns]
     extra = [column for column in columns if column not in observed_header]
@@ -420,6 +437,27 @@ def _validate_pair(columns: dict[str, str], code_field: str, name_field: str) ->
         raise JdlExp01CandidateError(
             f"ambiguous explicit mapping: {code_field} and {name_field} must both be blank or both be set"
         )
+
+
+def _validate_target_master_confirmation(values: dict[str, bool]) -> None:
+    missing = [key for key in TARGET_MASTER_VALIDATION_KEYS if key not in values]
+    if missing:
+        raise JdlExp01CandidateError(
+            "missing target master validation confirmations: " + ", ".join(missing)
+        )
+    unconfirmed = [
+        key
+        for key in TARGET_MASTER_VALIDATION_KEYS
+        if values.get(key) is not True
+    ]
+    if unconfirmed:
+        raise JdlExp01CandidateError(
+            "target master validation is not confirmed: " + ", ".join(unconfirmed)
+        )
+
+
+def _target_master_validation_confirmed(config: JdlExp01CandidateConfig) -> bool:
+    return all(config.target_master_validation.get(key) is True for key in TARGET_MASTER_VALIDATION_KEYS)
 
 
 def _write_candidate_csv(

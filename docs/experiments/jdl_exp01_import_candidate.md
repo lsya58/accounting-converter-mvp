@@ -55,6 +55,8 @@ cp experiments/jdl_import/exp01_config.template.json \
 
 `config.json` の30列すべてを確認する。空欄にする列も、JDLテスト会社で空欄として試す意図を明示して空欄にする。
 
+`target_master_validation` の全項目も、JDLテスト会社のマスターを人間が確認して `true` にする。未確認のまま候補CSVを生成しない。
+
 最低限、人間がJDL実機で確認して入力する値:
 
 - 伝番
@@ -67,6 +69,11 @@ cp experiments/jdl_import/exp01_config.template.json \
 - 貸方科目正式名称
 - 摘要
 - 補助、部門、税区分、税入力方法、取引科目を空欄にしてよいか
+- 借方科目が取込先JDLマスターに存在すること
+- 貸方科目が取込先JDLマスターに存在すること
+- 補助科目を使う場合、正しい親勘定科目の下に存在すること
+- 補助科目を使わない場合、空欄表現として試す意図が明確であること
+- fuzzy matchingや自動置換を行っていないこと
 
 ## 生成コマンド
 
@@ -97,6 +104,7 @@ PYTHONPATH=src python3 -m experiments.jdl_import.exp01_candidate \
 - 金額parse可能
 - 借方合計と貸方合計が一致
 - 必須mapping値が明示設定済み
+- target master validationが明示確認済み
 - 暗黙defaultなし
 
 privacy-safe reportには科目名、補助名、部門名、摘要、個別金額、raw CSV rowを出さない。
@@ -143,6 +151,8 @@ EXP-01は1件の最小候補の実験です。成功しても、JDLの正式CSV�
 同一UI内に `CSVファイル -> 仕訳ファイル` と `仕訳ファイル -> CSVファイル` が存在するため、JDL-origin 30-column CSV familyがImport template/referenceになり得る仮説は強くなった。しかし、まだ `VERIFIED_BY_REAL_IMPORT` ではない。
 
 過去の1271件rejection UIと既存診断結果は、CSV構造認識後にtarget master mismatch等でwhole importが拒否された可能性と整合する。ただし、補助科目不一致だけが原因とは断定しない。
+
+error-annotated CSVの再解析では、account/subaccount mismatch candidatesがJDL runtime diagnosticとして観測された。EXP-01では、科目・補助科目のtarget master確認を候補生成前の必須条件として扱う。
 
 ## JDL会計21列仕訳一覧との関係
 

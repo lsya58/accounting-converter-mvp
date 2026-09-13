@@ -44,6 +44,7 @@ class JdlExp01CandidateTests(unittest.TestCase):
             self.assertEqual(result.validation_report.column_count, 30)
             self.assertEqual(dict(result.validation_report.identifier_flags), {"1000": 1})
             self.assertTrue(result.validation_report.balanced)
+            self.assertTrue(result.validation_report.target_master_validation_confirmed)
             self.assertEqual(result.validation_report.status, EXPERIMENT_STATUS)
 
             manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
@@ -193,6 +194,13 @@ class JdlExp01CandidateTests(unittest.TestCase):
             all(item["source"].startswith("explicit_experiment_config") for item in plan)
         )
 
+    def test_missing_target_master_validation_blocks(self) -> None:
+        config = self.config()
+        config.target_master_validation["debit_account_exists_in_target_master"] = False
+
+        with self.assertRaisesRegex(JdlExp01CandidateError, "target master validation"):
+            build_exp01_common_journal(config)
+
     def test_production_registry_does_not_register_jdl_output(self) -> None:
         registry = production_adapter_registry()
         jdl_schema = jdl_ibex_cashbook_35_5_observed_schema_definition()
@@ -256,6 +264,13 @@ class JdlExp01CandidateTests(unittest.TestCase):
         return JdlExp01CandidateConfig(
             jdl_columns=columns,
             journal_date_iso="2026-09-10",
+            target_master_validation={
+                "debit_account_exists_in_target_master": True,
+                "credit_account_exists_in_target_master": True,
+                "debit_subaccount_blank_or_exists_under_parent": True,
+                "credit_subaccount_blank_or_exists_under_parent": True,
+                "no_fuzzy_matching_or_auto_replacement": True,
+            },
         )
 
 

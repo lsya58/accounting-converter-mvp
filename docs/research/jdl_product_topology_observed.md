@@ -87,3 +87,5 @@ JDL製品群の実運用上の位置づけを、正式仕様ではなくObserved
 - H2: The prior 1271-record rejection may primarily involve target master mismatches after structural recognition.
 
 Both hypotheses remain unverified. The UI rejection evidence is consistent with H2, but does not prove a single cause.
+
+The error-annotated CSV evidence strengthens H2 because account/subaccount mismatch diagnostics were observed at runtime. It still does not prove that master mismatch is the only cause, that the 30-column family is fully valid, or that correcting mappings guarantees import success.

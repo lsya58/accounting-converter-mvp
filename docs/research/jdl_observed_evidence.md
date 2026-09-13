@@ -72,6 +72,44 @@
   - this does not prove the 30-column export family is the official import layout
   - target master mismatch is a stronger hypothesis than before, but remains unverified until the JDL log is reviewed
 
+## EVID-JDL-005
+
+- source: JDL IBEX出納帳 35.5 error-annotated CSV generated after CSV入力 rejection
+- evidence level: `OBSERVED`
+- file relationship:
+  - a newly supplied private error-annotated CSV was byte-identical to the previously analyzed error CSV
+  - the identity check was performed by hash comparison in the private workspace
+- observed structure:
+  - CP932
+  - CRLF
+  - BOMなし
+  - 30-column header family
+  - data record count: 1271
+  - diagnostic message count: 493
+  - all diagnostic messages were linked to the preceding data record by the current parser
+- diagnostic category aggregate:
+  - debit subaccount mismatch candidates: 374
+  - credit subaccount mismatch candidates: 102
+  - debit account mismatch candidates: 16
+  - credit account mismatch candidates: 1
+- record-level aggregate:
+  - records with diagnostic candidates: 493
+  - records without diagnostic candidates: 778
+  - records with multiple diagnostic candidates: 0
+- subaccount aggregate:
+  - non-empty debit subaccount records matched debit subaccount mismatch candidates in this file
+  - non-empty credit subaccount records matched credit subaccount mismatch candidates in this file
+  - subaccount mismatch candidates without non-empty subaccount were not observed in this file
+- interpretation:
+  - account/subaccount mismatch was observed as a JDL runtime diagnostic category
+  - target master-aware preflight would likely block this class of rejection earlier
+  - this strengthens, but does not prove, the target master mismatch hypothesis
+- limits:
+  - customer-specific account/subaccount values are not recorded here
+  - this does not prove subaccount mismatch is the only failure cause
+  - this does not prove the 30-column CSV structure is fully correct
+  - this does not prove import success after correcting master mismatches
+
 ## EVID-JDL-002
 
 - source: JDL-origin export sample

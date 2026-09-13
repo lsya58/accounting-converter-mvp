@@ -13,6 +13,7 @@ from accounting_converter.diagnostics.jdl_csv import (
     ObservedJournalGroupStatus,
     ObservedJdlSchema,
     analysis_to_dict,
+    analysis_to_privacy_safe_dict,
 )
 from accounting_converter.diagnostics.jdl_csv.observed_schemas import (
     jdl_ibex_cashbook_35_5_observed_schema,
@@ -245,6 +246,50 @@ class JdlCsvDiagnosticsTests(unittest.TestCase):
         self.assertEqual(summary.items[0].count, 3)
         self.assertEqual(summary.items[0].first_row, 3)
         self.assertIsNone(summary.items[0].account_value)
+
+    def test_multiple_diagnostics_attach_to_same_preceding_record(self) -> None:
+        result = self.analyze_observed_records(
+            [
+                self.record30(
+                    debit_code="D001",
+                    debit_account="架空売掛金",
+                    debit_sub="架空補助",
+                    credit_code="C001",
+                    credit_account="架空現金",
+                    amount="100",
+                ),
+                "// [借方補助]に一致する補助が見つかりません",
+                "// [借方科目]に一致する科目が見つかりません",
+            ]
+        )
+
+        self.assertEqual(len(result.diagnostic_issues), 2)
+        self.assertEqual(
+            {issue.related_record_row for issue in result.diagnostic_issues},
+            {2},
+        )
+        self.assertEqual(result.master_mismatch_summary.total_count, 2)
+
+    def test_privacy_safe_aggregation_does_not_expose_mismatch_values(self) -> None:
+        result = self.analyze_observed_records(
+            [
+                self.record30(
+                    debit_code="D001",
+                    debit_account="架空売掛金",
+                    debit_sub="秘密補助",
+                    credit_code="C001",
+                    credit_account="架空現金",
+                    amount="100",
+                ),
+                "// [借方補助]に一致する補助が見つかりません",
+            ]
+        )
+
+        serialized = str(analysis_to_privacy_safe_dict(result))
+
+        self.assertIn("diagnostic_issue_counts_by_type", serialized)
+        self.assertNotIn("秘密補助", serialized)
+        self.assertNotIn("架空売掛金", serialized)
 
     def test_unknown_jdl_message_is_kept_as_unknown_issue(self) -> None:
         result = self.analyzer.analyze_text(
