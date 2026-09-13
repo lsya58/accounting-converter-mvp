@@ -20,6 +20,7 @@ from accounting_converter.diagnostics.jdl_accounting_journal_list import (
     JdlAccountingPostImportVerifier,
     PostImportVerificationStatus,
     analysis_to_privacy_safe_dict,
+    jdl_accounting_journal_list_observed_schema,
     verification_to_privacy_safe_dict,
 )
 from accounting_converter.domain.journal import (
@@ -50,6 +51,15 @@ class JdlAccountingJournalListTests(unittest.TestCase):
         self.assertEqual(result.data_row_count, 1)
         self.assertEqual(result.data_row_column_count_distribution, ((21, 1),))
         self.assertEqual(result.comparison_to_cashbook_30_column, JdlAccountingJournalListComparison.DIFFERENT_STRUCTURE)
+
+    def test_observed_identity_is_read_only_and_version_unknown(self) -> None:
+        schema = jdl_accounting_journal_list_observed_schema()
+
+        self.assertEqual(schema.evidence_level, "OBSERVED")
+        self.assertEqual(schema.observed_version, "UNKNOWN")
+        self.assertEqual(schema.purpose, "READ_ONLY_POST_IMPORT_VERIFICATION_CANDIDATE")
+        self.assertFalse(schema.is_formal_format_profile)
+        self.assertEqual(schema.column_count, 21)
 
     def test_preamble_and_header_detection(self) -> None:
         result = self.analyze(self.csv_text(preamble=("JDL accounting export", "")))

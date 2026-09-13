@@ -2,9 +2,11 @@
 
 ## 目的
 
-EXP-01は、完全架空の最小1仕訳をJDL import candidate fileとして生成し、JDL実機のテスト会社で手動Import試験するための研究用手順です。
+EXP-01は、完全架空の最小1仕訳をJDL IBEX出納帳 35.5の「会計データ変換」->「CSVファイル -> 仕訳ファイル」経路で手動Import試験するための研究用手順です。
 
 これは正式JDLOutputAdapterではありません。JDL observed evidenceを正式仕様へ昇格しません。成功しても即production化しません。
+
+UI evidenceにより、JDL IBEX出納帳 35.5にCSVから仕訳ファイルへ変換する入力経路が存在することは確認済み。ただし、30列Observed CSVがそのままImport可能であること、Export CSVとImport CSVが完全対称であること、EXP-01 candidateが受理されることは未検証です。
 
 ## 安全条件
 
@@ -118,11 +120,13 @@ Import失敗時に保存するもの:
 
 EXP-01は1件の最小候補の実験です。成功しても、JDLの正式CSV仕様、複合仕訳、税区分、補助、部門、月次大量データ、別Version互換性はまだ確定しません。
 
+同一UI内に `CSVファイル -> 仕訳ファイル` と `仕訳ファイル -> CSVファイル` が存在するため、JDL-origin 30-column CSV familyがImport template/referenceになり得る仮説は強くなった。しかし、まだ `VERIFIED_BY_REAL_IMPORT` ではない。
+
 ## JDL会計21列仕訳一覧との関係
 
 JDL会計から取得した21列の仕訳一覧CSVは、EXP-01の30列import candidateとは別構造として扱う。
 
-- 30列JDL出納帳Observed: import candidate research
+- 30列JDL出納帳Observed: JDL IBEX出納帳 35.5 import candidate research
 - 21列JDL会計仕訳一覧Observed: post-import verification candidate
 
 21列仕訳一覧は、JDLへ取り込んだ後にJDL側で登録された内容をread-onlyに確認するための候補Evidenceであり、30列import formatへ流用しない。

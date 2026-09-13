@@ -29,10 +29,16 @@
   - padded diagnostic message rows can have the same column count as data records
   - `1110 -> 0..n * 1100 -> 1101` contiguous group candidates were observed
   - multiple group candidates had same voucher/date and debit/credit balance
+- UI evidence:
+  - JDL IBEX出納帳 35.5に「会計データ変換」機能が存在する
+  - 「会計データ入出力設定」画面で `CSVファイル -> 仕訳ファイル` の入力経路を観測
+  - 同一画面で `仕訳ファイル -> CSVファイル` の出力経路を観測
 - limits:
   - not a formal JDL CSV specification
   - not verified as a successful import file
   - identifier flag meanings remain unresolved
+  - export/import symmetry is still a hypothesis
+  - EXP-01 generated CSV has not been imported successfully yet
 
 ## EVID-JDL-002
 
@@ -103,6 +109,20 @@
   - field semantics are read-only verification candidates only
   - no claim is made that JDL会計 and JDL IBEX出納帳 share a CSV specification
   - no `VERIFIED_BY_REAL_IMPORT` promotion is made
+
+## EVID-JDL-004
+
+- source: JDL会計 / server-side financial system operation notes
+- evidence level: `OBSERVED`
+- observed topology:
+  - day-to-day entry is performed on standalone JDL IBEX出納帳 installations
+  - closing/reporting work uses the server-side JDL financial/accounting system
+  - server-side system is operationally auto-updated
+  - a JOBMENU screen displayed `財務システム38`
+- separation:
+  - `財務システム38` is not hardcoded as a product version
+  - JDL会計/server-side exports are downstream evidence, not MVP import target evidence
+  - JDL IBEX出納帳 35.5 remains the primary candidate for MVP direct import target
 
 ## Tax / Department Notes
 

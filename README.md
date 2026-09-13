@@ -61,6 +61,8 @@ JDL IBEX出納帳 35.5の実データでObserved Behaviorは再現できてい�
 
 JDL診断CLIは、schema未指定の純粋観測と、明示的なObserved Schema比較を分けています。バージョン未確認のJDL由来CSVを、黙って35.5 evidenceとして扱いません。
 
+実運用上は、日常入力にJDL IBEX出納帳 35.5を使い、決算・申告時にserver-sideのJDL財務/会計システムへ移行する流れが観測されています。MVPの直接Import target候補はJDL IBEX出納帳 35.5へ整理し、JDL会計21列仕訳一覧はpost-import verification用のread-only evidence候補として分離します。
+
 ```bash
 PYTHONPATH=src python3 -m accounting_converter.cli diagnose-jdl <csv-path>
 PYTHONPATH=src python3 -m accounting_converter.cli diagnose-jdl <csv-path> --compare-observed jdl-ibex-cashbook-35.5
@@ -185,7 +187,7 @@ PYTHONPATH=src python3 -m accounting_converter.cli diagnose-yayoi <csv-path> --f
 PYTHONPATH=src python3 -m accounting_converter.cli diagnose-yayoi <csv-path> --format privacy-json
 ```
 
-現在のテスト数は267件です。
+現在のテスト数は283件です。
 
 ## Windows Packaging PoC
 
