@@ -117,3 +117,14 @@ Import失敗時に保存するもの:
 ## production化しない理由
 
 EXP-01は1件の最小候補の実験です。成功しても、JDLの正式CSV仕様、複合仕訳、税区分、補助、部門、月次大量データ、別Version互換性はまだ確定しません。
+
+## JDL会計21列仕訳一覧との関係
+
+JDL会計から取得した21列の仕訳一覧CSVは、EXP-01の30列import candidateとは別構造として扱う。
+
+- 30列JDL出納帳Observed: import candidate research
+- 21列JDL会計仕訳一覧Observed: post-import verification candidate
+
+21列仕訳一覧は、JDLへ取り込んだ後にJDL側で登録された内容をread-onlyに確認するための候補Evidenceであり、30列import formatへ流用しない。
+
+現時点では、21列仕訳一覧から見える項目だけを比較対象候補にする。日付表記、footer行、一覧固有の列、税関連列の意味が未確定な場合は、JDL実機取込後Verificationで `INSUFFICIENT_EVIDENCE` または `PARSE_FAILED` として扱う。

@@ -75,6 +75,35 @@
   - no normalization rule such as display-code to CSV-code conversion is established
   - this supports the need for future master-aware Mapping Review, not automatic mapping
 
+## EVID-JDL-003
+
+- source: JDL会計 仕訳一覧CSV
+- product/version evidence: JDL会計由来として実務上確認。versionは未確認。
+- evidence level: `OBSERVED`
+- purpose: post-import verification candidate / read-only evidence
+- observed structure:
+  - CP932
+  - CRLF
+  - BOMなし
+  - 21-column journal list export family
+  - pre-header rows exist
+  - header names/order differ from JDL IBEX出納帳30-column observed schema
+  - data rows are 21 columns in the observed main body
+- observed behavior:
+  - account, subaccount, amount, description, tax-scope/tax-category-like fields are visible in the journal-list header
+  - date values are not yet safely interpreted as calendar dates by the current analyzer
+  - footer/summary-like non-21-column rows can appear after the main body
+- separation:
+  - not a 30-column import candidate format
+  - not used for EXP-01 CSV generation
+  - not merged into JDL IBEX出納帳35.5 observed import/export evidence
+  - not verified as an importable CSV format
+- limits:
+  - version is `UNKNOWN`
+  - field semantics are read-only verification candidates only
+  - no claim is made that JDL会計 and JDL IBEX出納帳 share a CSV specification
+  - no `VERIFIED_BY_REAL_IMPORT` promotion is made
+
 ## Tax / Department Notes
 
 - Tax and department columns are treated as observed fields only.
