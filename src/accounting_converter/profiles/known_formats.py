@@ -21,6 +21,7 @@ from accounting_converter.domain.format_metadata import (
     SourceProvenance,
 )
 
+from .jdl_official import jdl_ibex_cashbook_official_journal_import_spec
 from .yayoi_official import yayoi_accounting_05_official_import_spec
 
 
@@ -57,6 +58,20 @@ JDL_OBSERVED_SOURCE = SourceProvenance(
     evidence_level=EvidenceLevel.OBSERVED,
     verified_at=date(2026, 8, 27),
     notes="実機取込成功で検証済みの正式仕様ではない。",
+)
+
+JDL_IBEX_CASHBOOK_MANUAL_SOURCE = SourceProvenance(
+    title=(
+        "JDL IBEX 出納帳 操作マニュアル CSV形式で出力するには / "
+        "CSV形式のデータを取り込むには"
+    ),
+    url=None,
+    evidence_level=EvidenceLevel.OFFICIAL_DOCUMENTED,
+    retrieved_at=date(2026, 9, 14),
+    notes=(
+        "Manual pages P319-P322 and P326-P327; footer date 2024-02-14. "
+        "Real import verification is still pending."
+    ),
 )
 
 
@@ -98,6 +113,39 @@ _JDL_OBSERVED_FIELDS: dict[str, SemanticField] = {
     "貸方消費税": SemanticField.CREDIT_TAX_AMOUNT,
     "摘要": SemanticField.DESCRIPTION,
     "借方部門名称": SemanticField.DEBIT_DEPARTMENT,
+    "貸方部門名称": SemanticField.CREDIT_DEPARTMENT,
+}
+
+_JDL_OFFICIAL_FIELDS: dict[str, SemanticField] = {
+    "//識別フラグ": SemanticField.IDENTIFIER_FLAG,
+    "伝番": SemanticField.VOUCHER_NUMBER,
+    "日付": SemanticField.DATE,
+    "借方科目": SemanticField.DEBIT_ACCOUNT,
+    "借方科目名称": SemanticField.DEBIT_ACCOUNT,
+    "借方科目正式名称": SemanticField.DEBIT_ACCOUNT,
+    "借方補助": SemanticField.DEBIT_SUBACCOUNT,
+    "借方補助名称": SemanticField.DEBIT_SUBACCOUNT,
+    "借方課区": SemanticField.DEBIT_TAX_CATEGORY,
+    "借方税区": SemanticField.DEBIT_TAX_CATEGORY,
+    "借方税入力方法": SemanticField.UNKNOWN,
+    "借方金額": SemanticField.DEBIT_AMOUNT,
+    "借方消費税": SemanticField.DEBIT_TAX_AMOUNT,
+    "貸方科目": SemanticField.CREDIT_ACCOUNT,
+    "貸方科目名称": SemanticField.CREDIT_ACCOUNT,
+    "貸方科目正式名称": SemanticField.CREDIT_ACCOUNT,
+    "貸方補助": SemanticField.CREDIT_SUBACCOUNT,
+    "貸方補助名称": SemanticField.CREDIT_SUBACCOUNT,
+    "貸方課区": SemanticField.CREDIT_TAX_CATEGORY,
+    "貸方税区": SemanticField.CREDIT_TAX_CATEGORY,
+    "貸方税入力方法": SemanticField.UNKNOWN,
+    "貸方金額": SemanticField.CREDIT_AMOUNT,
+    "貸方消費税": SemanticField.CREDIT_TAX_AMOUNT,
+    "摘要": SemanticField.DESCRIPTION,
+    "借方取引科目": SemanticField.UNKNOWN,
+    "貸方取引科目": SemanticField.UNKNOWN,
+    "借方部門コード": SemanticField.DEBIT_DEPARTMENT,
+    "借方部門名称": SemanticField.DEBIT_DEPARTMENT,
+    "貸方部門コード": SemanticField.CREDIT_DEPARTMENT,
     "貸方部門名称": SemanticField.CREDIT_DEPARTMENT,
 }
 
@@ -359,12 +407,105 @@ def jdl_ibex_cashbook_35_5_observed_schema_definition() -> SchemaDefinition:
     )
 
 
+def jdl_ibex_cashbook_official_journal_import_schema_definition() -> SchemaDefinition:
+    spec = jdl_ibex_cashbook_official_journal_import_spec()
+    fields = tuple(
+        FieldDefinition(
+            field_id=f"jdl_ibex_cashbook_official_import_col_{column.position:02d}",
+            display_name=column.name,
+            semantic_field=_JDL_OFFICIAL_FIELDS.get(column.name, SemanticField.UNKNOWN),
+            column_position=column.position,
+            required=column.required,
+            data_type=_jdl_official_data_type(column.data_type),
+            max_length=column.max_length,
+            allowed_values=(
+                spec.identifier_flag_values if column.position == 1 else ()
+            ),
+            blank_policy=(
+                BlankPolicy.REQUIRED if column.required else BlankPolicy.OPTIONAL
+            ),
+            evidence=EvidenceLevel.OFFICIAL_DOCUMENTED,
+            source=JDL_IBEX_CASHBOOK_MANUAL_SOURCE,
+            notes=column.notes,
+        )
+        for column in spec.columns
+    )
+    return SchemaDefinition(
+        identity=FormatIdentity(
+            vendor="JDL",
+            product="JDL IBEX 出納帳",
+            format_name="CSV Journal Import 30-column Manual",
+            direction=FormatDirection.OUTPUT,
+            evidence_level=EvidenceLevel.OFFICIAL_DOCUMENTED,
+            source_reference=JDL_IBEX_CASHBOOK_MANUAL_SOURCE,
+            notes=(
+                "Official documented CSV journal import schema from manual. "
+                "Not verified by a successful real import and not production enabled."
+            ),
+        ),
+        fields=fields,
+        capabilities=FormatCapabilities(
+            supports_subaccount=Capability(
+                CapabilityStatus.SUPPORTED,
+                "Code or name can identify a subaccount; target master must contain it.",
+            ),
+            supports_department=Capability(
+                CapabilityStatus.SUPPORTED,
+                "Department columns are part of the documented 30 columns.",
+            ),
+            supports_tax_category=Capability(
+                CapabilityStatus.CONDITIONAL,
+                "Requiredness depends on company tax processing.",
+            ),
+            supports_tax_amount=Capability(
+                CapabilityStatus.CONDITIONAL,
+                "Required for tax-exclusive processing.",
+            ),
+            supports_invoice_classification=Capability(CapabilityStatus.UNKNOWN),
+            supports_description=Capability(CapabilityStatus.SUPPORTED),
+            supports_voucher_number=Capability(CapabilityStatus.SUPPORTED),
+            supports_compound_journal=Capability(CapabilityStatus.SUPPORTED),
+            supports_multiple_debit_lines=Capability(
+                CapabilityStatus.CONDITIONAL,
+                "Voucher line limit depends on company settings.",
+            ),
+            supports_multiple_credit_lines=Capability(
+                CapabilityStatus.CONDITIONAL,
+                "Voucher line limit depends on company settings.",
+            ),
+            supports_header=Capability(
+                CapabilityStatus.SUPPORTED,
+                "First physical row must be exact item-name header.",
+            ),
+            accepted_extensions=(".csv",),
+            delimiter=",",
+            column_count_rules=(30,),
+            maximum_field_lengths={
+                field.semantic_field: field.max_length
+                for field in fields
+                if field.max_length is not None
+                and field.semantic_field is not SemanticField.UNKNOWN
+            },
+            journal_grouping_strategy=JournalGroupingStrategy.IDENTIFIER_FLAG_SEQUENCE,
+        ),
+        delimiter=",",
+        has_header=CapabilityStatus.SUPPORTED,
+        column_count=30,
+        date_formats=("%Y%m%d",),
+        numeric_format="integer_yen_tax_included",
+        blank_representation="empty_field_for_unneeded_item",
+        notes=(
+            "Encoding/newline are not taken from the manual here; EXP-01 uses "
+            "CP932/CRLF/BOM-less only as observed-compatible serialization."
+        ),
+    )
 def default_format_schemas() -> tuple[SchemaDefinition, ...]:
     return (
         yayoi_desktop_import_25_documented_schema(),
         yayoi_ae19_direct_export_observed_schema(),
         yayoi_next_documented_candidate_schema(25),
         yayoi_next_documented_candidate_schema(27),
+        jdl_ibex_cashbook_official_journal_import_schema_definition(),
         jdl_ibex_cashbook_35_5_observed_schema_definition(),
     )
 
@@ -384,3 +525,12 @@ def _jdl_data_type(name: str) -> FieldDataType:
     if "金額" in name or "消費税" in name:
         return FieldDataType.DECIMAL
     return FieldDataType.TEXT
+
+
+def _jdl_official_data_type(value: str) -> FieldDataType:
+    return {
+        "文字": FieldDataType.TEXT,
+        "数値": FieldDataType.NUMBER,
+        "金額": FieldDataType.DECIMAL,
+        "日付": FieldDataType.DATE,
+    }.get(value, FieldDataType.UNKNOWN)

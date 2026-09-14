@@ -32,7 +32,9 @@ JDL製品群の実運用上の位置づけを、正式仕様ではなくObserved
   - field mapping機能が存在しないとは断定しない
   - import前/実行時validationでwhole importを拒否する経路は観測済み
   - partial successは観測されていない
-  - 30-column observed CSVがImport形式そのものかは未検証
+  - 操作マニュアルP319-P322で30-column CSV仕訳入力schemaは `OFFICIAL_DOCUMENTED` として確認済み
+  - 既存30-column observed CSVのheaderはmanual field listと一致した
+  - ただし既存Export CSVにはpreambleがあり、official input requirementの「1行目header」と差分がある
   - Export CSVとImport CSVの対称性は仮説
   - EXP-01 candidateのImport成功は未検証
 
@@ -83,9 +85,15 @@ JDL製品群の実運用上の位置づけを、正式仕様ではなくObserved
 
 ## Current Hypotheses
 
-- H1: JDL-origin 30-column CSV family may be a reference/template candidate for the `CSVファイル -> 仕訳ファイル` input route.
+- H1: JDL-origin 30-column CSV family may be a reference/template candidate for the `CSVファイル -> 仕訳ファイル` input route, but export preamble removal/header-first normalization may be required.
 - H2: The prior 1271-record rejection may primarily involve target master mismatches after structural recognition.
 
 Both hypotheses remain unverified. The UI rejection evidence is consistent with H2, but does not prove a single cause.
 
 The error-annotated CSV evidence strengthens H2 because account/subaccount mismatch diagnostics were observed at runtime. It still does not prove that master mismatch is the only cause, that the 30-column family is fully valid, or that correcting mappings guarantees import success.
+
+## Official Manual Layer
+
+JDL IBEX 出納帳の操作マニュアルP312-P327から、CSV仕訳データ入力の30項目、1行目header requirement、identifier flag meanings、税処理ごとのconditional requirements、error-file behaviorを `OFFICIAL_DOCUMENTED` として整理した。
+
+このmanual layerはJDL IBEX出納帳35.5のUI observed evidenceとは分離する。CP932、CRLF、BOMなしは実CSVからのobserved-compatible serialization設定であり、manual evidenceではない。

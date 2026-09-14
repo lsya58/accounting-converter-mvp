@@ -23,6 +23,10 @@ from accounting_converter.domain.journal import (
     SourceReference,
     TaxInfo,
 )
+from accounting_converter.profiles.jdl_official import (
+    JdlTaxProcessingMode,
+    jdl_ibex_cashbook_official_journal_import_spec,
+)
 
 
 EXPERIMENT_ID = "EXP-01"
@@ -30,7 +34,9 @@ EXPERIMENT_STATUS = "EXPERIMENTAL_NOT_VERIFIED_BY_REAL_IMPORT"
 DEFAULT_OUTPUT_DIR = Path("data/private/experiments/jdl_import/exp01")
 DEFAULT_OUTPUT_NAME = "EXP-01_jdl_import_candidate.csv"
 
-EXPLICIT_CONFIG_REQUIRED_COLUMNS = jdl_ibex_cashbook_35_5_observed_schema().observed_header
+OFFICIAL_SPEC = jdl_ibex_cashbook_official_journal_import_spec()
+OFFICIAL_HEADER = OFFICIAL_SPEC.column_names
+OFFICIAL_FIELD_BY_NAME = {column.name: column for column in OFFICIAL_SPEC.columns}
 TARGET_MASTER_VALIDATION_KEYS = (
     "debit_account_exists_in_target_master",
     "credit_account_exists_in_target_master",
@@ -38,13 +44,35 @@ TARGET_MASTER_VALIDATION_KEYS = (
     "credit_subaccount_blank_or_exists_under_parent",
     "no_fuzzy_matching_or_auto_replacement",
 )
+TAX_VALIDATION_KEYS = (
+    "company_tax_processing_confirmed",
+    "tax_category_abbreviations_confirmed_when_used",
+    "tax_scope_tax_category_combination_confirmed_when_used",
+    "transaction_account_confirmed_when_used",
+)
+REQUIRED_TRANSACTION_COLUMNS = (
+    "//識別フラグ",
+    "伝番",
+    "日付",
+    "借方金額",
+    "貸方金額",
+    "摘要",
+)
+DEBIT_ACCOUNT_IDENTIFIER_COLUMNS = ("借方科目", "借方科目名称", "借方科目正式名称")
+CREDIT_ACCOUNT_IDENTIFIER_COLUMNS = ("貸方科目", "貸方科目名称", "貸方科目正式名称")
+TAX_FIELDS_BY_SIDE = {
+    "借方": ("借方課区", "借方税区", "借方税入力方法", "借方消費税"),
+    "貸方": ("貸方課区", "貸方税区", "貸方税入力方法", "貸方消費税"),
+}
+TRANSACTION_ACCOUNT_FIELDS = ("借方取引科目", "貸方取引科目")
+TAX_INPUT_METHODS = ("内税", "外税", "別記")
 OBSERVED_INVARIANTS = (
     "encoding=cp932",
     "bom=false",
     "line_ending=CRLF",
-    "header=observed_30_column_header",
+    "header=official_documented_30_column_header",
     "record_count=1",
-    "identifier_flag=1000_for_EXP01_observed_single_record_candidate",
+    "identifier_flag=1000_for_EXP01_official_non_voucher_journal",
 )
 
 
@@ -57,6 +85,8 @@ class JdlExp01CandidateConfig:
     jdl_columns: dict[str, str]
     journal_date_iso: str
     target_master_validation: dict[str, bool]
+    company_tax_processing: str = JdlTaxProcessingMode.UNCONFIRMED.value
+    tax_validation: dict[str, bool] | None = None
     output_name: str = DEFAULT_OUTPUT_NAME
     experiment_id: str = EXPERIMENT_ID
     status: str = EXPERIMENT_STATUS
@@ -139,6 +169,11 @@ def load_config(path: Path) -> JdlExp01CandidateConfig:
         jdl_columns=dict(payload["jdl_columns"]),
         journal_date_iso=payload["journal_date_iso"],
         target_master_validation=dict(payload.get("target_master_validation", {})),
+        company_tax_processing=payload.get(
+            "company_tax_processing",
+            JdlTaxProcessingMode.UNCONFIRMED.value,
+        ),
+        tax_validation=dict(payload.get("tax_validation", {})),
         output_name=payload.get("output_name", DEFAULT_OUTPUT_NAME),
         experiment_id=payload.get("experiment_id", EXPERIMENT_ID),
         status=payload.get("status", EXPERIMENT_STATUS),
@@ -151,17 +186,16 @@ def generate_exp01_candidate(
     overwrite: bool = False,
     config_path: Path | None = None,
 ) -> JdlExp01GenerationResult:
-    schema = jdl_ibex_cashbook_35_5_observed_schema()
     output_path = output_dir / config.output_name
     report_path = output_path.with_suffix(".report.json")
     manifest_path = output_dir / "EXP-01_manifest.json"
     _validate_paths(output_path, report_path, manifest_path, overwrite, config_path)
-    _validate_config(config, schema.observed_header)
+    _validate_config(config)
     entry = build_exp01_common_journal(config)
     row = serialize_exp01_candidate_row(config, entry)
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    _write_candidate_csv(output_path, schema.observed_header, row)
+    _write_candidate_csv(output_path, OFFICIAL_HEADER, row)
     report = validate_generated_candidate(output_path, config)
     if not report.success:
         try:
@@ -180,8 +214,8 @@ def generate_exp01_candidate(
 
 
 def build_exp01_common_journal(config: JdlExp01CandidateConfig) -> JournalEntry:
-    _validate_config(config, EXPLICIT_CONFIG_REQUIRED_COLUMNS)
-    columns = config.jdl_columns
+    _validate_config(config)
+    columns = _resolved_columns(config)
     source = SourceReference(
         file_name="EXP-01_jdl_import_candidate",
         row_number=2,
@@ -195,27 +229,35 @@ def build_exp01_common_journal(config: JdlExp01CandidateConfig) -> JournalEntry:
         lines=[
             JournalLine(
                 side=Side.DEBIT,
-                account=columns["借方科目名称"],
+                account=_account_identity(columns, DEBIT_ACCOUNT_IDENTIFIER_COLUMNS),
                 sub_account=columns["借方補助名称"] or None,
                 department=columns["借方部門名称"] or None,
                 amount=_required_decimal(columns["借方金額"], "借方金額"),
                 tax_info=TaxInfo(
                     category=columns["借方税区"] or None,
                     tax_amount=_optional_decimal(columns["借方消費税"], "借方消費税"),
-                    metadata={"source": "jdl_exp01_explicit_config"},
+                    tax_inclusion=columns["借方税入力方法"] or None,
+                    metadata={
+                        "source": "jdl_exp01_official_documented_schema",
+                        "company_tax_processing": config.company_tax_processing,
+                    },
                 ),
                 source_reference=source,
             ),
             JournalLine(
                 side=Side.CREDIT,
-                account=columns["貸方科目名称"],
+                account=_account_identity(columns, CREDIT_ACCOUNT_IDENTIFIER_COLUMNS),
                 sub_account=columns["貸方補助名称"] or None,
                 department=columns["貸方部門名称"] or None,
                 amount=_required_decimal(columns["貸方金額"], "貸方金額"),
                 tax_info=TaxInfo(
                     category=columns["貸方税区"] or None,
                     tax_amount=_optional_decimal(columns["貸方消費税"], "貸方消費税"),
-                    metadata={"source": "jdl_exp01_explicit_config"},
+                    tax_inclusion=columns["貸方税入力方法"] or None,
+                    metadata={
+                        "source": "jdl_exp01_official_documented_schema",
+                        "company_tax_processing": config.company_tax_processing,
+                    },
                 ),
                 source_reference=source,
             ),
@@ -223,7 +265,8 @@ def build_exp01_common_journal(config: JdlExp01CandidateConfig) -> JournalEntry:
         metadata={
             "experiment_id": EXPERIMENT_ID,
             "status": EXPERIMENT_STATUS,
-            "evidence_level": "OBSERVED",
+            "schema_evidence_level": "OFFICIAL_DOCUMENTED",
+            "serialization_evidence_level": "OBSERVED",
             "production_adapter": False,
         },
     )
@@ -235,11 +278,12 @@ def serialize_exp01_candidate_row(
 ) -> tuple[str, ...]:
     if not entry.is_balanced():
         raise JdlExp01CandidateError("EXP-01 candidate journal is not balanced")
-    if _required_decimal(config.jdl_columns["借方金額"], "借方金額") != entry.debit_total():
+    columns = _resolved_columns(config)
+    if _required_decimal(columns["借方金額"], "借方金額") != entry.debit_total():
         raise JdlExp01CandidateError("Debit amount does not match Common Journal Model")
-    if _required_decimal(config.jdl_columns["貸方金額"], "貸方金額") != entry.credit_total():
+    if _required_decimal(columns["貸方金額"], "貸方金額") != entry.credit_total():
         raise JdlExp01CandidateError("Credit amount does not match Common Journal Model")
-    return tuple(config.jdl_columns[column] for column in EXPLICIT_CONFIG_REQUIRED_COLUMNS)
+    return tuple(columns[column] for column in OFFICIAL_HEADER)
 
 
 def validate_generated_candidate(
@@ -268,8 +312,8 @@ def validate_generated_candidate(
         errors.append("analyzer detected BOM")
     if analysis.line_ending != "CRLF":
         errors.append("analyzer did not classify CRLF")
-    if analysis.header_columns != schema.observed_header:
-        errors.append("observed header does not match")
+    if analysis.header_columns != OFFICIAL_HEADER:
+        errors.append("official documented header does not match")
     if analysis.header_column_count != 30:
         errors.append("header column count must be 30")
     if analysis.data_record_count != 1:
@@ -281,9 +325,9 @@ def validate_generated_candidate(
 
     rows = tuple(csv.reader(text.splitlines())) if text else ()
     if len(rows) != 2:
-        errors.append("CSV body must contain only observed header and one data record")
-    elif tuple(rows[0]) != schema.observed_header:
-        errors.append("first row must be the observed header")
+        errors.append("CSV body must contain only official header and one data record")
+    elif tuple(rows[0]) != OFFICIAL_HEADER:
+        errors.append("first row must be the official documented header")
     elif len(rows[1]) != 30:
         errors.append("data row must contain 30 columns")
     elif tuple(rows[1]) != serialize_exp01_candidate_row(
@@ -309,35 +353,43 @@ def validate_generated_candidate(
         balanced=balanced,
         required_mapping_complete=True,
         target_master_validation_confirmed=_target_master_validation_confirmed(config),
-        implicit_default_count=0,
+        implicit_default_count=_implicit_default_count(config),
     )
     _ = analysis_to_privacy_safe_dict(analysis)
     return report
 
 
 def config_column_plan() -> tuple[dict[str, str], ...]:
-    required_master = {
-        "借方科目",
-        "借方科目名称",
-        "借方科目正式名称",
-        "貸方科目",
-        "貸方科目名称",
-        "貸方科目正式名称",
-    }
-    required_transaction = {"//識別フラグ", "伝番", "日付", "借方金額", "貸方金額", "摘要"}
+    required_transaction = set(REQUIRED_TRANSACTION_COLUMNS)
     plan = []
-    for column in EXPLICIT_CONFIG_REQUIRED_COLUMNS:
-        if column in required_master:
-            source = "explicit_experiment_config_required_master"
+    for column in OFFICIAL_HEADER:
+        if column in required_transaction:
+            source = "explicit_experiment_config_required_transaction"
+            notes = "Required for EXP-01 candidate generation."
+        elif column in DEBIT_ACCOUNT_IDENTIFIER_COLUMNS + CREDIT_ACCOUNT_IDENTIFIER_COLUMNS:
+            source = "explicit_experiment_config_conditional_master_identifier"
+            notes = "At least one documented account identifier per side is required."
+        elif column in TRANSACTION_ACCOUNT_FIELDS:
+            source = "blank_when_unneeded_official_documented"
+            notes = "Only for consumption tax journals; not defaulted to zero."
+        elif column in {
+            field
+            for fields in TAX_FIELDS_BY_SIDE.values()
+            for field in fields
+        }:
+            source = "conditional_tax_field_official_documented"
+            notes = "Requiredness depends on confirmed company tax processing."
         elif column in required_transaction:
             source = "explicit_experiment_config_required_transaction"
+            notes = "Required for EXP-01 candidate generation."
         else:
-            source = "explicit_experiment_config_required_unknown_or_optional"
+            source = "blank_allowed_when_unneeded_official_documented"
+            notes = "Column is always emitted; value may be blank when unneeded."
         plan.append(
             {
                 "column": column,
                 "source": source,
-                "notes": "No implicit default is generated for this column.",
+                "notes": notes,
             }
         )
     return tuple(plan)
@@ -369,20 +421,15 @@ def _is_private_experiment_path(path: Path) -> bool:
     )
 
 
-def _validate_config(
-    config: JdlExp01CandidateConfig,
-    observed_header: tuple[str, ...],
-) -> None:
+def _validate_config(config: JdlExp01CandidateConfig) -> None:
     if config.experiment_id != EXPERIMENT_ID:
         raise JdlExp01CandidateError("experiment_id must be EXP-01")
     if config.status != EXPERIMENT_STATUS:
         raise JdlExp01CandidateError("status must be EXPERIMENTAL_NOT_VERIFIED_BY_REAL_IMPORT")
     _validate_target_master_confirmation(config.target_master_validation)
-    columns = config.jdl_columns
-    missing = [column for column in observed_header if column not in columns]
-    extra = [column for column in columns if column not in observed_header]
-    if missing:
-        raise JdlExp01CandidateError("missing explicit JDL columns: " + ", ".join(missing))
+    _validate_tax_confirmation(config.tax_validation or {})
+    columns = _resolved_columns(config)
+    extra = [column for column in config.jdl_columns if column not in OFFICIAL_HEADER]
     if extra:
         raise JdlExp01CandidateError("unknown JDL columns in config: " + ", ".join(extra))
     non_strings = [column for column, value in columns.items() if not isinstance(value, str)]
@@ -398,22 +445,14 @@ def _validate_config(
             "EXP-01 does not allow embedded newlines: " + ", ".join(newline_values)
         )
     if columns["//識別フラグ"] != "1000":
-        raise JdlExp01CandidateError("EXP-01 observed single-record candidate requires flag 1000")
-    for field in (
-        "伝番",
-        "日付",
-        "借方科目",
-        "借方科目名称",
-        "借方科目正式名称",
-        "借方金額",
-        "貸方科目",
-        "貸方科目名称",
-        "貸方科目正式名称",
-        "貸方金額",
-        "摘要",
-    ):
+        raise JdlExp01CandidateError("EXP-01 official single-record candidate requires flag 1000")
+    for field in REQUIRED_TRANSACTION_COLUMNS:
         if not columns[field].strip():
             raise JdlExp01CandidateError(f"missing required EXP-01 mapping/value: {field}")
+    _validate_account_identifier(columns, DEBIT_ACCOUNT_IDENTIFIER_COLUMNS, "debit account")
+    _validate_account_identifier(columns, CREDIT_ACCOUNT_IDENTIFIER_COLUMNS, "credit account")
+    _validate_official_field_values(columns)
+    _validate_jdl_date(columns["日付"], config.journal_date_iso)
     _required_decimal(columns["借方金額"], "借方金額")
     _required_decimal(columns["貸方金額"], "貸方金額")
     _optional_decimal(columns["借方消費税"], "借方消費税")
@@ -423,11 +462,39 @@ def _validate_config(
         "貸方金額",
     ):
         raise JdlExp01CandidateError("EXP-01 debit and credit amounts must match")
-    _validate_pair(columns, "借方補助", "借方補助名称")
-    _validate_pair(columns, "貸方補助", "貸方補助名称")
+    _validate_alternative_pair(columns, "借方補助", "借方補助名称")
+    _validate_alternative_pair(columns, "貸方補助", "貸方補助名称")
     _validate_pair(columns, "借方部門コード", "借方部門名称")
     _validate_pair(columns, "貸方部門コード", "貸方部門名称")
+    _validate_tax_fields(config, columns)
     _date(config.journal_date_iso, "journal_date_iso")
+
+
+def _resolved_columns(config: JdlExp01CandidateConfig) -> dict[str, str]:
+    return {column: config.jdl_columns.get(column, "") for column in OFFICIAL_HEADER}
+
+
+def _implicit_default_count(config: JdlExp01CandidateConfig) -> int:
+    return sum(1 for column in OFFICIAL_HEADER if column not in config.jdl_columns)
+
+
+def _account_identity(columns: dict[str, str], fields: tuple[str, str, str]) -> str:
+    for field in fields:
+        value = columns[field].strip()
+        if value:
+            return value
+    raise JdlExp01CandidateError("account identifier is missing")
+
+
+def _validate_account_identifier(
+    columns: dict[str, str],
+    fields: tuple[str, str, str],
+    label: str,
+) -> None:
+    if not any(columns[field].strip() for field in fields):
+        raise JdlExp01CandidateError(
+            f"{label} requires at least one documented identifier"
+        )
 
 
 def _validate_pair(columns: dict[str, str], code_field: str, name_field: str) -> None:
@@ -436,6 +503,118 @@ def _validate_pair(columns: dict[str, str], code_field: str, name_field: str) ->
     if has_code != has_name:
         raise JdlExp01CandidateError(
             f"ambiguous explicit mapping: {code_field} and {name_field} must both be blank or both be set"
+        )
+
+
+def _validate_alternative_pair(
+    columns: dict[str, str],
+    code_field: str,
+    name_field: str,
+) -> None:
+    code = columns[code_field].strip()
+    name = columns[name_field].strip()
+    if code:
+        _validate_digits(code, code_field, 4)
+    if name:
+        _validate_text_length(name, name_field, OFFICIAL_FIELD_BY_NAME[name_field].max_length)
+
+
+def _validate_official_field_values(columns: dict[str, str]) -> None:
+    _validate_digits(columns["//識別フラグ"], "//識別フラグ", 4)
+    _validate_digits(columns["伝番"], "伝番", 8)
+    for field in ("借方科目", "貸方科目", "借方取引科目", "貸方取引科目"):
+        if columns[field].strip():
+            _validate_digits(columns[field], field, 4)
+    for field in ("借方部門コード", "貸方部門コード"):
+        if columns[field].strip():
+            _validate_digits(columns[field], field, 4)
+    for field, definition in OFFICIAL_FIELD_BY_NAME.items():
+        if definition.data_type == "文字" and definition.max_length is not None:
+            _validate_text_length(columns[field], field, definition.max_length)
+    for field in ("借方金額", "借方消費税", "貸方金額", "貸方消費税"):
+        if columns[field].strip():
+            _validate_amount_digits(columns[field], field, 12)
+
+
+def _validate_tax_confirmation(values: dict[str, bool]) -> None:
+    missing = [key for key in TAX_VALIDATION_KEYS if key not in values]
+    if missing:
+        raise JdlExp01CandidateError(
+            "missing tax validation confirmations: " + ", ".join(missing)
+        )
+    if values.get("company_tax_processing_confirmed") is not True:
+        raise JdlExp01CandidateError("company tax processing is not confirmed")
+
+
+def _validate_tax_fields(
+    config: JdlExp01CandidateConfig,
+    columns: dict[str, str],
+) -> None:
+    tax_validation = config.tax_validation or {}
+    try:
+        mode = JdlTaxProcessingMode(config.company_tax_processing)
+    except ValueError as exc:
+        raise JdlExp01CandidateError("unknown company tax processing mode") from exc
+    if mode is JdlTaxProcessingMode.UNCONFIRMED:
+        raise JdlExp01CandidateError("company tax processing mode must be confirmed")
+    if mode is JdlTaxProcessingMode.EXEMPT:
+        populated = [
+            field
+            for fields in TAX_FIELDS_BY_SIDE.values()
+            for field in fields
+            if columns[field].strip()
+        ] + [
+            field for field in TRANSACTION_ACCOUNT_FIELDS if columns[field].strip()
+        ]
+        if populated:
+            raise JdlExp01CandidateError(
+                "unnecessary tax field populated for exempt processing: "
+                + ", ".join(populated)
+            )
+        return
+    if tax_validation.get("tax_category_abbreviations_confirmed_when_used") is not True:
+        raise JdlExp01CandidateError("tax abbreviations must be confirmed before use")
+    if tax_validation.get("tax_scope_tax_category_combination_confirmed_when_used") is not True:
+        raise JdlExp01CandidateError("tax scope/category combination is not confirmed")
+    for side, (scope_field, category_field, method_field, amount_field) in TAX_FIELDS_BY_SIDE.items():
+        if not columns[scope_field].strip() or not columns[category_field].strip():
+            raise JdlExp01CandidateError(f"{side} tax scope and category are required")
+        if mode is JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED:
+            if columns[method_field].strip() or columns[amount_field].strip():
+                raise JdlExp01CandidateError(
+                    f"{side} tax-inclusive processing must not populate tax input method or tax amount"
+                )
+        if mode is JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED:
+            if columns[method_field].strip() not in TAX_INPUT_METHODS:
+                raise JdlExp01CandidateError(f"{side} tax input method is required")
+            if not columns[amount_field].strip():
+                raise JdlExp01CandidateError(f"{side} tax amount is required")
+    if any(columns[field].strip() for field in TRANSACTION_ACCOUNT_FIELDS):
+        if tax_validation.get("transaction_account_confirmed_when_used") is not True:
+            raise JdlExp01CandidateError("transaction account semantics are not confirmed")
+    elif mode is JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED:
+        pass
+
+
+def _validate_digits(value: str, field: str, max_digits: int) -> None:
+    if not value.isdigit() or len(value) > max_digits:
+        raise JdlExp01CandidateError(
+            f"{field} must be numeric and at most {max_digits} digits"
+        )
+
+
+def _validate_amount_digits(value: str, field: str, max_digits: int) -> None:
+    normalized = value.replace(",", "")
+    if not normalized.isdigit() or len(normalized) > max_digits:
+        raise JdlExp01CandidateError(
+            f"{field} must be an integer amount with at most {max_digits} digits"
+        )
+
+
+def _validate_text_length(value: str, field: str, max_length: int | None) -> None:
+    if max_length is not None and len(value) > max_length:
+        raise JdlExp01CandidateError(
+            f"{field} must be at most {max_length} characters"
         )
 
 
@@ -527,6 +706,15 @@ def _date(value: str, field: str) -> date:
         return date.fromisoformat(value)
     except ValueError as exc:
         raise JdlExp01CandidateError(f"{field} must be ISO date YYYY-MM-DD") from exc
+
+
+def _validate_jdl_date(jdl_value: str, iso_value: str) -> None:
+    parsed = _date(iso_value, "journal_date_iso")
+    expected = parsed.strftime("%Y%m%d")
+    if not jdl_value.isdigit() or len(jdl_value) != 8:
+        raise JdlExp01CandidateError("日付 must be YYYYMMDD / 8 digits")
+    if jdl_value != expected:
+        raise JdlExp01CandidateError("日付 must match journal_date_iso as YYYYMMDD")
 
 
 def main(argv: list[str] | None = None) -> int:

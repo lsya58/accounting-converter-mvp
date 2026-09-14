@@ -16,11 +16,14 @@ from accounting_converter.infrastructure.adapter_registry import (
 )
 from accounting_converter.domain.format_metadata import EvidenceLevel
 from accounting_converter.profiles.known_formats import (
+    jdl_ibex_cashbook_official_journal_import_schema_definition,
     jdl_ibex_cashbook_35_5_observed_schema_definition,
     yayoi_ae19_direct_export_observed_schema,
 )
+from accounting_converter.profiles.jdl_official import JdlTaxProcessingMode
 from experiments.jdl_import.exp01_candidate import (
     EXPERIMENT_STATUS,
+    OFFICIAL_HEADER,
     JdlExp01CandidateConfig,
     JdlExp01CandidateError,
     build_exp01_common_journal,
@@ -79,6 +82,8 @@ class JdlExp01CandidateTests(unittest.TestCase):
         self.assertTrue(entry.is_balanced())
         self.assertFalse(entry.is_compound())
         self.assertEqual(entry.metadata["status"], EXPERIMENT_STATUS)
+        self.assertEqual(entry.metadata["schema_evidence_level"], "OFFICIAL_DOCUMENTED")
+        self.assertEqual(entry.metadata["serialization_evidence_level"], "OBSERVED")
         self.assertFalse(entry.metadata["production_adapter"])
 
     def test_overwrite_is_blocked_by_default_and_existing_file_is_unchanged(self) -> None:
@@ -124,30 +129,60 @@ class JdlExp01CandidateTests(unittest.TestCase):
     def test_missing_account_mapping_blocks(self) -> None:
         config = self.config()
         config.jdl_columns["借方科目"] = ""
+        config.jdl_columns["借方科目名称"] = ""
+        config.jdl_columns["借方科目正式名称"] = ""
 
-        with self.assertRaisesRegex(JdlExp01CandidateError, "借方科目"):
+        with self.assertRaisesRegex(JdlExp01CandidateError, "debit account"):
             build_exp01_common_journal(config)
 
-    def test_ambiguous_mapping_blocks(self) -> None:
+    def test_account_code_only_identifier_is_allowed_by_manual_rule(self) -> None:
         config = self.config()
-        config.jdl_columns["借方補助"] = "S001"
-        config.jdl_columns["借方補助名称"] = ""
+        config.jdl_columns["借方科目名称"] = ""
+        config.jdl_columns["借方科目正式名称"] = ""
+        config.jdl_columns["貸方科目名称"] = ""
+        config.jdl_columns["貸方科目正式名称"] = ""
 
-        with self.assertRaisesRegex(JdlExp01CandidateError, "ambiguous explicit mapping"):
-            build_exp01_common_journal(config)
+        entry = build_exp01_common_journal(config)
 
-    def test_unknown_required_jdl_field_blocks(self) -> None:
+        self.assertTrue(entry.is_balanced())
+
+    def test_subaccount_code_or_name_alternative_is_allowed(self) -> None:
         config = self.config()
-        del config.jdl_columns["借方課区"]
+        config.jdl_columns["借方補助"] = "0101"
 
-        with self.assertRaisesRegex(JdlExp01CandidateError, "missing explicit JDL columns"):
+        entry = build_exp01_common_journal(config)
+
+        self.assertTrue(entry.is_balanced())
+
+    def test_optional_documented_columns_can_be_omitted_and_remain_columns(self) -> None:
+        config = self.config()
+        del config.jdl_columns["借方補助"]
+        del config.jdl_columns["借方補助名称"]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_exp01_candidate(
+                config,
+                Path(tmpdir) / "data" / "private" / "experiments",
+            )
+
+            rows = list(csv.reader(result.csv_path.read_text(encoding="cp932").splitlines()))
+
+        self.assertEqual(len(rows[1]), 30)
+        self.assertEqual(rows[1][OFFICIAL_HEADER.index("借方補助")], "")
+        self.assertGreater(result.validation_report.implicit_default_count, 0)
+
+    def test_unknown_jdl_field_blocks(self) -> None:
+        config = self.config()
+        config.jdl_columns["未確認列"] = ""
+
+        with self.assertRaisesRegex(JdlExp01CandidateError, "unknown JDL columns"):
             build_exp01_common_journal(config)
 
     def test_amount_parse_blocks(self) -> None:
         config = self.config()
         config.jdl_columns["借方金額"] = "not-amount"
 
-        with self.assertRaisesRegex(JdlExp01CandidateError, "parseable amount"):
+        with self.assertRaisesRegex(JdlExp01CandidateError, "integer amount"):
             build_exp01_common_journal(config)
 
     def test_debit_credit_imbalance_blocks(self) -> None:
@@ -183,15 +218,18 @@ class JdlExp01CandidateTests(unittest.TestCase):
         self.assertNotIn("D001", serialized)
         self.assertNotIn("C001", serialized)
         self.assertNotIn("9001", serialized)
-        self.assertNotIn("2026/09/10", serialized)
+        self.assertNotIn("20260910", serialized)
         self.assertEqual(payload["status"], EXPERIMENT_STATUS)
 
-    def test_column_plan_requires_explicit_config_for_all_30_columns(self) -> None:
+    def test_column_plan_separates_required_conditional_and_blankable_columns(self) -> None:
         plan = config_column_plan()
 
         self.assertEqual(len(plan), 30)
         self.assertTrue(
-            all(item["source"].startswith("explicit_experiment_config") for item in plan)
+            any(item["source"] == "blank_allowed_when_unneeded_official_documented" for item in plan)
+        )
+        self.assertTrue(
+            any(item["source"] == "conditional_tax_field_official_documented" for item in plan)
         )
 
     def test_missing_target_master_validation_blocks(self) -> None:
@@ -218,10 +256,12 @@ class JdlExp01CandidateTests(unittest.TestCase):
     def test_import_route_ui_evidence_does_not_make_exp01_production(self) -> None:
         entry = build_exp01_common_journal(self.config())
         jdl_schema = jdl_ibex_cashbook_35_5_observed_schema_definition()
+        official_schema = jdl_ibex_cashbook_official_journal_import_schema_definition()
 
         self.assertEqual(entry.metadata["status"], EXPERIMENT_STATUS)
         self.assertFalse(entry.metadata["production_adapter"])
         self.assertEqual(jdl_schema.identity.evidence_level, EvidenceLevel.OBSERVED)
+        self.assertEqual(official_schema.identity.evidence_level, EvidenceLevel.OFFICIAL_DOCUMENTED)
         self.assertIn("Not verified by successful import", jdl_schema.identity.notes)
 
     def test_yayoi_to_jdl_readiness_is_not_ready(self) -> None:
@@ -242,20 +282,156 @@ class JdlExp01CandidateTests(unittest.TestCase):
             AdapterAvailabilityStatus.UNAVAILABLE,
         )
 
-    def config(self) -> JdlExp01CandidateConfig:
-        schema = jdl_ibex_cashbook_35_5_observed_schema_definition()
+    def test_yayoi_to_official_jdl_readiness_is_not_ready(self) -> None:
+        registry = production_adapter_registry()
+        source = yayoi_ae19_direct_export_observed_schema()
+        target = jdl_ibex_cashbook_official_journal_import_schema_definition()
+
+        readiness = ConversionPreparationService(adapter_registry=registry).prepare(
+            source,
+            target,
+            journal_entries=(),
+            saved_profile=None,
+        )
+
+        self.assertNotEqual(readiness.status, ConversionReadinessStatus.READY)
+        self.assertEqual(
+            readiness.adapter_availability.output_status,
+            AdapterAvailabilityStatus.UNAVAILABLE,
+        )
+
+    def test_exempt_tax_processing_blocks_unnecessary_tax_fields(self) -> None:
+        config = self.config()
+        config.jdl_columns["借方課区"] = "仕入"
+
+        with self.assertRaisesRegex(JdlExp01CandidateError, "unnecessary tax field"):
+            build_exp01_common_journal(config)
+
+    def test_tax_inclusive_processing_requires_scope_and_category(self) -> None:
+        config = self.config(
+            company_tax_processing=JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED.value,
+            tax_validation_confirmed=True,
+        )
+        config.jdl_columns["借方課区"] = "仕入"
+        config.jdl_columns["借方税区"] = "10%"
+        config.jdl_columns["貸方課区"] = "売上"
+        config.jdl_columns["貸方税区"] = "10%"
+
+        entry = build_exp01_common_journal(config)
+
+        self.assertTrue(entry.is_balanced())
+
+    def test_tax_values_without_confirmed_abbreviations_block(self) -> None:
+        config = self.config(
+            company_tax_processing=JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED.value,
+        )
+        config.jdl_columns["借方課区"] = "仕入"
+        config.jdl_columns["借方税区"] = "10%"
+        config.jdl_columns["貸方課区"] = "売上"
+        config.jdl_columns["貸方税区"] = "10%"
+
+        with self.assertRaisesRegex(JdlExp01CandidateError, "tax abbreviations"):
+            build_exp01_common_journal(config)
+
+    def test_tax_inclusive_processing_blocks_tax_amount(self) -> None:
+        config = self.config(
+            company_tax_processing=JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED.value,
+            tax_validation_confirmed=True,
+        )
+        config.jdl_columns["借方課区"] = "仕入"
+        config.jdl_columns["借方税区"] = "10%"
+        config.jdl_columns["貸方課区"] = "売上"
+        config.jdl_columns["貸方税区"] = "10%"
+        config.jdl_columns["借方消費税"] = "100"
+
+        with self.assertRaisesRegex(JdlExp01CandidateError, "tax-inclusive"):
+            build_exp01_common_journal(config)
+
+    def test_tax_exclusive_processing_requires_tax_method_and_amount(self) -> None:
+        config = self.config(
+            company_tax_processing=JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED.value,
+            tax_validation_confirmed=True,
+        )
+        config.jdl_columns["借方課区"] = "仕入"
+        config.jdl_columns["借方税区"] = "10%"
+        config.jdl_columns["借方税入力方法"] = "別記"
+        config.jdl_columns["借方消費税"] = "100"
+        config.jdl_columns["貸方課区"] = "売上"
+        config.jdl_columns["貸方税区"] = "10%"
+        config.jdl_columns["貸方税入力方法"] = "別記"
+        config.jdl_columns["貸方消費税"] = "100"
+
+        entry = build_exp01_common_journal(config)
+
+        self.assertTrue(entry.is_balanced())
+
+    def test_tax_exclusive_processing_blocks_missing_tax_amount(self) -> None:
+        config = self.config(
+            company_tax_processing=JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED.value,
+            tax_validation_confirmed=True,
+        )
+        config.jdl_columns["借方課区"] = "仕入"
+        config.jdl_columns["借方税区"] = "10%"
+        config.jdl_columns["借方税入力方法"] = "別記"
+        config.jdl_columns["貸方課区"] = "売上"
+        config.jdl_columns["貸方税区"] = "10%"
+        config.jdl_columns["貸方税入力方法"] = "別記"
+
+        with self.assertRaisesRegex(JdlExp01CandidateError, "tax amount is required"):
+            build_exp01_common_journal(config)
+
+    def test_transaction_account_requires_explicit_tax_semantics_confirmation(self) -> None:
+        config = self.config(
+            company_tax_processing=JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED.value,
+            tax_validation_confirmed=True,
+            transaction_account_confirmed=False,
+        )
+        config.jdl_columns["借方課区"] = "仕入"
+        config.jdl_columns["借方税区"] = "10%"
+        config.jdl_columns["借方税入力方法"] = "別記"
+        config.jdl_columns["借方消費税"] = "100"
+        config.jdl_columns["貸方課区"] = "売上"
+        config.jdl_columns["貸方税区"] = "10%"
+        config.jdl_columns["貸方税入力方法"] = "別記"
+        config.jdl_columns["貸方消費税"] = "100"
+        config.jdl_columns["借方取引科目"] = "1001"
+
+        with self.assertRaisesRegex(JdlExp01CandidateError, "transaction account"):
+            build_exp01_common_journal(config)
+
+    def test_date_must_be_yyyymmdd_and_match_iso_date(self) -> None:
+        config = self.config()
+        config.jdl_columns["日付"] = "2026/09/10"
+
+        with self.assertRaisesRegex(JdlExp01CandidateError, "YYYYMMDD"):
+            build_exp01_common_journal(config)
+
+    def test_summary_length_limit_blocks(self) -> None:
+        config = self.config()
+        config.jdl_columns["摘要"] = "あ" * 33
+
+        with self.assertRaisesRegex(JdlExp01CandidateError, "摘要"):
+            build_exp01_common_journal(config)
+
+    def config(
+        self,
+        company_tax_processing: str = JdlTaxProcessingMode.EXEMPT.value,
+        tax_validation_confirmed: bool = False,
+        transaction_account_confirmed: bool = True,
+    ) -> JdlExp01CandidateConfig:
+        schema = jdl_ibex_cashbook_official_journal_import_schema_definition()
         columns = {field.display_name: "" for field in schema.fields}
         columns.update(
             {
                 "//識別フラグ": "1000",
                 "伝番": "9001",
-                "日付": "2026/09/10",
-                "借方科目": "D001",
-                "借方科目名称": "架空現金",
+                "日付": "20260910",
+                "借方科目": "1001",
+                "借方科目名称": "現金",
                 "借方科目正式名称": "架空現金",
                 "借方金額": "1000",
-                "貸方科目": "C001",
-                "貸方科目名称": "架空普通預金",
+                "貸方科目": "1002",
+                "貸方科目名称": "預金",
                 "貸方科目正式名称": "架空普通預金",
                 "貸方金額": "1000",
                 "摘要": "取込テスト",
@@ -270,6 +446,19 @@ class JdlExp01CandidateTests(unittest.TestCase):
                 "debit_subaccount_blank_or_exists_under_parent": True,
                 "credit_subaccount_blank_or_exists_under_parent": True,
                 "no_fuzzy_matching_or_auto_replacement": True,
+            },
+            company_tax_processing=company_tax_processing,
+            tax_validation={
+                "company_tax_processing_confirmed": True,
+                "tax_category_abbreviations_confirmed_when_used": (
+                    tax_validation_confirmed
+                ),
+                "tax_scope_tax_category_combination_confirmed_when_used": (
+                    tax_validation_confirmed
+                ),
+                "transaction_account_confirmed_when_used": (
+                    transaction_account_confirmed
+                ),
             },
         )
 

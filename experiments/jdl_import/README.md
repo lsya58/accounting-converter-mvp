@@ -1,12 +1,12 @@
 # JDL Import Experiments
 
-JDL IBEX 出納帳 35.5の実データから確認したObserved Schemaを使い、JDL実機の取込条件を確認するための研究用環境です。
+JDL IBEX 出納帳のofficial documented 30-column CSV仕訳入力schemaと、JDL IBEX 出納帳35.5の実データから確認したobserved-compatible serializationを使い、JDL実機の取込条件を確認するための研究用環境です。
 
-これは正式JDLOutputAdapterではありません。Observed仕様を正式FormatProfileへ昇格しません。
+これは正式JDLOutputAdapterではありません。`OFFICIAL_DOCUMENTED` schemaを追加しても、実Import成功までは `VERIFIED_BY_REAL_IMPORT` へ昇格しません。
 
 ## EXP-01 import candidate
 
-EXP-01専用の候補生成器は、Observed Headerと1 data recordだけを生成します。CSV本体に独自コメント行や独自metadata行は追加しません。
+EXP-01専用の候補生成器は、official documented headerと1 data recordだけを生成します。CSV本体に独自コメント行、独自metadata行、JDL-origin export preambleは追加しません。
 
 設定テンプレート:
 
@@ -22,7 +22,7 @@ PYTHONPATH=src python3 -m experiments.jdl_import.exp01_candidate \
   --config data/private/experiments/jdl_import/exp01/config.json
 ```
 
-30列すべてを明示設定として扱い、未設定列がある場合は生成をblockします。実機手順は `docs/experiments/jdl_exp01_import_candidate.md` を参照してください。
+マニュアルで不要時に空欄可と確認できた項目は、configで省略しても空欄列として出力します。ただし、列そのものは必ず30列生成します。科目master確認、補助master確認、会社の消費税処理確認、税項目の組み合わせ確認は明示確認が必要です。実機手順は `docs/experiments/jdl_exp01_import_candidate.md` を参照してください。
 
 ## 生成されるもの
 

@@ -6,10 +6,33 @@
 
 ## Evidence Levels
 
+- `OFFICIAL_DOCUMENTED`: JDL公式マニュアル等で確認したが、生成CSVの実機取込成功では未確認。
 - `OBSERVED`: 実ファイルまたは帳票から観測したが、正式仕様または実機取込成功では未確認。
 - `VERIFIED_BY_REAL_IMPORT`: 生成CSVを対象JDLへ実際に取り込み、件数、貸借、内容確認まで完了。
 
-今回のEvidenceは `OBSERVED` に留める。JDLOutputAdapterのEvidenceLevelは上げない。
+実ファイル・UI・帳票由来のEvidenceは `OBSERVED` に留める。マニュアル由来の確認事項は別途 `OFFICIAL_DOCUMENTED` として保持するが、JDLOutputAdapterのEvidenceLevelは上げない。
+
+## EVID-JDL-MANUAL-001
+
+- source: JDL IBEX 出納帳 操作マニュアル P312-P327
+- evidence level: `OFFICIAL_DOCUMENTED`
+- manual footer date: 2024-02-14
+- scope:
+  - CSV入力条件
+  - 仕訳データ30項目
+  - 1行目header requirement
+  - identifier flag meanings
+  - 振替伝票sequence
+  - 科目/補助科目identifier alternatives
+  - target subaccount master requirement
+  - 税処理ごとのconditional requirements
+  - import operation and error-file behavior
+- separation:
+  - JDL IBEX出納帳35.5固有仕様とは断定しない
+  - CP932/CRLF/BOMなしはmanual由来ではなくobserved evidenceのまま
+  - generated CSVのsuccessful importは未検証
+  - `VERIFIED_BY_REAL_IMPORT` には昇格しない
+- details: `docs/research/jdl_ibex_csv_manual_evidence.md`
 
 ## EVID-JDL-001
 
@@ -42,9 +65,9 @@
   - 決算整理を含む/含まない選択を観測
   - validation failure時にCSV入力全体が拒否され、ログ表示ボタンが提示されることを観測
 - limits:
-  - not a formal JDL CSV specification
+  - some field names/order now match official manual evidence, but this file itself remains observed evidence
   - not verified as a successful import file
-  - identifier flag meanings remain unresolved
+  - identifier flag meanings are now official documented in the manual layer, but observed grouping behavior remains separately tracked
   - export/import symmetry is still a hypothesis
   - EXP-01 generated CSV has not been imported successfully yet
   - visible field mapping UI was not observed in this flow, but absence of a field mapping feature is not proven

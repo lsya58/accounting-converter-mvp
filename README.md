@@ -65,6 +65,8 @@ JDL診断CLIは、schema未指定の純粋観測と、明示的なObserved Schem
 
 JDL IBEX出納帳 35.5では `データ管理・選択 -> CSV入力 -> データ種類: 仕訳データ` のImport flowも観測済みです。退避確認、日付範囲指定、決算整理の含む/含まない選択、rejection時のログ表示が確認されています。ただし、30-column observed CSVがImport形式そのものか、Export/Importが完全対称か、EXP-01 candidateが受理されるかは未検証です。
 
+JDL IBEX 出納帳の操作マニュアルP319-P322/P326-P327から、CSV仕訳データ入力の30項目、1行目header requirement、identifier flag meanings、税処理ごとのconditional requirements、error CSV behaviorを `OFFICIAL_DOCUMENTED` evidenceとして追加しています。これはJDL IBEX出納帳35.5の実機取込成功を意味しません。CP932/CRLF/BOMなしは実CSV由来のobserved-compatible serializationとして分離しています。
+
 JDL runtimeのerror-annotated CSVでは、account/subaccount mismatch candidatesが観測されています。このためEXP-01や将来のJDL output preflightでは、target masterに科目が存在すること、補助科目が正しい親勘定科目の下に存在すること、unknown mappingをblockすることを重視します。自動置換やfuzzy matchingは行いません。
 
 ```bash
@@ -132,7 +134,7 @@ GUIは生CSV全文、摘要全文、個別仕訳全文、個別金額を既定�
 
 `accounting_converter.domain.format_metadata` では、`OFFICIAL_DOCUMENTED`、`OBSERVED`、`VERIFIED_BY_REAL_IMPORT`、`INFERRED`、`UNKNOWN` を区別します。弥生Desktop 25項目、弥生Next 25/27項目候補、JDL IBEX出納帳35.5 Observed Schemaを同一視しないための土台です。
 
-`FormatRegistry` は候補とconfidenceを返しますが、CSVだけを見て製品やバージョンを自動確定しません。`FormatCompatibilityAnalyzer` はSource/Target Schemaの差分からTransformation Planを作りますが、科目・税区分などのMapping値は推測しません。
+`FormatRegistry` は候補とconfidenceを返しますが、CSVだけを見て製品やバージョンを自動確定しません。JDL IBEX出納帳のofficial documented 30-column schemaとobserved 30-column schemaは列名順序が一致していても、Evidence layerとFormatIdentityを分けて保持します。`FormatCompatibilityAnalyzer` はSource/Target Schemaの差分からTransformation Planを作りますが、科目・税区分などのMapping値は推測しません。
 
 ## Conversion Preparation / Readiness
 
@@ -168,9 +170,8 @@ Preparationが `READY` になった場合のみ、薄い実行層が既存 `Conv
 ## まだ実装していないもの
 
 - すべての弥生製品/バージョンに対応する汎用YayoiInputAdapter
-- 実際のJDL取込CSV列定義
 - 正式JDLOutputAdapter
-- 正式JDL FormatProfile
+- JDL `VERIFIED_BY_REAL_IMPORT` FormatProfile
 - 勘定科目/補助科目/税区分の実マッピング
 - Conversion Profile管理GUI
 - JDL実機E2E
@@ -191,7 +192,7 @@ PYTHONPATH=src python3 -m accounting_converter.cli diagnose-yayoi <csv-path> --f
 PYTHONPATH=src python3 -m accounting_converter.cli diagnose-yayoi <csv-path> --format privacy-json
 ```
 
-現在のテスト数は287件です。
+現在のテスト数は後述コマンドで確認します。
 
 ## Windows Packaging PoC
 
@@ -219,6 +220,6 @@ GitHub ActionsではPython 3.12で同じテストを実行し、`tests/fixtures/
 
 ## JDL実機Import Testの準備
 
-`experiments/jdl_import/` には、JDL IBEX出納帳35.5のObserved Schemaを使った研究用CSV generatorがあります。これは正式JDLOutputAdapterではなく、完全架空データでJDL実機の取込条件を確認するための実験環境です。
+`experiments/jdl_import/` には、JDL IBEX出納帳のofficial documented 30-column schemaとJDL IBEX出納帳35.5 observed-compatible serializationを使った研究用CSV generatorがあります。これは正式JDLOutputAdapterではなく、完全架空データでJDL実機の取込条件を確認するための実験環境です。
 
 次にJDL実機が使えるときは、テスト用JDLマスターに存在する架空科目を指定してEXP-01から生成し、JDLへ取り込み、結果を`experiments/jdl_import/output/experiment_manifest.json`へ`PASS` / `REJECTED` / `UNTESTED`として記録します。JDLエラーログや実機結果の詳細は`data/private/`配下に保存し、Gitには追加しません。
