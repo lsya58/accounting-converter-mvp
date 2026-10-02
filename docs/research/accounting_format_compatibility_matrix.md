@@ -11,9 +11,10 @@
 | Yayoi | Yayoi Accounting AE 19 | 弥生インポート形式 direct export | Export evidence | 25 observed | no header observed | CP932 observed | 2000/2111 and 2110/2100/2101 observed | OBSERVED | private raw export observation | Medium for observed 2000/2111 and observed multi-record sequences | 複数の独立単一仕訳、借方/貸方の補助科目・部門ありrecord、1行振替伝票record、複数行振替伝票sequenceで再観測。最小YayoiInputAdapterはこのObserved identityに限定し、万能仕様へ昇格しない。 |
 | Yayoi | Yayoi Accounting Next | インポートデータ記述形式 | Import | 25 or 27 | UNKNOWN | UNKNOWN | 識別フラグ体系 documented | OFFICIAL_DOCUMENTED | https://support.yayoi-kk.co.jp/subcontents.html?page_id=29611 | Medium | Desktopと同一仕様とは断定しない。Yayoi=常に25列は禁止。 |
 | JDL | JDL IBEX 出納帳 | CSV仕訳データ入力 30項目 | Import target | 30 documented | 1行目に項目名称必須 | UNKNOWN in manual | 1000/1111/1110/1100/1101 documented | OFFICIAL_DOCUMENTED | JDL IBEX 出納帳 操作マニュアル P319-P322/P326-P327 | High for manual pages | CP932/CRLF/BOMなしはobserved evidence。Format全体は実Import未検証。production JDLOutputAdapterではない。 |
-| JDL | JDL IBEX 出納帳 35.5 | Generator-authored 1111 single-row candidate | Import verification | 30 | first row exact official header | CP932 observed | 1111 single-line voucher only | VERIFIED_BY_REAL_IMPORT (scoped) | EVID-JDL-GENERATOR-1111-001 | High for this exact artifact/path only | explicit configから生成した完全架空1件。免税、科目名称identifier、補助なし、部門なし、税fieldなし。1000、複合、Format全体には適用しない。 |
+| JDL | JDL IBEX 出納帳 35.5 | Generator-authored 1111 single-row candidate | Import verification | 30 | first row exact official header | CP932 observed | 1111 single-line voucher only | VERIFIED_BY_REAL_IMPORT (scoped) | EVID-JDL-GENERATOR-1111-001 | High for this exact artifact/path only | explicit configから生成した完全架空1件。免税、科目名称identifier、補助なし、部門なし、税fieldなし。このEvidence単独は他flag、複合、Format全体には適用しない。 |
+| JDL | JDL IBEX 出納帳 35.5 | Generator-authored 1000 single-row candidate | Import verification | 30 | first row exact official header | CP932 observed | 1000 non-voucher journal only | VERIFIED_BY_REAL_IMPORT (scoped) | EVID-JDL-GENERATOR-1000-001 | High for this exact artifact/path only | explicit configから生成した完全架空1件。仕訳帳で確認し、振替伝票には非表示。免税、補助なし、部門なし、税fieldなし。Format全体には適用しない。 |
 | JDL | JDL IBEX 出納帳 35.5 | JDL-origin 1111 preamble-stripped round-trip | Import verification | 30 | first row exact official header | CP932 observed | 1111 single-line voucher only | VERIFIED_BY_REAL_IMPORT (scoped) | private fully fictional runtime experiment | High for this exact path only | JDL-origin data rowをbyte-for-byte保持。免税、補助なし、部門なし、税fieldなし。generator outputやFormat全体には適用しない。 |
-| JDL | JDL IBEX 出納帳 | Observed 30-column CSV | Export/Import candidate | 30 observed | Observed header exists, sometimes after preamble | CP932 observed | Identifier flags observed; meanings documented separately in manual layer | OBSERVED | private real data observation | Medium | JDL IBEX出納帳35.5実データから観測。JDL-origin round-tripと特定のgenerator-authored 1111以外は正常取込未検証。 |
+| JDL | JDL IBEX 出納帳 | Observed 30-column CSV | Export/Import candidate | 30 observed | Observed header exists, sometimes after preamble | CP932 observed | Identifier flags observed; meanings documented separately in manual layer | OBSERVED | private real data observation | Medium | JDL IBEX出納帳35.5実データから観測。JDL-origin round-tripと特定のgenerator-authored 1111/1000以外は正常取込未検証。 |
 | JDL | JDL-origin export sample | Observed 30-column CSV | Export evidence | 30 observed | Observed header exists | CP932 observed | Identifier flags observed; meaning unresolved | OBSERVED | private export observation | Medium | Product/versionは未検証。35.5固有Evidenceへ無条件統合しない。Known Good Import Fileとは呼ばない。 |
 | JDL | JDL IBEX 出納帳net | CSV入出力 | Import/Export | UNKNOWN | 1行目に項目名称が必要と公開情報から確認 | UNKNOWN | UNKNOWN | OFFICIAL_DOCUMENTED | https://www.jdlibex.net/ab-net/renkei-csv.html | Medium | JDL IBEX出納帳35.5のObserved Schemaと同一視しない。 |
 | JDL | JDL IBEX 会計 / net | JDL IBEX 会計形式 | Import candidate | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | OFFICIAL_DOCUMENTED | https://www.jdlibex.net/ | Low | 詳細CSV仕様は未取得。正式JDL FormatProfileではない。 |
@@ -26,7 +27,7 @@
 - 弥生会計 Next公式情報では25項目または27項目が示されている。
 - JDL IBEX出納帳35.5の実データでは30列Observed Schemaが観測された。
 - JDL IBEX出納帳操作マニュアルP319-P322/P326-P327で、CSV仕訳データ入力の30項目、1行目header requirement、identifier flag meanings、税処理ごとのconditional requirements、error CSV behaviorを確認した。
-- Manualの30項目field names/orderと、JDL IBEX出納帳35.5 observed 30-column headerは一致した。JDL-origin `1111` rowについて、3行のexport preambleだけを除去しheader/data suffixをbyte-for-byte保持したsame-runtime round-trip Importに成功した。
+- Manualの30項目field names/orderと、JDL IBEX出納帳35.5 observed 30-column headerは一致した。JDL-origin `1111` round-tripとgenerator-authored `1111` / `1000` 各1件は、厳密に限定した条件で実Importに成功した。
 - バージョン未検証のJDL由来Export sampleでも30列header family、CP932、CRLF、BOMなし、同じ識別フラグ集合が再観測された。ただし35.5固有仕様として統合しない。
 - Money Forward Cloud AccountingにはJDL（IBEX 会計）向け仕訳エクスポート機能が案内されているが、内部CSV仕様はこの調査ではUNKNOWN。
 
@@ -39,7 +40,7 @@
 - 正式YayoiFormatProfile
 - 正式JDLOutputAdapter
 - 複数条件をカバーした `VERIFIED_BY_REAL_IMPORT` のJDL FormatProfile
-- generator-authored `1000`、補助、部門、税、複合仕訳の段階的な正常取込結果
+- generator-authored補助、部門、税、複合仕訳、複数件の段階的な正常取込結果
 - JDLの課区・税区略称一覧
 - JDL会社設定依存の税処理、伝票行数、入力開始月、日付範囲条件
 - Money Forwardが出力するJDL向けファイルの内部Schema

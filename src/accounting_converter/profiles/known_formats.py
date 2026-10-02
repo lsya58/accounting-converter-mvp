@@ -59,7 +59,7 @@ JDL_OBSERVED_SOURCE = SourceProvenance(
     verified_at=date(2026, 8, 27),
     notes=(
         "Observed schema overall is not a verified formal specification. "
-        "A JDL-origin 1111 round-trip and one generator-authored 1111 path "
+        "A JDL-origin round-trip and two generator-authored single-record variants "
         "have scoped real-import verification."
     ),
 )
@@ -74,7 +74,7 @@ JDL_IBEX_CASHBOOK_MANUAL_SOURCE = SourceProvenance(
     retrieved_at=date(2026, 9, 14),
     notes=(
         "Manual pages P319-P322 and P326-P327; footer date 2024-02-14. "
-        "A JDL-origin 1111 round-trip and one generator-authored 1111 path "
+        "A JDL-origin round-trip and two generator-authored single-record variants "
         "passed scoped real import; the full format remains unverified."
     ),
 )
@@ -448,8 +448,8 @@ def jdl_ibex_cashbook_official_journal_import_schema_definition() -> SchemaDefin
             source_reference=JDL_IBEX_CASHBOOK_MANUAL_SOURCE,
             notes=(
                 "Official documented CSV journal import schema from manual. "
-                "Scoped JDL-origin and generator-authored 1111 imports are verified, "
-                "but the full schema is not verified or production enabled."
+                "Scoped JDL-origin and generator-authored single-record imports are "
+                "verified, but the full schema is not verified or production enabled."
             ),
         ),
         fields=fields,

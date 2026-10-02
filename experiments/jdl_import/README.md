@@ -2,7 +2,7 @@
 
 JDL IBEX 出納帳のofficial documented 30-column CSV仕訳入力schemaと、JDL IBEX 出納帳35.5の実データから確認したobserved-compatible serializationを使い、JDL実機の取込条件を確認するための研究用環境です。
 
-これは正式JDLOutputAdapterではありません。特定のgenerator-authored `1111` artifactは `EVID-JDL-GENERATOR-1111-001` として限定的に実Import検証済みですが、official schema全体、将来生成物、production capabilityは `VERIFIED_BY_REAL_IMPORT` へ昇格しません。
+これは正式JDLOutputAdapterではありません。特定のgenerator-authored `1111` / `1000` artifactsは、それぞれ限定Evidenceとして実Import検証済みですが、official schema全体、将来生成物、production capabilityは `VERIFIED_BY_REAL_IMPORT` へ昇格しません。
 
 ## EXP-01 import candidate
 
@@ -36,7 +36,7 @@ PYTHONPATH=src python3 -m experiments.jdl_import.generator_authored_1111 \
 
 configはofficial 30列と各列のdecision sourceを全件明示する必要があります。出力は `data/private/experiments/jdl_import/generator_authored_1111/` に限定し、同名ファイルがあれば上書きせず停止します。完全架空の特定artifactは実機Importと再Exportまで成功しましたが、新しく生成するartifactの初期statusは引き続き `GENERATOR_AUTHORED_1111_UNTESTED` です。runtimeで補完された再Export表現はgenerator defaultにしません。これはproduction JDLOutputAdapterではありません。
 
-次段階のgenerator-authored `1000` candidateは既存 `exp01_candidate.py` を使用し、private configで1111成功candidateとの差をidentifier flagだけに限定します。statusは `GENERATOR_AUTHORED_1000_UNTESTED` で、実機結果が得られるまで成功扱いしません。
+generator-authored `1000` candidateも実機Importと再Exportに成功し、`EVID-JDL-GENERATOR-1000-001` として限定的に検証済みです。generatorの将来生成物へ成功statusを継承せず、再Exportでnonblankになった表現もdefault化しません。次の補助科目実験は、取込先JDLへ完全架空の補助科目が正しい親科目配下に登録・確認されるまでcandidateを生成しません。
 
 ## 生成されるもの
 

@@ -30,8 +30,8 @@
 - separation:
   - JDL IBEX出納帳35.5固有仕様とは断定しない
   - CP932/CRLF/BOMなしはmanual由来ではなくobserved evidenceのまま
-  - JDL-origin data rowを保持したround-tripと、特定のgenerator-authored `1111` artifactは別Evidenceで実機成功を確認済み
-  - generator-authored `1000`、他条件、Format全体は未検証
+  - JDL-origin data rowを保持したround-tripと、特定のgenerator-authored `1111` / `1000` artifactsは別Evidenceで実機成功を確認済み
+  - subaccount、department、tax、compound、Format全体は未検証
   - official schema identityは `VERIFIED_BY_REAL_IMPORT` へ昇格しない
 - details: `docs/research/jdl_ibex_csv_manual_evidence.md`
 
@@ -112,6 +112,44 @@
   - production JDLOutputAdapterは未登録
   - YayoiからJDLへのproduction readinessは変更しない
 
+## EVID-JDL-GENERATOR-1000-001
+
+- source: 成功済み1111と同じexplicit private configを基に、identifier flagだけを変更した完全架空1件
+- product/version evidence: JDL IBEX出納帳 35.5
+- evidence level: `VERIFIED_BY_REAL_IMPORT`（このartifactと条件に限定）
+- candidate structure:
+  - CP932-compatible、CRLF、BOMなし
+  - first physical rowはofficial 30-column header
+  - preambleなし、30-column data rowが1件
+  - identifier flag `1000`
+  - JDL-origin data rowを構築元に使用していない
+- runtime result:
+  - JDLが1件として認識し、Importを正常完了
+  - 仕訳帳に1件だけ表示され、貸借一致と内容を目視確認
+  - 振替伝票画面には表示されず、Manualの「伝票以外の仕訳」という意味と整合
+  - Import後のJDL再Exportを取得
+- privacy-safe raw comparison:
+  - candidateから再Exportへ21 fieldsが入力表現のまま保持された
+  - candidateでblankだった9 fieldsが再Exportではnonblank representationになった
+  - 9 fieldsは伝番、借方/貸方の科目code、正式名称、消費税、部門code
+  - candidate/re-exportともflag `1000`、30-column data row 1件
+- interpretation:
+  - account名称だけをidentifierとして使う限定経路の非伝票仕訳Import成功を確認した
+  - blankからnonblankへの変化はJDLの再Export表現としてのみ記録する
+  - JDL内部保存値、一般的な補完規則、generator defaultとは断定しない
+- not verified:
+  - subaccount、department
+  - taxable/tax-included、taxable/tax-excluded
+  - tax abbreviations、transaction account
+  - compound `1110/1100/1101`
+  - multiple records、large data sets、other products/versions
+  - YayoiからJDLへのend-to-end conversion
+  - production JDLOutputAdapter
+- separation:
+  - official documented schema全体は `OFFICIAL_DOCUMENTED` のまま
+  - production JDLOutputAdapterは未登録
+  - YayoiからJDLへのproduction readinessは変更しない
+
 ## EVID-JDL-001
 
 - source: prior failed-import dataset
@@ -146,9 +184,9 @@
   - some field names/order now match official manual evidence, but this file itself remains observed evidence
   - not verified as a successful import file
   - identifier flag meanings are now official documented in the manual layer, but observed grouping behavior remains separately tracked
-  - JDL-origin `1111` round-tripと特定のgenerator-authored `1111` artifactは実機成功済み
+  - JDL-origin `1111` round-tripと特定のgenerator-authored `1111` / `1000` artifactsは実機成功済み
   - generator-authored CSVを含む一般的なexport/import symmetryは未検証
-  - EXP-01 generator-authored `1000` CSVはまだ実機成功していない
+  - generator-authored `1000` の限定artifactは実機成功済みだが、一般的な1000生成規則には昇格しない
   - visible field mapping UI was not observed in this flow, but absence of a field mapping feature is not proven
   - partial success was not observed
 
@@ -304,10 +342,10 @@
 
 ## Next Verification Gate
 
-Both the JDL-origin `1111` round-trip and one explicit-config generator-authored `1111` artifact are now scoped `VERIFIED_BY_REAL_IMPORT`. The next gate remains narrow:
+The JDL-origin `1111` round-trip and one explicit-config artifact for each of `1111` and `1000` are now scoped `VERIFIED_BY_REAL_IMPORT`. The next gate remains narrow:
 
-1. Import the prepared fully fictional `1000` candidate whose only field difference from the successful generator-authored `1111` candidate is the identifier flag.
-2. Use the same test company, backup, date range, exempt/no-subaccount/no-department conditions, and visual verification.
-3. Record the `1000` result independently as `PASS` or `REJECTED` in its private manifest and obtain a re-export on success.
-4. Continue with subaccount, department, tax-inclusive, tax-exclusive, then compound voucher.
+1. Register one fully fictional subaccount under one already tested account in the same test company.
+2. Record its exact parent account and identifier in private target-master evidence; do not use fuzzy matching or an unconfirmed value.
+3. Only then generate one `1000` candidate whose sole semantic change is that subaccount.
+4. Continue with department, tax-inclusive, tax-exclusive, then compound voucher.
 5. Keep the official schema, production JDLOutputAdapter, and Yayoi-to-JDL readiness unchanged until their own evidence requirements are met.

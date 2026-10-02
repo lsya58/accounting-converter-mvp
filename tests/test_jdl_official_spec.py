@@ -50,7 +50,7 @@ class JdlOfficialSpecTests(unittest.TestCase):
         self.assertEqual(schema.has_header, CapabilityStatus.SUPPORTED)
         self.assertEqual(schema.date_formats, ("%Y%m%d",))
         self.assertIsNone(schema.encoding)
-        self.assertIn("generator-authored 1111", schema.identity.notes)
+        self.assertIn("generator-authored single-record", schema.identity.notes)
         self.assertIn("full schema is not verified", schema.identity.notes)
         self.assertIn("not verified", schema.identity.notes)
 

@@ -6,7 +6,7 @@ EXP-01は、完全架空の最小1仕訳をJDL IBEX出納帳 35.5の `データ�
 
 これは正式JDLOutputAdapterではありません。JDL IBEX 出納帳操作マニュアルP319-P322/P326-P327で確認した `OFFICIAL_DOCUMENTED` schemaと、実CSVから観測したCP932/CRLF/BOMなしserializationを組み合わせた実験です。成功しても即production化しません。
 
-Manual evidenceにより、30列CSV仕訳データ入力schema、1行目header requirement、identifier flag meanings、税処理ごとのconditional requirements、error CSV behaviorは確認済みです。JDL-origin data rowを保持した限定round-tripと、explicit configから生成した特定の `1111` artifactは実機成功済みです。現行EXP-01の `1000` candidateは未試験です。
+Manual evidenceにより、30列CSV仕訳データ入力schema、1行目header requirement、identifier flag meanings、税処理ごとのconditional requirements、error CSV behaviorは確認済みです。JDL-origin data rowを保持した限定round-tripと、explicit configから生成した特定の `1111` / `1000` artifactsは実機成功済みです。次の補助科目candidateはtarget master確認待ちです。
 
 今回観測した操作flow:
 
@@ -40,7 +40,9 @@ Import後のJDL再Exportでは、candidateの21 fieldsが入力表現のまま�
 
 次のcandidateは、成功したgenerator-authored `1111` のexplicit configを基に、identifier flagだけを `1000` へ変更した。JDL-origin data rowは構築元に使用していない。伝番はManual上の任意項目としてblankを維持し、他の29 fields、会社条件、target master確認、tax確認を変えていない。
 
-private生成物は `data/private/experiments/jdl_import/generator_authored_1000/` に保存し、statusは `GENERATOR_AUTHORED_1000_UNTESTED` とする。実機Import結果が得られるまで成功Evidenceへ昇格しない。
+private生成物は `data/private/experiments/jdl_import/generator_authored_1000/` に保存した。この特定artifactは `EVID-JDL-GENERATOR-1000-001` として限定的に実機Import検証済みである。generatorが今後作る別artifactの初期statusは `GENERATOR_AUTHORED_1000_UNTESTED` のままとし、成功Evidenceを自動継承しない。
+
+1000は仕訳帳で1件として確認され、振替伝票画面には表示されなかった。1111が振替伝票画面で確認されたこととの違いは、Manualのidentifier flag semanticsと整合する。再Exportでは21 fieldsが保持され、blankだった同じ9 fieldsがnonblank representationになったが、内部保存値やgenerator defaultとは扱わない。
 
 ## 安全条件
 
@@ -65,7 +67,7 @@ private生成物は `data/private/experiments/jdl_import/generator_authored_1000
 - JDL-origin exportで観測したmetadata/comment/preamble行は入れない。
 - JDL仕様上未確認の独自コメント行や独自metadata行は追加しない。
 - metadataはCSVではなくprivacy-safe report/manifestへ記録する。
-- 1000 candidateのstatusは `GENERATOR_AUTHORED_1000_UNTESTED` のまま保持する。
+- generatorが作る未試験1000 artifactのstatusは `GENERATOR_AUTHORED_1000_UNTESTED` とする。特定artifactのruntime成功はprivate manifestとEvidence IDで別管理する。
 
 ## 事前設定
 
@@ -171,7 +173,7 @@ Import失敗時に保存するもの:
 
 ## production化しない理由
 
-EXP-01はgenerator-authored 1件の最小候補を段階検証する実験です。特定のgenerator-authored `1111` artifactは成功しましたが、`1000`、複合仕訳、税区分、補助、部門、月次大量データ、別Version互換性は確定しません。
+EXP-01はgenerator-authored 1件の最小候補を段階検証する実験です。特定のgenerator-authored `1111` / `1000` artifactsは成功しましたが、複合仕訳、税区分、補助、部門、月次大量データ、別Version互換性は確定しません。
 
 Manual evidenceで30-column CSV仕訳入力schemaは確認できた。一方、JDL-origin exportにはpreambleがあるため、Export CSVをそのままImport可能とは扱わない。EXP-01 candidateはpreambleなしで1行目にofficial headerを置く。
 
@@ -192,9 +194,11 @@ JDL会計から取得した21列の仕訳一覧CSVは、EXP-01の30列import can
 
 ## 次に取得するEvidence
 
-generator-authored `1111` minimal candidateは実機Importと再Exportまで成功した。次は他の29 fieldsを同一に保ち、identifier flagだけを変えたEXP-01 `1000` を別Evidenceとして試験する。
+generator-authored `1111` / `1000` minimal candidatesは実機Importと再Exportまで成功した。次は成功済み1000を基準に、補助科目だけを変更する。target master依存値を推測しないため、完全架空の補助科目が正しい親科目配下へ登録・確認されるまでcandidateは生成しない。
 
-- EXP-01 `1000` minimal candidateの実Import結果と、成功時の再Export
+- テスト会社で、既存の成功済み親勘定科目配下へ完全架空の補助科目を1件登録
+- 補助科目のcode/name、親勘定科目、登録確認をprivate evidenceへ記録
+- その確認後、1000・免税・部門なし・税fieldなしの1件candidateを生成
 - 成功時の取込件数確認画面とJDL側登録結果
 - 失敗時の `ログ表示` 内容とerror CSV
 - 課区・税区略称一覧

@@ -16,8 +16,8 @@
 - manual footer date: 2024-02-14
 - copyright footer: Japan Digital Laboratory
 - evidence level: `OFFICIAL_DOCUMENTED`
-- scoped real import verification: JDL-origin `1111` round-trip and one explicit-config generator-authored `1111` artifact
-- full format / other generator-authored conditions: pending
+- scoped real import verification: JDL-origin `1111` round-trip and explicit-config generator-authored `1111` / `1000` artifacts
+- full format / subaccount, department, tax, compound and bulk conditions: pending
 
 JDL IBEX 出納帳35.5で観測したUI/実CSVとは別Evidenceとして扱う。マニュアルをVersion 35.5固有仕様としては扱わない。
 
@@ -127,9 +127,11 @@ Official input requirementでは、1行目が30列の項目名称headerである
 
 Import後の再Exportでは、candidate入力の21 fieldsが同じ表現で保持され、blank入力だった9 fieldsがnonblank表現になった。これは再Export表現の観測であり、JDL内部保存値、一般的な補完規則、generator defaultとは扱わない。30-column Format全体も検証済みとは扱わない。
 
+同じ条件でidentifier flagだけを `1000` に変更したgenerator-authored 1件も実機Importに成功した。`1111` は振替伝票画面で1行伝票として確認し、`1000` は仕訳帳で確認して振替伝票画面には表示されなかった。この差はManualの `1111 = 伝票1行の仕訳`、`1000 = 伝票以外の仕訳` と整合する。1000の再Exportでも21 fields保持、同じ9 blank fieldsのnonblank表現を観測したが、default規則には昇格しない。
+
 ## Remaining Blockers
 
-- EXP-01 `1000`、補助、部門、各税処理、compound sequenceの段階的Import検証。
+- 補助、部門、各税処理、compound sequence、複数件の段階的Import検証。
 - 取込先テスト会社の科目master確認。
 - 補助科目を使う場合の親科目配下登録確認。
 - 取込先会社の消費税処理確認。
