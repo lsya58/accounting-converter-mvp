@@ -1,6 +1,6 @@
 {
   "experiment_id": "EXP-01",
-  "status": "EXPERIMENTAL_NOT_VERIFIED_BY_REAL_IMPORT",
+  "status": "GENERATOR_AUTHORED_1000_UNTESTED",
   "journal_date_iso": "2026-09-10",
   "company_tax_processing": "UNCONFIRMED",
   "output_name": "EXP-01_jdl_import_candidate.csv",
@@ -19,7 +19,7 @@
   },
   "jdl_columns": {
     "//識別フラグ": "1000",
-    "伝番": "取込先JDLテスト会社で使用してよい伝番を入力",
+    "伝番": "",
     "日付": "20260910",
     "借方科目": "取込先JDLで確認した借方科目コードを入力",
     "借方科目名称": "取込先JDLで確認した借方科目名を入力",

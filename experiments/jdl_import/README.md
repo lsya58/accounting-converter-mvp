@@ -2,7 +2,7 @@
 
 JDL IBEX 出納帳のofficial documented 30-column CSV仕訳入力schemaと、JDL IBEX 出納帳35.5の実データから確認したobserved-compatible serializationを使い、JDL実機の取込条件を確認するための研究用環境です。
 
-これは正式JDLOutputAdapterではありません。`OFFICIAL_DOCUMENTED` schemaを追加しても、実Import成功までは `VERIFIED_BY_REAL_IMPORT` へ昇格しません。
+これは正式JDLOutputAdapterではありません。特定のgenerator-authored `1111` artifactは `EVID-JDL-GENERATOR-1111-001` として限定的に実Import検証済みですが、official schema全体、将来生成物、production capabilityは `VERIFIED_BY_REAL_IMPORT` へ昇格しません。
 
 ## EXP-01 import candidate
 
@@ -23,6 +23,20 @@ PYTHONPATH=src python3 -m experiments.jdl_import.exp01_candidate \
 ```
 
 マニュアルで不要時に空欄可と確認できた項目は、configで省略しても空欄列として出力します。ただし、列そのものは必ず30列生成します。科目master確認、補助master確認、会社の消費税処理確認、税項目の組み合わせ確認は明示確認が必要です。実機手順は `docs/experiments/jdl_exp01_import_candidate.md` を参照してください。
+
+## Generator-authored 1111 candidate
+
+`generator_authored_1111.py` は、成功済みJDL-origin round-tripの次段階として、explicit private configから `1111` の1行伝票を生成します。JDL source rowは生成後のbyte非同一確認にだけ使い、field constructionには使いません。
+
+```bash
+PYTHONPATH=src python3 -m experiments.jdl_import.generator_authored_1111 \
+  --config data/private/experiments/jdl_import/generator_authored_1111/config.json \
+  --comparison-source data/private/jdl_self_export_20261002.csv
+```
+
+configはofficial 30列と各列のdecision sourceを全件明示する必要があります。出力は `data/private/experiments/jdl_import/generator_authored_1111/` に限定し、同名ファイルがあれば上書きせず停止します。完全架空の特定artifactは実機Importと再Exportまで成功しましたが、新しく生成するartifactの初期statusは引き続き `GENERATOR_AUTHORED_1111_UNTESTED` です。runtimeで補完された再Export表現はgenerator defaultにしません。これはproduction JDLOutputAdapterではありません。
+
+次段階のgenerator-authored `1000` candidateは既存 `exp01_candidate.py` を使用し、private configで1111成功candidateとの差をidentifier flagだけに限定します。statusは `GENERATOR_AUTHORED_1000_UNTESTED` で、実機結果が得られるまで成功扱いしません。
 
 ## 生成されるもの
 

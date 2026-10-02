@@ -30,8 +30,8 @@
 - separation:
   - JDL IBEX出納帳35.5固有仕様とは断定しない
   - CP932/CRLF/BOMなしはmanual由来ではなくobserved evidenceのまま
-  - JDL-origin data rowを保持したround-tripは別Evidenceで実機成功を確認済み
-  - generator-authored CSVとFormat全体は未検証
+  - JDL-origin data rowを保持したround-tripと、特定のgenerator-authored `1111` artifactは別Evidenceで実機成功を確認済み
+  - generator-authored `1000`、他条件、Format全体は未検証
   - official schema identityは `VERIFIED_BY_REAL_IMPORT` へ昇格しない
 - details: `docs/research/jdl_ibex_csv_manual_evidence.md`
 
@@ -73,6 +73,45 @@
   - production JDLOutputAdapterは未登録
   - YayoiからJDLへのproduction readinessは変更しない
 
+## EVID-JDL-GENERATOR-1111-001
+
+- source: official/manual、target master確認、explicit private configだけから生成した完全架空1件
+- product/version evidence: JDL IBEX出納帳 35.5
+- evidence level: `VERIFIED_BY_REAL_IMPORT`（このartifactと条件に限定）
+- candidate structure:
+  - CP932-compatible、CRLF、BOMなし
+  - first physical rowはofficial 30-column header
+  - preambleなし、30-column data rowが1件
+  - identifier flag `1111`
+  - JDL-origin data rowを構築元に使用していない
+- runtime result:
+  - JDLが1件として認識し、CSV変換終了を表示
+  - 1伝票、重複なし、貸借一致を目視確認
+  - date、account identity、debit/credit amount、descriptionを目視確認
+  - Import後のJDL再Exportを取得
+- privacy-safe raw comparison:
+  - candidateから再Exportへ21 fieldsが入力表現のまま保持された
+  - candidateでblankだった9 fieldsが再Exportではnonblank representationになった
+  - 9 fieldsは伝番、借方/貸方の科目code、正式名称、消費税、部門code
+  - 最初のJDL手入力reference exportと再Exportは29/30 fieldsが一致し、差分fieldは伝番だけ
+- interpretation:
+  - account名称だけをidentifierとして使う限定経路のImport成功を確認した
+  - blankからnonblankへの変化はJDLの再Export表現としてのみ記録する
+  - JDL内部保存値、一般的な補完規則、generator defaultとは断定しない
+- not verified:
+  - identifier flag `1000`
+  - compound `1110/1100/1101`
+  - subaccount、department
+  - taxable/tax-included、taxable/tax-excluded
+  - tax abbreviations、transaction account
+  - multiple records、large data sets、other products/versions
+  - YayoiからJDLへのend-to-end conversion
+  - production JDLOutputAdapter
+- separation:
+  - official documented schema全体は `OFFICIAL_DOCUMENTED` のまま
+  - production JDLOutputAdapterは未登録
+  - YayoiからJDLへのproduction readinessは変更しない
+
 ## EVID-JDL-001
 
 - source: prior failed-import dataset
@@ -107,9 +146,9 @@
   - some field names/order now match official manual evidence, but this file itself remains observed evidence
   - not verified as a successful import file
   - identifier flag meanings are now official documented in the manual layer, but observed grouping behavior remains separately tracked
-  - JDL-origin `1111` rowのpreamble除去round-tripだけは実機成功済み
+  - JDL-origin `1111` round-tripと特定のgenerator-authored `1111` artifactは実機成功済み
   - generator-authored CSVを含む一般的なexport/import symmetryは未検証
-  - EXP-01 generator-authored CSVはまだ実機成功していない
+  - EXP-01 generator-authored `1000` CSVはまだ実機成功していない
   - visible field mapping UI was not observed in this flow, but absence of a field mapping feature is not proven
   - partial success was not observed
 
@@ -265,10 +304,10 @@
 
 ## Next Verification Gate
 
-The JDL-origin `1111` round-trip path is now scoped `VERIFIED_BY_REAL_IMPORT`. To verify generator-authored JDL output without broadening that evidence:
+Both the JDL-origin `1111` round-trip and one explicit-config generator-authored `1111` artifact are now scoped `VERIFIED_BY_REAL_IMPORT`. The next gate remains narrow:
 
-1. Generate one fully fictional, exempt, no-subaccount, no-department `1111` journal from explicit config, without copying the JDL-origin data row.
-2. Import only that one record into the same test JDL environment after backup and confirm one voucher, no duplicate, account identities, debit/credit totals, description, and balance.
-3. If the generator-authored `1111` succeeds, run the existing EXP-01 `1000` experiment as a separate variable change.
-4. Record each result independently as `PASS` or `REJECTED` in the private experiment manifest.
-5. Continue with subaccount, department, tax-inclusive, tax-exclusive, then compound voucher; keep production JDLOutputAdapter unavailable.
+1. Import the prepared fully fictional `1000` candidate whose only field difference from the successful generator-authored `1111` candidate is the identifier flag.
+2. Use the same test company, backup, date range, exempt/no-subaccount/no-department conditions, and visual verification.
+3. Record the `1000` result independently as `PASS` or `REJECTED` in its private manifest and obtain a re-export on success.
+4. Continue with subaccount, department, tax-inclusive, tax-exclusive, then compound voucher.
+5. Keep the official schema, production JDLOutputAdapter, and Yayoi-to-JDL readiness unchanged until their own evidence requirements are met.

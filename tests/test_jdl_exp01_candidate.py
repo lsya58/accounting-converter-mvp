@@ -135,6 +135,22 @@ class JdlExp01CandidateTests(unittest.TestCase):
         with self.assertRaisesRegex(JdlExp01CandidateError, "debit account"):
             build_exp01_common_journal(config)
 
+    def test_blank_voucher_number_is_allowed_by_manual_rule(self) -> None:
+        config = self.config()
+        config.jdl_columns["伝番"] = ""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_exp01_candidate(
+                config,
+                Path(tmpdir) / "data/private/experiments",
+            )
+            rows = list(
+                csv.reader(result.csv_path.read_text(encoding="cp932").splitlines())
+            )
+
+        self.assertEqual(rows[1][OFFICIAL_HEADER.index("伝番")], "")
+        self.assertTrue(result.validation_report.success)
+
     def test_account_code_only_identifier_is_allowed_by_manual_rule(self) -> None:
         config = self.config()
         config.jdl_columns["借方科目名称"] = ""
@@ -262,7 +278,7 @@ class JdlExp01CandidateTests(unittest.TestCase):
         self.assertFalse(entry.metadata["production_adapter"])
         self.assertEqual(jdl_schema.identity.evidence_level, EvidenceLevel.OBSERVED)
         self.assertEqual(official_schema.identity.evidence_level, EvidenceLevel.OFFICIAL_DOCUMENTED)
-        self.assertIn("Not verified by successful import", jdl_schema.identity.notes)
+        self.assertIn("schema overall is not verified", jdl_schema.identity.notes)
 
     def test_yayoi_to_jdl_readiness_is_not_ready(self) -> None:
         registry = production_adapter_registry()

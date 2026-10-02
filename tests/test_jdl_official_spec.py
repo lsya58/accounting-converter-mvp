@@ -50,8 +50,8 @@ class JdlOfficialSpecTests(unittest.TestCase):
         self.assertEqual(schema.has_header, CapabilityStatus.SUPPORTED)
         self.assertEqual(schema.date_formats, ("%Y%m%d",))
         self.assertIsNone(schema.encoding)
-        self.assertIn("scoped JDL-origin 1111 round-trip", schema.identity.notes)
-        self.assertIn("generator-authored output", schema.identity.notes)
+        self.assertIn("generator-authored 1111", schema.identity.notes)
+        self.assertIn("full schema is not verified", schema.identity.notes)
         self.assertIn("not verified", schema.identity.notes)
 
     def test_official_and_observed_30_column_headers_match_but_identity_differs(self) -> None:

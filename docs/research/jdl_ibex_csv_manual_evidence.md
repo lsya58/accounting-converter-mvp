@@ -16,8 +16,8 @@
 - manual footer date: 2024-02-14
 - copyright footer: Japan Digital Laboratory
 - evidence level: `OFFICIAL_DOCUMENTED`
-- scoped real import verification: JDL-origin `1111` single-row round-trip only
-- full format / generator-authored import verification: pending
+- scoped real import verification: JDL-origin `1111` round-trip and one explicit-config generator-authored `1111` artifact
+- full format / other generator-authored conditions: pending
 
 JDL IBEX 出納帳35.5で観測したUI/実CSVとは別Evidenceとして扱う。マニュアルをVersion 35.5固有仕様としては扱わない。
 
@@ -123,12 +123,13 @@ Official input requirementでは、1行目が30列の項目名称headerである
 
 完全架空テスト事業所のJDL IBEX出納帳35.5で、JDL自身がExportした `1111` の1 data rowについて、先頭3 physical rows、83 bytesのpreambleだけを除去し、header + data suffixをbyte-for-byte保持したcandidateの再Importに成功した。これにより、この限定round-trip経路ではfirst physical rowのofficial headerとpreamble除去が実機検証された。
 
-ただし、field valueをgeneratorが構築したCSVの成功ではない。`JDL自身がExportした任意のCSVを常に再Import可能`、または30-column Format全体が検証済みとは扱わない。
+さらに、official/manual、target master確認、explicit configだけから生成した完全架空の `1111` 1件も同じ実機へImportでき、登録内容の目視確認とJDL再Exportまで完了した。この限定経路では、科目名称だけをaccount identifierとして使い、免税、補助なし、部門なし、税fieldなしの組み合わせが実機検証された。
+
+Import後の再Exportでは、candidate入力の21 fieldsが同じ表現で保持され、blank入力だった9 fieldsがnonblank表現になった。これは再Export表現の観測であり、JDL内部保存値、一般的な補完規則、generator defaultとは扱わない。30-column Format全体も検証済みとは扱わない。
 
 ## Remaining Blockers
 
-- explicit configからゼロ構築した `1111` candidateの実Import成功。
-- その後のEXP-01 `1000`、補助、部門、各税処理、compound sequenceの段階的Import検証。
+- EXP-01 `1000`、補助、部門、各税処理、compound sequenceの段階的Import検証。
 - 取込先テスト会社の科目master確認。
 - 補助科目を使う場合の親科目配下登録確認。
 - 取込先会社の消費税処理確認。

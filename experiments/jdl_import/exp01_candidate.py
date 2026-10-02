@@ -30,7 +30,7 @@ from accounting_converter.profiles.jdl_official import (
 
 
 EXPERIMENT_ID = "EXP-01"
-EXPERIMENT_STATUS = "EXPERIMENTAL_NOT_VERIFIED_BY_REAL_IMPORT"
+EXPERIMENT_STATUS = "GENERATOR_AUTHORED_1000_UNTESTED"
 DEFAULT_OUTPUT_DIR = Path("data/private/experiments/jdl_import/exp01")
 DEFAULT_OUTPUT_NAME = "EXP-01_jdl_import_candidate.csv"
 
@@ -52,7 +52,6 @@ TAX_VALIDATION_KEYS = (
 )
 REQUIRED_TRANSACTION_COLUMNS = (
     "//識別フラグ",
-    "伝番",
     "日付",
     "借方金額",
     "貸方金額",
@@ -216,13 +215,14 @@ def generate_exp01_candidate(
 def build_exp01_common_journal(config: JdlExp01CandidateConfig) -> JournalEntry:
     _validate_config(config)
     columns = _resolved_columns(config)
+    internal_journal_id = columns["伝番"] or f"{EXPERIMENT_ID}-record-1"
     source = SourceReference(
         file_name="EXP-01_jdl_import_candidate",
         row_number=2,
-        source_journal_id=columns["伝番"],
+        source_journal_id=internal_journal_id,
     )
     return JournalEntry(
-        id=columns["伝番"],
+        id=internal_journal_id,
         source_reference=source,
         date=_date(config.journal_date_iso, "journal_date_iso"),
         description=columns["摘要"] or None,
@@ -521,7 +521,8 @@ def _validate_alternative_pair(
 
 def _validate_official_field_values(columns: dict[str, str]) -> None:
     _validate_digits(columns["//識別フラグ"], "//識別フラグ", 4)
-    _validate_digits(columns["伝番"], "伝番", 8)
+    if columns["伝番"].strip():
+        _validate_digits(columns["伝番"], "伝番", 8)
     for field in ("借方科目", "貸方科目", "借方取引科目", "貸方取引科目"):
         if columns[field].strip():
             _validate_digits(columns[field], field, 4)

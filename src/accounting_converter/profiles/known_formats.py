@@ -59,8 +59,8 @@ JDL_OBSERVED_SOURCE = SourceProvenance(
     verified_at=date(2026, 8, 27),
     notes=(
         "Observed schema overall is not a verified formal specification. "
-        "Only one JDL-origin 1111 row has a scoped same-runtime round-trip "
-        "import verification."
+        "A JDL-origin 1111 round-trip and one generator-authored 1111 path "
+        "have scoped real-import verification."
     ),
 )
 
@@ -74,8 +74,8 @@ JDL_IBEX_CASHBOOK_MANUAL_SOURCE = SourceProvenance(
     retrieved_at=date(2026, 9, 14),
     notes=(
         "Manual pages P319-P322 and P326-P327; footer date 2024-02-14. "
-        "A JDL-origin 1111 row passed a scoped same-runtime round-trip import; "
-        "generator-authored output and the full format remain unverified."
+        "A JDL-origin 1111 round-trip and one generator-authored 1111 path "
+        "passed scoped real import; the full format remains unverified."
     ),
 )
 
@@ -380,7 +380,10 @@ def jdl_ibex_cashbook_35_5_observed_schema_definition() -> SchemaDefinition:
             major_version="35",
             minor_version="5",
             source_reference=JDL_OBSERVED_SOURCE,
-            notes="Observed from real CSV. Not verified by successful import.",
+            notes=(
+                "Observed from real CSV. Scoped 1111 paths succeeded, but the "
+                "observed schema overall is not verified or production enabled."
+            ),
         ),
         fields=fields,
         capabilities=FormatCapabilities(
@@ -445,9 +448,8 @@ def jdl_ibex_cashbook_official_journal_import_schema_definition() -> SchemaDefin
             source_reference=JDL_IBEX_CASHBOOK_MANUAL_SOURCE,
             notes=(
                 "Official documented CSV journal import schema from manual. "
-                "A scoped JDL-origin 1111 round-trip import is verified, but "
-                "generator-authored output and the full schema are not verified or "
-                "production enabled."
+                "Scoped JDL-origin and generator-authored 1111 imports are verified, "
+                "but the full schema is not verified or production enabled."
             ),
         ),
         fields=fields,

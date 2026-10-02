@@ -10,9 +10,10 @@
 | Yayoi | Yayoi Accounting Desktop | 弥生取り込み（インポート）形式（弥生会計05以降） | Import | 25 | UNKNOWN | UNKNOWN | 2000/2111/2110/2100/2101 documented | OFFICIAL_DOCUMENTED | https://support.yayoi-kk.co.jp/faq_Subcontents.html?page_id=18545 | High for documented import layout | 実際に使用する弥生製品/version/実CSVは未確認。正式YayoiInputAdapterではない。 |
 | Yayoi | Yayoi Accounting AE 19 | 弥生インポート形式 direct export | Export evidence | 25 observed | no header observed | CP932 observed | 2000/2111 and 2110/2100/2101 observed | OBSERVED | private raw export observation | Medium for observed 2000/2111 and observed multi-record sequences | 複数の独立単一仕訳、借方/貸方の補助科目・部門ありrecord、1行振替伝票record、複数行振替伝票sequenceで再観測。最小YayoiInputAdapterはこのObserved identityに限定し、万能仕様へ昇格しない。 |
 | Yayoi | Yayoi Accounting Next | インポートデータ記述形式 | Import | 25 or 27 | UNKNOWN | UNKNOWN | 識別フラグ体系 documented | OFFICIAL_DOCUMENTED | https://support.yayoi-kk.co.jp/subcontents.html?page_id=29611 | Medium | Desktopと同一仕様とは断定しない。Yayoi=常に25列は禁止。 |
-| JDL | JDL IBEX 出納帳 | CSV仕訳データ入力 30項目 | Import target | 30 documented | 1行目に項目名称必須 | UNKNOWN in manual | 1000/1111/1110/1100/1101 documented | OFFICIAL_DOCUMENTED | JDL IBEX 出納帳 操作マニュアル P319-P322/P326-P327 | High for manual pages | CP932/CRLF/BOMなしはobserved evidence。Format全体とgenerator-authored CSVは実Import未検証。production JDLOutputAdapterではない。 |
+| JDL | JDL IBEX 出納帳 | CSV仕訳データ入力 30項目 | Import target | 30 documented | 1行目に項目名称必須 | UNKNOWN in manual | 1000/1111/1110/1100/1101 documented | OFFICIAL_DOCUMENTED | JDL IBEX 出納帳 操作マニュアル P319-P322/P326-P327 | High for manual pages | CP932/CRLF/BOMなしはobserved evidence。Format全体は実Import未検証。production JDLOutputAdapterではない。 |
+| JDL | JDL IBEX 出納帳 35.5 | Generator-authored 1111 single-row candidate | Import verification | 30 | first row exact official header | CP932 observed | 1111 single-line voucher only | VERIFIED_BY_REAL_IMPORT (scoped) | EVID-JDL-GENERATOR-1111-001 | High for this exact artifact/path only | explicit configから生成した完全架空1件。免税、科目名称identifier、補助なし、部門なし、税fieldなし。1000、複合、Format全体には適用しない。 |
 | JDL | JDL IBEX 出納帳 35.5 | JDL-origin 1111 preamble-stripped round-trip | Import verification | 30 | first row exact official header | CP932 observed | 1111 single-line voucher only | VERIFIED_BY_REAL_IMPORT (scoped) | private fully fictional runtime experiment | High for this exact path only | JDL-origin data rowをbyte-for-byte保持。免税、補助なし、部門なし、税fieldなし。generator outputやFormat全体には適用しない。 |
-| JDL | JDL IBEX 出納帳 | Observed 30-column CSV | Export/Import candidate | 30 observed | Observed header exists, sometimes after preamble | CP932 observed | Identifier flags observed; meanings documented separately in manual layer | OBSERVED | private real data observation | Medium | JDL IBEX出納帳35.5実データから観測。1111の限定round-trip以外は正常取込未検証。 |
+| JDL | JDL IBEX 出納帳 | Observed 30-column CSV | Export/Import candidate | 30 observed | Observed header exists, sometimes after preamble | CP932 observed | Identifier flags observed; meanings documented separately in manual layer | OBSERVED | private real data observation | Medium | JDL IBEX出納帳35.5実データから観測。JDL-origin round-tripと特定のgenerator-authored 1111以外は正常取込未検証。 |
 | JDL | JDL-origin export sample | Observed 30-column CSV | Export evidence | 30 observed | Observed header exists | CP932 observed | Identifier flags observed; meaning unresolved | OBSERVED | private export observation | Medium | Product/versionは未検証。35.5固有Evidenceへ無条件統合しない。Known Good Import Fileとは呼ばない。 |
 | JDL | JDL IBEX 出納帳net | CSV入出力 | Import/Export | UNKNOWN | 1行目に項目名称が必要と公開情報から確認 | UNKNOWN | UNKNOWN | OFFICIAL_DOCUMENTED | https://www.jdlibex.net/ab-net/renkei-csv.html | Medium | JDL IBEX出納帳35.5のObserved Schemaと同一視しない。 |
 | JDL | JDL IBEX 会計 / net | JDL IBEX 会計形式 | Import candidate | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | OFFICIAL_DOCUMENTED | https://www.jdlibex.net/ | Low | 詳細CSV仕様は未取得。正式JDL FormatProfileではない。 |
@@ -38,7 +39,7 @@
 - 正式YayoiFormatProfile
 - 正式JDLOutputAdapter
 - 複数条件をカバーした `VERIFIED_BY_REAL_IMPORT` のJDL FormatProfile
-- generator-authored JDL CSVの正常取込結果
+- generator-authored `1000`、補助、部門、税、複合仕訳の段階的な正常取込結果
 - JDLの課区・税区略称一覧
 - JDL会社設定依存の税処理、伝票行数、入力開始月、日付範囲条件
 - Money Forwardが出力するJDL向けファイルの内部Schema

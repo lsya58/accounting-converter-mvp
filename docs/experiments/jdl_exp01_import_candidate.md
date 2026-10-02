@@ -6,7 +6,7 @@ EXP-01は、完全架空の最小1仕訳をJDL IBEX出納帳 35.5の `データ�
 
 これは正式JDLOutputAdapterではありません。JDL IBEX 出納帳操作マニュアルP319-P322/P326-P327で確認した `OFFICIAL_DOCUMENTED` schemaと、実CSVから観測したCP932/CRLF/BOMなしserializationを組み合わせた実験です。成功しても即production化しません。
 
-Manual evidenceにより、30列CSV仕訳データ入力schema、1行目header requirement、identifier flag meanings、税処理ごとのconditional requirements、error CSV behaviorは確認済みです。加えてJDL-origin data rowをbyte-for-byte保持した限定round-tripは実機成功済みですが、EXP-01 generatorがゼロから構築するcandidateは未検証です。
+Manual evidenceにより、30列CSV仕訳データ入力schema、1行目header requirement、identifier flag meanings、税処理ごとのconditional requirements、error CSV behaviorは確認済みです。JDL-origin data rowを保持した限定round-tripと、explicit configから生成した特定の `1111` artifactは実機成功済みです。現行EXP-01の `1000` candidateは未試験です。
 
 今回観測した操作flow:
 
@@ -25,6 +25,22 @@ Manual evidenceにより、30列CSV仕訳データ入力schema、1行目header r
 完全架空テスト事業所のJDL IBEX出納帳35.5で、JDL自身がExportした `1111` の1行伝票を使ったround-trip Importに成功した。source exportの先頭3 physical rows、83 bytesのpreambleだけを除去し、official headerとdata rowはbyte-for-byte保持した。JDLは1件として認識し、Import後に1伝票、重複なし、日付、貸借科目、貸借金額、摘要、貸借一致を確認した。
 
 この結果のEvidence levelは、そのsame-runtime round-trip経路だけ `VERIFIED_BY_REAL_IMPORT` とする。generator-authored field values、`1000`、補助、部門、税、compound voucher、YayoiからJDLへの変換には適用しない。
+
+## Generator-Authored 1111 Candidate
+
+次段階のcandidateは、30列すべてと各列のdecision sourceをprivate configで明示し、JDL-origin data rowを構築元に使わない。flag、日付、科目名称、金額、摘要の制御対象semanticsはround-trip rowと一致する。
+
+伝番、科目コード/正式名称、消費税、部門コード等は、JDL source値をコピーせず、official Manual上の任意項目、科目名称によるidentifier alternative、免税、補助/部門なしという根拠でblankにする。このためraw rowには複数列の差分があり、byte-levelで「originだけが唯一の差」とは扱わない。Import結果はgenerator-authored manual semanticsの検証として評価する。
+
+candidate、config、privacy-safe report、manifestは `data/private/experiments/jdl_import/generator_authored_1111/` だけに保存した。この特定artifactは `EVID-JDL-GENERATOR-1111-001` として限定的に実機Import検証済みである。generatorが今後作る別artifactの初期statusは引き続き `GENERATOR_AUTHORED_1111_UNTESTED` とし、成功Evidenceを自動継承しない。
+
+Import後のJDL再Exportでは、candidateの21 fieldsが入力表現のまま保持され、blankだった9 fieldsがnonblank representationになった。これは再Export表現の観測であり、内部保存値やgenerator defaultとは扱わない。
+
+## Generator-Authored 1000 Candidate
+
+次のcandidateは、成功したgenerator-authored `1111` のexplicit configを基に、identifier flagだけを `1000` へ変更した。JDL-origin data rowは構築元に使用していない。伝番はManual上の任意項目としてblankを維持し、他の29 fields、会社条件、target master確認、tax確認を変えていない。
+
+private生成物は `data/private/experiments/jdl_import/generator_authored_1000/` に保存し、statusは `GENERATOR_AUTHORED_1000_UNTESTED` とする。実機Import結果が得られるまで成功Evidenceへ昇格しない。
 
 ## 安全条件
 
@@ -49,7 +65,7 @@ Manual evidenceにより、30列CSV仕訳データ入力schema、1行目header r
 - JDL-origin exportで観測したmetadata/comment/preamble行は入れない。
 - JDL仕様上未確認の独自コメント行や独自metadata行は追加しない。
 - metadataはCSVではなくprivacy-safe report/manifestへ記録する。
-- statusは `EXPERIMENTAL_NOT_VERIFIED_BY_REAL_IMPORT` のまま保持する。
+- 1000 candidateのstatusは `GENERATOR_AUTHORED_1000_UNTESTED` のまま保持する。
 
 ## 事前設定
 
@@ -67,7 +83,7 @@ cp experiments/jdl_import/exp01_config.template.json \
 
 最低限、人間がJDL実機で確認して入力する値:
 
-- 伝番
+- 伝番を入力する場合は8桁以内の数字。空欄はManual上の任意項目として明示する
 - 日付は `YYYYMMDD`
 - 借方科目コード、借方科目名、借方科目正式名称の少なくとも1つ
 - 貸方科目コード、貸方科目名、貸方科目正式名称の少なくとも1つ
@@ -85,16 +101,17 @@ cp experiments/jdl_import/exp01_config.template.json \
 
 ```bash
 PYTHONPATH=src python3 -m experiments.jdl_import.exp01_candidate \
-  --config data/private/experiments/jdl_import/exp01/config.json
+  --config data/private/experiments/jdl_import/generator_authored_1000/config.json \
+  --output-dir data/private/experiments/jdl_import/generator_authored_1000
 ```
 
-同名出力がある場合は失敗する。明示的に置換する場合だけ `--overwrite` を付ける。
+同名出力がある場合は失敗する。実機試験用candidateはoverwriteせず、再生成が必要なら既存artifactを別途保全してから人間が判断する。
 
 生成物:
 
-- `data/private/experiments/jdl_import/exp01/EXP-01_jdl_import_candidate.csv`
-- `data/private/experiments/jdl_import/exp01/EXP-01_jdl_import_candidate.report.json`
-- `data/private/experiments/jdl_import/exp01/EXP-01_manifest.json`
+- `data/private/experiments/jdl_import/generator_authored_1000/jdl_generator_authored_1000_candidate.csv`
+- `data/private/experiments/jdl_import/generator_authored_1000/jdl_generator_authored_1000_candidate.report.json`
+- `data/private/experiments/jdl_import/generator_authored_1000/EXP-01_manifest.json`
 
 ## 自動検証
 
@@ -154,7 +171,7 @@ Import失敗時に保存するもの:
 
 ## production化しない理由
 
-EXP-01はgenerator-authored 1件の最小候補を検証する実験です。JDL-origin rowの限定round-trip成功だけでは、generator出力、複合仕訳、税区分、補助、部門、月次大量データ、別Version互換性は確定しません。
+EXP-01はgenerator-authored 1件の最小候補を段階検証する実験です。特定のgenerator-authored `1111` artifactは成功しましたが、`1000`、複合仕訳、税区分、補助、部門、月次大量データ、別Version互換性は確定しません。
 
 Manual evidenceで30-column CSV仕訳入力schemaは確認できた。一方、JDL-origin exportにはpreambleがあるため、Export CSVをそのままImport可能とは扱わない。EXP-01 candidateはpreambleなしで1行目にofficial headerを置く。
 
@@ -175,10 +192,9 @@ JDL会計から取得した21列の仕訳一覧CSVは、EXP-01の30列import can
 
 ## 次に取得するEvidence
 
-現行EXP-01 generatorはidentifier flag `1000` を要求する。generator-authored field valuesだけを先に分離検証するため、まず同じ最小条件の `1111` candidateを別実験として生成・Importし、その成功後にEXP-01 `1000` へ進む。
+generator-authored `1111` minimal candidateは実機Importと再Exportまで成功した。次は他の29 fieldsを同一に保ち、identifier flagだけを変えたEXP-01 `1000` を別Evidenceとして試験する。
 
-- generator-authored `1111` minimal candidateの実Import結果
-- EXP-01 `1000` minimal candidateの実Import結果
+- EXP-01 `1000` minimal candidateの実Import結果と、成功時の再Export
 - 成功時の取込件数確認画面とJDL側登録結果
 - 失敗時の `ログ表示` 内容とerror CSV
 - 課区・税区略称一覧
