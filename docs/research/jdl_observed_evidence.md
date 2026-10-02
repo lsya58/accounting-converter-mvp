@@ -8,9 +8,9 @@
 
 - `OFFICIAL_DOCUMENTED`: JDL公式マニュアル等で確認したが、生成CSVの実機取込成功では未確認。
 - `OBSERVED`: 実ファイルまたは帳票から観測したが、正式仕様または実機取込成功では未確認。
-- `VERIFIED_BY_REAL_IMPORT`: 生成CSVを対象JDLへ実際に取り込み、件数、貸借、内容確認まで完了。
+- `VERIFIED_BY_REAL_IMPORT`: 特定のCSV生成経路とデータ条件について、対象JDLへ実際に取り込み、件数、貸借、内容確認まで完了。適用範囲を必ず明記し、Format全体へ一般化しない。
 
-実ファイル・UI・帳票由来のEvidenceは `OBSERVED` に留める。マニュアル由来の確認事項は別途 `OFFICIAL_DOCUMENTED` として保持するが、JDLOutputAdapterのEvidenceLevelは上げない。
+実ファイル・UI・帳票由来のEvidenceは原則 `OBSERVED` とする。実機Import成功を確認した経路だけを限定的に `VERIFIED_BY_REAL_IMPORT` として記録する。マニュアル由来の確認事項は別途 `OFFICIAL_DOCUMENTED` として保持し、限定的な成功だけでJDLOutputAdapterのEvidenceLevelは上げない。
 
 ## EVID-JDL-MANUAL-001
 
@@ -30,9 +30,48 @@
 - separation:
   - JDL IBEX出納帳35.5固有仕様とは断定しない
   - CP932/CRLF/BOMなしはmanual由来ではなくobserved evidenceのまま
-  - generated CSVのsuccessful importは未検証
-  - `VERIFIED_BY_REAL_IMPORT` には昇格しない
+  - JDL-origin data rowを保持したround-tripは別Evidenceで実機成功を確認済み
+  - generator-authored CSVとFormat全体は未検証
+  - official schema identityは `VERIFIED_BY_REAL_IMPORT` へ昇格しない
 - details: `docs/research/jdl_ibex_csv_manual_evidence.md`
+
+## EVID-JDL-ROUNDTRIP-001
+
+- source: 完全架空テスト事業所でJDL自身が出力した1仕訳CSV
+- product/version evidence: JDL IBEX出納帳 35.5
+- evidence level: `VERIFIED_BY_REAL_IMPORT`（下記round-trip経路に限定）
+- candidate construction:
+  - source exportはCP932、CRLF、BOMなし
+  - source exportの先頭3 physical rows、83 bytesのpreambleだけを除去
+  - official 30-column headerをfirst physical rowとした
+  - headerとdata rowのsuffixはsource exportとbyte-for-byte一致
+  - field value、quoting、encoding、newlineは変更していない
+- runtime result:
+  - `データ管理・選択 -> CSV入力 -> 仕訳データ` からImport
+  - JDLが1件のデータとして認識
+  - CSV変換終了messageを確認
+  - 1伝票だけが登録され、重複なし
+  - date、debit/credit account、debit/credit amount、description、balanceが元の架空仕訳と一致
+- verified scope:
+  - JDL-origin data rowのsame-runtime round-trip
+  - identifier flag `1111` の1行伝票
+  - 免税会社
+  - 補助科目なし
+  - 部門なし
+  - 税関連fieldなし
+  - observed export preamble除去とfirst-row official header requirement
+- not verified:
+  - generator-authored field values
+  - identifier flag `1000`
+  - compound voucher sequence
+  - subaccount、department
+  - taxable/tax-included、taxable/tax-excluded
+  - tax code abbreviations、transaction account
+  - YayoiからJDLへのend-to-end conversion
+- separation:
+  - official documented schemaは引き続き `OFFICIAL_DOCUMENTED`
+  - production JDLOutputAdapterは未登録
+  - YayoiからJDLへのproduction readinessは変更しない
 
 ## EVID-JDL-001
 
@@ -68,8 +107,9 @@
   - some field names/order now match official manual evidence, but this file itself remains observed evidence
   - not verified as a successful import file
   - identifier flag meanings are now official documented in the manual layer, but observed grouping behavior remains separately tracked
-  - export/import symmetry is still a hypothesis
-  - EXP-01 generated CSV has not been imported successfully yet
+  - JDL-origin `1111` rowのpreamble除去round-tripだけは実機成功済み
+  - generator-authored CSVを含む一般的なexport/import symmetryは未検証
+  - EXP-01 generator-authored CSVはまだ実機成功していない
   - visible field mapping UI was not observed in this flow, but absence of a field mapping feature is not proven
   - partial success was not observed
 
@@ -225,10 +265,10 @@
 
 ## Next Verification Gate
 
-To move any JDL output capability to `VERIFIED_BY_REAL_IMPORT`, run:
+The JDL-origin `1111` round-trip path is now scoped `VERIFIED_BY_REAL_IMPORT`. To verify generator-authored JDL output without broadening that evidence:
 
-1. Generate fully fictional JDL import experiment CSV.
-2. Import it into the target JDL environment.
-3. Record `PASS` or `REJECTED` in the private experiment manifest.
-4. Compare fingerprints against prior observed files.
-5. Confirm record/group counts, debit/credit totals, and journal content inside JDL.
+1. Generate one fully fictional, exempt, no-subaccount, no-department `1111` journal from explicit config, without copying the JDL-origin data row.
+2. Import only that one record into the same test JDL environment after backup and confirm one voucher, no duplicate, account identities, debit/credit totals, description, and balance.
+3. If the generator-authored `1111` succeeds, run the existing EXP-01 `1000` experiment as a separate variable change.
+4. Record each result independently as `PASS` or `REJECTED` in the private experiment manifest.
+5. Continue with subaccount, department, tax-inclusive, tax-exclusive, then compound voucher; keep production JDLOutputAdapter unavailable.

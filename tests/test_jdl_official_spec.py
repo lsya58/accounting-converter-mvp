@@ -40,7 +40,7 @@ class JdlOfficialSpecTests(unittest.TestCase):
         )
         self.assertFalse(spec.is_formal_format_profile)
 
-    def test_official_schema_identity_is_output_target_but_not_verified(self) -> None:
+    def test_official_schema_identity_is_not_promoted_by_scoped_roundtrip(self) -> None:
         schema = jdl_ibex_cashbook_official_journal_import_schema_definition()
 
         self.assertEqual(schema.identity.vendor, "JDL")
@@ -50,7 +50,9 @@ class JdlOfficialSpecTests(unittest.TestCase):
         self.assertEqual(schema.has_header, CapabilityStatus.SUPPORTED)
         self.assertEqual(schema.date_formats, ("%Y%m%d",))
         self.assertIsNone(schema.encoding)
-        self.assertIn("Not verified", schema.identity.notes)
+        self.assertIn("scoped JDL-origin 1111 round-trip", schema.identity.notes)
+        self.assertIn("generator-authored output", schema.identity.notes)
+        self.assertIn("not verified", schema.identity.notes)
 
     def test_official_and_observed_30_column_headers_match_but_identity_differs(self) -> None:
         official = jdl_ibex_cashbook_official_journal_import_schema_definition()

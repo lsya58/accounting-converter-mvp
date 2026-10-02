@@ -6,7 +6,7 @@ EXP-01は、完全架空の最小1仕訳をJDL IBEX出納帳 35.5の `データ�
 
 これは正式JDLOutputAdapterではありません。JDL IBEX 出納帳操作マニュアルP319-P322/P326-P327で確認した `OFFICIAL_DOCUMENTED` schemaと、実CSVから観測したCP932/CRLF/BOMなしserializationを組み合わせた実験です。成功しても即production化しません。
 
-Manual evidenceにより、30列CSV仕訳データ入力schema、1行目header requirement、identifier flag meanings、税処理ごとのconditional requirements、error CSV behaviorは確認済み。ただし、EXP-01 candidateがJDL実機で受理されることは未検証です。
+Manual evidenceにより、30列CSV仕訳データ入力schema、1行目header requirement、identifier flag meanings、税処理ごとのconditional requirements、error CSV behaviorは確認済みです。加えてJDL-origin data rowをbyte-for-byte保持した限定round-tripは実機成功済みですが、EXP-01 generatorがゼロから構築するcandidateは未検証です。
 
 今回観測した操作flow:
 
@@ -19,6 +19,12 @@ Manual evidenceにより、30列CSV仕訳データ入力schema、1行目header r
 7. 実行
 
 このflowではvisibleなfield mapping UIは観測されていない。ただしfield mapping機能が存在しないとは断定しない。
+
+## Round-Trip Baseline
+
+完全架空テスト事業所のJDL IBEX出納帳35.5で、JDL自身がExportした `1111` の1行伝票を使ったround-trip Importに成功した。source exportの先頭3 physical rows、83 bytesのpreambleだけを除去し、official headerとdata rowはbyte-for-byte保持した。JDLは1件として認識し、Import後に1伝票、重複なし、日付、貸借科目、貸借金額、摘要、貸借一致を確認した。
+
+この結果のEvidence levelは、そのsame-runtime round-trip経路だけ `VERIFIED_BY_REAL_IMPORT` とする。generator-authored field values、`1000`、補助、部門、税、compound voucher、YayoiからJDLへの変換には適用しない。
 
 ## 安全条件
 
@@ -148,7 +154,7 @@ Import失敗時に保存するもの:
 
 ## production化しない理由
 
-EXP-01は1件の最小候補の実験です。成功しても、JDLの正式CSV仕様、複合仕訳、税区分、補助、部門、月次大量データ、別Version互換性はまだ確定しません。
+EXP-01はgenerator-authored 1件の最小候補を検証する実験です。JDL-origin rowの限定round-trip成功だけでは、generator出力、複合仕訳、税区分、補助、部門、月次大量データ、別Version互換性は確定しません。
 
 Manual evidenceで30-column CSV仕訳入力schemaは確認できた。一方、JDL-origin exportにはpreambleがあるため、Export CSVをそのままImport可能とは扱わない。EXP-01 candidateはpreambleなしで1行目にofficial headerを置く。
 
@@ -169,7 +175,10 @@ JDL会計から取得した21列の仕訳一覧CSVは、EXP-01の30列import can
 
 ## 次に取得するEvidence
 
-- EXP-01 candidateの実Import結果
+現行EXP-01 generatorはidentifier flag `1000` を要求する。generator-authored field valuesだけを先に分離検証するため、まず同じ最小条件の `1111` candidateを別実験として生成・Importし、その成功後にEXP-01 `1000` へ進む。
+
+- generator-authored `1111` minimal candidateの実Import結果
+- EXP-01 `1000` minimal candidateの実Import結果
 - 成功時の取込件数確認画面とJDL側登録結果
 - 失敗時の `ログ表示` 内容とerror CSV
 - 課区・税区略称一覧

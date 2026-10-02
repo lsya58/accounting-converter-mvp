@@ -63,9 +63,9 @@ JDL診断CLIは、schema未指定の純粋観測と、明示的なObserved Schem
 
 実運用上は、日常入力にJDL IBEX出納帳 35.5を使い、決算・申告時にserver-sideのJDL財務/会計システムへ移行する流れが観測されています。MVPの直接Import target候補はJDL IBEX出納帳 35.5へ整理し、JDL会計21列仕訳一覧はpost-import verification用のread-only evidence候補として分離します。
 
-JDL IBEX出納帳 35.5では `データ管理・選択 -> CSV入力 -> データ種類: 仕訳データ` のImport flowも観測済みです。退避確認、日付範囲指定、決算整理の含む/含まない選択、rejection時のログ表示が確認されています。ただし、30-column observed CSVがImport形式そのものか、Export/Importが完全対称か、EXP-01 candidateが受理されるかは未検証です。
+JDL IBEX出納帳 35.5では `データ管理・選択 -> CSV入力 -> データ種類: 仕訳データ` のImport flowも観測済みです。退避確認、日付範囲指定、決算整理の含む/含まない選択、rejection時のログ表示が確認されています。JDL自身が出力した `1111` の1 data rowを保持し、3行のexport preambleだけを除去したcandidateは、同じ実機へのround-trip Importに成功しました。この検証は限定経路だけに適用し、generator-authored CSVやFormat全体へ一般化しません。
 
-JDL IBEX 出納帳の操作マニュアルP319-P322/P326-P327から、CSV仕訳データ入力の30項目、1行目header requirement、identifier flag meanings、税処理ごとのconditional requirements、error CSV behaviorを `OFFICIAL_DOCUMENTED` evidenceとして追加しています。これはJDL IBEX出納帳35.5の実機取込成功を意味しません。CP932/CRLF/BOMなしは実CSV由来のobserved-compatible serializationとして分離しています。
+JDL IBEX 出納帳の操作マニュアルP319-P322/P326-P327から、CSV仕訳データ入力の30項目、1行目header requirement、identifier flag meanings、税処理ごとのconditional requirements、error CSV behaviorを `OFFICIAL_DOCUMENTED` evidenceとして追加しています。CP932/CRLF/BOMなしは実CSV由来のobserved-compatible serializationとして分離しています。限定round-tripは実機成功済みですが、official schema identityは `OFFICIAL_DOCUMENTED` のままです。
 
 JDL runtimeのerror-annotated CSVでは、account/subaccount mismatch candidatesが観測されています。このためEXP-01や将来のJDL output preflightでは、target masterに科目が存在すること、補助科目が正しい親勘定科目の下に存在すること、unknown mappingをblockすることを重視します。自動置換やfuzzy matchingは行いません。
 
@@ -222,4 +222,4 @@ GitHub ActionsではPython 3.12で同じテストを実行し、`tests/fixtures/
 
 `experiments/jdl_import/` には、JDL IBEX出納帳のofficial documented 30-column schemaとJDL IBEX出納帳35.5 observed-compatible serializationを使った研究用CSV generatorがあります。これは正式JDLOutputAdapterではなく、完全架空データでJDL実機の取込条件を確認するための実験環境です。
 
-次にJDL実機が使えるときは、テスト用JDLマスターに存在する架空科目を指定してEXP-01から生成し、JDLへ取り込み、結果を`experiments/jdl_import/output/experiment_manifest.json`へ`PASS` / `REJECTED` / `UNTESTED`として記録します。JDLエラーログや実機結果の詳細は`data/private/`配下に保存し、Gitには追加しません。
+JDL-origin `1111` rowのpreamble除去round-tripは実機成功済みです。次は同じ最小条件をexplicit configからゼロ構築した `1111` でgenerator-authored field valuesだけを検証し、成功後に現行EXP-01の `1000` へ進みます。結果はprivate manifestへ`PASS` / `REJECTED` / `UNTESTED`として記録し、JDLエラーログや詳細は`data/private/`配下だけに保存します。
