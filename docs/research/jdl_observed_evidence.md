@@ -219,6 +219,54 @@
   - 片側department input、他部門、階層/配賦、税、複合、複数件には適用しない
   - production JDLOutputAdapterまたはYayoiからJDLへのreadinessへ昇格しない
 
+## EVID-JDL-TAX-INCLUSIVE-HAND-1111-001
+
+- source: 完全架空テスト事業所で課税・税込の1行振替伝票を手入力し、JDL自身からExportしたraw CSV
+- product/version evidence: JDL IBEX出納帳 35.5
+- evidence level: `OBSERVED`（manual-entry/export観測。generator Import成功ではない）
+- company setting scope:
+  - 課税、原則課税、個別対応方式、税込
+  - 売上/仕入端数は切り捨て、別記消費税は使用しない
+  - department processing無効
+- raw structure:
+  - CP932-compatible、BOMなし、CRLF
+  - preamble 3行、official 30-column header、30-column data row 1件
+  - identifier flag `1111`、補助なし、貸借一致
+- tax representation:
+  - 借方課区は `仕　入`。中央はU+3000 IDEOGRAPHIC SPACE
+  - 借方税区は `10%`
+  - 借方税入力方法と借方取引科目はblank
+  - 貸方の課区/税区/税入力方法/取引科目はblank
+  - 借貸消費税と借貸部門codeはre-exportで `0`
+- limits:
+  - re-exportの税額/部門code `0`をgenerator defaultにしない
+  - 課区の全角spaceを除去・半角化・trimしない
+  - 他税率、他課区/税区、税抜、簡易課税、別の仕入税額控除方式へ一般化しない
+  - transaction accountが常に不要とは断定しない
+  - production capabilityへ昇格しない
+
+## EVID-JDL-GENERATOR-1111-TAX-INCLUSIVE-001
+
+- source: Official Manual、上記の手入力Export observation、確認済みtarget masterだけから全30 fieldsを明示して生成した完全架空1件
+- product/version evidence: JDL IBEX出納帳 35.5
+- evidence level: `VERIFIED_BY_REAL_IMPORT`（このartifactと会社設定に限定）
+- verified scope:
+  - official 30-column headerを先頭行に持つCP932-compatible、BOMなし、CRLFのCSV
+  - identifier flag `1111`、1行伝票、補助なし、部門なし、貸借一致
+  - 課税、原則課税、個別対応方式、税込、売上/仕入端数切り捨て、別記消費税なし
+  - raw-confirmedな借方課区 `仕　入`（中央U+3000）と借方税区 `10%` の1組
+  - 実機が1件として認識し、Import完了後に1伝票、対象日付、貸借、摘要、税区分表示、重複なしを目視確認
+  - post-import raw re-exportを取得
+- candidate / re-export comparison:
+  - 21 fieldsは入力表現を保持
+  - candidateでblankだった9 fieldsがre-exportでnonblank
+  - 借方課区、借方税区、借方税入力方法、借方金額、借方取引科目、貸方tax classification、貸方金額、貸方取引科目は入力表現を保持
+  - 借貸消費税と借貸部門codeのre-export表現はgenerator defaultへ昇格しない
+- limits:
+  - 他の課区、税区、税率、軽減8%、売上側課税、税抜、税入力方法variant、明示税額、取引科目を検証していない
+  - flag `1000` の課税、複合、混在税率、複数件、大量データを検証していない
+  - production JDLOutputAdapterまたはYayoiからJDLへのreadinessへ昇格しない
+
 ## Generator-authored 1000 department experiment
 
 - result: `INCONCLUSIVE / NOT VERIFIED`

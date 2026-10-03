@@ -220,6 +220,10 @@ generator-authored `1111` / `1000` minimal candidatesは実機Importと再Export
 
 ### 次のtax-inclusive実験
 
-現在のテスト事業所は免税であり、課区/税区の有効な略称と組み合わせも未取得であるため、tax candidateはまだ生成しない。Manual上、課税・税込処理では借貸の課区/税区が必要で、税入力方法/消費税は不要とされる。取引科目は消費税仕訳の場合だけ必要であり、通常仕訳へ推測入力しない。
+テスト事業所を課税・原則課税・個別対応方式・税込へ変更し、department/subaccountなしの単純仕訳を手入力したraw Exportを取得した。`EVID-JDL-TAX-INCLUSIVE-HAND-1111-001` として、借方課区 `仕　入`（中央U+3000）、借方税区 `10%`、その他のtax classification/input method/transaction accountのblank状態を観測した。
 
-次はdepartmentとsubaccountを外した単純仕訳をJDL UIで手入力し、課税・税込の会社設定、UIで実際に選択した課区/税区、再Exportの30列表現をEvidenceとして取得する。tax input method、tax amount、transaction accountがblank/nonblankのどちらになるかもrawで確認し、取得前はcandidate生成をblockする。
+Manual上、課税・税込処理では課区/税区が必要で、税入力方法/消費税は不要とされる。このためgenerator-authored candidateではraw-confirmedな借方課区/税区だけを設定し、税入力方法/消費税はblankにした。self-exportで観測した消費税 `0`、department code `0` は再Export表現であり、candidateへコピーしていない。
+
+この特定candidateは実機Importと再Exportに成功し、`EVID-JDL-GENERATOR-1111-TAX-INCLUSIVE-001` として限定的に検証済みとした。JDLは1件として認識し、1伝票、税区分表示、貸借、摘要、重複なしを確認した。raw比較では21 fieldsが保持され、借方課区のU+3000と借方税区も保持された。blankからnonblankになった9 fieldsは再Export表現であり、generator defaultにはしない。
+
+新しく生成するartifactの初期statusは引き続き `GENERATOR_AUTHORED_1111_TAX_INCLUSIVE_UNTESTED` とする。他の税率/課区/税区、売上側課税、税抜、transaction account、別会社設定へ値を継承しない。次の最小実験は税抜会社設定での手入力・self-export evidence取得であり、そのraw確認前にcandidateを生成しない。

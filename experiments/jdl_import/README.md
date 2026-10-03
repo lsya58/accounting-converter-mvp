@@ -80,7 +80,19 @@ PYTHONPATH=src python3 -m experiments.jdl_import.generator_authored_1111_departm
 
 今回の特定artifactは実機Importと再Exportに成功し、`EVID-JDL-GENERATOR-1111-DEPARTMENT-001` として限定的に検証済みです。candidateからre-exportへdepartment 4 fieldsは保持されましたが、UI表示差や両側入力の一般規則には昇格しません。片側departmentの `1000` 実験も引き続き `INCONCLUSIVE / NOT VERIFIED` です。
 
-次のtax-inclusive candidateはまだ生成しません。課税・税込の会社設定、JDL UIで選択可能な課区/税区略称、手入力仕訳のraw Exportで税関連fieldの表現が確認できるまで追加Evidence待ちです。次の実験ではsubaccountとdepartmentを外し、税だけを変更変数にします。
+## Generator-authored 1111 + tax-inclusive candidate
+
+`generator_authored_1111_tax_inclusive.py` は、課税・税込の手入力 `1111` self-exportで観測した課区/税区と、Official Manualのrequirednessを組み合わせた研究用generatorです。subaccount/departmentを外し、税だけを変更変数にします。
+
+```bash
+PYTHONPATH=src python3 -m experiments.jdl_import.generator_authored_1111_tax_inclusive \
+  --config data/private/experiments/jdl_import/generator_authored_1111_tax_inclusive/config.json \
+  --comparison-source data/private/experiments/jdl_import/generator_authored_1111_tax_inclusive/jdl_tax_inclusive_hand_entry_0818.csv
+```
+
+raw-confirmedな課区文字列は全角spaceを含めてexact matchし、勝手にnormalizeしません。Manualで税込時に不要とされる税入力方法/消費税はblankにし、self-exportの `0`をgenerator defaultへ流用しません。部門処理無効時のre-export部門code `0`もcandidateへ入れません。新規artifactの初期statusは `GENERATOR_AUTHORED_1111_TAX_INCLUSIVE_UNTESTED` です。
+
+今回の特定artifactは実機Importと再Exportに成功し、`EVID-JDL-GENERATOR-1111-TAX-INCLUSIVE-001` として限定的に検証済みです。借方課区のU+3000を含む表現と借方税区は保持されましたが、他の税表現、税抜、flag、会社設定、複数件には適用せず、production capabilityにも昇格しません。
 
 ## 生成されるもの
 

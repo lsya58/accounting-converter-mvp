@@ -101,6 +101,8 @@ JDL IBEX 出納帳35.5で観測したUI/実CSVとは別Evidenceとして扱う�
 
 借方/貸方取引科目は消費税仕訳のときのみ必要。通常仕訳に0などを自動入力しない。
 
+JDL IBEX出納帳35.5の課税・原則課税・個別対応方式・税込という限定会社設定で、手入力 `1111` のself-exportを観測した。借方課区/税区は非空、税入力方法はblankで、Manualの税込requirednessと整合した。self-exportの借貸消費税は `0` だったが、Manual上は税込処理で消費税fieldは不要であるため、`0`をInput generatorのdefaultにはしない。貸方税classificationがblankだったことも、この1仕訳・科目組み合わせのObserved Evidenceに限定する。
+
 ## Import Operation And Error File
 
 マニュアルP326-P327で以下を確認した。
@@ -131,12 +133,14 @@ Import後の再Exportでは、candidate入力の21 fieldsが同じ表現で保�
 
 部門処理を有効にし、確認済み部門masterのcode/短縮名を借貸両側へ明示したgenerator-authored `1111` 1件も実機Importと再Exportに成功した。raw比較ではdepartment 4 fieldsを含む23 fieldsが保持され、blank入力7 fieldsがre-exportでnonblankになった。UIで借方部門だけが見えた理由や、部門を常に両側へ入力すべきかはManualから確定できないため、このartifactを一般規則にはしない。
 
+課税・税込の手入力Exportで観測した借方課区/税区1組とManual requirednessを使い、全30 fieldsを明示したgenerator-authored `1111` 1件も実機Importと再Exportに成功した。借方課区のU+3000を含む表現と借方税区はraw再Exportで保持された。candidateの21 fieldsが保持され、blank入力9 fieldsがnonblankになったが、再Exportの税額/部門code表現をgenerator defaultにはしない。この検証は当該会社設定、税表現、1 artifactに限定する。
+
 ## Remaining Blockers
 
 - 貸方補助と借貸両側部門の特定artifactsは限定的に実Import検証済み。その他の補助/部門表現、各税処理、compound sequence、複数件は未検証。
 - 部門処理を有効にした手入力 `1111` の再Exportでは、画面上の借方側指定に対してraw CSVの借貸両側部門fieldが埋まることを観測した。これはExport observationであり、generator-authored department Importの成功Evidenceではない。
 - 借方部門だけを明示したgenerator-authored `1000` 実験はImport後の部門表示を確認できず、別要因errorも混在したため `INCONCLUSIVE / NOT VERIFIED`。
-- 次のtax-inclusive実験は、取込先を課税・税込設定へ変更した上でJDL UIの有効な課区/税区略称とraw Export表現を取得するまでcandidate生成をblockする。
+- 課税・税込の借方課区/税区1組は限定artifactで実Import検証済み。他税率/税区、売上側課税、税抜、明示税額、transaction account、複数件は引き続きblockする。
 - 取込先テスト会社の科目master確認。
 - 補助科目を使う場合の親科目配下登録確認。
 - 取込先会社の消費税処理確認。
