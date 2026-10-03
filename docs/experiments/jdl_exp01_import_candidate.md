@@ -207,3 +207,19 @@ generator-authored `1111` / `1000` minimal candidatesは実機Importと再Export
 - 課区・税区略称一覧
 - 取込先会社の消費税処理設定
 - 伝票行数上限など会社設定依存項目
+
+### Generator-authored 1000 + department
+
+部門処理を有効化した完全架空テスト事業所で、成功済み補助なし `1000` を基準に借方部門だけを追加したcandidateを生成した。差分は `借方部門コード` / `借方部門名称` の2列だけで、statusは `GENERATOR_AUTHORED_1000_DEPARTMENT_UNTESTED` とする。
+
+登録正式名はofficial 4文字上限を超えるため切り詰めず、JDL画面で別途確認済みの4文字以内の短縮名を `借方部門名称` の実験値として明示設定した。これは実機検証対象の仮説であり、部門名称列が常に短縮名を要求するとは断定しない。貸方部門、借貸の補助、税fieldは空欄を維持する。
+
+実機ではCSV自体はImportされたが、仕訳帳画面でdepartment表示を確認できなかった。初回試行には残存subaccount masterによる別要因errorも含まれたため、この1000実験は `INCONCLUSIVE / NOT VERIFIED` とし、department成功Evidenceへ昇格しない。
+
+借貸両側へ確認済みdepartment code/短縮名を明示したgenerator-authored `1111` 1件は実機Importと再Exportに成功し、`EVID-JDL-GENERATOR-1111-DEPARTMENT-001` として限定的に検証済みとした。candidate/re-export比較ではdepartment 4 fieldsを含む23 fieldsが保持された。UIでは借方部門が見え、貸方部門欄は空欄に見えたため、JDL内部保存やUI表示差、両側入力の一般的requirednessは未確定のままにする。
+
+### 次のtax-inclusive実験
+
+現在のテスト事業所は免税であり、課区/税区の有効な略称と組み合わせも未取得であるため、tax candidateはまだ生成しない。Manual上、課税・税込処理では借貸の課区/税区が必要で、税入力方法/消費税は不要とされる。取引科目は消費税仕訳の場合だけ必要であり、通常仕訳へ推測入力しない。
+
+次はdepartmentとsubaccountを外した単純仕訳をJDL UIで手入力し、課税・税込の会社設定、UIで実際に選択した課区/税区、再Exportの30列表現をEvidenceとして取得する。tax input method、tax amount、transaction accountがblank/nonblankのどちらになるかもrawで確認し、取得前はcandidate生成をblockする。

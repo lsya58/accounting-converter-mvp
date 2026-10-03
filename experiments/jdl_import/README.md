@@ -52,6 +52,36 @@ PYTHONPATH=src python3 -m experiments.jdl_import.generator_authored_1000_subacco
 
 Import後に訂正したprivate configは、candidate表現とtarget master actual codeを分離した実験履歴であり、再生成用configではありません。generatorは両codeを正規化せず、不一致の新規candidateを引き続きblockします。
 
+## Generator-authored 1000 + debit department candidate
+
+`generator_authored_1000_department.py` は、成功済み補助なし `1000` candidateを基準に、借方部門コード/名称だけを変更する研究用wrapperです。全30列explicit config、部門処理有効、target department master完全一致、no fuzzy matching、no automatic replacementを必須とします。subaccount、税field、貸方部門は空欄を強制します。
+
+```bash
+PYTHONPATH=src python3 -m experiments.jdl_import.generator_authored_1000_department \
+  --config data/private/experiments/jdl_import/generator_authored_1000_department/config.json \
+  --comparison-source data/private/experiments/jdl_import/generator_authored_1000/jdl_generator_authored_1000_candidate.csv
+```
+
+official `借方部門名称` は4文字上限のため、5文字の登録正式名を切り詰めず、JDL masterで明示確認された短縮名を実験上のCSV表現として使用します。この選択は `GENERATOR_AUTHORED_1000_DEPARTMENT_UNTESTED` の仮説であり、一般仕様にはしません。
+
+実機結果は `INCONCLUSIVE / NOT VERIFIED` です。CSVはImportされましたがdepartment表示を確認できず、初回試行には残存subaccount masterによる別要因errorも含まれました。この結果をdepartment対応やproduction capabilityのEvidenceには使用しません。
+
+## Generator-authored 1111 + both-side department candidate
+
+`generator_authored_1111_department.py` は、手入力した部門付き `1111` 伝票のJDL再Exportで借貸両側のdepartment code/短縮名が観測されたことを根拠に、両側を明示した次の研究用candidateを生成します。観測元rawはaccount/department Evidence確認とbyte非同一検査だけに使用し、data rowの構築元にはしません。
+
+```bash
+PYTHONPATH=src python3 -m experiments.jdl_import.generator_authored_1111_department \
+  --config data/private/experiments/jdl_import/generator_authored_1111_department/config.json \
+  --comparison-source data/private/experiments/jdl_import/generator_authored_1000_department/JDL出納帳-0001-0816-仕訳.csv
+```
+
+全30列とdecision source、取込先account/department master、部門処理有効、免税条件をprivate configで明示します。subaccountと税fieldは空欄を強制し、同名出力は上書きしません。新規artifactの初期statusは `GENERATOR_AUTHORED_1111_DEPARTMENT_UNTESTED` です。
+
+今回の特定artifactは実機Importと再Exportに成功し、`EVID-JDL-GENERATOR-1111-DEPARTMENT-001` として限定的に検証済みです。candidateからre-exportへdepartment 4 fieldsは保持されましたが、UI表示差や両側入力の一般規則には昇格しません。片側departmentの `1000` 実験も引き続き `INCONCLUSIVE / NOT VERIFIED` です。
+
+次のtax-inclusive candidateはまだ生成しません。課税・税込の会社設定、JDL UIで選択可能な課区/税区略称、手入力仕訳のraw Exportで税関連fieldの表現が確認できるまで追加Evidence待ちです。次の実験ではsubaccountとdepartmentを外し、税だけを変更変数にします。
+
 ## 生成されるもの
 
 `experiments/jdl_import/output/` に以下を生成します。

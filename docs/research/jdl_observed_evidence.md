@@ -176,6 +176,62 @@
   - production JDLOutputAdapterは未登録
   - YayoiからJDLへのproduction readinessは変更しない
 
+## EVID-JDL-DEPARTMENT-HAND-1111-001
+
+- source: 完全架空テスト事業所で部門付き1行振替伝票を手入力し、JDL自身から再Exportしたraw CSV
+- product/version evidence: JDL IBEX出納帳 35.5
+- evidence level: `OBSERVED`（Import検証ではなくmanual-entry/export観測）
+- raw structure:
+  - CP932 decode可能、BOMなし、CRLF
+  - preamble 3行、4行目にofficial 30-column header
+  - 30-column data row 1件、identifier flag `1111`
+- department observation:
+  - operatorは画面上で借方側だけに対象部門を指定
+  - re-export rawでは借方・貸方の部門code/nameが両側とも非空
+  - 両側のcode representationは `1`
+  - 両側の名称representationは確認済み短縮名
+- limits:
+  - flag `1000`でも両側departmentが必要とは断定しない
+  - すべての仕訳で片側指定が両側へ複製されるとは断定しない
+  - departmentが片側指定不可とは断定しない
+  - production capabilityまたはgenerator defaultへ昇格しない
+
+## EVID-JDL-GENERATOR-1111-DEPARTMENT-001
+
+- source: official/manual、target master確認、手入力department Export observationを根拠にexplicit configから生成した完全架空1件
+- product/version evidence: JDL IBEX出納帳 35.5
+- evidence level: `VERIFIED_BY_REAL_IMPORT`（このartifactだけに限定）
+- candidate/runtime scope:
+  - official 30-column first-row header、CP932-compatible、BOMなし、CRLF
+  - identifier flag `1111`、1行伝票、1 data record、貸借一致
+  - 免税、補助なし、税fieldなし、部門処理有効
+  - 確認済み部門masterのcode/短縮名を借貸両側4 fieldへ明示
+  - JDLが1件と認識してImportを正常終了
+  - 振替伝票画面で1伝票、貸借、摘要、借方部門表示、重複なしを確認
+- raw re-export:
+  - preamble 3行、official 30-column header、30-column data row 1件
+  - candidateから23 fieldsを同じ表現で保持
+  - candidateでblankだった7 fieldsがre-exportでnonblank
+  - 借方/貸方の部門code/name 4 fieldsはすべてcandidate表現を保持
+- interpretation limits:
+  - UIでは借方部門が見え、貸方部門欄は空欄に見えた一方、raw re-exportでは借貸両側に部門表現がある
+  - JDL内部保存、UI表示差の理由、両側部門の一般的requirednessは未確定
+  - 片側department input、他部門、階層/配賦、税、複合、複数件には適用しない
+  - production JDLOutputAdapterまたはYayoiからJDLへのreadinessへ昇格しない
+
+## Generator-authored 1000 department experiment
+
+- result: `INCONCLUSIVE / NOT VERIFIED`
+- candidate: flag `1000`、借方部門のみ、補助なし、免税、1件
+- runtime observation:
+  - CSV自体はImportされた
+  - JDL仕訳帳画面ではdepartment表示を確認できなかった
+  - 初回試行には以前のsubaccount masterが残ったことによる別要因errorもあった
+- interpretation:
+  - department Import成功Evidenceにはしない
+  - flag `1000` 固有挙動、片側department表現、master状態の影響を分離できていない
+  - production readinessは変更しない
+
 ## EVID-JDL-001
 
 - source: prior failed-import dataset

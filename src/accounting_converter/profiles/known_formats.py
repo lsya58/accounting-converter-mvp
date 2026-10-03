@@ -59,8 +59,8 @@ JDL_OBSERVED_SOURCE = SourceProvenance(
     verified_at=date(2026, 8, 27),
     notes=(
         "Observed schema overall is not a verified formal specification. "
-        "A JDL-origin round-trip and two generator-authored single-record variants "
-        "have scoped real-import verification."
+        "A JDL-origin round-trip and several explicitly scoped generator-authored "
+        "single-record artifacts have real-import verification."
     ),
 )
 

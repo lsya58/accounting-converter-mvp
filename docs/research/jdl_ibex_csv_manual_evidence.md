@@ -129,9 +129,14 @@ Import後の再Exportでは、candidate入力の21 fieldsが同じ表現で保�
 
 同じ条件でidentifier flagだけを `1000` に変更したgenerator-authored 1件も実機Importに成功した。`1111` は振替伝票画面で1行伝票として確認し、`1000` は仕訳帳で確認して振替伝票画面には表示されなかった。この差はManualの `1111 = 伝票1行の仕訳`、`1000 = 伝票以外の仕訳` と整合する。1000の再Exportでも21 fields保持、同じ9 blank fieldsのnonblank表現を観測したが、default規則には昇格しない。
 
+部門処理を有効にし、確認済み部門masterのcode/短縮名を借貸両側へ明示したgenerator-authored `1111` 1件も実機Importと再Exportに成功した。raw比較ではdepartment 4 fieldsを含む23 fieldsが保持され、blank入力7 fieldsがre-exportでnonblankになった。UIで借方部門だけが見えた理由や、部門を常に両側へ入力すべきかはManualから確定できないため、このartifactを一般規則にはしない。
+
 ## Remaining Blockers
 
-- 補助、部門、各税処理、compound sequence、複数件の段階的Import検証。
+- 貸方補助と借貸両側部門の特定artifactsは限定的に実Import検証済み。その他の補助/部門表現、各税処理、compound sequence、複数件は未検証。
+- 部門処理を有効にした手入力 `1111` の再Exportでは、画面上の借方側指定に対してraw CSVの借貸両側部門fieldが埋まることを観測した。これはExport observationであり、generator-authored department Importの成功Evidenceではない。
+- 借方部門だけを明示したgenerator-authored `1000` 実験はImport後の部門表示を確認できず、別要因errorも混在したため `INCONCLUSIVE / NOT VERIFIED`。
+- 次のtax-inclusive実験は、取込先を課税・税込設定へ変更した上でJDL UIの有効な課区/税区略称とraw Export表現を取得するまでcandidate生成をblockする。
 - 取込先テスト会社の科目master確認。
 - 補助科目を使う場合の親科目配下登録確認。
 - 取込先会社の消費税処理確認。

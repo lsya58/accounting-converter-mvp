@@ -17,12 +17,18 @@ from accounting_converter.profiles.jdl_official import (
 EVIDENCE_ID_1111 = "EVID-JDL-GENERATOR-1111-001"
 EVIDENCE_ID_1000 = "EVID-JDL-GENERATOR-1000-001"
 EVIDENCE_ID_1000_SUBACCOUNT = "EVID-JDL-GENERATOR-1000-SUBACCOUNT-001"
+EVIDENCE_ID_DEPARTMENT_HAND_1111 = "EVID-JDL-DEPARTMENT-HAND-1111-001"
+EVIDENCE_ID_1111_DEPARTMENT = "EVID-JDL-GENERATOR-1111-DEPARTMENT-001"
 EVIDENCE_ID = EVIDENCE_ID_1111
 VERIFIED_ARTIFACT_STATUS = "GENERATOR_AUTHORED_1111_VERIFIED_BY_REAL_IMPORT_SCOPED"
 VERIFIED_ARTIFACT_STATUS_1000 = "GENERATOR_AUTHORED_1000_VERIFIED_BY_REAL_IMPORT_SCOPED"
 VERIFIED_ARTIFACT_STATUS_1000_SUBACCOUNT = (
     "GENERATOR_AUTHORED_1000_SUBACCOUNT_VERIFIED_BY_REAL_IMPORT_SCOPED"
 )
+VERIFIED_ARTIFACT_STATUS_1111_DEPARTMENT = (
+    "GENERATOR_AUTHORED_1111_DEPARTMENT_VERIFIED_BY_REAL_IMPORT_SCOPED"
+)
+DEPARTMENT_1000_EXPERIMENT_STATUS = "INCONCLUSIVE_NOT_VERIFIED"
 OFFICIAL_HEADER = jdl_ibex_cashbook_official_journal_import_spec().column_names
 
 
@@ -209,6 +215,71 @@ def generator_authored_1000_subaccount_real_import_evidence() -> ScopedJdlImport
     )
 
 
+def department_hand_entry_1111_observed_evidence() -> ScopedJdlImportEvidence:
+    return ScopedJdlImportEvidence(
+        evidence_id=EVIDENCE_ID_DEPARTMENT_HAND_1111,
+        evidence_level=EvidenceLevel.OBSERVED,
+        product="JDL IBEX 出納帳",
+        observed_version="35.5",
+        verified_scope=(
+            "real-runtime manual-entry export observation",
+            "one 1111 single-line voucher record",
+            "department processing enabled",
+            "operator selected the department on the debit side",
+            "raw re-export populated both debit and credit department fields",
+            "both re-export department codes used representation 1",
+            "both re-export department names used the confirmed short name",
+            "CP932-compatible CRLF BOM-less export with three-row preamble",
+        ),
+        not_verified=(
+            "generator-authored department import",
+            "identifier flag 1000 department behavior",
+            "department is required on both sides",
+            "all JDL exports duplicate a one-sided department",
+            "other department codes, accounts, JDL versions, or products",
+            "production JDLOutputAdapter",
+        ),
+        production_output_enabled=False,
+    )
+
+
+def generator_authored_1111_department_real_import_evidence(
+) -> ScopedJdlImportEvidence:
+    return ScopedJdlImportEvidence(
+        evidence_id=EVIDENCE_ID_1111_DEPARTMENT,
+        evidence_level=EvidenceLevel.VERIFIED_BY_REAL_IMPORT,
+        product="JDL IBEX 出納帳",
+        observed_version="35.5",
+        verified_scope=(
+            "one exact generator-authored 1111 single-line voucher artifact",
+            "official 30-column first-row header",
+            "CP932-compatible CRLF BOM-less serialization",
+            "exempt company with no subaccount or tax fields",
+            "department processing enabled with confirmed target master",
+            "both debit and credit department fields explicitly generated",
+            "one balanced record with description",
+            "runtime import completed and one voucher visually verified",
+            "debit department displayed in the runtime UI",
+            "post-import JDL re-export obtained",
+            "all four department fields preserved in the raw re-export",
+        ),
+        not_verified=(
+            "identifier flag 1000 department semantics",
+            "debit-only or credit-only department input",
+            "why the runtime UI appeared blank on the credit side",
+            "whether department fields must always be populated on both sides",
+            "other department codes, hierarchical departments, or allocation settings",
+            "taxable, tax-inclusive, or tax-exclusive processing",
+            "tax abbreviations and transaction account",
+            "compound voucher and multiple-record or large data sets",
+            "other JDL versions or products",
+            "Yayoi to JDL end-to-end",
+            "production JDLOutputAdapter",
+        ),
+        production_output_enabled=False,
+    )
+
+
 def compare_generator_runtime(
     candidate_path: Path,
     reexport_path: Path,
@@ -288,6 +359,18 @@ def compare_generator_1000_subaccount_runtime(
         reexport_path,
         evidence_id=EVIDENCE_ID_1000_SUBACCOUNT,
         expected_flag="1000",
+    )
+
+
+def compare_generator_1111_department_runtime(
+    candidate_path: Path,
+    reexport_path: Path,
+) -> GeneratorRuntimeComparison:
+    return compare_generator_runtime(
+        candidate_path,
+        reexport_path,
+        evidence_id=EVIDENCE_ID_1111_DEPARTMENT,
+        expected_flag="1111",
     )
 
 
