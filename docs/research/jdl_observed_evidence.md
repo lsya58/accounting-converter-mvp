@@ -31,7 +31,7 @@
   - JDL IBEX出納帳35.5固有仕様とは断定しない
   - CP932/CRLF/BOMなしはmanual由来ではなくobserved evidenceのまま
   - JDL-origin data rowを保持したround-tripと、特定のgenerator-authored `1111` / `1000` artifactsは別Evidenceで実機成功を確認済み
-  - subaccount、department、tax、compound、Format全体は未検証
+  - 1件のscoped貸方補助artifactを除き、subaccount、department、tax、compound、Format全体は未検証
   - official schema identityは `VERIFIED_BY_REAL_IMPORT` へ昇格しない
 - details: `docs/research/jdl_ibex_csv_manual_evidence.md`
 
@@ -147,6 +147,32 @@
   - production JDLOutputAdapter
 - separation:
   - official documented schema全体は `OFFICIAL_DOCUMENTED` のまま
+  - production JDLOutputAdapterは未登録
+  - YayoiからJDLへのproduction readinessは変更しない
+
+## EVID-JDL-GENERATOR-1000-SUBACCOUNT-001
+
+- source: 成功済みgenerator-authored `1000` を基に貸方補助2項目だけを変更した完全架空1件
+- product/version evidence: JDL IBEX出納帳 35.5
+- evidence level: `VERIFIED_BY_REAL_IMPORT`（このartifactと親科目/補助科目の組み合わせに限定）
+- candidate/runtime facts:
+  - candidateの貸方補助numeric representationは `0001`
+  - target masterで人間が実際に登録・確認した補助codeは `1`
+  - official Manualでは貸方補助は数値4桁
+  - JDLが1件として認識し、Importを正常完了
+  - 仕訳帳で親科目配下の対象補助、貸借一致、摘要保持、重複なしを確認
+- re-export evidence:
+  - post-import re-export rawはCP932 decode可能、BOMなし、CRLF
+  - preamble 3行、4行目にofficial 30-column header、30-column data row 1件
+  - re-exportもflag `1000`、貸方科目・貸方補助名称はcandidate/実機確認と一致
+  - re-export rawの貸方補助numeric representationは `1`
+  - candidate `0001`、target master actual `1`、re-export `1` を別Evidenceとして保持する
+- interpretation limits:
+  - `0001` から `1` への正規化規則とは断定しない
+  - leading zeroを常に無視するとは断定しない
+  - `0001` と `1` が全JDL環境で同一とは断定しない
+  - generatorが `1` または `0001` のどちらを出すべきか一般化しない
+- separation:
   - production JDLOutputAdapterは未登録
   - YayoiからJDLへのproduction readinessは変更しない
 

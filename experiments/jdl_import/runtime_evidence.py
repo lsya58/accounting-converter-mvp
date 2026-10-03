@@ -16,9 +16,13 @@ from accounting_converter.profiles.jdl_official import (
 
 EVIDENCE_ID_1111 = "EVID-JDL-GENERATOR-1111-001"
 EVIDENCE_ID_1000 = "EVID-JDL-GENERATOR-1000-001"
+EVIDENCE_ID_1000_SUBACCOUNT = "EVID-JDL-GENERATOR-1000-SUBACCOUNT-001"
 EVIDENCE_ID = EVIDENCE_ID_1111
 VERIFIED_ARTIFACT_STATUS = "GENERATOR_AUTHORED_1111_VERIFIED_BY_REAL_IMPORT_SCOPED"
 VERIFIED_ARTIFACT_STATUS_1000 = "GENERATOR_AUTHORED_1000_VERIFIED_BY_REAL_IMPORT_SCOPED"
+VERIFIED_ARTIFACT_STATUS_1000_SUBACCOUNT = (
+    "GENERATOR_AUTHORED_1000_SUBACCOUNT_VERIFIED_BY_REAL_IMPORT_SCOPED"
+)
 OFFICIAL_HEADER = jdl_ibex_cashbook_official_journal_import_spec().column_names
 
 
@@ -170,6 +174,41 @@ def generator_authored_1000_real_import_evidence() -> ScopedJdlImportEvidence:
     )
 
 
+def generator_authored_1000_subaccount_real_import_evidence() -> ScopedJdlImportEvidence:
+    return ScopedJdlImportEvidence(
+        evidence_id=EVIDENCE_ID_1000_SUBACCOUNT,
+        evidence_level=EvidenceLevel.VERIFIED_BY_REAL_IMPORT,
+        product="JDL IBEX 出納帳",
+        observed_version="35.5",
+        verified_scope=(
+            "one exact generator-authored 1000 non-voucher artifact",
+            "official 30-column first-row header",
+            "CP932-compatible CRLF BOM-less serialization",
+            "exempt company with no department or tax fields",
+            "credit subaccount displayed under the confirmed parent account",
+            "candidate numeric subaccount representation 0001",
+            "target master actual subaccount code 1",
+            "raw post-import re-export subaccount representation 1",
+            "runtime import completed for one balanced record",
+            "journal-book account, subaccount, amounts, and description visually verified",
+            "post-import JDL re-export raw structure and subaccount fields verified",
+        ),
+        not_verified=(
+            "general leading-zero equivalence for numeric subaccount identifiers",
+            "whether generators should emit 1 or 0001",
+            "other subaccount codes, parent accounts, JDL versions, or products",
+            "debit subaccount",
+            "department",
+            "tax-inclusive and tax-exclusive processing",
+            "compound 1110/1100/1101",
+            "multiple records and large data sets",
+            "Yayoi to JDL end-to-end",
+            "production JDLOutputAdapter",
+        ),
+        production_output_enabled=False,
+    )
+
+
 def compare_generator_runtime(
     candidate_path: Path,
     reexport_path: Path,
@@ -236,6 +275,18 @@ def compare_generator_1000_runtime(
         candidate_path,
         reexport_path,
         evidence_id=EVIDENCE_ID_1000,
+        expected_flag="1000",
+    )
+
+
+def compare_generator_1000_subaccount_runtime(
+    candidate_path: Path,
+    reexport_path: Path,
+) -> GeneratorRuntimeComparison:
+    return compare_generator_runtime(
+        candidate_path,
+        reexport_path,
+        evidence_id=EVIDENCE_ID_1000_SUBACCOUNT,
         expected_flag="1000",
     )
 

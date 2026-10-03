@@ -36,7 +36,21 @@ PYTHONPATH=src python3 -m experiments.jdl_import.generator_authored_1111 \
 
 configはofficial 30列と各列のdecision sourceを全件明示する必要があります。出力は `data/private/experiments/jdl_import/generator_authored_1111/` に限定し、同名ファイルがあれば上書きせず停止します。完全架空の特定artifactは実機Importと再Exportまで成功しましたが、新しく生成するartifactの初期statusは引き続き `GENERATOR_AUTHORED_1111_UNTESTED` です。runtimeで補完された再Export表現はgenerator defaultにしません。これはproduction JDLOutputAdapterではありません。
 
-generator-authored `1000` candidateも実機Importと再Exportに成功し、`EVID-JDL-GENERATOR-1000-001` として限定的に検証済みです。generatorの将来生成物へ成功statusを継承せず、再Exportでnonblankになった表現もdefault化しません。次の補助科目実験は、取込先JDLへ完全架空の補助科目が正しい親科目配下に登録・確認されるまでcandidateを生成しません。
+generator-authored `1000` candidateも実機Importと再Exportに成功し、`EVID-JDL-GENERATOR-1000-001` として限定的に検証済みです。generatorの将来生成物へ成功statusを継承せず、再Exportでnonblankになった表現もdefault化しません。貸方補助を追加した特定artifactも実機Importに成功しましたが、numeric representationの一般規則には昇格しません。
+
+## Generator-authored 1000 + credit subaccount candidate
+
+`generator_authored_1000_subaccount.py` は、成功済みgenerator-authored `1000` candidateを基準に、貸方補助コード/名称だけを変更する研究用wrapperです。全30列explicit config、取込先masterの親勘定科目context、no fuzzy matching、no automatic replacementを必須とし、成功済みcandidateとの差が2補助列以外にあればblockします。
+
+```bash
+PYTHONPATH=src python3 -m experiments.jdl_import.generator_authored_1000_subaccount \
+  --config data/private/experiments/jdl_import/generator_authored_1000_subaccount/config.json \
+  --comparison-source data/private/experiments/jdl_import/generator_authored_1000/jdl_generator_authored_1000_candidate.csv
+```
+
+出力は `data/private/experiments/jdl_import/generator_authored_1000_subaccount/` に限定します。この特定artifactは `EVID-JDL-GENERATOR-1000-SUBACCOUNT-001` として実機Import成功とpost-import re-export rawを確認済みです。candidate、target master、re-exportのnumeric representationは別Evidenceとして保持し、この1件からleading-zero規則やgenerator defaultを導出しません。新しいcandidateの初期statusは引き続き `GENERATOR_AUTHORED_1000_SUBACCOUNT_UNTESTED` です。
+
+Import後に訂正したprivate configは、candidate表現とtarget master actual codeを分離した実験履歴であり、再生成用configではありません。generatorは両codeを正規化せず、不一致の新規candidateを引き続きblockします。
 
 ## 生成されるもの
 

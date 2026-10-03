@@ -194,13 +194,16 @@ JDL会計から取得した21列の仕訳一覧CSVは、EXP-01の30列import can
 
 ## 次に取得するEvidence
 
-generator-authored `1111` / `1000` minimal candidatesは実機Importと再Exportまで成功した。次は成功済み1000を基準に、補助科目だけを変更する。target master依存値を推測しないため、完全架空の補助科目が正しい親科目配下へ登録・確認されるまでcandidateは生成しない。
+generator-authored `1111` / `1000` minimal candidatesは実機Importと再Exportまで成功した。取込先テスト会社で完全架空の補助科目が既存親勘定科目の直下に登録済みであることを人間が確認し、そのprivate evidenceを用いて貸方補助だけを変更したcandidateを生成した。
 
-- テスト会社で、既存の成功済み親勘定科目配下へ完全架空の補助科目を1件登録
-- 補助科目のcode/name、親勘定科目、登録確認をprivate evidenceへ記録
-- その確認後、1000・免税・部門なし・税fieldなしの1件candidateを生成
-- 成功時の取込件数確認画面とJDL側登録結果
+このcandidateは全30列をexplicit configで保持し、成功済み1000との差分を `貸方補助` / `貸方補助名称` だけに限定した。`MappingKey`相当の親勘定科目context、no fuzzy matching、no automatic replacementをself-validationした。
+
+実機Importは成功し、`EVID-JDL-GENERATOR-1000-SUBACCOUNT-001` としてこのartifactに限り検証済みとした。candidateの貸方補助numeric representationは `0001`、target masterで人間が実際に登録したcodeは `1`、post-import re-export rawのrepresentationは `1` だった。Manual上の型は数値4桁だが、この結果からleading-zeroの一般規則やgeneratorが出力すべき表現を決めない。
+
+訂正後のprivate configは実験履歴として保持し、再生成入力には使わない。generatorは新規candidateについてcode不一致を正規化せずblockする。
+
 - 失敗時の `ログ表示` 内容とerror CSV
+- department実験前に、テスト事業所の部門処理設定と完全架空の部門code/nameを実機確認
 - 課区・税区略称一覧
 - 取込先会社の消費税処理設定
 - 伝票行数上限など会社設定依存項目
