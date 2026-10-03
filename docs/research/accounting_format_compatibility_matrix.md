@@ -18,6 +18,8 @@
 | JDL | JDL IBEX 出納帳 35.5 | Generator-authored 1111 with both-side department | Import verification | 30 | first row exact official header | CP932 observed | 1111 single-line voucher only | VERIFIED_BY_REAL_IMPORT (scoped) | EVID-JDL-GENERATOR-1111-DEPARTMENT-001 | High for this exact artifact/path only | 完全架空1件。部門4 fieldを借貸両側へ明示しImport成功、raw再Exportでも4 field保持。片側入力、UI表示差、一般requirednessへ一般化しない。 |
 | JDL | JDL IBEX 出納帳 35.5 | Hand-entered 1111 taxable/tax-included export | Export observation | 30 | header after 3-row preamble | CP932 observed | 1111 single-line voucher only | OBSERVED | EVID-JDL-TAX-INCLUSIVE-HAND-1111-001 | Medium for this exact observation only | 課税・原則課税・個別対応方式・税込の限定設定。課区の全角spaceを保持。後続generator Import Evidenceとは別レイヤ。 |
 | JDL | JDL IBEX 出納帳 35.5 | Generator-authored 1111 taxable/tax-included | Import verification | 30 | first row exact official header | CP932 observed | 1111 single-line voucher only | VERIFIED_BY_REAL_IMPORT (scoped) | EVID-JDL-GENERATOR-1111-TAX-INCLUSIVE-001 | High for this exact artifact/path only | 完全架空1件。raw-confirmedな借方課区/税区1組を明示してImport・再Export成功。U+3000を含む課区表現を保持。他税率、売上側課税、税抜、複数件へ一般化しない。 |
+| JDL | JDL IBEX 出納帳 35.5 | Hand-entered 1111 taxable/tax-exclusive export | Export observation | 30 | header after 3-row preamble | CP932 observed | 1111 single-line voucher only | OBSERVED | EVID-JDL-TAX-EXCLUSIVE-HAND-1111-001 | Medium for this exact observation only | 会社設定の税抜とUI税抜入力を別Evidenceとして保持。raw税入力方法の意味を同一視しない。後続generator Import Evidenceとは別レイヤ。 |
+| JDL | JDL IBEX 出納帳 35.5 | Generator-authored 1111 taxable/tax-exclusive | Import verification | 30 | first row exact official header | CP932 observed | 1111 single-line voucher only | VERIFIED_BY_REAL_IMPORT (scoped) | EVID-JDL-GENERATOR-1111-TAX-EXCLUSIVE-001 | High for this exact artifact/path only | 完全架空1件。raw-confirmedな借方tax表現1組を明示してImport・再Export成功。UI入力方式との意味関係、他税率、売上側、複数件へ一般化しない。 |
 | JDL | JDL IBEX 出納帳 35.5 | JDL-origin 1111 preamble-stripped round-trip | Import verification | 30 | first row exact official header | CP932 observed | 1111 single-line voucher only | VERIFIED_BY_REAL_IMPORT (scoped) | private fully fictional runtime experiment | High for this exact path only | JDL-origin data rowをbyte-for-byte保持。免税、補助なし、部門なし、税fieldなし。generator outputやFormat全体には適用しない。 |
 | JDL | JDL IBEX 出納帳 | Observed 30-column CSV | Export/Import candidate | 30 observed | Observed header exists, sometimes after preamble | CP932 observed | Identifier flags observed; meanings documented separately in manual layer | OBSERVED | private real data observation | Medium | JDL IBEX出納帳35.5実データから観測。JDL-origin round-tripと特定のgenerator-authored 1111/1000以外は正常取込未検証。 |
 | JDL | JDL-origin export sample | Observed 30-column CSV | Export evidence | 30 observed | Observed header exists | CP932 observed | Identifier flags observed; meaning unresolved | OBSERVED | private export observation | Medium | Product/versionは未検証。35.5固有Evidenceへ無条件統合しない。Known Good Import Fileとは呼ばない。 |
@@ -45,7 +47,7 @@
 - 正式YayoiFormatProfile
 - 正式JDLOutputAdapter
 - 複数条件をカバーした `VERIFIED_BY_REAL_IMPORT` のJDL FormatProfile
-- generator-authored補助は特定の貸方補助1件、departmentは借貸両側を明示した特定の1111 1件、税は課税・税込の借方課区/税区1組を持つ特定の1111 1件だけ検証済み。他の補助code/親科目、借方補助、片側/階層department、他税率/売上側課税/税抜、複合仕訳、複数件の段階的な正常取込結果。
+- generator-authored補助は特定の貸方補助1件、departmentは借貸両側を明示した特定の1111 1件、税は課税・税込/税抜の借方tax表現各1組を持つ特定の1111各1件だけ検証済み。他の補助code/親科目、借方補助、片側/階層department、他税率/売上側課税、複合仕訳、複数件の段階的な正常取込結果。
 - JDLの課区・税区略称一覧
 - JDL会社設定依存の税処理、伝票行数、入力開始月、日付範囲条件
 - Money Forwardが出力するJDL向けファイルの内部Schema

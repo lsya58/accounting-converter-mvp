@@ -21,6 +21,8 @@ EVIDENCE_ID_DEPARTMENT_HAND_1111 = "EVID-JDL-DEPARTMENT-HAND-1111-001"
 EVIDENCE_ID_1111_DEPARTMENT = "EVID-JDL-GENERATOR-1111-DEPARTMENT-001"
 EVIDENCE_ID_TAX_INCLUSIVE_HAND_1111 = "EVID-JDL-TAX-INCLUSIVE-HAND-1111-001"
 EVIDENCE_ID_1111_TAX_INCLUSIVE = "EVID-JDL-GENERATOR-1111-TAX-INCLUSIVE-001"
+EVIDENCE_ID_TAX_EXCLUSIVE_HAND_1111 = "EVID-JDL-TAX-EXCLUSIVE-HAND-1111-001"
+EVIDENCE_ID_1111_TAX_EXCLUSIVE = "EVID-JDL-GENERATOR-1111-TAX-EXCLUSIVE-001"
 EVIDENCE_ID = EVIDENCE_ID_1111
 VERIFIED_ARTIFACT_STATUS = "GENERATOR_AUTHORED_1111_VERIFIED_BY_REAL_IMPORT_SCOPED"
 VERIFIED_ARTIFACT_STATUS_1000 = "GENERATOR_AUTHORED_1000_VERIFIED_BY_REAL_IMPORT_SCOPED"
@@ -33,6 +35,9 @@ VERIFIED_ARTIFACT_STATUS_1111_DEPARTMENT = (
 DEPARTMENT_1000_EXPERIMENT_STATUS = "INCONCLUSIVE_NOT_VERIFIED"
 VERIFIED_ARTIFACT_STATUS_1111_TAX_INCLUSIVE = (
     "GENERATOR_AUTHORED_1111_TAX_INCLUSIVE_VERIFIED_BY_REAL_IMPORT_SCOPED"
+)
+VERIFIED_ARTIFACT_STATUS_1111_TAX_EXCLUSIVE = (
+    "GENERATOR_AUTHORED_1111_TAX_EXCLUSIVE_VERIFIED_BY_REAL_IMPORT_SCOPED"
 )
 OFFICIAL_HEADER = jdl_ibex_cashbook_official_journal_import_spec().column_names
 
@@ -356,6 +361,80 @@ def generator_authored_1111_tax_inclusive_real_import_evidence(
     )
 
 
+def tax_exclusive_hand_entry_1111_observed_evidence() -> ScopedJdlImportEvidence:
+    return ScopedJdlImportEvidence(
+        evidence_id=EVIDENCE_ID_TAX_EXCLUSIVE_HAND_1111,
+        evidence_level=EvidenceLevel.OBSERVED,
+        product="JDL IBEX 出納帳",
+        observed_version="35.5",
+        verified_scope=(
+            "real-runtime manual-entry export observation",
+            "one 1111 single-line voucher record",
+            "taxable company using standard taxation and individual attribution",
+            "company accounting method configured as tax-exclusive",
+            "operator explicitly selected the tax-exclusive UI input mode",
+            "UI input mode and CSV tax-input-method field kept as separate evidence",
+            "one exact debit tax scope/category/input-method/amount representation",
+            "credit-side tax classification and input method blank in the raw export",
+            "no subaccount and department processing disabled",
+            "CP932-compatible CRLF BOM-less export with three-row preamble",
+        ),
+        not_verified=(
+            "generator-authored tax-exclusive import from this observation alone",
+            "semantic equivalence of the UI input mode and CSV tax-input-method field",
+            "other tax scopes, categories, rates, input methods, or tax amounts",
+            "sales-side tax classification",
+            "transaction account behavior",
+            "identifier flag 1000 tax semantics",
+            "compound voucher, mixed rates, or multiple taxable rows",
+            "multiple-record or large data sets",
+            "other JDL versions or products",
+            "Yayoi to JDL end-to-end",
+            "production JDLOutputAdapter",
+        ),
+        production_output_enabled=False,
+    )
+
+
+def generator_authored_1111_tax_exclusive_real_import_evidence(
+) -> ScopedJdlImportEvidence:
+    return ScopedJdlImportEvidence(
+        evidence_id=EVIDENCE_ID_1111_TAX_EXCLUSIVE,
+        evidence_level=EvidenceLevel.VERIFIED_BY_REAL_IMPORT,
+        product="JDL IBEX 出納帳",
+        observed_version="35.5",
+        verified_scope=(
+            "one exact generator-authored 1111 single-line voucher artifact",
+            "official 30-column first-row header",
+            "CP932-compatible CRLF BOM-less serialization",
+            "taxable company using standard taxation and individual attribution",
+            "company accounting method configured as tax-exclusive",
+            "one raw-confirmed debit tax scope/category/input-method/amount combination",
+            "UI input mode and CSV tax-input-method field kept as separate evidence",
+            "credit-side tax classification, input method, and transaction accounts blank",
+            "no subaccount or department input",
+            "one balanced record with description",
+            "runtime import completed and one voucher visually verified",
+            "post-import JDL re-export obtained",
+            "exact debit tax scope including U+3000 and all debit tax literals preserved",
+        ),
+        not_verified=(
+            "other tax scopes, categories, rates, input methods, or tax amounts",
+            "sales-side tax classification",
+            "reduced-rate 8 percent",
+            "transaction account behavior",
+            "identifier flag 1000 tax semantics",
+            "compound voucher, mixed rates, or multiple taxable rows",
+            "multiple-record or large data sets",
+            "semantic equivalence of the UI input mode and CSV tax-input-method field",
+            "other JDL versions or products",
+            "Yayoi to JDL end-to-end",
+            "production JDLOutputAdapter",
+        ),
+        production_output_enabled=False,
+    )
+
+
 def compare_generator_runtime(
     candidate_path: Path,
     reexport_path: Path,
@@ -458,6 +537,18 @@ def compare_generator_1111_tax_inclusive_runtime(
         candidate_path,
         reexport_path,
         evidence_id=EVIDENCE_ID_1111_TAX_INCLUSIVE,
+        expected_flag="1111",
+    )
+
+
+def compare_generator_1111_tax_exclusive_runtime(
+    candidate_path: Path,
+    reexport_path: Path,
+) -> GeneratorRuntimeComparison:
+    return compare_generator_runtime(
+        candidate_path,
+        reexport_path,
+        evidence_id=EVIDENCE_ID_1111_TAX_EXCLUSIVE,
         expected_flag="1111",
     )
 

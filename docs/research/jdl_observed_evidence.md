@@ -267,6 +267,57 @@
   - flag `1000` の課税、複合、混在税率、複数件、大量データを検証していない
   - production JDLOutputAdapterまたはYayoiからJDLへのreadinessへ昇格しない
 
+## EVID-JDL-TAX-EXCLUSIVE-HAND-1111-001
+
+- source: 完全架空テスト事業所で課税・税抜の1行振替伝票を手入力し、JDL自身からExportしたraw CSV
+- product/version evidence: JDL IBEX出納帳 35.5
+- evidence level: `OBSERVED`（manual-entry/export観測。generator Import成功ではない）
+- company / UI setting scope:
+  - 課税、原則課税、個別対応方式、会社設定は税抜
+  - 売上/仕入端数は切り捨て、別記消費税は使用しない
+  - operatorが伝票入力UIの入力方式を税抜入力へ明示変更
+  - company accounting settingとUI input modeは別Evidenceとして保持
+  - department processing無効
+- raw structure:
+  - 564 bytes、CP932-compatible、BOMなし、CRLF
+  - preamble 3行、official 30-column header、30-column data row 1件
+  - identifier flag `1111`、補助なし、貸借一致
+- tax representation:
+  - 借方課区は `仕　入`。中央はU+3000 IDEOGRAPHIC SPACE
+  - 借方税区は `10%`
+  - 借方税入力方法は `内税`、借方消費税はnonblank
+  - 貸方の課区/税区/税入力方法/取引科目はblank
+  - 貸方消費税と借貸部門codeはself-exportで `0`
+- interpretation limits:
+  - UIの税抜入力とCSVの `内税`を同義化せず、この1条件で併存した観測事実だけを保持する
+  - 税込Evidenceとは金額条件も異なるため、差分原因を税方式だけに帰属しない
+  - self-exportの貸方消費税/部門code `0`をgenerator defaultにしない
+  - 他税率、他課区/税区、売上側、別の税入力方法、取引科目へ一般化しない
+  - production capabilityへ昇格しない
+
+## EVID-JDL-GENERATOR-1111-TAX-EXCLUSIVE-001
+
+- source: Official Manual、上記の手入力Export observation、確認済みtarget masterだけから全30 fieldsを明示して生成した完全架空1件
+- product/version evidence: JDL IBEX出納帳 35.5
+- evidence level: `VERIFIED_BY_REAL_IMPORT`（このartifactと会社・税設定に限定）
+- verified scope:
+  - official 30-column headerを先頭行に持つCP932-compatible、BOMなし、CRLFのCSV
+  - identifier flag `1111`、1行伝票、補助なし、部門なし、貸借一致
+  - 課税、原則課税、個別対応方式、会社設定は税抜
+  - raw-confirmedな借方課区 `仕　入`、税区 `10%`、税入力方法 `内税`、明示税額の1組
+  - 実機が1件として認識し、Import後に1伝票、貸借、摘要、tax表示、重複なしを目視確認
+  - post-import raw re-exportを取得
+- candidate / re-export comparison:
+  - 22 fieldsは入力表現を保持
+  - candidateでblankだった8 fieldsがre-exportでnonblank
+  - 借方課区、税区、税入力方法、金額、消費税、取引科目は入力表現を保持
+  - 貸方消費税と借貸部門codeのre-export表現はgenerator defaultへ昇格しない
+- limits:
+  - UIの税抜入力とCSVの `内税`を同義化しない
+  - 他の課区、税区、税率、売上側、税入力方法、明示税額、取引科目を検証していない
+  - flag `1000` の課税、複合、混在税率、複数件、大量データを検証していない
+  - production JDLOutputAdapterまたはYayoiからJDLへのreadinessへ昇格しない
+
 ## Generator-authored 1000 department experiment
 
 - result: `INCONCLUSIVE / NOT VERIFIED`

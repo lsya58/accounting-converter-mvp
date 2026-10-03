@@ -94,6 +94,22 @@ raw-confirmedな課区文字列は全角spaceを含めてexact matchし、勝手
 
 今回の特定artifactは実機Importと再Exportに成功し、`EVID-JDL-GENERATOR-1111-TAX-INCLUSIVE-001` として限定的に検証済みです。借方課区のU+3000を含む表現と借方税区は保持されましたが、他の税表現、税抜、flag、会社設定、複数件には適用せず、production capabilityにも昇格しません。
 
+## Generator-authored 1111 + tax-exclusive candidate
+
+`generator_authored_1111_tax_exclusive.py` は、課税・税抜の手入力 `1111` self-exportとOfficial Manual requirednessを併用する研究用generatorです。会社設定の税抜とUI入力方式の税抜入力は別Evidenceとして保持し、rawの税入力方法文字列と同義化しません。
+
+```bash
+PYTHONPATH=src python3 -m experiments.jdl_import.generator_authored_1111_tax_exclusive \
+  --config data/private/experiments/jdl_import/generator_authored_1111_tax_exclusive/config.json \
+  --comparison-source data/private/experiments/jdl_import/generator_authored_1111_tax_exclusive/jdl_tax_exclusive_hand_entry_0820.csv
+```
+
+借方tax fieldsはManualで必要かつ0820 rawでexact確認した値だけを使用します。貸方非課税側と取引科目は今回の観測に限定してblankとし、self-exportの貸方消費税/部門code `0`をdefaultへ昇格しません。新規artifactの初期statusは `GENERATOR_AUTHORED_1111_TAX_EXCLUSIVE_UNTESTED` です。
+
+今回の特定artifactは実機Importと再Exportに成功し、`EVID-JDL-GENERATOR-1111-TAX-EXCLUSIVE-001` として限定的に検証済みです。借方課区、税区、税入力方法、明示税額を含む22 fieldsが保持されましたが、他のtax表現、flag、会社設定、複数件には適用せず、production capabilityにも昇格しません。
+
+次のcompound実験はまだgenerator candidateを作りません。まず免税・補助なし・部門なしの3行複合振替伝票をJDL UIで手入力し、JDL自身のraw Exportで `1110 -> 1100 -> 1101` とgroup invariantsを再確認します。
+
 ## 生成されるもの
 
 `experiments/jdl_import/output/` に以下を生成します。

@@ -227,3 +227,19 @@ Manual上、課税・税込処理では課区/税区が必要で、税入力方�
 この特定candidateは実機Importと再Exportに成功し、`EVID-JDL-GENERATOR-1111-TAX-INCLUSIVE-001` として限定的に検証済みとした。JDLは1件として認識し、1伝票、税区分表示、貸借、摘要、重複なしを確認した。raw比較では21 fieldsが保持され、借方課区のU+3000と借方税区も保持された。blankからnonblankになった9 fieldsは再Export表現であり、generator defaultにはしない。
 
 新しく生成するartifactの初期statusは引き続き `GENERATOR_AUTHORED_1111_TAX_INCLUSIVE_UNTESTED` とする。他の税率/課区/税区、売上側課税、税抜、transaction account、別会社設定へ値を継承しない。次の最小実験は税抜会社設定での手入力・self-export evidence取得であり、そのraw確認前にcandidateを生成しない。
+
+### Tax-exclusive実験
+
+会社設定を課税・原則課税・個別対応方式・税抜へ変更し、operatorが伝票入力UIの入力方式を税抜入力へ切り替えた手入力 `1111` raw Exportを取得した。`EVID-JDL-TAX-EXCLUSIVE-HAND-1111-001` として、借方の課区/税区/税入力方法/消費税が非空、貸方tax classificationと取引科目がblankであることを観測した。UI入力方式とCSV税入力方法は同義化しない。
+
+Manualは税抜時に課区/税区/税入力方法/消費税を必要とし、金額には消費税を含めるとしている。generator candidateはManual requirednessと0820 exact raw valuesの双方を根拠に借方tax fieldsを明示した。通常仕訳の貸方非課税側と取引科目はblankを維持し、self-exportの貸方消費税/部門code `0`はcandidateへ入れていない。
+
+この特定candidateは実機Importと再Exportに成功し、`EVID-JDL-GENERATOR-1111-TAX-EXCLUSIVE-001` として限定的に検証済みとした。raw比較では22 fieldsを保持し、借方tax fieldsはすべて入力表現を保持した。blankからnonblankになった8 fieldsは再Export表現であり、generator defaultにはしない。
+
+新しく生成するartifactの初期statusは引き続き `GENERATOR_AUTHORED_1111_TAX_EXCLUSIVE_UNTESTED` とする。全30 fieldsとdecision sourceを明示し、source row copy、implicit default、値のnormalize、production capabilityへの昇格を禁止する。
+
+### 次のcompound実験
+
+既存Observed Evidenceでは `1110 -> 1100* -> 1101` を観測しているが、generator-authored Import成功Evidenceではない。privacy-safeな再集計では26 groupすべての開始行が借方のみで、中間行は大半が貸方のみだった。この傾向から、最小Human実験は1 debit : 2 creditの3行構成を優先する。ただしflag semanticsや全環境の規則へ一般化しない。
+
+次はcandidateを作らず、完全架空テスト事業所を免税・補助なし・部門なしへ戻し、既にmaster確認済みの科目だけでJDL UIから3行の最小複合振替伝票を手入力してself-exportする。貸借合計は明示的に一致させ、日付と伝番を1つに揃える。目的はstart/middle/end sequence、伝番・日付一致、row order、各行金額、group貸借一致、摘要表現の再確認である。
