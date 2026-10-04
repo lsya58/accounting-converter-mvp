@@ -440,11 +440,49 @@
 - release decision:
   - Adapter behaviorのformal runtime release gateは通過した
   - production registryは、explicit target master/tax contextをfactoryへ安全に供給する配線が未実装のため未登録を維持
-  - YayoiInputAdapterからJDLOutputAdapterまでのformal E2Eは未完了で、YayoiからJDLはNOT READY
+  - このEvidence単独ではYayoiInputAdapter起点E2Eを検証していなかった。後続の`EVID-JDL-YAYOI-TO-JDL-E2E-001`でstrict scopeのruntime E2Eを別途確認した
 - limits:
   - simple+simple、compound+compound、10-20 records mixed batchは未検証
   - 任意のgroup順・件数・feature combination、他JDL製品/versionへ一般化しない
   - re-exportの科目code/正式名称、税額`0`、部門code`0`をgeneration defaultへ昇格しない
+
+## EVID-JDL-YAYOI-TO-JDL-E2E-001
+
+- source: 完全架空のYayoi AE19 observed 25-field CSVを正式変換経路へ入力したartifact
+- product/version evidence: Yayoi Accounting AE 19 observed direct-export identity -> JDL IBEX出納帳 35.5
+- evidence level: `VERIFIED_BY_REAL_IMPORT`（下記formal routeとstrict allow-listに限定）
+- formal route:
+  - `YayoiInputAdapter` -> Structural Validation -> Common Journal Model
+  - confirmed `ConversionProfile` / `MappingEngine` -> Business Validation
+  - explicit Evidence route assignment -> `JdlOutputPreflight` / `JDLOutputAdapter`
+  - `JDLOutputValidator` -> Verification Report -> atomic publish
+- verified scope:
+  - sourceはCP932、BOMなし、CRLF、headerなし、25 fieldsの4 physical records
+  - source groupingはsimple 1件とexact 3-record compound 1件、合計2 logical journals
+  - account mapping 4件は明示確認済み。fuzzy/implicit mappingなし
+  - outputは同日`1111 -> 1110 -> 1100 -> 1101`、4 physical records / 2 logical journals
+  - 免税、補助なし、部門なし、tax fieldsなし
+  - JDL実機は4 recordsを認識して正常終了し、UIでexactly 2 vouchersを確認
+  - merge、split、duplicateは観測されず、貸借、科目配置、摘要、group境界を確認
+- raw re-export:
+  - 873 bytes、CP932/Shift_JIS strict round-trip可能な文字範囲、UTF-8不可、BOMなし、CRLF
+  - preamble 3 rows、official header 1 row、30-column data 4 rows
+  - candidate/re-export 120 fields中88 `PRESERVED`、32 `BLANK_REEXPORT_NONBLANK`
+  - `NORMALIZED`、`DIFFERENT`、`UNKNOWN`は0。semantic differenceも0
+- voucher evidence separation:
+  - candidate raw: 全4 recordsの伝番blank
+  - runtime UI: 2 vouchersの伝票番号欄blank
+  - self re-export raw: 全4 recordsの伝番`0`
+  - 「今回の未指定伝番はself-export上で`0`表現になった」とだけ扱う
+  - 採番、一般的なblank-to-zero規則、generator defaultとは解釈しない
+- readiness decision:
+  - strict scopeのcore Yayoi -> JDL conversion engineはruntime validated
+  - production registryはtarget master/tax/company contextの安全なruntime注入が未実装のため`UNAVAILABLE`
+  - 一般的なYayoi -> JDL routeとGUIはNOT READY
+- limits:
+  - tax、subaccount、department付きYayoi -> JDLは未検証
+  - simple+simple、compound+compound、10-20 records mixed batch、任意batch sizeは未検証
+  - 任意compound shape、別Yayoi/JDL製品・version、Format全体へ一般化しない
 
 ## Generator-authored 1000 department experiment
 
@@ -651,10 +689,10 @@
 
 ## Next Verification Gate
 
-単一simple、単一compound、限定master/tax条件、同日simple+compoundに加え、正式ConversionService生成artifactの実機Import・UI確認・self re-export比較まで完了した。Adapter behaviorのrelease gateは通過したが、registry wiringとYayoiからJDLのformal E2Eは別gateとして残る。
+単一simple、単一compound、限定master/tax条件、同日simple+compound、正式ConversionService生成artifactに加え、正式YayoiInputAdapter起点artifactの実機Import・UI確認・self re-export比較まで完了した。strict scopeのcore conversion engineはruntime validatedだが、registry wiringと一般利用readinessは別gateとして残る。
 
 1. production registryは、customer-specific defaultを持たずにexplicit target contextをAdapter factoryへ渡せるまで未登録を維持する。
-2. 次はsynthetic Yayoi exportを正式YayoiInputAdapterから読み、ConversionProfile/Mappingを経てJDL artifactを生成するsoftware E2Eを優先する。
-3. そのartifactをJDL実機へImportし、YayoiからJDL routeのruntime Evidenceを得る。
-4. simple+simpleと10-20 records mixed batchはYayoiからJDL release前のconfidence確認、compound+compoundは必要性に応じたpost-MVP候補とする。
+2. selected ConversionProfile、confirmed target master、tax/company settingsから`JdlTargetContext`をruntime構築するcontext-aware factoryを次の実装候補とする。
+3. simple+simple、compound+compound、10-20 records mixed batchは、simple + verified compoundを初期release scopeへ含める前のruntime gateとする。
+4. subaccount付きrouteは早期follow-up、tax/department付きrouteは別の限定Evidence取得後に判断する。
 5. 未確認の組合せは引き続きstrict preflightでblockし、official schema identityをFormat全体の実機検証済みへ昇格しない。

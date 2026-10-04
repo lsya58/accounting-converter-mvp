@@ -5,7 +5,7 @@
 - 上位文書: 要求仕様書 v0.6 / 要件定義書 v0.6
 - 対象変換: 弥生会計 -> JDL
 - ステータス: 実装進行・実データ検証待ち
-- 最終更新日: 2026年9月2日
+- 最終更新日: 2026年10月5日
 - 変更元: basic_design_v0.2.md
 
 ## 1. 設計目的
@@ -73,7 +73,7 @@ Output Validation
 
 入力は「対応する仕訳データファイル」として扱う。`.csv` や `.txt` などの拡張子だけでフォーマットを断定せず、FormatProfileに基づいて判定する。
 
-現在はYayoi AE19 observed subsetのInputAdapterと、JDL IBEX出納帳35.5の実機Evidence subsetだけを扱うEvidence-limited JDLOutputAdapter v0を実装済みである。JDL Outputは正式ConversionService生成artifactの実機Import・再Export比較まで成功済みで、YayoiInputAdapter起点のsynthetic software E2Eも成功している。ただし後者のartifactはJDL実機未検証であり、target contextをregistry factoryへ安全に注入する配線も未実装のためproduction AdapterRegistryには未登録である。
+現在はYayoi AE19 observed subsetのInputAdapterと、JDL IBEX出納帳35.5の実機Evidence subsetだけを扱うEvidence-limited JDLOutputAdapter v0を実装済みである。YayoiInputAdapter起点のsynthetic sourceから正式ConversionServiceで生成したartifactは、実機Import・UI確認・再Export比較まで成功した。ただし検証は免税・補助/部門/税なし・同日simple 1件 + exact 1D3C compound 1件に限定され、target contextをregistry factoryへ安全に注入する配線も未実装のためproduction AdapterRegistryには未登録である。
 
 出力profileの選択が必要な場合は、Application層のvendor-neutralな`JournalRoutePolicy`境界を使う。JDL実装は仕訳IDごとのEvidence profile明示割当だけを許可し、仕訳形状から自動推測しない。未割当、余剰割当、重複IDは正式出力前にErrorとして停止する。
 
@@ -717,7 +717,7 @@ Observed Dataや公式文書から推測して正式仕様へ昇格しない。
 
 ## 20. 現在の実装状態
 
-2026年9月2日時点:
+2026年10月4日時点:
 
 - ConversionService E2Eは完全架空デモデータで確認済み
 - JDL診断はデモデータとJDL IBEX出納帳35.5実データでObserved Behavior確認済み
@@ -730,4 +730,4 @@ Observed Dataや公式文書から推測して正式仕様へ昇格しない。
 - ConversionPreflightServiceを追加済み
 - CIはPython 3.12、unittest、CSV漏洩防止チェック
 
-Yayoi AE19 subset InputAdapterとEvidence-limited JDLOutputAdapter v0は実装済み。JDL Outputのformal runtime E2Eも成功済み。production登録、YayoiからJDLのformal E2E、正式FormatProfileへの昇格、Conversion Profile管理GUIは、target context注入と運用確認後に行う。
+Yayoi AE19 subset InputAdapterとEvidence-limited JDLOutputAdapter v0は実装済み。strict scopeのYayoiからJDLへのformal runtime E2Eも成功済み。production登録、一般利用readiness、正式FormatProfileへの昇格、Conversion Profile管理GUIは、target context注入と追加batch検証後に判断する。

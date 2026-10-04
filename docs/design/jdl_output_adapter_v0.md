@@ -2,7 +2,7 @@
 
 ## Status
 
-`JDLOutputAdapter`と`JDLOutputValidator`は正式`src`配下に実装済み。`EVID-JDL-CONVERSION-SERVICE-E2E-001`によりConversionService経由artifactのJDL実機Import、UI確認、self re-export比較まで完了した。ただしproduction `AdapterRegistry`には未登録で、YayoiからJDLへのreadinessは`ADAPTER_UNAVAILABLE`のままとする。
+`JDLOutputAdapter`と`JDLOutputValidator`は正式`src`配下に実装済み。`EVID-JDL-CONVERSION-SERVICE-E2E-001`によりConversionService経由artifactを、`EVID-JDL-YAYOI-TO-JDL-E2E-001`によりYayoiInputAdapter起点artifactをJDL実機でImportし、UI確認、self re-export比較まで完了した。ただしproduction `AdapterRegistry`には未登録で、YayoiからJDLへのreadinessは`ADAPTER_UNAVAILABLE`のままとする。
 
 Target identityはJDL IBEX出納帳35.5 / Journal CSV Input / official documented 30-column schema。schema自体のEvidence levelは`OFFICIAL_DOCUMENTED`から変更しない。adapter behaviorだけを個別の`VERIFIED_BY_REAL_IMPORT` Evidenceへ結び付ける。
 
@@ -48,7 +48,7 @@ unknown product/version、未知Evidence profile、未確認master、1000+tax/de
 
 正式ConversionServiceで生成した同日simple+compound artifactは、JDL IBEX出納帳35.5で4 records / exactly 2 vouchersとしてImport成功した。candidate/re-exportの120 fieldsは88 preserved、32 blank-to-nonblankで、semantic differenceは0だった。
 
-Adapter behaviorのruntime gateは通過した。一方、現在の`AdapterRegistry` factoryは引数なしであり、`JDLOutputAdapter`が必須とするtarget master・税処理contextをcustomer-specific defaultなしに供給できない。この配線を解決するまでregistryは`UNAVAILABLE`を維持する。YayoiからJDLは、YayoiInputAdapterを起点とするformal software/runtime E2E完了までNOT READYとする。
+Adapter behaviorのruntime gateとstrict scopeのYayoiInputAdapter起点runtime E2Eは通過した。一方、現在の`AdapterRegistry` factoryは引数なしであり、`JDLOutputAdapter`が必須とするtarget master・税処理contextをcustomer-specific defaultなしに供給できない。この配線を解決し、一般ユーザー向け実行制御を検証するまでregistryは`UNAVAILABLE`、YayoiからJDLはNOT READYを維持する。
 
 ## Yayoi Input Software E2E
 
@@ -60,6 +60,8 @@ Yayoi AE19 observed 25-field synthetic CSVを正式`YayoiInputAdapter`で読み�
 - output: `1111, 1110, 1100, 1101`、4 records / 2 journals
 - safety: unknown mappingまたはroute未割当は正式出力前にblock
 
-これはsoftware内のsynthetic E2Eであり、生成artifactのJDL実機Import evidenceではない。`AdapterRegistry`は`UNAVAILABLE`、YayoiからJDLのreadinessはNOT READYを維持する。
+生成artifactはJDL IBEX出納帳35.5で4 records / exactly 2 vouchersとしてImportされ、UIとself re-exportでsemantic preservationを確認した。candidate/re-exportの120 fieldsは88 preserved、32 blank-to-nonblank、semantic difference 0だった。これによりstrict allow-list内のcore conversion engineはruntime validatedとする。
+
+一方、tax/subaccount/department、任意compound、任意batch、別製品/versionは未検証である。`AdapterRegistry`はcustomer-specific target contextを注入できないため`UNAVAILABLE`、YayoiからJDLの一般利用readinessはNOT READYを維持する。candidate伝番blank、UI blank、re-export `0`は別Evidenceとして保持し、`0`を生成defaultにしない。
 
 次のregistry配線では、グローバルdefaultを導入せず、選択済みConversion Profileと確認済みtarget master/tax settingsから実行時`JdlTargetContext`を構築し、context-aware factoryへ明示注入する必要がある。

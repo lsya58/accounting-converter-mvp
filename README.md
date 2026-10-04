@@ -84,7 +84,7 @@ PYTHONPATH=src python3 -m accounting_converter.cli compare-jdl <baseline-csv> <t
 
 ConversionService自身には、弥生/JDL固有のCSV列変換や識別フラグ生成を実装しません。
 
-Yayoi AE19 observed subsetからCommon Journal Modelを経由し、Evidence-limited JDL Output Adapter v0へ渡すsynthetic software E2Eは成功しています。単一仕訳は`SUPPORTED_1111_BASIC`、複合仕訳は`SUPPORTED_COMPOUND_1D3C`を仕訳IDごとに明示割当し、特徴からprofileを推測しません。このartifactはまだJDL実機へImportしていないため、production Adapter RegistryとYayoiからJDLへのreadinessは変更しません。
+Yayoi AE19 observed subsetからCommon Journal Modelを経由し、Evidence-limited JDL Output Adapter v0へ渡すformal E2Eは、synthetic sourceからのsoftware変換、JDL IBEX出納帳35.5への実機Import、UI確認、self re-export比較まで成功しています（`EVID-JDL-YAYOI-TO-JDL-E2E-001`）。単一仕訳は`SUPPORTED_1111_BASIC`、複合仕訳は`SUPPORTED_COMPOUND_1D3C`を仕訳IDごとに明示割当し、特徴からprofileを推測しません。検証範囲は免税・補助/部門/税なし・同日simple 1件 + exact 1D3C compound 1件に限定し、production Adapter Registryと一般利用のreadinessは変更しません。
 
 正式出力は一時ファイルへ生成し、OutputValidation成功後のみatomic replaceします。既存出力ファイルは `overwrite=True` が明示されない限り上書きしません。
 
@@ -176,7 +176,7 @@ Preparationが `READY` になった場合のみ、薄い実行層が既存 `Conv
 - JDL `VERIFIED_BY_REAL_IMPORT` FormatProfile
 - 勘定科目/補助科目/税区分の実マッピング
 - Conversion Profile管理GUI
-- synthetic Yayoi入力から生成したJDL artifactの実機Import E2E
+- target contextを安全に注入したYayoi -> JDL production実行経路
 
 これらは実CSVとJDL取込仕様確認後に実装します。
 
@@ -224,4 +224,4 @@ GitHub ActionsではPython 3.12で同じテストを実行し、`tests/fixtures/
 
 `experiments/jdl_import/` には、JDL IBEX出納帳のofficial documented 30-column schemaとJDL IBEX出納帳35.5 observed-compatible serializationを使った研究用CSV generatorがあります。これは正式JDLOutputAdapterではなく、完全架空データでJDL実機の取込条件を確認するための実験環境です。
 
-JDL-origin `1111` round-trip、各generator-authored subsetに加え、正式ConversionServiceが生成した同日simple+compound artifactもJDL IBEX出納帳35.5へのImport、exactly 2 vouchersのUI確認、self re-export比較まで成功しました（`EVID-JDL-CONVERSION-SERVICE-E2E-001`）。Adapter behaviorのrelease gateは通過していますが、target contextのregistry wiringとYayoiInputAdapter起点のformal E2Eが残るため、production registryとYayoiからJDL readinessはまだ変更していません。
+JDL-origin `1111` round-trip、各generator-authored subset、正式ConversionService生成artifactに加え、正式YayoiInputAdapterを起点とする同日simple+compound artifactもJDL IBEX出納帳35.5へのImport、exactly 2 vouchersのUI確認、self re-export比較まで成功しました（`EVID-JDL-YAYOI-TO-JDL-E2E-001`）。strict scopeのcore conversion engineはruntime validatedですが、target contextのregistry wiringと一般ユーザー向け実行制御が残るため、production registryとYayoiからJDL readinessはまだ変更していません。

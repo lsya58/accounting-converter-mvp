@@ -31,6 +31,7 @@ from accounting_converter.application.mapping_review import MappingRequirementEx
 from accounting_converter.application.profile_preflight import mapping_rule_set_from_profile
 from accounting_converter.application.validation_pipeline import ValidationPipeline
 from accounting_converter.domain.conversion_profile import ConversionProfile
+from accounting_converter.domain.format_metadata import EvidenceLevel
 from accounting_converter.domain.mapping import MappingStatus, MappingValue
 from accounting_converter.domain.profile import FormatProfile
 from accounting_converter.domain.validation import BalanceRule
@@ -48,6 +49,10 @@ from accounting_converter.profiles.known_formats import (
 )
 from accounting_converter.profiles.yayoi_official import (
     yayoi_accounting_05_official_import_spec,
+)
+from experiments.jdl_import.runtime_evidence import (
+    EVIDENCE_ID_YAYOI_TO_JDL_E2E,
+    yayoi_to_jdl_e2e_real_import_evidence,
 )
 
 
@@ -202,6 +207,31 @@ class YayoiToJdlFormalE2ETests(unittest.TestCase):
         self.assertEqual(
             production_adapter_registry().get_exact_output(target.identity).status,
             AdapterAvailabilityStatus.UNAVAILABLE,
+        )
+
+    def test_real_import_evidence_is_runtime_verified_but_not_production_enabled(
+        self,
+    ) -> None:
+        evidence = yayoi_to_jdl_e2e_real_import_evidence()
+
+        self.assertEqual(evidence.evidence_id, EVIDENCE_ID_YAYOI_TO_JDL_E2E)
+        self.assertEqual(evidence.evidence_level, EvidenceLevel.VERIFIED_BY_REAL_IMPORT)
+        self.assertFalse(evidence.production_output_enabled)
+        self.assertIn(
+            "formal YayoiInputAdapter and structural validation",
+            evidence.verified_scope,
+        )
+        self.assertIn(
+            "post-import JDL self re-export compared across 120 fields",
+            evidence.verified_scope,
+        )
+        self.assertIn(
+            "registry factory wiring for explicit target master and tax context",
+            evidence.not_verified,
+        )
+        self.assertIn(
+            "tax, subaccount, or department in the Yayoi to JDL route",
+            evidence.not_verified,
         )
 
     def service(
