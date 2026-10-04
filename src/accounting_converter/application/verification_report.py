@@ -5,6 +5,20 @@ from dataclasses import dataclass
 from accounting_converter import __version__
 
 
+_UNSUPPORTED_OUTPUT_PROFILE_RULES = {
+    "JDL-OUT-BASIC-FEATURE",
+    "JDL-OUT-COMPOUND-FEATURE",
+    "JDL-OUT-COMPOUND-SHAPE",
+    "JDL-OUT-COMPOUND-TAX-MODE",
+    "JDL-OUT-DEPARTMENT-COMBINATION",
+    "JDL-OUT-EVIDENCE-PROFILE",
+    "JDL-OUT-MULTIGROUP-SCOPE",
+    "JDL-OUT-SIMPLE-SHAPE",
+    "JDL-OUT-SUBACCOUNT-COMBINATION",
+    "JDL-OUT-TAX-COMBINATION",
+}
+
+
 @dataclass(frozen=True)
 class VerificationReportGenerator:
     system_version: str = __version__
@@ -14,6 +28,22 @@ class VerificationReportGenerator:
         if result.output_validation_result is not None:
             output_validation = (
                 "success" if result.output_validation_result.success else "failed"
+            )
+        evidence_profiles = "not_run"
+        output_schema_identity = "not_run"
+        unsupported_profile_count = sum(
+            result.rule_id in _UNSUPPORTED_OUTPUT_PROFILE_RULES
+            for result in result.validation_results
+        )
+        if result.output_validation_result is not None:
+            evidence_profiles = ",".join(
+                result.output_validation_result.evidence_profiles
+            ) or "none"
+            output_schema_identity = (
+                result.output_validation_result.output_schema_identity or "unknown"
+            )
+            unsupported_profile_count = (
+                result.output_validation_result.unsupported_profile_count
             )
 
         lines = [
@@ -37,6 +67,9 @@ class VerificationReportGenerator:
             f"Error件数: {result.error_count}",
             f"Warning件数: {result.warning_count}",
             f"unresolved mapping件数: {result.unresolved_mapping_count}",
+            f"unsupported output profile件数: {unsupported_profile_count}",
+            f"JDL Evidence profile: {evidence_profiles}",
+            f"output schema identity: {output_schema_identity}",
             f"Output Validation結果: {output_validation}",
             "",
             "注意: 本レポートは本システムが検証可能な範囲を示すものであり、取込先ソフトウェア側の障害を断定しません。",

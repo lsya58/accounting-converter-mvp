@@ -57,7 +57,7 @@
 
 `accounting_converter.diagnostics.jdl_csv` には、JDLへ取り込めないCSVの構造・診断メッセージ・マスター不一致候補・Observed Schema・Observed Journal Group Candidateを分析する診断機能があります。
 
-JDL IBEX出納帳 35.5の実データでObserved Behaviorは再現できていますが、正式JDL FormatProfileや正式JDLOutputAdapterへは昇格していません。
+JDL IBEX出納帳 35.5の実データでObserved Behaviorは再現済みです。検証済みsubsetだけを扱うEvidence-limited `JDLOutputAdapter v0`も正式`src`配下に実装しましたが、正式JDL FormatProfileへの昇格とproduction AdapterRegistryへの登録はまだ行っていません。
 
 JDL診断CLIは、schema未指定の純粋観測と、明示的なObserved Schema比較を分けています。バージョン未確認のJDL由来CSVを、黙って35.5 evidenceとして扱いません。
 
@@ -170,7 +170,7 @@ Preparationが `READY` になった場合のみ、薄い実行層が既存 `Conv
 ## まだ実装していないもの
 
 - すべての弥生製品/バージョンに対応する汎用YayoiInputAdapter
-- 正式JDLOutputAdapter
+- Evidence-limited JDLOutputAdapter v0のproduction registry有効化
 - JDL `VERIFIED_BY_REAL_IMPORT` FormatProfile
 - 勘定科目/補助科目/税区分の実マッピング
 - Conversion Profile管理GUI
@@ -222,4 +222,4 @@ GitHub ActionsではPython 3.12で同じテストを実行し、`tests/fixtures/
 
 `experiments/jdl_import/` には、JDL IBEX出納帳のofficial documented 30-column schemaとJDL IBEX出納帳35.5 observed-compatible serializationを使った研究用CSV generatorがあります。これは正式JDLOutputAdapterではなく、完全架空データでJDL実機の取込条件を確認するための実験環境です。
 
-JDL-origin `1111` round-trip、generator-authored `1111` / `1000`、限定的な貸方補助付き `1000`、借貸両側部門付き `1111`、課税・税込/税抜の借方tax表現各1組を持つ `1111`、3-record compound、simple+compoundの同日2-group artifactは、それぞれscopeを限定して実機Import成功済みです。片側部門の `1000` 実験は引き続き `INCONCLUSIVE / NOT VERIFIED` です。各Evidenceは特定の会社設定・表現・artifactだけに適用し、production readinessには影響しません。次は実験網羅を続けるより、未検証scopeを明示的にblockするEvidence-limited Output Adapter v0をproduction registry未登録のまま実装する段階です。
+JDL-origin `1111` round-trip、generator-authored `1111` / `1000`、限定的な貸方補助付き `1000`、借貸両側部門付き `1111`、課税・税込/税抜の借方tax表現各1組を持つ `1111`、3-record compound、simple+compoundの同日2-group artifactは、それぞれscopeを限定して実機Import成功済みです。片側部門の `1000` 実験は引き続き `INCONCLUSIVE / NOT VERIFIED` です。これらをstrict allow-listとして使うEvidence-limited Output Adapter v0とsynthetic validationを実装済みですが、ConversionService生成物の最終実機E2Eが未完了なためproduction registry/readinessは変更していません。

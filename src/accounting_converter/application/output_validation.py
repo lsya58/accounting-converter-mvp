@@ -18,6 +18,9 @@ class OutputValidationResult:
     debit_total: Decimal
     credit_total: Decimal
     validation_results: tuple[ValidationResult, ...] = ()
+    unsupported_profile_count: int = 0
+    evidence_profiles: tuple[str, ...] = ()
+    output_schema_identity: str | None = None
 
     @classmethod
     def failed(cls, results: Sequence[ValidationResult]) -> OutputValidationResult:

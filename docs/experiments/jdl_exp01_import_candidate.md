@@ -268,3 +268,5 @@ Manualは税抜時に課区/税区/税入力方法/消費税を必要とし、�
 - VerificationReportには件数・合計・validation結果だけを記録し、会計本文を保存しない
 
 追加実機候補の優先度は、A simple+simple=`SHOULD BEFORE RELEASE`、B compound+compound=`SHOULD BEFORE RELEASE`、C 3 groups以上の個別網羅=`OPTIONAL / POST-MVP`、D 10-20 records mixed batch=`SHOULD BEFORE RELEASE`、E Evidence-limited adapterのpreflight/serializer contract=`MUST BEFORE ADAPTER`とする。A-Dをすべて終えるまで実装開始を遅らせず、release gateと実装開始gateを分離する。
+
+上記方針に基づく`JDLOutputAdapter v0`、Evidence Coverage preflight、CP932 serializer、`JDLOutputValidator`、ConversionService synthetic E2Eを実装した。研究generatorはproduction codeからimportせず、30列headerはofficial schemaをsource of truthとしている。adapterは直接テスト可能だが、ConversionService生成artifactの実機Import成功を得るまでproduction registryは`UNAVAILABLE`、YayoiからJDLはNOT READYを維持する。詳細は`docs/design/jdl_output_adapter_v0.md`を参照。

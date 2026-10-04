@@ -27,6 +27,7 @@ class ConversionStatus(str, Enum):
     BLOCKED_BY_STRUCTURAL_VALIDATION = "BLOCKED_BY_STRUCTURAL_VALIDATION"
     BLOCKED_BY_MAPPING = "BLOCKED_BY_MAPPING"
     BLOCKED_BY_BUSINESS_VALIDATION = "BLOCKED_BY_BUSINESS_VALIDATION"
+    BLOCKED_BY_OUTPUT_PREFLIGHT = "BLOCKED_BY_OUTPUT_PREFLIGHT"
     OUTPUT_VALIDATION_FAILED = "OUTPUT_VALIDATION_FAILED"
     SYSTEM_ERROR = "SYSTEM_ERROR"
 
@@ -191,6 +192,28 @@ class ConversionService:
             if self._has_blocking_validation(business_results):
                 return self._result(
                     status=ConversionStatus.BLOCKED_BY_BUSINESS_VALIDATION,
+                    request=request,
+                    input_record_count=input_record_count,
+                    input_journal_count=input_journal_count,
+                    output_record_count=output_record_count,
+                    output_journal_count=output_journal_count,
+                    debit_total=debit_total,
+                    credit_total=credit_total,
+                    validation_results=validation_results,
+                    unresolved_mapping_count=unresolved_mapping_count,
+                    output_validation_result=output_validation_result,
+                    output_path=None,
+                    completed_at=completed_at,
+                )
+
+            output_preflight_results = self._output_adapter.preflight(
+                mapped_entries,
+                request.output_profile,
+            )
+            validation_results.extend(output_preflight_results)
+            if self._has_blocking_validation(output_preflight_results):
+                return self._result(
+                    status=ConversionStatus.BLOCKED_BY_OUTPUT_PREFLIGHT,
                     request=request,
                     input_record_count=input_record_count,
                     input_journal_count=input_journal_count,

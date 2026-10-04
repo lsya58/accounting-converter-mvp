@@ -70,7 +70,7 @@ Output Validation
 
 入力は「対応する仕訳データファイル」として扱う。`.csv` や `.txt` などの拡張子だけでフォーマットを断定せず、FormatProfileに基づいて判定する。
 
-現在の実装では、正式YayoiInputAdapterと正式JDLOutputAdapterは未実装である。ConversionServiceはDemo AdapterによりE2Eテスト済みであり、正式Adapterは実データ取得後に接続する。
+現在はYayoi AE19 observed subsetのInputAdapterと、JDL IBEX出納帳35.5の実機Evidence subsetだけを扱うEvidence-limited JDLOutputAdapter v0を実装済みである。JDL OutputはConversionServiceへ直接接続してsynthetic E2E可能だが、production AdapterRegistryには未登録である。
 
 ### 2.1 Presentation層
 
@@ -517,11 +517,12 @@ JDL取込ファイル生成
 
 - 共通モデル -> 出力形式
 
-正式JDLOutputAdapterは未有効化。JDL正常取込サンプル確認後に正式実装する。
+Evidence-limited JDLOutputAdapter v0は実装済みだが未有効化。ConversionService生成artifactのJDL実機Import確認後にproduction登録を再評価する。
 
 ### CMP-11 OutputValidator
 
 - 生成ファイルの自己再検証
+- JDL v0ではCP932 round-trip、BOMなし、CRLF、公式30列header、30列data、Evidence planとのexact parse-back、record/journal count、貸借合計を検証
 
 ### CMP-12 VerificationReportGenerator
 
@@ -699,7 +700,7 @@ tests/
 - 実際の弥生エクスポート形式
 - 正式YayoiInputAdapter
 - 正式YayoiFormatProfile
-- 正式JDLOutputAdapter
+- Evidence-limited JDLOutputAdapter v0の実機E2Eとproduction登録
 - 正式JDLFormatProfile
 - 税区分Mapping
 - JDLへの正常取込条件
@@ -724,4 +725,4 @@ Observed Dataや公式文書から推測して正式仕様へ昇格しない。
 - ConversionPreflightServiceを追加済み
 - CIはPython 3.12、unittest、CSV漏洩防止チェック
 
-正式YayoiInputAdapter、正式JDLOutputAdapter、正式FormatProfile、Conversion Profile管理GUIは、実CSV・JDL正常取込サンプル・保存方式確認後に実装する。
+Yayoi AE19 subset InputAdapterとEvidence-limited JDLOutputAdapter v0は実装済み。JDL Outputのproduction登録、正式FormatProfileへの昇格、Conversion Profile管理GUIは、ConversionService生成物の実機E2Eと運用確認後に行う。
