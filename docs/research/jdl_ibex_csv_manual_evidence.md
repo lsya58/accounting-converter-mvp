@@ -83,6 +83,8 @@ JDL IBEX出納帳35.5の完全架空3行振替伝票self-exportでも、`1110 ->
 
 その後、同じ3-record構造をOfficial Manual、Observed Evidence、target master確認から明示生成し、candidate伝番を全行blankとした単一artifactの実機Importに成功した（`EVID-JDL-GENERATOR-COMPOUND-1110-1100-1101-001`）。実機は3 recordsを1伝票へgroupingし、再Exportでは全伝番が`0`になった。blank Import成功とre-export `0`は別Evidenceであり、`0`をgenerator defaultへ昇格せず、複数groupでも同じ挙動になるとは扱わない。
 
+さらに、同日・全伝番blankの `1111 + 1110 -> 1100 -> 1101` を1 CSVに置いたgenerator-authored artifactが実機でexactly 2 vouchersとしてImportされた（`EVID-JDL-GENERATOR-MULTIGROUP-SIMPLE-COMPOUND-001`）。UIの両伝票番号欄はblank、self re-exportの全伝番は`0`だった。この結果はManualのflag semanticsと整合するが、JDL内部grouping algorithm、任意の複数group、blank/`0`の一般規則を証明しない。candidate raw、runtime UI、re-export rawの3層を分離して保持する。
+
 ## Account And Master Rules
 
 - 勘定科目は、科目コード、科目名称、科目正式名称のいずれか1つが入力されていれば取り込めると記載されている。

@@ -118,6 +118,19 @@ PYTHONPATH=src python3 -m experiments.jdl_import.generator_authored_compound \
 
 生成時のartifact statusは `GENERATOR_AUTHORED_COMPOUND_UNTESTED`。この特定artifactはその後、実機Importと再Exportに成功し、`EVID-JDL-GENERATOR-COMPOUND-1110-1100-1101-001`として限定的な`VERIFIED_BY_REAL_IMPORT`になりました。伝番blankの3 recordsが1伝票へgroupingされ、re-exportでは伝番`0`を観測しましたが、将来生成物、複数group、`0`のgenerator default、production JDLOutputAdapterやreadinessには成功statusを継承しません。
 
+## Generator-authored simple + compound boundary candidate
+
+`generator_authored_multi_group.py`は、実機検証済みのblank伝番`1111`単一groupとblank伝番3-record compoundを、同一日付の1 CSVへ連続配置する境界実験です。既存のexplicit configとfield decisionsを再利用し、CSV row自体はコピーしません。
+
+```bash
+PYTHONPATH=src python3 -m experiments.jdl_import.generator_authored_multi_group \
+  --config data/private/experiments/jdl_import/generator_authored_multi_group/config.private.json
+```
+
+生成時statusは履歴として`GENERATOR_AUTHORED_SIMPLE_PLUS_COMPOUND_UNTESTED`を維持します。この特定artifactは実機Importと再Exportに成功し、`EVID-JDL-GENERATOR-MULTIGROUP-SIMPLE-COMPOUND-001`として限定的な`VERIFIED_BY_REAL_IMPORT`になりました。JDLは4 recordsを認識し、同日・全伝番blankの`1111`と`1110 -> 1100 -> 1101`をexactly 2 vouchersとして保持しました。
+
+伝番はcandidate rawのblank、runtime UIのblank、self re-export rawの`0`を別Evidenceとして保持します。`0`をgenerator defaultやJDL内部採番とは扱いません。構造Analyzerのblank voucherを含むcompound候補は引き続き`UNRESOLVED`であり、今回の成功から未知のgroup構成を自動確定しません。production registry/readinessも変更しません。
+
 ## 生成されるもの
 
 `experiments/jdl_import/output/` に以下を生成します。

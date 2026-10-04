@@ -248,4 +248,23 @@ Manualは税抜時に課区/税区/税入力方法/消費税を必要とし、�
 
 この単一candidateは実機Importと再Exportに成功し、`EVID-JDL-GENERATOR-COMPOUND-1110-1100-1101-001`として限定的に検証済みとした。実機は3 recordsを1つの振替伝票へgroupingした。candidate伝番は全行blank、re-exportは全行`0`だったが、複数groupにおけるblank伝番や`0`のgenerator利用へ一般化しない。production capabilityとYayoiからJDLへのREADY判定は変更しない。
 
-次の優先候補は、1 CSV内にsimpleとcompoundを含む複数groupを置き、group boundaryと意図しないmergeの有無を検証する実験である。ただし、複数groupをすべてblank伝番にする安全性は未確認のためcandidateはまだ生成しない。
+続いて、同日・全伝番blankの `1111 + 1110 -> 1100 -> 1101` を1 CSVへ置く境界実験を行い、`EVID-JDL-GENERATOR-MULTIGROUP-SIMPLE-COMPOUND-001` として限定的に実機検証した。JDLは4 recordsを認識し、UI上でsimple 1伝票とcompound 1伝票のexactly 2 vouchersを生成した。merge、split、duplicateは観測されなかった。
+
+伝番Evidenceは混同しない。candidate rawは全行blank、runtime UIの2伝票番号欄もblank、self re-export rawは全行`0`だった。これは「今回の未指定伝番がself-exportで`0`表現になった」Evidenceに限り、採番、一般的なblank-to-zero変換、generator defaultを意味しない。
+
+この成功により、strict Evidence allow-listで未検証feature combinationをblockする`Evidence-limited JDLOutputAdapter v0`は設計・実装を開始可能と評価する。ただし、この実験自体は引き続き研究artifactであり、production registry、Official schema identity、YayoiからJDL readinessを変更しない。simple+simple、compound+compound、10-20 recordsのmixed batchはrelease前の追加confidence確認、3 groups以上の個別網羅はMVP後でもよい。
+
+### Evidence-limited JDLOutputAdapter v0 開始方針
+
+実装開始判断は`YES`。全JDL対応ではなく、JDL IBEX出納帳35.5の検証済みsubsetだけをallow-list化する。最初の実装ではproduction registryへ登録せず、次を満たさない入力は明示的にblockする。
+
+- exact FormatIdentity、対象version、会社/profile条件をpreflightで確認
+- 確認済みaccount/subaccount/department mappingだけを使用し、fuzzy matchingや自動置換を禁止
+- 検証済みtax literal/会社設定の組合せだけを許可
+- `1000`、`1111`、検証済み`1110 -> 1100 -> 1101` shapeとsimple+compound順だけを個別capabilityとして扱う
+- sequence、row order、日付制約、group貸借、必須/空欄field、Evidence coverageを検証
+- CP932、BOMなし、CRLF、first-row exact headerで一時出力し、再読込self-validation後だけAtomic Outputへ渡す
+- unsupported compound shape、未知master、未検証feature combination、任意JDL versionをblock
+- VerificationReportには件数・合計・validation結果だけを記録し、会計本文を保存しない
+
+追加実機候補の優先度は、A simple+simple=`SHOULD BEFORE RELEASE`、B compound+compound=`SHOULD BEFORE RELEASE`、C 3 groups以上の個別網羅=`OPTIONAL / POST-MVP`、D 10-20 records mixed batch=`SHOULD BEFORE RELEASE`、E Evidence-limited adapterのpreflight/serializer contract=`MUST BEFORE ADAPTER`とする。A-Dをすべて終えるまで実装開始を遅らせず、release gateと実装開始gateを分離する。

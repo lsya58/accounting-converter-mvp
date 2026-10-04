@@ -371,6 +371,44 @@
   - blank伝番が常に安全、JDLが常にsequenceだけでgroupingするとは一般化しない
   - production JDLOutputAdapterまたはYayoiからJDLへのreadinessへ昇格しない
 
+## EVID-JDL-GENERATOR-MULTIGROUP-SIMPLE-COMPOUND-001
+
+- source: 検証済みsimple/compoundのexplicit configを再利用し、同日4 recordsを明示生成した完全架空artifact
+- product/version evidence: JDL IBEX出納帳 35.5
+- evidence level: `VERIFIED_BY_REAL_IMPORT`（このartifactと会社設定に限定）
+- candidate structure:
+  - official 30-column headerを先頭行に持つCP932-compatible、BOMなし、CRLFのCSV
+  - flag / row orderは `1111 -> 1110 -> 1100 -> 1101`
+  - 全4 recordsは同日、伝番はすべてblank
+  - `1111`単独groupと`1110 -> 1100 -> 1101` compound groupは個別に貸借一致
+- runtime result:
+  - JDLは4 recordsを認識してImportを正常終了
+  - UIではsimple 1伝票とcompound 1伝票のexactly 2 vouchersを確認
+  - merge、compound内部のsplit、duplicateは観測されず、順序、貸借、摘要を確認
+  - 両voucherのUI伝票番号欄はblankとして観測
+- raw re-export:
+  - 875 bytes、CP932/Shift_JISの双方でdecode可能な文字範囲、BOMなし、CRLF
+  - preamble 3 rows、official header 1 row、30-column data 4 rows
+  - flag order、日付、account/amount/description配置を保持
+  - 120 fields中88 fieldsは入力表現を保持し、32 fieldsはcandidate blankからre-export nonblankへ変化
+  - `NORMALIZED`、`DIFFERENT`、`UNKNOWN`に分類される差分は今回0
+- voucher evidence separation:
+  - candidate raw: 全4伝番blank
+  - runtime UI: 2 vouchersとも伝票番号欄blank
+  - self re-export raw: 全4伝番`0`
+  - 限定的に「今回の未指定伝番はself-exportで`0`表現になった」とだけ扱う
+  - JDLが伝番0を採番した、blankが常に0になる、generatorが0を出すべき、とは解釈しない
+- group-boundary interpretation:
+  - 今回の同日 `1111 + 1110/1100/1101` は、candidate伝番blankでも2 groupsとしてImportされた
+  - 同日かつre-export伝番`0`だけでは、今回のlogical boundaryを表現できない
+  - voucher numberが常にgroupingと無関係、flagだけで常に判定可能、JDL内部algorithmが判明した、とは一般化しない
+  - diagnosticsのblank voucherを含む未知ケースは引き続き保守的に`UNRESOLVED`とする
+- limits:
+  - simple+simple、compound+compound、3 groups以上、nonblank伝番は未検証
+  - 同flag type同士のboundary、任意順序、長いmiddle sequence、2 debit : 1 credit、many-to-manyは未検証
+  - compound内tax/subaccount/department、large batch、他製品/version、YayoiからJDL E2Eは未検証
+  - production JDLOutputAdapterとYayoiからJDLへのreadinessは変更しない
+
 ## Generator-authored 1000 department experiment
 
 - result: `INCONCLUSIVE / NOT VERIFIED`
@@ -576,10 +614,10 @@
 
 ## Next Verification Gate
 
-The JDL-origin `1111` round-trip and one explicit-config artifact for each of `1111` and `1000` are now scoped `VERIFIED_BY_REAL_IMPORT`. The next gate remains narrow:
+単一simple、単一compound、限定master/tax条件に加え、同日simple+compoundの2-group artifactまで実機検証できた。これ以上の組合せを網羅する研究より、Evidence allow-list外を必ずblockするOutput Adapter v0の設計・実装を優先できる段階にある。
 
-1. Register one fully fictional subaccount under one already tested account in the same test company.
-2. Record its exact parent account and identifier in private target-master evidence; do not use fuzzy matching or an unconfirmed value.
-3. Only then generate one `1000` candidate whose sole semantic change is that subaccount.
-4. Continue with department, tax-inclusive, tax-exclusive, then compound voucher.
-5. Keep the official schema, production JDLOutputAdapter, and Yayoi-to-JDL readiness unchanged until their own evidence requirements are met.
+1. production registryは未登録のまま、exact product/version/profileとEvidence coverageを検査するpreflightを先に作る。
+2. 生成可能scopeを検証済みflag、会社設定、master mapping、tax literal、compound shape、mixed-group shapeへ限定する。
+3. simple+simple、compound+compound、10-20 recordsのmixed batchはrelease前confidence確認として扱い、未確認の組合せはblockする。
+4. 3 groups以上の個別網羅はMVP必須にせず、mixed batchで必要な境界をまとめて検証する。
+5. Official schema identity、production registry、YayoiからJDL readinessは、adapter実装・validation・release evidenceが揃うまで変更しない。
