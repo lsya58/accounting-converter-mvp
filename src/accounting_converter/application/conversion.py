@@ -16,6 +16,7 @@ from accounting_converter.domain.profile import FormatProfile
 from accounting_converter.domain.validation import Severity, ValidationResult
 
 from .mapping_engine import MappingEngine
+from .journal_route import JournalRoutePolicy
 from .output_validation import OutputValidationResult, OutputValidator
 from .verification_report import VerificationReportGenerator
 
@@ -80,6 +81,7 @@ class ConversionService:
         output_adapter: OutputAdapter,
         output_validator: OutputValidator,
         verification_report_generator: VerificationReportGenerator | None = None,
+        journal_route_policy: JournalRoutePolicy | None = None,
     ) -> None:
         self._input_adapter = input_adapter
         self._structural_validator = structural_validator
@@ -87,6 +89,7 @@ class ConversionService:
         self._business_validator = business_validator
         self._output_adapter = output_adapter
         self._output_validator = output_validator
+        self._journal_route_policy = journal_route_policy
         self._report_generator = (
             verification_report_generator or VerificationReportGenerator()
         )
@@ -158,6 +161,26 @@ class ConversionService:
                 request.input_path,
                 request.input_profile,
             )
+            if self._journal_route_policy is not None:
+                route_result = self._journal_route_policy.apply(entries)
+                validation_results.extend(route_result.validation_results)
+                if self._has_blocking_validation(route_result.validation_results):
+                    return self._result(
+                        status=ConversionStatus.BLOCKED_BY_OUTPUT_PREFLIGHT,
+                        request=request,
+                        input_record_count=self._input_record_count(request, entries),
+                        input_journal_count=len(entries),
+                        output_record_count=output_record_count,
+                        output_journal_count=output_journal_count,
+                        debit_total=self._debit_total(entries),
+                        credit_total=self._credit_total(entries),
+                        validation_results=validation_results,
+                        unresolved_mapping_count=unresolved_mapping_count,
+                        output_validation_result=output_validation_result,
+                        output_path=None,
+                        completed_at=completed_at,
+                    )
+                entries = list(route_result.entries)
             input_record_count = self._input_record_count(request, entries)
             input_journal_count = len(entries)
             debit_total = self._debit_total(entries)

@@ -80,9 +80,11 @@ PYTHONPATH=src python3 -m accounting_converter.cli compare-jdl <baseline-csv> <t
 
 ## Application層の現在位置
 
-`ConversionService` は、InputAdapter、Structural Validation、Mapping、Business Validation、OutputAdapter、OutputValidation、VerificationReportを統括します。
+`ConversionService` は、InputAdapter、Structural Validation、明示的な出力route割当、Mapping、Business Validation、OutputAdapter、OutputValidation、VerificationReportを統括します。
 
 ConversionService自身には、弥生/JDL固有のCSV列変換や識別フラグ生成を実装しません。
+
+Yayoi AE19 observed subsetからCommon Journal Modelを経由し、Evidence-limited JDL Output Adapter v0へ渡すsynthetic software E2Eは成功しています。単一仕訳は`SUPPORTED_1111_BASIC`、複合仕訳は`SUPPORTED_COMPOUND_1D3C`を仕訳IDごとに明示割当し、特徴からprofileを推測しません。このartifactはまだJDL実機へImportしていないため、production Adapter RegistryとYayoiからJDLへのreadinessは変更しません。
 
 正式出力は一時ファイルへ生成し、OutputValidation成功後のみatomic replaceします。既存出力ファイルは `overwrite=True` が明示されない限り上書きしません。
 
@@ -174,7 +176,7 @@ Preparationが `READY` になった場合のみ、薄い実行層が既存 `Conv
 - JDL `VERIFIED_BY_REAL_IMPORT` FormatProfile
 - 勘定科目/補助科目/税区分の実マッピング
 - Conversion Profile管理GUI
-- JDL実機E2E
+- synthetic Yayoi入力から生成したJDL artifactの実機Import E2E
 
 これらは実CSVとJDL取込仕様確認後に実装します。
 

@@ -46,6 +46,9 @@ Input Adapter + FormatProfile
 Common Journal Model
   |
   v
+Explicit Output Route Policy
+  |
+  v
 Conversion Profile
   |
   v
@@ -70,7 +73,9 @@ Output Validation
 
 入力は「対応する仕訳データファイル」として扱う。`.csv` や `.txt` などの拡張子だけでフォーマットを断定せず、FormatProfileに基づいて判定する。
 
-現在はYayoi AE19 observed subsetのInputAdapterと、JDL IBEX出納帳35.5の実機Evidence subsetだけを扱うEvidence-limited JDLOutputAdapter v0を実装済みである。JDL Outputは正式ConversionService生成artifactの実機Import・再Export比較まで成功済みだが、target contextをregistry factoryへ安全に注入する配線が未実装のためproduction AdapterRegistryには未登録である。
+現在はYayoi AE19 observed subsetのInputAdapterと、JDL IBEX出納帳35.5の実機Evidence subsetだけを扱うEvidence-limited JDLOutputAdapter v0を実装済みである。JDL Outputは正式ConversionService生成artifactの実機Import・再Export比較まで成功済みで、YayoiInputAdapter起点のsynthetic software E2Eも成功している。ただし後者のartifactはJDL実機未検証であり、target contextをregistry factoryへ安全に注入する配線も未実装のためproduction AdapterRegistryには未登録である。
+
+出力profileの選択が必要な場合は、Application層のvendor-neutralな`JournalRoutePolicy`境界を使う。JDL実装は仕訳IDごとのEvidence profile明示割当だけを許可し、仕訳形状から自動推測しない。未割当、余剰割当、重複IDは正式出力前にErrorとして停止する。
 
 ### 2.1 Presentation層
 

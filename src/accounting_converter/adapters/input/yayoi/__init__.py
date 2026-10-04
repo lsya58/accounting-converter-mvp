@@ -6,6 +6,7 @@ from .observed_parser import (
     YayoiObservedSingleRecordParserError,
     YayoiObservedSingleRecordRow,
 )
+from .validator import YayoiStructuralValidator
 
 __all__ = [
     "YayoiInputAdapter",
@@ -13,4 +14,5 @@ __all__ = [
     "YayoiObservedSingleRecordParser",
     "YayoiObservedSingleRecordParserError",
     "YayoiObservedSingleRecordRow",
+    "YayoiStructuralValidator",
 ]

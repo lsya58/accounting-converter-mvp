@@ -49,3 +49,17 @@ unknown product/version、未知Evidence profile、未確認master、1000+tax/de
 正式ConversionServiceで生成した同日simple+compound artifactは、JDL IBEX出納帳35.5で4 records / exactly 2 vouchersとしてImport成功した。candidate/re-exportの120 fieldsは88 preserved、32 blank-to-nonblankで、semantic differenceは0だった。
 
 Adapter behaviorのruntime gateは通過した。一方、現在の`AdapterRegistry` factoryは引数なしであり、`JDLOutputAdapter`が必須とするtarget master・税処理contextをcustomer-specific defaultなしに供給できない。この配線を解決するまでregistryは`UNAVAILABLE`を維持する。YayoiからJDLは、YayoiInputAdapterを起点とするformal software/runtime E2E完了までNOT READYとする。
+
+## Yayoi Input Software E2E
+
+Yayoi AE19 observed 25-field synthetic CSVを正式`YayoiInputAdapter`で読み、Common Journal Model、確認済みMapping、Business Validation、JDL output preflight、temporary output、output validation、Verification Report、atomic publishまで通すsoftware E2Eを実装した。
+
+- input: CP932、BOMなし、CRLF、headerなし、4 physical records
+- grouping: `2111` 1件と`2110 -> 2100 -> 2101` 1件、合計2 logical journals
+- route: journal IDごとの明示割当のみ。feature inferenceなし
+- output: `1111, 1110, 1100, 1101`、4 records / 2 journals
+- safety: unknown mappingまたはroute未割当は正式出力前にblock
+
+これはsoftware内のsynthetic E2Eであり、生成artifactのJDL実機Import evidenceではない。`AdapterRegistry`は`UNAVAILABLE`、YayoiからJDLのreadinessはNOT READYを維持する。
+
+次のregistry配線では、グローバルdefaultを導入せず、選択済みConversion Profileと確認済みtarget master/tax settingsから実行時`JdlTargetContext`を構築し、context-aware factoryへ明示注入する必要がある。

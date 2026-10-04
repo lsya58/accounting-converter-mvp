@@ -15,9 +15,11 @@ from .preflight import (
     jdl_ibex_35_5_output_profile,
 )
 from .validator import JDLOutputValidator
+from .route_policy import ExplicitJdlEvidenceRoutePolicy
 
 __all__ = [
     "EVIDENCE_IDS",
+    "ExplicitJdlEvidenceRoutePolicy",
     "JDL_OUTPUT_FORMAT_ID",
     "JDL_OUTPUT_METADATA_KEY",
     "JDLOutputAdapter",
