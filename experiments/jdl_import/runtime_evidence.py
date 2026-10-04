@@ -32,6 +32,7 @@ EVIDENCE_ID_GENERATOR_COMPOUND_1110_1100_1101 = (
 EVIDENCE_ID_GENERATOR_MULTIGROUP_SIMPLE_COMPOUND = (
     "EVID-JDL-GENERATOR-MULTIGROUP-SIMPLE-COMPOUND-001"
 )
+EVIDENCE_ID_CONVERSION_SERVICE_E2E = "EVID-JDL-CONVERSION-SERVICE-E2E-001"
 EVIDENCE_ID = EVIDENCE_ID_1111
 VERIFIED_ARTIFACT_STATUS = "GENERATOR_AUTHORED_1111_VERIFIED_BY_REAL_IMPORT_SCOPED"
 VERIFIED_ARTIFACT_STATUS_1000 = "GENERATOR_AUTHORED_1000_VERIFIED_BY_REAL_IMPORT_SCOPED"
@@ -47,6 +48,9 @@ VERIFIED_ARTIFACT_STATUS_1111_TAX_INCLUSIVE = (
 )
 VERIFIED_ARTIFACT_STATUS_1111_TAX_EXCLUSIVE = (
     "GENERATOR_AUTHORED_1111_TAX_EXCLUSIVE_VERIFIED_BY_REAL_IMPORT_SCOPED"
+)
+VERIFIED_ARTIFACT_STATUS_CONVERSION_SERVICE_E2E = (
+    "CONVERSION_SERVICE_E2E_VERIFIED_BY_REAL_IMPORT_SCOPED"
 )
 OFFICIAL_HEADER = jdl_ibex_cashbook_official_journal_import_spec().column_names
 
@@ -636,6 +640,37 @@ def generator_authored_multi_group_real_import_evidence() -> ScopedJdlImportEvid
             "other JDL versions or products",
             "Yayoi to JDL end-to-end",
             "production JDLOutputAdapter",
+        ),
+        production_output_enabled=False,
+    )
+
+
+def conversion_service_e2e_real_import_evidence() -> ScopedJdlImportEvidence:
+    return ScopedJdlImportEvidence(
+        evidence_id=EVIDENCE_ID_CONVERSION_SERVICE_E2E,
+        evidence_level=EvidenceLevel.VERIFIED_BY_REAL_IMPORT,
+        product="JDL IBEX 出納帳",
+        observed_version="35.5",
+        verified_scope=(
+            "formal ConversionService path with confirmed ConversionProfile mappings",
+            "JdlOutputPreflight, JDLOutputAdapter, JDLOutputValidator, and atomic publish",
+            "official 30-column first-row header and CP932 CRLF BOM-less serialization",
+            "one 1111 simple journal followed by one 1110/1100/1101 compound journal",
+            "same date and blank candidate voucher fields across all four records",
+            "runtime recognized four records and produced exactly two vouchers",
+            "no merge, compound split, or duplicate observed",
+            "balances, account placement, descriptions, and group boundaries preserved",
+            "runtime UI voucher fields observed blank for both vouchers",
+            "post-import JDL self re-export obtained and compared across 120 fields",
+        ),
+        not_verified=(
+            "YayoiInputAdapter through JDLOutputAdapter formal end-to-end",
+            "registry factory wiring for explicit target master and tax context",
+            "simple plus simple or compound plus compound boundaries",
+            "ten-to-twenty-record mixed operational batch",
+            "three or more arbitrary logical groups",
+            "other JDL products or versions",
+            "format-wide support outside the v0 strict allow-list",
         ),
         production_output_enabled=False,
     )

@@ -23,6 +23,7 @@
 | JDL | JDL IBEX 出納帳 35.5 | Hand-entered three-record compound export | Export observation | 30 | header after 3-row preamble | CP932 observed | 1110/1100/1101 exact observed sequence | OBSERVED | EVID-JDL-COMPOUND-HAND-1110-1100-1101-001 | Medium for this exact observation only | 同一伝番・日付、group貸借一致をraw確認。generator-authored compound Import、blank伝番、他shapeは未検証。 |
 | JDL | JDL IBEX 出納帳 35.5 | Generator-authored three-record compound | Import verification | 30 | first row exact official header | CP932 observed | 1110/1100/1101 exact sequence | VERIFIED_BY_REAL_IMPORT (scoped) | EVID-JDL-GENERATOR-COMPOUND-1110-1100-1101-001 | High for this exact artifact/path only | candidate伝番blankで3 recordsを1伝票へgrouping。re-export伝番`0`はgenerator defaultにせず、複数group・別shape・compound内master/taxは未検証。 |
 | JDL | JDL IBEX 出納帳 35.5 | Generator-authored simple + compound multi-group | Import verification | 30 | first row exact official header | CP932 observed | 1111 then 1110/1100/1101 | VERIFIED_BY_REAL_IMPORT (scoped) | EVID-JDL-GENERATOR-MULTIGROUP-SIMPLE-COMPOUND-001 | High for this exact artifact/path only | 同日・candidate伝番blankの4 recordsがexactly 2 vouchersとしてImport。UI伝票番号blankとre-export伝番`0`を分離し、他group組合せやgenerator defaultへ一般化しない。 |
+| JDL | JDL IBEX 出納帳 35.5 | ConversionService output v0 release gate | Import verification | 30 | first row exact official header | CP932 verified for artifact | 1111 then 1110/1100/1101 | VERIFIED_BY_REAL_IMPORT (scoped) | EVID-JDL-CONVERSION-SERVICE-E2E-001 | High for the formal v0 path and exact allow-list | confirmed ConversionProfile/Mappingからpreflight、serializer、validator、atomic publishを通した4 records。実機でexactly 2 vouchers、再Export120 fieldsのsemantic difference 0。registry context wiringとYayoi起点E2Eは別gate。 |
 | JDL | JDL IBEX 出納帳 35.5 | JDL-origin 1111 preamble-stripped round-trip | Import verification | 30 | first row exact official header | CP932 observed | 1111 single-line voucher only | VERIFIED_BY_REAL_IMPORT (scoped) | private fully fictional runtime experiment | High for this exact path only | JDL-origin data rowをbyte-for-byte保持。免税、補助なし、部門なし、税fieldなし。generator outputやFormat全体には適用しない。 |
 | JDL | JDL IBEX 出納帳 | Observed 30-column CSV | Export/Import candidate | 30 observed | Observed header exists, sometimes after preamble | CP932 observed | Identifier flags observed; meanings documented separately in manual layer | OBSERVED | private real data observation | Medium | JDL IBEX出納帳35.5実データから観測。JDL-origin round-tripと特定のgenerator-authored 1111/1000以外は正常取込未検証。 |
 | JDL | JDL-origin export sample | Observed 30-column CSV | Export evidence | 30 observed | Observed header exists | CP932 observed | Identifier flags observed; meaning unresolved | OBSERVED | private export observation | Medium | Product/versionは未検証。35.5固有Evidenceへ無条件統合しない。Known Good Import Fileとは呼ばない。 |
@@ -48,7 +49,8 @@
 - 弥生実CSVのencoding、header、line ending
 - すべての弥生製品/バージョンに対応する汎用YayoiInputAdapter
 - 正式YayoiFormatProfile
-- Evidence-limited JDLOutputAdapter v0のConversionService生成物に対する最終実機E2Eとregistry有効化
+- Evidence-limited JDLOutputAdapter v0のtarget context注入を含むregistry wiring
+- YayoiInputAdapterからJDLOutputAdapterまでのformal software/runtime E2E
 - 複数条件をカバーした `VERIFIED_BY_REAL_IMPORT` のJDL FormatProfile
 - generator-authored補助は特定の貸方補助1件、departmentは借貸両側を明示した特定の1111 1件、税は課税・税込/税抜の借方tax表現各1組を持つ特定の1111各1件、compoundは特定の1 debit : 3 credit / 3-record artifactだけ検証済み。他の補助code/親科目、借方補助、片側/階層department、他税率/売上側課税、別compound shape、複数group・複数件の段階的な正常取込結果。
 - JDLの課区・税区略称一覧

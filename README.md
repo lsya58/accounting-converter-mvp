@@ -163,14 +163,14 @@ Readiness status:
 
 `TransformationPlan` にStepが存在しても、それだけで実装済みとは扱いません。`MASTER_MAPPING` / `TAX_MAPPING` は確認済みConversion Profileがある場合のみ `SUPPORTED_WITH_PROFILE` になり、`UNKNOWN` / `UNSUPPORTED` / lossyな変換は通常のREADYにしません。
 
-`AdapterRegistry` は `FormatIdentity` のexact/candidate/unavailableを区別します。Candidateは自動採用しません。現在のproduction registryには、Yayoi AE19 direct exportのObserved evidenceに限定した最小 `YayoiInputAdapter` だけを登録します。JDLのようなOutput Adapterは、原則として `VERIFIED_BY_REAL_IMPORT` のEvidenceを持つ正式Adapterだけを本番変換可能とします。Demo Adapterは登録しません。
+`AdapterRegistry` は `FormatIdentity` のexact/candidate/unavailableを区別します。Candidateは自動採用しません。現在のproduction registryには、Yayoi AE19 direct exportのObserved evidenceに限定した最小 `YayoiInputAdapter` だけを登録します。JDL Output Adapter v0は正式ConversionService artifactの実機Importまで検証済みですが、target master/tax contextをfactoryへ安全に渡す配線が未実装のため未登録です。Demo Adapterは登録しません。
 
 Preparationが `READY` になった場合のみ、薄い実行層が既存 `ConversionService` を呼び出します。ConversionService内のstructural / mapping / business / output validation、atomic output、overwrite safety、Verification Reportは引き続き残り、二重安全性を維持します。
 
 ## まだ実装していないもの
 
 - すべての弥生製品/バージョンに対応する汎用YayoiInputAdapter
-- Evidence-limited JDLOutputAdapter v0のproduction registry有効化
+- Evidence-limited JDLOutputAdapter v0へのtarget context注入とproduction registry有効化
 - JDL `VERIFIED_BY_REAL_IMPORT` FormatProfile
 - 勘定科目/補助科目/税区分の実マッピング
 - Conversion Profile管理GUI
@@ -222,4 +222,4 @@ GitHub ActionsではPython 3.12で同じテストを実行し、`tests/fixtures/
 
 `experiments/jdl_import/` には、JDL IBEX出納帳のofficial documented 30-column schemaとJDL IBEX出納帳35.5 observed-compatible serializationを使った研究用CSV generatorがあります。これは正式JDLOutputAdapterではなく、完全架空データでJDL実機の取込条件を確認するための実験環境です。
 
-JDL-origin `1111` round-trip、generator-authored `1111` / `1000`、限定的な貸方補助付き `1000`、借貸両側部門付き `1111`、課税・税込/税抜の借方tax表現各1組を持つ `1111`、3-record compound、simple+compoundの同日2-group artifactは、それぞれscopeを限定して実機Import成功済みです。片側部門の `1000` 実験は引き続き `INCONCLUSIVE / NOT VERIFIED` です。これらをstrict allow-listとして使うEvidence-limited Output Adapter v0とsynthetic validationを実装済みですが、ConversionService生成物の最終実機E2Eが未完了なためproduction registry/readinessは変更していません。
+JDL-origin `1111` round-trip、各generator-authored subsetに加え、正式ConversionServiceが生成した同日simple+compound artifactもJDL IBEX出納帳35.5へのImport、exactly 2 vouchersのUI確認、self re-export比較まで成功しました（`EVID-JDL-CONVERSION-SERVICE-E2E-001`）。Adapter behaviorのrelease gateは通過していますが、target contextのregistry wiringとYayoiInputAdapter起点のformal E2Eが残るため、production registryとYayoiからJDL readinessはまだ変更していません。

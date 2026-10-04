@@ -32,9 +32,11 @@ from experiments.jdl_import.generator_authored_multi_group import (
     generate_candidate,
 )
 from experiments.jdl_import.runtime_evidence import (
+    EVIDENCE_ID_CONVERSION_SERVICE_E2E,
     EVIDENCE_ID_GENERATOR_MULTIGROUP_SIMPLE_COMPOUND,
     RuntimeReexportFieldStatus,
     compare_generator_multi_group_runtime,
+    conversion_service_e2e_real_import_evidence,
     generator_authored_multi_group_real_import_evidence,
 )
 
@@ -161,6 +163,24 @@ class JdlGeneratorAuthoredMultiGroupTests(unittest.TestCase):
             evidence.not_verified,
         )
         self.assertIn("production JDLOutputAdapter", evidence.not_verified)
+
+    def test_conversion_service_release_gate_evidence_is_scoped(self) -> None:
+        evidence = conversion_service_e2e_real_import_evidence()
+        self.assertEqual(evidence.evidence_id, EVIDENCE_ID_CONVERSION_SERVICE_E2E)
+        self.assertEqual(evidence.evidence_level, EvidenceLevel.VERIFIED_BY_REAL_IMPORT)
+        self.assertFalse(evidence.production_output_enabled)
+        self.assertIn(
+            "formal ConversionService path with confirmed ConversionProfile mappings",
+            evidence.verified_scope,
+        )
+        self.assertIn(
+            "YayoiInputAdapter through JDLOutputAdapter formal end-to-end",
+            evidence.not_verified,
+        )
+        self.assertIn(
+            "registry factory wiring for explicit target master and tax context",
+            evidence.not_verified,
+        )
 
     def test_runtime_comparison_keeps_three_voucher_evidence_layers_separate(
         self,

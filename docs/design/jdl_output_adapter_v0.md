@@ -2,7 +2,7 @@
 
 ## Status
 
-`JDLOutputAdapter`と`JDLOutputValidator`は正式`src`配下に実装済み。ただしproduction `AdapterRegistry`には未登録で、YayoiからJDLへのreadinessは`ADAPTER_UNAVAILABLE`のままとする。ConversionService経由で生成したartifactのJDL実機Import確認後にのみ有効化を再評価する。
+`JDLOutputAdapter`と`JDLOutputValidator`は正式`src`配下に実装済み。`EVID-JDL-CONVERSION-SERVICE-E2E-001`によりConversionService経由artifactのJDL実機Import、UI確認、self re-export比較まで完了した。ただしproduction `AdapterRegistry`には未登録で、YayoiからJDLへのreadinessは`ADAPTER_UNAVAILABLE`のままとする。
 
 Target identityはJDL IBEX出納帳35.5 / Journal CSV Input / official documented 30-column schema。schema自体のEvidence levelは`OFFICIAL_DOCUMENTED`から変更しない。adapter behaviorだけを個別の`VERIFIED_BY_REAL_IMPORT` Evidenceへ結び付ける。
 
@@ -44,6 +44,8 @@ file-level multi-groupは`SUPPORTED_1111_BASIC`の後に`SUPPORTED_COMPOUND_1D3C
 
 unknown product/version、未知Evidence profile、未確認master、1000+tax/department、department+tax、8%/売上側/未知tax literal、取引科目、compound内tax/subaccount/department、2借方対1貸方、many-to-many、2-record compound、複数compound、simple+simple、3 groups以上、nonblank伝番、CP932変換不能、truncate/normalize/inferred valueをblockする。
 
-## Remaining Gate
+## Release Gate Result
 
-production registry有効化前に、ConversionServiceが生成した完全架空artifactをJDL IBEX出納帳35.5へImportし、件数、group境界、科目、補助、部門、税、貸借、摘要、重複なしを実機確認する。release前にはsimple+simple、compound+compound、10-20 records mixed batchの必要性を再評価する。
+正式ConversionServiceで生成した同日simple+compound artifactは、JDL IBEX出納帳35.5で4 records / exactly 2 vouchersとしてImport成功した。candidate/re-exportの120 fieldsは88 preserved、32 blank-to-nonblankで、semantic differenceは0だった。
+
+Adapter behaviorのruntime gateは通過した。一方、現在の`AdapterRegistry` factoryは引数なしであり、`JDLOutputAdapter`が必須とするtarget master・税処理contextをcustomer-specific defaultなしに供給できない。この配線を解決するまでregistryは`UNAVAILABLE`を維持する。YayoiからJDLは、YayoiInputAdapterを起点とするformal software/runtime E2E完了までNOT READYとする。

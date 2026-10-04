@@ -4,7 +4,7 @@ import csv
 import io
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -26,7 +26,14 @@ from accounting_converter.application.conversion import (
     ConversionStatus,
 )
 from accounting_converter.application.mapping_engine import MappingEngine, MappingRuleSet
+from accounting_converter.application.profile_preflight import mapping_rule_set_from_profile
 from accounting_converter.application.validation_pipeline import ValidationPipeline
+from accounting_converter.domain.conversion_profile import ConversionProfile
+from accounting_converter.domain.format_metadata import (
+    EvidenceLevel,
+    FormatDirection,
+    FormatIdentity,
+)
 from accounting_converter.domain.journal import (
     JournalEntry,
     JournalLine,
@@ -253,6 +260,102 @@ class JDLOutputAdapterV0Tests(unittest.TestCase):
         self.assertNotIn(b"\n", raw.replace(b"\r\n", b""))
         self.assertIn("JDL Evidence profile:", result.verification_report)
         self.assertIn(JDL_OUTPUT_FORMAT_ID, result.verification_report)
+
+    def test_release_gate_multigroup_uses_conversion_profile_and_service(self) -> None:
+        run_date = date(2026, 10, 14)
+        simple = self.simple(JdlEvidenceProfile.BASIC_1111, entry_id="E2E-SIMPLE")
+        simple.date = run_date
+        simple.description = "正式E2E-SIMPLE"
+        simple.lines[0].amount = Decimal("700")
+        simple.lines[1].account = "普通預金"
+        simple.lines[1].amount = Decimal("700")
+
+        compound = self.compound()
+        compound.date = run_date
+        compound.description = "正式E2E-COMPOUND"
+        compound.lines[1].account = "普通預金"
+        compound.lines[2].account = "当座預金"
+        compound.lines[3].account = "小口現金"
+
+        source_identity = FormatIdentity(
+            vendor="Synthetic",
+            product="Release Gate",
+            format_name="Common Journal Builder",
+            direction=FormatDirection.INPUT,
+            evidence_level=EvidenceLevel.OBSERVED,
+            format_version="1",
+        )
+        target_identity = (
+            jdl_ibex_cashbook_official_journal_import_schema_definition().identity
+        )
+        accounts = {"現金", "普通預金", "当座預金", "小口現金"}
+        conversion_profile = ConversionProfile(
+            profile_id="jdl-runtime-e2e-20261014",
+            profile_name="Synthetic JDL runtime E2E",
+            source_format_identity=source_identity,
+            target_format_identity=target_identity,
+            account_mappings={
+                account: MappingValue(
+                    source_value=account,
+                    target_value=account,
+                    status=MappingStatus.USER_CONFIRMED,
+                )
+                for account in accounts
+            },
+            created_at=datetime(2026, 10, 14, tzinfo=timezone.utc),
+            updated_at=datetime(2026, 10, 14, tzinfo=timezone.utc),
+        )
+        context = JdlTargetContext(
+            product="JDL IBEX 出納帳",
+            version="35.5",
+            accounts=frozenset(accounts),
+            tax_processing_mode=JdlTaxProcessingMode.EXEMPT,
+        )
+        entries = (simple, compound)
+        service = ConversionService(
+            input_adapter=_StaticInputAdapter(entries),
+            structural_validator=_NoStructuralErrors(),
+            mapping_engine=MappingEngine(
+                mapping_rule_set_from_profile(conversion_profile)
+            ),
+            business_validator=ValidationPipeline((BalanceRule(),)),
+            output_adapter=JDLOutputAdapter(context),
+            output_validator=JDLOutputValidator(context),
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = root / "synthetic-source.json"
+            destination = root / "jdl-runtime-e2e.csv"
+            source.write_text("synthetic immutable source", encoding="utf-8")
+            source_before = source.read_bytes()
+            result = service.convert(
+                ConversionRequest(
+                    source,
+                    destination,
+                    self.input_profile(),
+                    self.profile,
+                )
+            )
+            source_after = source.read_bytes()
+            rows = list(
+                csv.reader(
+                    io.StringIO(destination.read_bytes().decode("cp932"), newline="")
+                )
+            )
+
+        self.assertEqual(result.status, ConversionStatus.SUCCESS)
+        self.assertEqual(source_before, source_after)
+        self.assertEqual(result.input_journal_count, 2)
+        self.assertEqual(result.output_journal_count, 2)
+        self.assertEqual(result.output_record_count, 4)
+        self.assertEqual(result.debit_total, Decimal("1700"))
+        self.assertEqual(result.credit_total, Decimal("1700"))
+        self.assertEqual(result.unresolved_mapping_count, 0)
+        self.assertEqual([row[0] for row in rows[1:]], ["1111", "1110", "1100", "1101"])
+        self.assertEqual({row[2] for row in rows[1:]}, {"20261014"})
+        self.assertTrue(all(row[1] == "" for row in rows[1:]))
+        self.assertIn("unsupported output profile件数: 0", result.verification_report)
 
     def test_unresolved_mapping_blocks_before_output(self) -> None:
         entry = self.simple(JdlEvidenceProfile.BASIC_1111)
