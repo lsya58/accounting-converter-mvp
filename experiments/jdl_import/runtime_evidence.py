@@ -23,6 +23,12 @@ EVIDENCE_ID_TAX_INCLUSIVE_HAND_1111 = "EVID-JDL-TAX-INCLUSIVE-HAND-1111-001"
 EVIDENCE_ID_1111_TAX_INCLUSIVE = "EVID-JDL-GENERATOR-1111-TAX-INCLUSIVE-001"
 EVIDENCE_ID_TAX_EXCLUSIVE_HAND_1111 = "EVID-JDL-TAX-EXCLUSIVE-HAND-1111-001"
 EVIDENCE_ID_1111_TAX_EXCLUSIVE = "EVID-JDL-GENERATOR-1111-TAX-EXCLUSIVE-001"
+EVIDENCE_ID_COMPOUND_HAND_1110_1100_1101 = (
+    "EVID-JDL-COMPOUND-HAND-1110-1100-1101-001"
+)
+EVIDENCE_ID_GENERATOR_COMPOUND_1110_1100_1101 = (
+    "EVID-JDL-GENERATOR-COMPOUND-1110-1100-1101-001"
+)
 EVIDENCE_ID = EVIDENCE_ID_1111
 VERIFIED_ARTIFACT_STATUS = "GENERATOR_AUTHORED_1111_VERIFIED_BY_REAL_IMPORT_SCOPED"
 VERIFIED_ARTIFACT_STATUS_1000 = "GENERATOR_AUTHORED_1000_VERIFIED_BY_REAL_IMPORT_SCOPED"
@@ -120,6 +126,69 @@ class GeneratorRuntimeComparison:
 
 
 Generator1111RuntimeComparison = GeneratorRuntimeComparison
+
+
+@dataclass(frozen=True)
+class CompoundRuntimeFieldComparison:
+    record_index: int
+    field_name: str
+    status: RuntimeReexportFieldStatus
+
+
+@dataclass(frozen=True)
+class CompoundRuntimeComparison:
+    evidence_id: str
+    candidate_fields: tuple[CompoundRuntimeFieldComparison, ...]
+    candidate_structure: dict[str, Any]
+    reexport_structure: dict[str, Any]
+    sequence_preserved: bool
+    row_order_preserved: bool
+    date_preserved: bool
+    amounts_and_positions_preserved: bool
+    descriptions_and_positions_preserved: bool
+    candidate_vouchers_blank: bool
+    reexport_vouchers_zero: bool
+
+    @property
+    def status_counts(self) -> tuple[tuple[str, int], ...]:
+        counts = Counter(field.status.value for field in self.candidate_fields)
+        return tuple(sorted(counts.items()))
+
+    def to_privacy_safe_dict(self) -> dict[str, Any]:
+        return {
+            "evidence_id": self.evidence_id,
+            "candidate_to_reexport_status_counts": dict(self.status_counts),
+            "candidate_to_reexport_fields": [
+                {
+                    "record_index": item.record_index,
+                    "field": item.field_name,
+                    "status": item.status.value,
+                }
+                for item in self.candidate_fields
+            ],
+            "structures": {
+                "candidate": self.candidate_structure,
+                "runtime_reexport": self.reexport_structure,
+            },
+            "sequence_preserved": self.sequence_preserved,
+            "row_order_preserved": self.row_order_preserved,
+            "date_preserved": self.date_preserved,
+            "amounts_and_positions_preserved": self.amounts_and_positions_preserved,
+            "descriptions_and_positions_preserved": (
+                self.descriptions_and_positions_preserved
+            ),
+            "candidate_vouchers_blank": self.candidate_vouchers_blank,
+            "reexport_vouchers_zero": self.reexport_vouchers_zero,
+            "interpretation": (
+                "Blank candidate vouchers grouped successfully for this one runtime "
+                "artifact; re-export zero is an observed representation, not a "
+                "generator default or a general grouping rule."
+            ),
+            "privacy_note": (
+                "Field values, account names, descriptions, dates, amounts, "
+                "voucher values, and raw rows are omitted."
+            ),
+        }
 
 
 def generator_authored_1111_real_import_evidence() -> ScopedJdlImportEvidence:
@@ -396,6 +465,79 @@ def tax_exclusive_hand_entry_1111_observed_evidence() -> ScopedJdlImportEvidence
     )
 
 
+def compound_hand_entry_1110_1100_1101_observed_evidence(
+) -> ScopedJdlImportEvidence:
+    return ScopedJdlImportEvidence(
+        evidence_id=EVIDENCE_ID_COMPOUND_HAND_1110_1100_1101,
+        evidence_level=EvidenceLevel.OBSERVED,
+        product="JDL IBEX 出納帳",
+        observed_version="35.5",
+        verified_scope=(
+            "real-runtime manual-entry export observation",
+            "one three-record voucher candidate",
+            "exact 1110/1100/1101 sequence",
+            "same nonblank voucher number and date across all three records",
+            "one debit total balanced against three credit amounts",
+            "first record contains both debit and credit accounts",
+            "middle and final records contain credit accounts with blank debit accounts",
+            "required missing-side debit amounts represented as numeric zero",
+            "description populated on the first record only",
+            "exempt company with no subaccount, department, or tax classification",
+            "CP932-compatible CRLF BOM-less export with three-row preamble",
+        ),
+        not_verified=(
+            "generator-authored compound import",
+            "blank voucher-number behavior for compound import",
+            "all possible 1110/1100*/1101 shapes or line counts",
+            "multiple debit lines or many-to-many compound vouchers",
+            "subaccount, department, or taxable compound vouchers",
+            "multiple vouchers or large data sets",
+            "other JDL versions or products",
+            "Yayoi to JDL end-to-end",
+            "production JDLOutputAdapter",
+        ),
+        production_output_enabled=False,
+    )
+
+
+def generator_authored_compound_real_import_evidence() -> ScopedJdlImportEvidence:
+    return ScopedJdlImportEvidence(
+        evidence_id=EVIDENCE_ID_GENERATOR_COMPOUND_1110_1100_1101,
+        evidence_level=EvidenceLevel.VERIFIED_BY_REAL_IMPORT,
+        product="JDL IBEX 出納帳",
+        observed_version="35.5",
+        verified_scope=(
+            "one exact generator-authored three-record compound artifact",
+            "official 30-column first-row header",
+            "CP932-compatible CRLF BOM-less serialization",
+            "exact 1110/1100/1101 sequence and row order",
+            "same date across all three records",
+            "blank voucher field on all candidate records",
+            "runtime recognized three records and grouped them into one voucher",
+            "one debit balanced against three credits",
+            "first record description with later descriptions blank",
+            "exempt company with no subaccount, department, or tax fields",
+            "runtime import completed and one voucher visually verified",
+            "no duplicate voucher observed",
+            "post-import JDL re-export obtained",
+        ),
+        not_verified=(
+            "multiple compound vouchers in one file",
+            "nonblank supplied voucher-number behavior",
+            "two-debit/one-credit or many-to-many generator import",
+            "longer 1100 chains",
+            "tax, subaccount, department, or mixed tax rates inside compound vouchers",
+            "multiple simple and compound groups or large data sets",
+            "blank-voucher behavior outside this exact single-group artifact",
+            "sequence-only grouping as a general JDL rule",
+            "other JDL versions or products",
+            "Yayoi to JDL end-to-end",
+            "production JDLOutputAdapter",
+        ),
+        production_output_enabled=False,
+    )
+
+
 def generator_authored_1111_tax_exclusive_real_import_evidence(
 ) -> ScopedJdlImportEvidence:
     return ScopedJdlImportEvidence(
@@ -553,6 +695,74 @@ def compare_generator_1111_tax_exclusive_runtime(
     )
 
 
+def compare_generator_compound_runtime(
+    candidate_path: Path,
+    reexport_path: Path,
+) -> CompoundRuntimeComparison:
+    candidate = _read_records(candidate_path, expected_count=3)
+    reexport = _read_records(reexport_path, expected_count=3)
+    expected_flags = ("1110", "1100", "1101")
+    candidate_flags = tuple(row[0] for row in candidate["rows"])
+    reexport_flags = tuple(row[0] for row in reexport["rows"])
+    if candidate_flags != expected_flags or reexport_flags != expected_flags:
+        raise ValueError("candidate and re-export must preserve 1110/1100/1101")
+
+    comparisons = tuple(
+        CompoundRuntimeFieldComparison(
+            record_index=record_index,
+            field_name=name,
+            status=_field_status(candidate_row[field_index], reexport_row[field_index]),
+        )
+        for record_index, (candidate_row, reexport_row) in enumerate(
+            zip(candidate["rows"], reexport["rows"], strict=True), start=1
+        )
+        for field_index, name in enumerate(OFFICIAL_HEADER)
+    )
+    date_index = OFFICIAL_HEADER.index("日付")
+    debit_amount_index = OFFICIAL_HEADER.index("借方金額")
+    credit_amount_index = OFFICIAL_HEADER.index("貸方金額")
+    description_index = OFFICIAL_HEADER.index("摘要")
+    voucher_index = OFFICIAL_HEADER.index("伝番")
+    return CompoundRuntimeComparison(
+        evidence_id=EVIDENCE_ID_GENERATOR_COMPOUND_1110_1100_1101,
+        candidate_fields=comparisons,
+        candidate_structure=candidate["structure"],
+        reexport_structure=reexport["structure"],
+        sequence_preserved=candidate_flags == reexport_flags == expected_flags,
+        row_order_preserved=all(
+            candidate_row[0] == reexport_row[0]
+            for candidate_row, reexport_row in zip(
+                candidate["rows"], reexport["rows"], strict=True
+            )
+        ),
+        date_preserved=all(
+            candidate_row[date_index] == reexport_row[date_index]
+            for candidate_row, reexport_row in zip(
+                candidate["rows"], reexport["rows"], strict=True
+            )
+        ),
+        amounts_and_positions_preserved=all(
+            candidate_row[index] == reexport_row[index]
+            for candidate_row, reexport_row in zip(
+                candidate["rows"], reexport["rows"], strict=True
+            )
+            for index in (debit_amount_index, credit_amount_index)
+        ),
+        descriptions_and_positions_preserved=all(
+            candidate_row[description_index] == reexport_row[description_index]
+            for candidate_row, reexport_row in zip(
+                candidate["rows"], reexport["rows"], strict=True
+            )
+        ),
+        candidate_vouchers_blank=all(
+            not row[voucher_index] for row in candidate["rows"]
+        ),
+        reexport_vouchers_zero=all(
+            row[voucher_index] == "0" for row in reexport["rows"]
+        ),
+    )
+
+
 def _field_status(input_value: str, reexport_value: str) -> RuntimeReexportFieldStatus:
     if input_value == reexport_value:
         return RuntimeReexportFieldStatus.INPUT_PRESERVED
@@ -564,6 +774,11 @@ def _field_status(input_value: str, reexport_value: str) -> RuntimeReexportField
 
 
 def _read_single_record(path: Path) -> dict[str, Any]:
+    parsed = _read_records(path, expected_count=1)
+    return {"row": parsed["rows"][0], "structure": parsed["structure"]}
+
+
+def _read_records(path: Path, *, expected_count: int) -> dict[str, Any]:
     raw = path.read_bytes()
     try:
         text = raw.decode("cp932")
@@ -577,8 +792,12 @@ def _read_single_record(path: Path) -> dict[str, Any]:
         raise ValueError("evidence CSV must contain exactly one official header")
     header_index = header_indexes[0]
     records = rows[header_index + 1:]
-    if len(records) != 1 or len(records[0]) != len(OFFICIAL_HEADER):
-        raise ValueError("evidence CSV must contain exactly one 30-column record")
+    if len(records) != expected_count or any(
+        len(record) != len(OFFICIAL_HEADER) for record in records
+    ):
+        raise ValueError(
+            f"evidence CSV must contain exactly {expected_count} 30-column records"
+        )
     without_crlf = raw.replace(b"\r\n", b"")
     if b"\n" in without_crlf or b"\r" in without_crlf:
         line_ending = "mixed_or_non_crlf"
@@ -594,5 +813,8 @@ def _read_single_record(path: Path) -> dict[str, Any]:
         "header_column_count": len(rows[header_index]),
         "data_row_count": len(records),
         "data_column_count": len(records[0]),
+        "data_column_counts": dict(
+            Counter(len(record) for record in records)
+        ),
     }
-    return {"row": tuple(records[0]), "structure": structure}
+    return {"rows": tuple(tuple(record) for record in records), "structure": structure}

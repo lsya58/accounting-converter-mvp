@@ -108,7 +108,15 @@ PYTHONPATH=src python3 -m experiments.jdl_import.generator_authored_1111_tax_exc
 
 今回の特定artifactは実機Importと再Exportに成功し、`EVID-JDL-GENERATOR-1111-TAX-EXCLUSIVE-001` として限定的に検証済みです。借方課区、税区、税入力方法、明示税額を含む22 fieldsが保持されましたが、他のtax表現、flag、会社設定、複数件には適用せず、production capabilityにも昇格しません。
 
-次のcompound実験はまだgenerator candidateを作りません。まず免税・補助なし・部門なしの3行複合振替伝票をJDL UIで手入力し、JDL自身のraw Exportで `1110 -> 1100 -> 1101` とgroup invariantsを再確認します。
+3行複合振替伝票のJDL self-exportで `1110 -> 1100 -> 1101` とgroup invariantsを再確認しました。`generator_authored_compound.py` は、このObserved Evidence、Official Manual、確認済みtarget account masterだけから3-record実験candidateを生成します。伝番は全行explicit blankで、runtime groupingは未検証です。
+
+```bash
+PYTHONPATH=src python3 -m experiments.jdl_import.generator_authored_compound \
+  --config data/private/experiments/jdl_import/generator_authored_compound/exp_compound_config.private.json \
+  --observation-source data/private/experiments/jdl_import/generator_authored_compound/jdl_compound_hand_entry_0823.csv
+```
+
+生成時のartifact statusは `GENERATOR_AUTHORED_COMPOUND_UNTESTED`。この特定artifactはその後、実機Importと再Exportに成功し、`EVID-JDL-GENERATOR-COMPOUND-1110-1100-1101-001`として限定的な`VERIFIED_BY_REAL_IMPORT`になりました。伝番blankの3 recordsが1伝票へgroupingされ、re-exportでは伝番`0`を観測しましたが、将来生成物、複数group、`0`のgenerator default、production JDLOutputAdapterやreadinessには成功statusを継承しません。
 
 ## 生成されるもの
 

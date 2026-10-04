@@ -63,7 +63,7 @@ JDL診断CLIは、schema未指定の純粋観測と、明示的なObserved Schem
 
 実運用上は、日常入力にJDL IBEX出納帳 35.5を使い、決算・申告時にserver-sideのJDL財務/会計システムへ移行する流れが観測されています。MVPの直接Import target候補はJDL IBEX出納帳 35.5へ整理し、JDL会計21列仕訳一覧はpost-import verification用のread-only evidence候補として分離します。
 
-JDL IBEX出納帳 35.5では `データ管理・選択 -> CSV入力 -> データ種類: 仕訳データ` のImport flowも観測済みです。退避確認、日付範囲指定、決算整理の含む/含まない選択、rejection時のログ表示が確認されています。JDL自身が出力した `1111` data rowの限定round-tripに加え、explicit configから生成した完全架空の `1111` と `1000` 各1件を同じ実機へImportし、再Exportまで確認しました。`1111` は振替伝票、`1000` は非伝票仕訳として仕訳帳で確認しています。特定のgenerator-authored artifactsでは、貸方補助付き `1000`、借貸両側へ部門を明示した `1111`、課税・税込/税抜の借方tax表現各1組を持つ `1111` もImport・再Exportまで成功しました。いずれも限定artifactのEvidenceであり、他の補助/部門/税表現、複合仕訳、Format全体へ一般化しません。
+JDL IBEX出納帳 35.5では `データ管理・選択 -> CSV入力 -> データ種類: 仕訳データ` のImport flowも観測済みです。退避確認、日付範囲指定、決算整理の含む/含まない選択、rejection時のログ表示が確認されています。JDL自身が出力した `1111` data rowの限定round-tripに加え、explicit configから生成した完全架空の `1111` と `1000` 各1件を同じ実機へImportし、再Exportまで確認しました。`1111` は振替伝票、`1000` は非伝票仕訳として仕訳帳で確認しています。特定のgenerator-authored artifactsでは、貸方補助付き `1000`、借貸両側へ部門を明示した `1111`、課税・税込/税抜の借方tax表現各1組を持つ `1111` もImport・再Exportまで成功しました。さらに、伝番blankのgenerator-authored `1110 -> 1100 -> 1101` 3 recordsが1つの振替伝票へgroupingされることを実機Import・再Exportで確認しました。いずれも限定artifactのEvidenceであり、複数group、他の補助/部門/税表現、別の複合構造、Format全体へ一般化しません。
 
 JDL IBEX 出納帳の操作マニュアルP319-P322/P326-P327から、CSV仕訳データ入力の30項目、1行目header requirement、identifier flag meanings、税処理ごとのconditional requirements、error CSV behaviorを `OFFICIAL_DOCUMENTED` evidenceとして追加しています。CP932/CRLF/BOMなしは実CSV由来のobserved-compatible serializationとして分離しています。限定round-tripは実機成功済みですが、official schema identityは `OFFICIAL_DOCUMENTED` のままです。
 
@@ -222,4 +222,4 @@ GitHub ActionsではPython 3.12で同じテストを実行し、`tests/fixtures/
 
 `experiments/jdl_import/` には、JDL IBEX出納帳のofficial documented 30-column schemaとJDL IBEX出納帳35.5 observed-compatible serializationを使った研究用CSV generatorがあります。これは正式JDLOutputAdapterではなく、完全架空データでJDL実機の取込条件を確認するための実験環境です。
 
-JDL-origin `1111` round-trip、generator-authored `1111` / `1000`、限定的な貸方補助付き `1000`、借貸両側部門付き `1111`、課税・税込/税抜の借方tax表現各1組を持つ `1111` は、それぞれscopeを限定して実機Import成功済みです。片側部門の `1000` 実験は引き続き `INCONCLUSIVE / NOT VERIFIED` です。各tax Evidenceは特定の会社設定・税表現・1 artifactだけに適用し、production readinessには影響しません。次のcompound実験はHuman self-export Evidence取得前のためcandidate未生成です。
+JDL-origin `1111` round-trip、generator-authored `1111` / `1000`、限定的な貸方補助付き `1000`、借貸両側部門付き `1111`、課税・税込/税抜の借方tax表現各1組を持つ `1111`、3-record compoundは、それぞれscopeを限定して実機Import成功済みです。片側部門の `1000` 実験は引き続き `INCONCLUSIVE / NOT VERIFIED` です。各Evidenceは特定の会社設定・表現・1 artifactだけに適用し、production readinessには影響しません。次の優先候補はsimple + compoundなど複数groupの境界検証です。

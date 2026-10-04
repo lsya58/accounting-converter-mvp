@@ -79,6 +79,10 @@ JDL IBEX 出納帳35.5で観測したUI/実CSVとは別Evidenceとして扱う�
 
 マニュアルP322では、振替伝票取込時のsequenceとして `1110 -> 1100 -> 1101` の順序が示されている。既存observed evidenceでは `1110 -> 1100* -> 1101` を観測しているが、0件以上の`1100`を一般仕様として断定しない。
 
+JDL IBEX出納帳35.5の完全架空3行振替伝票self-exportでも、`1110 -> 1100 -> 1101`、同一伝番、同一日付、group貸借一致を観測した（`EVID-JDL-COMPOUND-HAND-1110-1100-1101-001`）。これはManualとのruntime export上の整合であり、generator-authored Import成功Evidenceではない。既存の2-record `1110 -> 1101` Observed Behaviorを正式仕様へ昇格または否定するものでもない。
+
+その後、同じ3-record構造をOfficial Manual、Observed Evidence、target master確認から明示生成し、candidate伝番を全行blankとした単一artifactの実機Importに成功した（`EVID-JDL-GENERATOR-COMPOUND-1110-1100-1101-001`）。実機は3 recordsを1伝票へgroupingし、再Exportでは全伝番が`0`になった。blank Import成功とre-export `0`は別Evidenceであり、`0`をgenerator defaultへ昇格せず、複数groupでも同じ挙動になるとは扱わない。
+
 ## Account And Master Rules
 
 - 勘定科目は、科目コード、科目名称、科目正式名称のいずれか1つが入力されていれば取り込めると記載されている。
@@ -141,7 +145,7 @@ Import後の再Exportでは、candidate入力の21 fieldsが同じ表現で保�
 
 ## Remaining Blockers
 
-- 貸方補助と借貸両側部門の特定artifactsは限定的に実Import検証済み。その他の補助/部門表現、各税処理、compound sequence、複数件は未検証。
+- 貸方補助、借貸両側部門、単一3-record compoundの特定artifactsは限定的に実Import検証済み。その他の補助/部門表現、各税処理、複数group・複数件は未検証。
 - 部門処理を有効にした手入力 `1111` の再Exportでは、画面上の借方側指定に対してraw CSVの借貸両側部門fieldが埋まることを観測した。これはExport observationであり、generator-authored department Importの成功Evidenceではない。
 - 借方部門だけを明示したgenerator-authored `1000` 実験はImport後の部門表示を確認できず、別要因errorも混在したため `INCONCLUSIVE / NOT VERIFIED`。
 - 課税・税込の借方課区/税区1組は限定artifactで実Import検証済み。他税率/税区、売上側課税、明示税額、transaction account、複数件は引き続きblockする。

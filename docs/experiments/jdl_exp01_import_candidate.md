@@ -173,7 +173,7 @@ Import失敗時に保存するもの:
 
 ## production化しない理由
 
-EXP-01はgenerator-authored 1件の最小候補を段階検証する実験です。特定のgenerator-authored `1111` / `1000` artifactsは成功しましたが、複合仕訳、税区分、補助、部門、月次大量データ、別Version互換性は確定しません。
+EXP-01はgenerator-authored最小候補を段階検証する実験です。特定のgenerator-authored `1111` / `1000`、貸方補助、借貸両側部門、借方tax表現、3-record compound artifactsは成功しましたが、別の複合構造、複数group、月次大量データ、別Version互換性は確定しません。
 
 Manual evidenceで30-column CSV仕訳入力schemaは確認できた。一方、JDL-origin exportにはpreambleがあるため、Export CSVをそのままImport可能とは扱わない。EXP-01 candidateはpreambleなしで1行目にofficial headerを置く。
 
@@ -240,6 +240,12 @@ Manualは税抜時に課区/税区/税入力方法/消費税を必要とし、�
 
 ### 次のcompound実験
 
-既存Observed Evidenceでは `1110 -> 1100* -> 1101` を観測しているが、generator-authored Import成功Evidenceではない。privacy-safeな再集計では26 groupすべての開始行が借方のみで、中間行は大半が貸方のみだった。この傾向から、最小Human実験は1 debit : 2 creditの3行構成を優先する。ただしflag semanticsや全環境の規則へ一般化しない。
+完全架空テスト事業所で3行振替伝票を手入力し、self-export rawから `1110 -> 1100 -> 1101`、同一伝番、同一日付、group貸借一致を再確認した。`EVID-JDL-COMPOUND-HAND-1110-1100-1101-001` として `OBSERVED` に留め、既存 `1110 -> 1100* -> 1101` familyや2-record `1110 -> 1101` を一般仕様へ昇格しない。
 
-次はcandidateを作らず、完全架空テスト事業所を免税・補助なし・部門なしへ戻し、既にmaster確認済みの科目だけでJDL UIから3行の最小複合振替伝票を手入力してself-exportする。貸借合計は明示的に一致させ、日付と伝番を1つに揃える。目的はstart/middle/end sequence、伝番・日付一致、row order、各行金額、group貸借一致、摘要表現の再確認である。
+このObserved EvidenceとManual requirednessを使い、3 records / 各30 fieldsをexplicit configから作る実験candidateを生成した。生成時statusは `GENERATOR_AUTHORED_COMPOUND_UNTESTED`。伝番はManual上optionalなので全行blankとし、自動採番値を推測しなかった。
+
+候補は免税、補助なし、部門なし、tax fieldsなし。後続2 recordsの借方金額`0`だけは、金額列のManual requirednessとraw observationの両方を根拠とする。self-exportで見えた税額/部門codeの`0`はcandidateへ昇格しない。
+
+この単一candidateは実機Importと再Exportに成功し、`EVID-JDL-GENERATOR-COMPOUND-1110-1100-1101-001`として限定的に検証済みとした。実機は3 recordsを1つの振替伝票へgroupingした。candidate伝番は全行blank、re-exportは全行`0`だったが、複数groupにおけるblank伝番や`0`のgenerator利用へ一般化しない。production capabilityとYayoiからJDLへのREADY判定は変更しない。
+
+次の優先候補は、1 CSV内にsimpleとcompoundを含む複数groupを置き、group boundaryと意図しないmergeの有無を検証する実験である。ただし、複数groupをすべてblank伝番にする安全性は未確認のためcandidateはまだ生成しない。

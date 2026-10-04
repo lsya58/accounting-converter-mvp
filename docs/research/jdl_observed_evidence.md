@@ -31,7 +31,7 @@
   - JDL IBEX出納帳35.5固有仕様とは断定しない
   - CP932/CRLF/BOMなしはmanual由来ではなくobserved evidenceのまま
   - JDL-origin data rowを保持したround-tripと、特定のgenerator-authored `1111` / `1000` artifactsは別Evidenceで実機成功を確認済み
-  - 1件のscoped貸方補助artifactを除き、subaccount、department、tax、compound、Format全体は未検証
+  - subaccount、department、tax、compoundはそれぞれ限定artifactだけ実機検証済みで、Format全体は未検証
   - official schema identityは `VERIFIED_BY_REAL_IMPORT` へ昇格しない
 - details: `docs/research/jdl_ibex_csv_manual_evidence.md`
 
@@ -316,6 +316,59 @@
   - UIの税抜入力とCSVの `内税`を同義化しない
   - 他の課区、税区、税率、売上側、税入力方法、明示税額、取引科目を検証していない
   - flag `1000` の課税、複合、混在税率、複数件、大量データを検証していない
+  - production JDLOutputAdapterまたはYayoiからJDLへのreadinessへ昇格しない
+
+## EVID-JDL-COMPOUND-HAND-1110-1100-1101-001
+
+- source: 完全架空テスト事業所で手入力した3行振替伝票のJDL self-export
+- product/version evidence: JDL IBEX出納帳 35.5
+- evidence level: `OBSERVED`
+- observed structure:
+  - CP932-compatible、BOMなし、CRLF、3-row preamble、official 30-column header
+  - 3 data recordsはいずれも30 columns
+  - exact sequenceは `1110 -> 1100 -> 1101`
+  - 3 recordsの伝番と日付はそれぞれ同一
+  - group全体の借方合計と貸方合計は一致
+  - 先頭recordは借貸両側、後続2 recordsは借方account blank / 借方金額 `0` / 貸方側nonblank
+  - 摘要は先頭recordだけnonblank
+- evidence boundaries:
+  - Manualの3-record sequenceと、既存Observed `1110 -> 1100* -> 1101` familyに整合する
+  - 既存2-record `1110 -> 1101` 観測を否定しないが、Manualの3-record例と同一仕様であるとは断定しない
+  - generator-authored compound Import、伝番blank時のruntime grouping、他の行構成は未検証
+  - self-exportの税額/部門code `0`をgenerator defaultへ昇格しない
+  - production JDLOutputAdapterまたはYayoiからJDLへのreadinessへ昇格しない
+
+## Generator-authored compound experiment
+
+- candidate creation status: `GENERATOR_AUTHORED_COMPOUND_UNTESTED`
+- construction: Official Manual、上記Observed Evidence、確認済みtarget account masterだけを根拠に全3 records / 全30 fields / decision sourceを明示
+- candidate: `1110 -> 1100 -> 1101`、免税、補助なし、部門なし、tax fieldsなし、group貸借一致
+- voucher field: Manual上optionalのため全行blank。自動採番やblank groupingを推測せず、runtime verification pendingとして扱う
+- missing-side amount: Manual上requiredの金額列とObserved rawの双方を根拠に、後続recordの借方金額を明示的な`0`とした
+- result: 下記の単一artifactについて実機Importと再Exportに成功。生成時statusは履歴として維持し、将来生成物へ成功を継承しない
+
+## EVID-JDL-GENERATOR-COMPOUND-1110-1100-1101-001
+
+- source: Official Manual、手入力Export observation、確認済みtarget masterから全90 fieldsを明示した完全架空3-record artifact
+- product/version evidence: JDL IBEX出納帳 35.5
+- evidence level: `VERIFIED_BY_REAL_IMPORT`（このartifactと会社設定に限定）
+- verified scope:
+  - official 30-column headerを先頭行に持つCP932-compatible、BOMなし、CRLFのCSV
+  - exact sequence / row order `1110 -> 1100 -> 1101`
+  - candidate伝番は3 recordsすべてblank、日付は同一、group貸借一致
+  - 実機が3 recordsを認識し、1つの振替伝票へgrouping
+  - 先頭recordだけ摘要あり、後続摘要blank、重複なしをUIで確認
+  - post-import raw re-exportを取得
+- candidate / re-export comparison:
+  - 90 fields中67 fieldsは入力表現を保持
+  - 23 fieldsはcandidate blankからre-export nonblankへ変化
+  - sequence、row order、日付、金額配置、摘要配置は保持
+  - candidate伝番blankとre-export伝番`0`は別Evidenceとして保持
+  - `0`はruntime re-export表現であり、generator defaultへ昇格しない
+- limits:
+  - 複数group、nonblank伝番、別の借貸構成、長いmiddle sequenceを検証していない
+  - compound内のtax、subaccount、department、mixed tax rateを検証していない
+  - blank伝番が常に安全、JDLが常にsequenceだけでgroupingするとは一般化しない
   - production JDLOutputAdapterまたはYayoiからJDLへのreadinessへ昇格しない
 
 ## Generator-authored 1000 department experiment
