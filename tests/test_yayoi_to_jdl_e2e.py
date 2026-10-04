@@ -14,11 +14,15 @@ from accounting_converter.adapters.input.yayoi import (
 )
 from accounting_converter.adapters.output.jdl import (
     JDL_OUTPUT_METADATA_KEY,
-    JDLOutputAdapter,
-    JDLOutputValidator,
     ExplicitJdlEvidenceRoutePolicy,
+    JdlAccountIdentity,
+    JdlContextConfirmationState,
+    JdlContextProvenance,
+    JdlDepartmentIdentity,
     JdlEvidenceProfile,
     JdlTargetContext,
+    JdlTargetContextBuilder,
+    JdlSubaccountIdentity,
     jdl_ibex_35_5_output_profile,
 )
 from accounting_converter.application.conversion import (
@@ -82,12 +86,7 @@ class YayoiToJdlFormalE2ETests(unittest.TestCase):
             routed = self.route_policy().apply(parsed)
 
             result = self.service(profile).convert(
-                ConversionRequest(
-                    source,
-                    output,
-                    self.yayoi_profile,
-                    self.jdl_profile,
-                )
+                self.request(source, output, profile)
             )
             raw = output.read_bytes()
             source_after = source.read_bytes()
@@ -115,6 +114,11 @@ class YayoiToJdlFormalE2ETests(unittest.TestCase):
         self.assertEqual(result.debit_total, Decimal("1700"))
         self.assertEqual(result.credit_total, Decimal("1700"))
         self.assertEqual(result.unresolved_mapping_count, 0)
+        self.assertIn("target context validation: success", result.verification_report)
+        self.assertIn("account master count: 4", result.verification_report)
+        self.assertIn("mapping/context consistency: success", result.verification_report)
+        self.assertNotIn("1001", result.verification_report)
+        self.assertNotIn("現金", result.verification_report)
         self.assertEqual(source_before, source_after)
         self.assertFalse(raw.startswith(b"\xef\xbb\xbf"))
         self.assertNotIn(b"\n", raw.replace(b"\r\n", b""))
@@ -161,7 +165,7 @@ class YayoiToJdlFormalE2ETests(unittest.TestCase):
             )
             parsed = YayoiInputAdapter().read(source, self.yayoi_profile)
             result = self.service(profile, route).convert(
-                ConversionRequest(source, output, self.yayoi_profile, self.jdl_profile)
+                self.request(source, output, profile)
             )
             output_exists = output.exists()
 
@@ -169,6 +173,147 @@ class YayoiToJdlFormalE2ETests(unittest.TestCase):
         self.assertEqual(result.status, ConversionStatus.BLOCKED_BY_MAPPING)
         self.assertEqual(result.unresolved_mapping_count, 1)
         self.assertFalse(output_exists)
+
+    def test_missing_target_context_blocks_without_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = self.write_source(root / "yayoi.csv")
+            output = root / "must_not_exist.csv"
+            profile = self.conversion_profile(self.accounts)
+            result = self.service(profile).convert(
+                ConversionRequest(
+                    source,
+                    output,
+                    self.yayoi_profile,
+                    self.jdl_profile,
+                    conversion_profile=profile,
+                    target_runtime_context=None,
+                )
+            )
+
+        self.assertEqual(result.status, ConversionStatus.BLOCKED_BY_TARGET_CONTEXT)
+        self.assertIn(
+            "JDL-CONTEXT-MISSING",
+            {item.rule_id for item in result.validation_results},
+        )
+        self.assertFalse(output.exists())
+
+    def test_wrong_jdl_version_is_rejected_by_context_builder(self) -> None:
+        result = self.build_context(version="36.0")
+
+        self.assertFalse(result.success)
+        self.assertIn(
+            "JDL-CONTEXT-TARGET-IDENTITY",
+            {item.rule_id for item in result.validation_results},
+        )
+
+    def test_mapping_target_code_mismatch_blocks_context_resolution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = self.write_source(root / "yayoi.csv")
+            output = root / "must_not_exist.csv"
+            profile = self.conversion_profile(self.accounts)
+            profile.account_mappings["現金"].metadata["target_code"] = "9999"
+            result = self.service(profile).convert(
+                self.request(source, output, profile)
+            )
+
+        self.assertEqual(result.status, ConversionStatus.BLOCKED_BY_TARGET_CONTEXT)
+        self.assertIn(
+            "JDL-CONTEXT-ACCOUNT-MAPPING-MISMATCH",
+            {item.rule_id for item in result.validation_results},
+        )
+        self.assertFalse(output.exists())
+
+    def test_subaccount_parent_mismatch_makes_context_invalid(self) -> None:
+        subaccount = JdlSubaccountIdentity(
+            parent_account="普通預金",
+            mapping_value="架空補助",
+            target_master_code="1",
+            output_code="0001",
+            output_name="架空補助",
+            output_representation_confirmed=True,
+            parent_account_code="9999",
+            target_name="架空補助",
+        )
+        result = self.build_context(subaccounts=(subaccount,))
+
+        self.assertFalse(result.success)
+        self.assertIn(
+            "JDL-CONTEXT-SUBACCOUNT-PARENT",
+            {item.rule_id for item in result.validation_results},
+        )
+
+    def test_department_mapping_code_mismatch_blocks_context_resolution(self) -> None:
+        department = JdlDepartmentIdentity(
+            mapping_value="架空部門",
+            target_master_code="1",
+            output_code="1",
+            output_name="部門",
+            target_formal_name="架空部門",
+        )
+        context_result = self.build_context(
+            departments=(department,),
+            department_processing_enabled=True,
+        )
+        self.assertTrue(context_result.success)
+        profile = self.conversion_profile(self.accounts)
+        profile.department_mappings["入力部門"] = MappingValue(
+            source_value="入力部門",
+            target_value="架空部門",
+            status=MappingStatus.USER_CONFIRMED,
+            metadata={"target_code": "2", "target_formal_name": "架空部門"},
+        )
+        factory = self.runtime_factory()
+        resolution = factory.resolve(
+            self.jdl_profile,
+            profile,
+            context_result.context,
+        )
+
+        self.assertFalse(resolution.resolved)
+        self.assertIn(
+            "JDL-CONTEXT-DEPARTMENT-MAPPING-MISMATCH",
+            {item.rule_id for item in resolution.validation_results},
+        )
+
+    def test_tax_profile_vs_exempt_context_blocks_output_preflight(self) -> None:
+        result = self.convert_single_with_route(
+            JdlEvidenceProfile.TAX_INCLUDED_1111,
+            JdlTaxProcessingMode.EXEMPT,
+        )
+        self.assertEqual(result.status, ConversionStatus.BLOCKED_BY_OUTPUT_PREFLIGHT)
+        self.assertIn(
+            "JDL-OUT-TAX-MODE",
+            {item.rule_id for item in result.validation_results},
+        )
+
+    def test_tax_inclusive_profile_vs_exclusive_context_blocks(self) -> None:
+        result = self.convert_single_with_route(
+            JdlEvidenceProfile.TAX_INCLUDED_1111,
+            JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED,
+        )
+        self.assertEqual(result.status, ConversionStatus.BLOCKED_BY_OUTPUT_PREFLIGHT)
+        self.assertIn(
+            "JDL-OUT-TAX-MODE",
+            {item.rule_id for item in result.validation_results},
+        )
+
+    def test_duplicate_target_account_code_makes_context_invalid(self) -> None:
+        masters = list(self.account_master())
+        masters[1] = JdlAccountIdentity(
+            masters[1].mapping_value,
+            masters[0].target_master_code,
+            masters[1].target_name,
+            masters[1].target_formal_name,
+        )
+        result = self.build_context(account_master=tuple(masters))
+
+        self.assertFalse(result.success)
+        self.assertIn(
+            "JDL-CONTEXT-ACCOUNT-DUPLICATE",
+            {item.rule_id for item in result.validation_results},
+        )
 
     def test_missing_explicit_route_assignment_blocks_before_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -181,7 +326,7 @@ class YayoiToJdlFormalE2ETests(unittest.TestCase):
                 route_id="INCOMPLETE-ROUTE",
             )
             result = self.service(profile, route).convert(
-                ConversionRequest(source, output, self.yayoi_profile, self.jdl_profile)
+                self.request(source, output, profile)
             )
             output_exists = output.exists()
 
@@ -204,10 +349,18 @@ class YayoiToJdlFormalE2ETests(unittest.TestCase):
 
     def test_registry_and_route_readiness_remain_unavailable(self) -> None:
         target = jdl_ibex_cashbook_official_journal_import_schema_definition()
+        registry = production_adapter_registry()
         self.assertEqual(
-            production_adapter_registry().get_exact_output(target.identity).status,
+            registry.get_exact_output(target.identity).status,
             AdapterAvailabilityStatus.UNAVAILABLE,
         )
+        implementation = registry.get_exact_output(
+            target.identity,
+            production_only=False,
+        )
+        self.assertEqual(implementation.status, AdapterAvailabilityStatus.EXACT)
+        self.assertTrue(implementation.registration.requires_runtime_context)
+        self.assertFalse(implementation.registration.production_enabled)
 
     def test_real_import_evidence_is_runtime_verified_but_not_production_enabled(
         self,
@@ -239,21 +392,123 @@ class YayoiToJdlFormalE2ETests(unittest.TestCase):
         profile: ConversionProfile,
         route=None,
     ) -> ConversionService:
-        context = JdlTargetContext(
-            product="JDL IBEX 出納帳",
-            version="35.5",
-            accounts=self.accounts,
-            tax_processing_mode=JdlTaxProcessingMode.EXEMPT,
+        target = jdl_ibex_cashbook_official_journal_import_schema_definition()
+        lookup = production_adapter_registry().get_exact_output(
+            target.identity,
+            production_only=False,
         )
+        self.assertIsNotNone(lookup.registration)
+        self.assertIsNotNone(lookup.registration.runtime_factory)
         return ConversionService(
             input_adapter=YayoiInputAdapter(),
             structural_validator=YayoiStructuralValidator(),
             mapping_engine=MappingEngine(mapping_rule_set_from_profile(profile)),
             business_validator=ValidationPipeline((BalanceRule(),)),
-            output_adapter=JDLOutputAdapter(context),
-            output_validator=JDLOutputValidator(context),
+            output_adapter=None,
+            output_validator=None,
             journal_route_policy=route or self.route_policy(),
+            runtime_output_factory=lookup.registration.runtime_factory,
         )
+
+    def runtime_factory(self):
+        target = jdl_ibex_cashbook_official_journal_import_schema_definition()
+        lookup = production_adapter_registry().get_exact_output(
+            target.identity,
+            production_only=False,
+        )
+        assert lookup.registration is not None
+        assert lookup.registration.runtime_factory is not None
+        return lookup.registration.runtime_factory
+
+    def request(
+        self,
+        source: Path,
+        output: Path,
+        profile: ConversionProfile,
+        context: JdlTargetContext | None = None,
+    ) -> ConversionRequest:
+        return ConversionRequest(
+            source,
+            output,
+            self.yayoi_profile,
+            self.jdl_profile,
+            conversion_profile=profile,
+            target_runtime_context=context or self.target_context(),
+        )
+
+    def target_context(self) -> JdlTargetContext:
+        result = self.build_context()
+        self.assertTrue(result.success, result.validation_results)
+        assert result.context is not None
+        return result.context
+
+    def build_context(
+        self,
+        *,
+        version: str = "35.5",
+        account_master: tuple[JdlAccountIdentity, ...] | None = None,
+        subaccounts: tuple[JdlSubaccountIdentity, ...] = (),
+        departments: tuple[JdlDepartmentIdentity, ...] = (),
+        department_processing_enabled: bool = False,
+        tax_processing_mode: JdlTaxProcessingMode = JdlTaxProcessingMode.EXEMPT,
+    ):
+        return JdlTargetContextBuilder().build(
+            target_format_identity=(
+                jdl_ibex_cashbook_official_journal_import_schema_definition().identity
+            ),
+            product="JDL IBEX 出納帳",
+            version=version,
+            account_master=(
+                self.account_master() if account_master is None else account_master
+            ),
+            subaccounts=subaccounts,
+            departments=departments,
+            tax_processing_mode=tax_processing_mode,
+            department_processing_enabled=department_processing_enabled,
+            standard_taxation_confirmed=(
+                tax_processing_mode is not JdlTaxProcessingMode.EXEMPT
+            ),
+            individual_credit_method_confirmed=(
+                tax_processing_mode is not JdlTaxProcessingMode.EXEMPT
+            ),
+            confirmation_state=JdlContextConfirmationState.CONFIRMED,
+            provenance=JdlContextProvenance.USER_CONFIRMED_RUNTIME_SNAPSHOT,
+            no_fuzzy_matching=True,
+            no_automatic_replacement=True,
+        )
+
+    def account_master(self) -> tuple[JdlAccountIdentity, ...]:
+        return tuple(
+            JdlAccountIdentity(account, code, account, account)
+            for account, code in self.account_codes().items()
+        )
+
+    def convert_single_with_route(
+        self,
+        evidence_profile: JdlEvidenceProfile,
+        tax_processing_mode: JdlTaxProcessingMode,
+    ):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = self.write_source(
+                root / "yayoi.csv",
+                rows=[self.row("2111", "101")],
+            )
+            output = root / "must_not_exist.csv"
+            profile = self.conversion_profile(self.accounts)
+            route = ExplicitJdlEvidenceRoutePolicy(
+                {"101": evidence_profile},
+                route_id="TAX-MODE-MISMATCH",
+            )
+            context_result = self.build_context(
+                tax_processing_mode=tax_processing_mode,
+            )
+            assert context_result.context is not None
+            result = self.service(profile, route).convert(
+                self.request(source, output, profile, context_result.context)
+            )
+            self.assertFalse(output.exists())
+            return result
 
     def conversion_profile(self, accounts: frozenset[str]) -> ConversionProfile:
         now = datetime(2026, 10, 15, tzinfo=timezone.utc)
@@ -269,12 +524,25 @@ class YayoiToJdlFormalE2ETests(unittest.TestCase):
                     source_value=account,
                     target_value=account,
                     status=MappingStatus.USER_CONFIRMED,
+                    metadata={
+                        "target_code": self.account_codes()[account],
+                        "target_formal_name": account,
+                    },
                 )
                 for account in accounts
             },
             created_at=now,
             updated_at=now,
         )
+
+    @staticmethod
+    def account_codes() -> dict[str, str]:
+        return {
+            "現金": "1001",
+            "普通預金": "1002",
+            "当座預金": "1003",
+            "小口現金": "1004",
+        }
 
     @staticmethod
     def route_policy() -> ExplicitJdlEvidenceRoutePolicy:

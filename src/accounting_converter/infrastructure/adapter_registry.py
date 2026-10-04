@@ -6,6 +6,7 @@ from typing import Callable, Generic, TypeVar
 
 from accounting_converter.adapters.input.base import InputAdapter
 from accounting_converter.adapters.output.base import OutputAdapter
+from accounting_converter.application.runtime_output import RuntimeOutputFactory
 from accounting_converter.domain.format_metadata import (
     EvidenceLevel,
     FormatDirection,
@@ -25,12 +26,21 @@ class AdapterAvailabilityStatus(str, Enum):
 @dataclass(frozen=True)
 class AdapterRegistration(Generic[AdapterT]):
     format_identity: FormatIdentity
-    factory: Callable[[], AdapterT]
     direction: FormatDirection
     evidence_level: EvidenceLevel
+    factory: Callable[[], AdapterT] | None = None
+    runtime_factory: RuntimeOutputFactory | None = None
     verified_by_real_import: bool = False
     production_enabled: bool = False
     notes: str | None = None
+
+    @property
+    def implementation_available(self) -> bool:
+        return self.factory is not None or self.runtime_factory is not None
+
+    @property
+    def requires_runtime_context(self) -> bool:
+        return self.runtime_factory is not None
 
     @property
     def production_eligible(self) -> bool:
@@ -123,6 +133,10 @@ class AdapterRegistry:
     ) -> None:
         if registration.direction is not expected_direction:
             raise ValueError("adapter direction does not match registry method")
+        if not registration.implementation_available:
+            raise ValueError("adapter registration requires a factory")
+        if expected_direction is FormatDirection.INPUT and registration.runtime_factory:
+            raise ValueError("runtime output factory cannot register an input adapter")
         key = registration.format_identity.stable_key
         if key in registrations:
             raise ValueError("adapter registration already exists")
@@ -180,7 +194,9 @@ class AdapterRegistry:
 
 def production_adapter_registry() -> AdapterRegistry:
     from accounting_converter.adapters.input.yayoi import YayoiInputAdapter
+    from accounting_converter.adapters.output.jdl import JdlOutputRuntimeFactory
     from accounting_converter.profiles.known_formats import (
+        jdl_ibex_cashbook_official_journal_import_schema_definition,
         yayoi_ae19_direct_export_observed_schema,
     )
 
@@ -196,6 +212,21 @@ def production_adapter_registry() -> AdapterRegistry:
             notes=(
                 "Minimal production input adapter for the observed Yayoi AE19 "
                 "direct export subset. Not a universal Yayoi adapter."
+            ),
+        )
+    )
+    jdl_schema = jdl_ibex_cashbook_official_journal_import_schema_definition()
+    registry.register_output(
+        AdapterRegistration(
+            format_identity=jdl_schema.identity,
+            direction=FormatDirection.OUTPUT,
+            evidence_level=EvidenceLevel.VERIFIED_BY_REAL_IMPORT,
+            runtime_factory=JdlOutputRuntimeFactory(),
+            verified_by_real_import=True,
+            production_enabled=False,
+            notes=(
+                "Context-aware implementation exists, but production activation "
+                "remains blocked pending runtime verification of the registry path."
             ),
         )
     )

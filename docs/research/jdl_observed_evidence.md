@@ -70,7 +70,7 @@
   - YayoiからJDLへのend-to-end conversion
 - separation:
   - official documented schemaは引き続き `OFFICIAL_DOCUMENTED`
-  - production JDLOutputAdapterは未登録
+  - 当該Evidence取得時点ではproduction JDLOutputAdapterは未登録。現在はcontext-aware implementationを登録済みだが、production利用は無効
   - YayoiからJDLへのproduction readinessは変更しない
 
 ## EVID-JDL-GENERATOR-1111-001
@@ -109,7 +109,7 @@
   - production JDLOutputAdapter
 - separation:
   - official documented schema全体は `OFFICIAL_DOCUMENTED` のまま
-  - production JDLOutputAdapterは未登録
+  - 当該Evidence取得時点ではproduction JDLOutputAdapterは未登録。現在はcontext-aware implementationを登録済みだが、production利用は無効
   - YayoiからJDLへのproduction readinessは変更しない
 
 ## EVID-JDL-GENERATOR-1000-001
@@ -147,7 +147,7 @@
   - production JDLOutputAdapter
 - separation:
   - official documented schema全体は `OFFICIAL_DOCUMENTED` のまま
-  - production JDLOutputAdapterは未登録
+  - 当該Evidence取得時点ではproduction JDLOutputAdapterは未登録。現在はcontext-aware implementationを登録済みだが、production利用は無効
   - YayoiからJDLへのproduction readinessは変更しない
 
 ## EVID-JDL-GENERATOR-1000-SUBACCOUNT-001
@@ -173,7 +173,7 @@
   - `0001` と `1` が全JDL環境で同一とは断定しない
   - generatorが `1` または `0001` のどちらを出すべきか一般化しない
 - separation:
-  - production JDLOutputAdapterは未登録
+  - 当該Evidence取得時点ではproduction JDLOutputAdapterは未登録。現在はcontext-aware implementationを登録済みだが、production利用は無効
   - YayoiからJDLへのproduction readinessは変更しない
 
 ## EVID-JDL-DEPARTMENT-HAND-1111-001
@@ -439,7 +439,7 @@
   - JDLが0を採番した、blankが常に0、generatorも0を出すべき、とは一般化しない
 - release decision:
   - Adapter behaviorのformal runtime release gateは通過した
-  - production registryは、explicit target master/tax contextをfactoryへ安全に供給する配線が未実装のため未登録を維持
+  - 当該Evidence取得時点ではexplicit target contextのruntime配線が未実装だった。現在はcontext-aware factoryを登録済みだが、この新経路の実機再検証前なのでproduction利用は無効
   - このEvidence単独ではYayoiInputAdapter起点E2Eを検証していなかった。後続の`EVID-JDL-YAYOI-TO-JDL-E2E-001`でstrict scopeのruntime E2Eを別途確認した
 - limits:
   - simple+simple、compound+compound、10-20 records mixed batchは未検証
@@ -477,7 +477,7 @@
   - 採番、一般的なblank-to-zero規則、generator defaultとは解釈しない
 - readiness decision:
   - strict scopeのcore Yayoi -> JDL conversion engineはruntime validated
-  - production registryはtarget master/tax/company contextの安全なruntime注入が未実装のため`UNAVAILABLE`
+  - 現在はtarget master/tax/company contextの明示的runtime注入を実装済み。ただしcontext-aware経路自体の実機再検証前なのでproduction lookupは`UNAVAILABLE`
   - 一般的なYayoi -> JDL routeとGUIはNOT READY
 - limits:
   - tax、subaccount、department付きYayoi -> JDLは未検証
@@ -689,10 +689,10 @@
 
 ## Next Verification Gate
 
-単一simple、単一compound、限定master/tax条件、同日simple+compound、正式ConversionService生成artifactに加え、正式YayoiInputAdapter起点artifactの実機Import・UI確認・self re-export比較まで完了した。strict scopeのcore conversion engineはruntime validatedだが、registry wiringと一般利用readinessは別gateとして残る。
+単一simple、単一compound、限定master/tax条件、同日simple+compound、正式ConversionService生成artifactに加え、正式YayoiInputAdapter起点artifactの実機Import・UI確認・self re-export比較まで完了した。strict scopeのcore conversion engineはruntime validatedであり、context-aware registry wiringも実装済み。ただし、この新しい生成経路の実機再検証と一般利用readinessは別gateとして残る。
 
-1. production registryは、customer-specific defaultを持たずにexplicit target contextをAdapter factoryへ渡せるまで未登録を維持する。
-2. selected ConversionProfile、confirmed target master、tax/company settingsから`JdlTargetContext`をruntime構築するcontext-aware factoryを次の実装候補とする。
+1. production registryにはcontext-aware implementationの存在を登録するが、production lookupは`UNAVAILABLE`を維持する。
+2. selected ConversionProfile、confirmed target master、tax/company settingsから`JdlTargetContext`をruntime構築し、factory経由でAdapterを生成する。context欠落・不整合は明示的にblockする。
 3. simple+simple、compound+compound、10-20 records mixed batchは、simple + verified compoundを初期release scopeへ含める前のruntime gateとする。
 4. subaccount付きrouteは早期follow-up、tax/department付きrouteは別の限定Evidence取得後に判断する。
 5. 未確認の組合せは引き続きstrict preflightでblockし、official schema identityをFormat全体の実機検証済みへ昇格しない。

@@ -11,6 +11,7 @@ from typing import Iterable, Protocol, Sequence
 
 from accounting_converter.adapters.input.base import InputAdapter
 from accounting_converter.adapters.output.base import OutputAdapter
+from accounting_converter.domain.conversion_profile import ConversionProfile
 from accounting_converter.domain.journal import JournalEntry
 from accounting_converter.domain.profile import FormatProfile
 from accounting_converter.domain.validation import Severity, ValidationResult
@@ -18,6 +19,8 @@ from accounting_converter.domain.validation import Severity, ValidationResult
 from .mapping_engine import MappingEngine
 from .journal_route import JournalRoutePolicy
 from .output_validation import OutputValidationResult, OutputValidator
+from .profile_preflight import mapping_rule_set_from_profile
+from .runtime_output import RuntimeOutputFactory
 from .verification_report import VerificationReportGenerator
 
 
@@ -28,6 +31,7 @@ class ConversionStatus(str, Enum):
     BLOCKED_BY_STRUCTURAL_VALIDATION = "BLOCKED_BY_STRUCTURAL_VALIDATION"
     BLOCKED_BY_MAPPING = "BLOCKED_BY_MAPPING"
     BLOCKED_BY_BUSINESS_VALIDATION = "BLOCKED_BY_BUSINESS_VALIDATION"
+    BLOCKED_BY_TARGET_CONTEXT = "BLOCKED_BY_TARGET_CONTEXT"
     BLOCKED_BY_OUTPUT_PREFLIGHT = "BLOCKED_BY_OUTPUT_PREFLIGHT"
     OUTPUT_VALIDATION_FAILED = "OUTPUT_VALIDATION_FAILED"
     SYSTEM_ERROR = "SYSTEM_ERROR"
@@ -50,6 +54,8 @@ class ConversionRequest:
     input_profile: FormatProfile
     output_profile: FormatProfile
     overwrite: bool = False
+    conversion_profile: ConversionProfile | None = None
+    target_runtime_context: object | None = None
 
 
 @dataclass(frozen=True)
@@ -78,10 +84,11 @@ class ConversionService:
         structural_validator: StructuralValidator,
         mapping_engine: MappingEngine,
         business_validator: BusinessValidator,
-        output_adapter: OutputAdapter,
-        output_validator: OutputValidator,
+        output_adapter: OutputAdapter | None,
+        output_validator: OutputValidator | None,
         verification_report_generator: VerificationReportGenerator | None = None,
         journal_route_policy: JournalRoutePolicy | None = None,
+        runtime_output_factory: RuntimeOutputFactory | None = None,
     ) -> None:
         self._input_adapter = input_adapter
         self._structural_validator = structural_validator
@@ -90,6 +97,7 @@ class ConversionService:
         self._output_adapter = output_adapter
         self._output_validator = output_validator
         self._journal_route_policy = journal_route_policy
+        self._runtime_output_factory = runtime_output_factory
         self._report_generator = (
             verification_report_generator or VerificationReportGenerator()
         )
@@ -106,6 +114,8 @@ class ConversionService:
         debit_total = Decimal("0")
         credit_total = Decimal("0")
         unresolved_mapping_count = 0
+        output_adapter = self._output_adapter
+        output_validator = self._output_validator
 
         try:
             preflight_results = self._preflight_output_path(request)
@@ -121,6 +131,57 @@ class ConversionService:
                 )
                 return self._result(
                     status=status,
+                    request=request,
+                    input_record_count=input_record_count,
+                    input_journal_count=input_journal_count,
+                    output_record_count=output_record_count,
+                    output_journal_count=output_journal_count,
+                    debit_total=debit_total,
+                    credit_total=credit_total,
+                    validation_results=validation_results,
+                    unresolved_mapping_count=unresolved_mapping_count,
+                    output_validation_result=output_validation_result,
+                    output_path=None,
+                    completed_at=completed_at,
+                )
+
+            if self._runtime_output_factory is not None:
+                runtime_output = self._runtime_output_factory.resolve(
+                    request.output_profile,
+                    request.conversion_profile,
+                    request.target_runtime_context,
+                )
+                validation_results.extend(runtime_output.validation_results)
+                if not runtime_output.resolved:
+                    return self._result(
+                        status=ConversionStatus.BLOCKED_BY_TARGET_CONTEXT,
+                        request=request,
+                        input_record_count=input_record_count,
+                        input_journal_count=input_journal_count,
+                        output_record_count=output_record_count,
+                        output_journal_count=output_journal_count,
+                        debit_total=debit_total,
+                        credit_total=credit_total,
+                        validation_results=validation_results,
+                        unresolved_mapping_count=unresolved_mapping_count,
+                        output_validation_result=output_validation_result,
+                        output_path=None,
+                        completed_at=completed_at,
+                    )
+                output_adapter = runtime_output.output_adapter
+                output_validator = runtime_output.output_validator
+            if output_adapter is None or output_validator is None:
+                validation_results.append(
+                    ValidationResult(
+                        severity=Severity.ERROR,
+                        rule_id="TARGET-CONTEXT-MISSING",
+                        message="出力Adapterのruntime contextが解決されていません。",
+                        field="target_context",
+                        suggested_action="確認済みtarget contextを指定してください。",
+                    )
+                )
+                return self._result(
+                    status=ConversionStatus.BLOCKED_BY_TARGET_CONTEXT,
                     request=request,
                     input_record_count=input_record_count,
                     input_journal_count=input_journal_count,
@@ -186,7 +247,12 @@ class ConversionService:
             debit_total = self._debit_total(entries)
             credit_total = self._credit_total(entries)
 
-            mapping_result = self._mapping_engine.apply(entries)
+            mapping_engine = self._mapping_engine
+            if request.conversion_profile is not None:
+                mapping_engine = MappingEngine(
+                    mapping_rule_set_from_profile(request.conversion_profile)
+                )
+            mapping_result = mapping_engine.apply(entries)
             unresolved_mapping_count = mapping_result.unresolved_count
             validation_results.extend(mapping_result.validation_results)
             if unresolved_mapping_count:
@@ -229,7 +295,7 @@ class ConversionService:
                     completed_at=completed_at,
                 )
 
-            output_preflight_results = self._output_adapter.preflight(
+            output_preflight_results = output_adapter.preflight(
                 mapped_entries,
                 request.output_profile,
             )
@@ -252,12 +318,12 @@ class ConversionService:
                 )
 
             temp_path = self._temporary_output_path(request.output_path)
-            self._output_adapter.write(
+            output_adapter.write(
                 mapped_entries,
                 temp_path,
                 request.output_profile,
             )
-            output_validation_result = self._output_validator.validate(
+            output_validation_result = output_validator.validate(
                 temp_path,
                 mapped_entries,
                 request.output_profile,

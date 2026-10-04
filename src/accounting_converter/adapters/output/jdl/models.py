@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from accounting_converter.domain.format_metadata import FormatIdentity
 from accounting_converter.profiles.jdl_official import JdlTaxProcessingMode
 
 
@@ -20,6 +21,25 @@ class JdlEvidenceProfile(str, Enum):
     COMPOUND_1D3C = "SUPPORTED_COMPOUND_1D3C"
 
 
+class JdlContextConfirmationState(str, Enum):
+    CONFIRMED = "CONFIRMED"
+    UNCONFIRMED = "UNCONFIRMED"
+
+
+class JdlContextProvenance(str, Enum):
+    USER_CONFIRMED_RUNTIME_SNAPSHOT = "USER_CONFIRMED_RUNTIME_SNAPSHOT"
+    LOCAL_VERIFIED_SNAPSHOT = "LOCAL_VERIFIED_SNAPSHOT"
+    UNCONFIRMED = "UNCONFIRMED"
+
+
+@dataclass(frozen=True)
+class JdlAccountIdentity:
+    mapping_value: str
+    target_master_code: str
+    target_name: str
+    target_formal_name: str
+
+
 @dataclass(frozen=True)
 class JdlSubaccountIdentity:
     parent_account: str
@@ -28,6 +48,8 @@ class JdlSubaccountIdentity:
     output_code: str
     output_name: str
     output_representation_confirmed: bool
+    parent_account_code: str = ""
+    target_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -36,6 +58,7 @@ class JdlDepartmentIdentity:
     target_master_code: str
     output_code: str
     output_name: str
+    target_formal_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -44,6 +67,8 @@ class JdlTargetContext:
     version: str
     accounts: frozenset[str]
     tax_processing_mode: JdlTaxProcessingMode
+    target_format_identity: FormatIdentity | None = None
+    account_master: tuple[JdlAccountIdentity, ...] = ()
     subaccounts: tuple[JdlSubaccountIdentity, ...] = ()
     departments: tuple[JdlDepartmentIdentity, ...] = ()
     department_processing_enabled: bool = False
@@ -51,6 +76,22 @@ class JdlTargetContext:
     individual_credit_method_confirmed: bool = False
     no_fuzzy_matching: bool = True
     no_automatic_replacement: bool = True
+    confirmation_state: JdlContextConfirmationState = (
+        JdlContextConfirmationState.UNCONFIRMED
+    )
+    provenance: JdlContextProvenance = JdlContextProvenance.UNCONFIRMED
+
+    def privacy_safe_summary(self) -> dict[str, str | int]:
+        return {
+            "target_product": self.product,
+            "target_version": self.version,
+            "context_confirmation": self.confirmation_state.value,
+            "context_provenance": self.provenance.value,
+            "account_master_count": len(self.account_master),
+            "subaccount_master_count": len(self.subaccounts),
+            "department_master_count": len(self.departments),
+            "tax_company_context": self.tax_processing_mode.value,
+        }
 
 
 @dataclass(frozen=True)

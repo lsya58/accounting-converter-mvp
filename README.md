@@ -57,7 +57,7 @@
 
 `accounting_converter.diagnostics.jdl_csv` には、JDLへ取り込めないCSVの構造・診断メッセージ・マスター不一致候補・Observed Schema・Observed Journal Group Candidateを分析する診断機能があります。
 
-JDL IBEX出納帳 35.5の実データでObserved Behaviorは再現済みです。検証済みsubsetだけを扱うEvidence-limited `JDLOutputAdapter v0`も正式`src`配下に実装しましたが、正式JDL FormatProfileへの昇格とproduction AdapterRegistryへの登録はまだ行っていません。
+JDL IBEX出納帳 35.5の実データでObserved Behaviorは再現済みです。検証済みsubsetだけを扱うEvidence-limited `JDLOutputAdapter v0`も正式`src`配下に実装しました。Adapter Registryにはcontext必須の実装として登録していますが、production有効化と正式JDL FormatProfileへの昇格は行っていません。
 
 JDL診断CLIは、schema未指定の純粋観測と、明示的なObserved Schema比較を分けています。バージョン未確認のJDL由来CSVを、黙って35.5 evidenceとして扱いません。
 
@@ -87,6 +87,8 @@ ConversionService自身には、弥生/JDL固有のCSV列変換や識別フラ�
 Yayoi AE19 observed subsetからCommon Journal Modelを経由し、Evidence-limited JDL Output Adapter v0へ渡すformal E2Eは、synthetic sourceからのsoftware変換、JDL IBEX出納帳35.5への実機Import、UI確認、self re-export比較まで成功しています（`EVID-JDL-YAYOI-TO-JDL-E2E-001`）。単一仕訳は`SUPPORTED_1111_BASIC`、複合仕訳は`SUPPORTED_COMPOUND_1D3C`を仕訳IDごとに明示割当し、特徴からprofileを推測しません。検証範囲は免税・補助/部門/税なし・同日simple 1件 + exact 1D3C compound 1件に限定し、production Adapter Registryと一般利用のreadinessは変更しません。
 
 正式出力は一時ファイルへ生成し、OutputValidation成功後のみatomic replaceします。既存出力ファイルは `overwrite=True` が明示されない限り上書きしません。
+
+JDL出力では、Conversion Profileと`JdlTargetContext`を分離します。Profileはsourceからtargetへの確認済みMapping、Contextは今回実行するJDL製品/version、target master、会社・税設定の確認済みsnapshotです。`JdlTargetContextBuilder`がidentity、master重複、補助親科目、部門、税設定を検証し、context-aware factoryがProfileのtarget code/正式名称とsnapshotを照合します。context不在・不整合は`BLOCKED_BY_TARGET_CONTEXT`で停止し、global customer defaultや前回contextの再利用はしません。
 
 ## Conversion Profileの方針
 
@@ -128,7 +130,7 @@ PYTHONPATH=src python3 -m accounting_converter.ui.app
 - ConversionPreflightServiceによる事前確認
 - 状態、件数、Error/Warning件数の表示
 
-最小YayoiInputAdapterは登録されていますが、正式JDLOutputAdapterは未登録のため、GUIの「変換する」ボタンは有効化しません。ダミーCSVを生成して成功したように見せる処理もありません。
+最小YayoiInputAdapterはproduction利用可能です。JDLOutputAdapterはcontext-aware実装としてRegistryに存在しますがproduction無効のため、GUIの「変換する」ボタンは有効化しません。ダミーCSVを生成して成功したように見せる処理もありません。
 
 GUIは生CSV全文、摘要全文、個別仕訳全文、個別金額を既定表示しません。表示するのはファイル名、形式候補、件数、構造状態、Error/Warning件数、Preflight状態などに限定します。
 
@@ -165,14 +167,14 @@ Readiness status:
 
 `TransformationPlan` にStepが存在しても、それだけで実装済みとは扱いません。`MASTER_MAPPING` / `TAX_MAPPING` は確認済みConversion Profileがある場合のみ `SUPPORTED_WITH_PROFILE` になり、`UNKNOWN` / `UNSUPPORTED` / lossyな変換は通常のREADYにしません。
 
-`AdapterRegistry` は `FormatIdentity` のexact/candidate/unavailableを区別します。Candidateは自動採用しません。現在のproduction registryには、Yayoi AE19 direct exportのObserved evidenceに限定した最小 `YayoiInputAdapter` だけを登録します。JDL Output Adapter v0は正式ConversionService artifactの実機Importまで検証済みですが、target master/tax contextをfactoryへ安全に渡す配線が未実装のため未登録です。Demo Adapterは登録しません。
+`AdapterRegistry` は `FormatIdentity` のexact/candidate/unavailableを区別します。Candidateは自動採用しません。Yayoi AE19 Inputはproduction利用可能です。JDL Output v0は`RuntimeOutputFactory`付き実装として登録され、確認済みcontextなしには生成できません。context-aware path自体の実機再確認前なので`production_enabled=False`を維持し、production lookupは`UNAVAILABLE`です。Demo Adapterは登録しません。
 
 Preparationが `READY` になった場合のみ、薄い実行層が既存 `ConversionService` を呼び出します。ConversionService内のstructural / mapping / business / output validation、atomic output、overwrite safety、Verification Reportは引き続き残り、二重安全性を維持します。
 
 ## まだ実装していないもの
 
 - すべての弥生製品/バージョンに対応する汎用YayoiInputAdapter
-- Evidence-limited JDLOutputAdapter v0へのtarget context注入とproduction registry有効化
+- Evidence-limited JDLOutputAdapter v0のcontext-aware registry path実機確認とproduction有効化判断
 - JDL `VERIFIED_BY_REAL_IMPORT` FormatProfile
 - 勘定科目/補助科目/税区分の実マッピング
 - Conversion Profile管理GUI
@@ -224,4 +226,4 @@ GitHub ActionsではPython 3.12で同じテストを実行し、`tests/fixtures/
 
 `experiments/jdl_import/` には、JDL IBEX出納帳のofficial documented 30-column schemaとJDL IBEX出納帳35.5 observed-compatible serializationを使った研究用CSV generatorがあります。これは正式JDLOutputAdapterではなく、完全架空データでJDL実機の取込条件を確認するための実験環境です。
 
-JDL-origin `1111` round-trip、各generator-authored subset、正式ConversionService生成artifactに加え、正式YayoiInputAdapterを起点とする同日simple+compound artifactもJDL IBEX出納帳35.5へのImport、exactly 2 vouchersのUI確認、self re-export比較まで成功しました（`EVID-JDL-YAYOI-TO-JDL-E2E-001`）。strict scopeのcore conversion engineはruntime validatedですが、target contextのregistry wiringと一般ユーザー向け実行制御が残るため、production registryとYayoiからJDL readinessはまだ変更していません。
+JDL-origin `1111` round-trip、各generator-authored subset、正式ConversionService生成artifactに加え、正式YayoiInputAdapterを起点とする同日simple+compound artifactもJDL IBEX出納帳35.5へのImport、exactly 2 vouchersのUI確認、self re-export比較まで成功しました（`EVID-JDL-YAYOI-TO-JDL-E2E-001`）。strict scopeのcore conversion engineはruntime validatedで、target contextのregistry wiringも実装済みです。ただし新しいcontext-aware instantiation pathの実機確認と一般ユーザー向け実行制御が残るため、production registryとYayoiからJDL readinessはまだ変更していません。

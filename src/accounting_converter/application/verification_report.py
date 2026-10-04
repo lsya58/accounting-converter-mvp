@@ -46,6 +46,34 @@ class VerificationReportGenerator:
                 result.output_validation_result.unsupported_profile_count
             )
 
+        context_lines: list[str] = []
+        summary_method = getattr(
+            request.target_runtime_context,
+            "privacy_safe_summary",
+            None,
+        )
+        if callable(summary_method):
+            summary = summary_method()
+            context_failed = any(
+                item.rule_id.startswith("JDL-CONTEXT-")
+                for item in result.validation_results
+            )
+            mapping_failed = any(
+                "MAPPING-MISMATCH" in item.rule_id
+                for item in result.validation_results
+            )
+            context_lines = [
+                f"target product/version: {summary['target_product']} / {summary['target_version']}",
+                f"target context confirmation: {summary['context_confirmation']}",
+                f"target context provenance: {summary['context_provenance']}",
+                f"target context validation: {'failed' if context_failed else 'success'}",
+                f"account master count: {summary['account_master_count']}",
+                f"subaccount master count: {summary['subaccount_master_count']}",
+                f"department master count: {summary['department_master_count']}",
+                f"tax/company context: {summary['tax_company_context']}",
+                f"mapping/context consistency: {'failed' if mapping_failed else 'success'}",
+            ]
+
         lines = [
             "変換検証レポート",
             "",
@@ -71,6 +99,7 @@ class VerificationReportGenerator:
             f"JDL Evidence profile: {evidence_profiles}",
             f"output schema identity: {output_schema_identity}",
             f"Output Validation結果: {output_validation}",
+            *context_lines,
             "",
             "注意: 本レポートは本システムが検証可能な範囲を示すものであり、取込先ソフトウェア側の障害を断定しません。",
         ]

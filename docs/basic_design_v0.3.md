@@ -73,7 +73,7 @@ Output Validation
 
 入力は「対応する仕訳データファイル」として扱う。`.csv` や `.txt` などの拡張子だけでフォーマットを断定せず、FormatProfileに基づいて判定する。
 
-現在はYayoi AE19 observed subsetのInputAdapterと、JDL IBEX出納帳35.5の実機Evidence subsetだけを扱うEvidence-limited JDLOutputAdapter v0を実装済みである。YayoiInputAdapter起点のsynthetic sourceから正式ConversionServiceで生成したartifactは、実機Import・UI確認・再Export比較まで成功した。ただし検証は免税・補助/部門/税なし・同日simple 1件 + exact 1D3C compound 1件に限定され、target contextをregistry factoryへ安全に注入する配線も未実装のためproduction AdapterRegistryには未登録である。
+現在はYayoi AE19 observed subsetのInputAdapterと、JDL IBEX出納帳35.5の実機Evidence subsetだけを扱うEvidence-limited JDLOutputAdapter v0を実装済みである。YayoiInputAdapter起点artifactは実機Import・UI確認・再Export比較まで成功した。JDL Outputはcontext-aware factoryとしてRegistryへ登録済みだが、検証範囲は免税・補助/部門/税なし・同日simple 1件 + exact 1D3C compound 1件に限定され、新factory path自体は実機未確認のためproduction無効を維持する。
 
 出力profileの選択が必要な場合は、Application層のvendor-neutralな`JournalRoutePolicy`境界を使う。JDL実装は仕訳IDごとのEvidence profile明示割当だけを許可し、仕訳形状から自動推測しない。未割当、余剰割当、重複IDは正式出力前にErrorとして停止する。
 
@@ -321,6 +321,14 @@ PreparationがREADYでも、ConversionService内のStructural Validation、Mappi
 
 `AdapterRegistry` は正式Adapter追加後にvendor/productのif分岐を増やさないための登録・解決基盤である。
 
+### 11.1 Runtime Target Context
+
+`ConversionProfile`はMapping decisionを保持し、`JdlTargetContext`は今回のrunで確認したtarget environment snapshotを保持する。両者を同一モデルへ統合しない。
+
+`JdlTargetContext`はtarget FormatIdentity、製品/version、勘定科目・親科目付き補助科目・部門master、会社の税処理、確認状態、privacy-safe provenanceをimmutableに保持する。Builderは重複code/identity、存在しない補助親科目、部門設定矛盾、未確認税設定、CP932不適合をErrorにする。
+
+`ConversionRequest`は選択済みProfileとrun-scoped contextを渡す。`RuntimeOutputFactory`はProfile metadataのtarget code/正式名称とsnapshotをexact照合し、成功したrunだけに新しいAdapter/Validator pairを生成する。module global、singleton、thread-local、暗黙defaultは使用しない。欠落・不整合は`BLOCKED_BY_TARGET_CONTEXT`とする。
+
 最低限以下を提供する。
 
 - register_input
@@ -522,7 +530,7 @@ JDL取込ファイル生成
 
 - 共通モデル -> 出力形式
 
-Evidence-limited JDLOutputAdapter v0は実装済みで、ConversionService生成artifactのJDL実機Importも確認済み。production登録は、取込先master・税処理contextを明示注入できるfactory wiringの実装後に再評価する。
+Evidence-limited JDLOutputAdapter v0は実装済みで、ConversionService生成artifactのJDL実機Importも確認済み。取込先master・税処理contextを明示注入するfactory wiringも実装した。production有効化はcontext-aware pathの実機確認後に再評価する。
 
 ### CMP-11 OutputValidator
 
@@ -705,7 +713,7 @@ tests/
 - 実際の弥生エクスポート形式
 - 正式YayoiInputAdapter
 - 正式YayoiFormatProfile
-- Evidence-limited JDLOutputAdapter v0のtarget context注入とproduction登録
+- Evidence-limited JDLOutputAdapter v0のcontext-aware path実機確認とproduction登録判断
 - 正式JDLFormatProfile
 - 税区分Mapping
 - JDLへの正常取込条件
@@ -730,4 +738,4 @@ Observed Dataや公式文書から推測して正式仕様へ昇格しない。
 - ConversionPreflightServiceを追加済み
 - CIはPython 3.12、unittest、CSV漏洩防止チェック
 
-Yayoi AE19 subset InputAdapterとEvidence-limited JDLOutputAdapter v0は実装済み。strict scopeのYayoiからJDLへのformal runtime E2Eも成功済み。production登録、一般利用readiness、正式FormatProfileへの昇格、Conversion Profile管理GUIは、target context注入と追加batch検証後に判断する。
+Yayoi AE19 subset InputAdapterとEvidence-limited JDLOutputAdapter v0は実装済み。strict scopeのformal runtime E2Eとcontext-aware factory wiringも完了した。production登録、一般利用readiness、正式FormatProfileへの昇格、Conversion Profile管理GUIは、新factory pathの実機確認と追加batch検証後に判断する。
