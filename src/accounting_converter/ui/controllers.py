@@ -4,6 +4,12 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from accounting_converter.application.first_release_workflow import (
+    FirstReleaseConversionWorkflow,
+    FirstReleasePreparedConversion,
+    conversion_result_message,
+)
+
 from accounting_converter.application.profile_preflight import (
     ConversionPreflightService,
     ObservedMappingRequirements,
@@ -20,6 +26,10 @@ from accounting_converter.infrastructure.conversion_profile_store import (
     ConversionProfileStore,
     ConversionProfileStoreError,
     default_profile_store_dir,
+)
+from accounting_converter.infrastructure.jdl_target_context_loader import (
+    JdlTargetContextLoadError,
+    JdlTargetContextLoader,
 )
 from accounting_converter.profiles.known_formats import (
     jdl_ibex_cashbook_35_5_observed_schema_definition,
@@ -66,6 +76,8 @@ class AccountingConverterController:
         formal_conversion_adapter_registered: bool = False,
         jdl_analyzer: JdlCsvStructuralAnalyzer | None = None,
         yayoi_analyzer: YayoiCsvAnalyzer | None = None,
+        conversion_workflow: FirstReleaseConversionWorkflow | None = None,
+        context_loader: JdlTargetContextLoader | None = None,
     ) -> None:
         self.profile_store = profile_store or ConversionProfileStore(
             default_profile_store_dir()
@@ -74,6 +86,10 @@ class AccountingConverterController:
         self.formal_conversion_adapter_registered = formal_conversion_adapter_registered
         self.jdl_analyzer = jdl_analyzer or JdlCsvStructuralAnalyzer()
         self.yayoi_analyzer = yayoi_analyzer or YayoiCsvAnalyzer()
+        self.conversion_workflow = conversion_workflow or FirstReleaseConversionWorkflow()
+        self.context_loader = context_loader or JdlTargetContextLoader()
+        self._target_context = None
+        self._prepared: FirstReleasePreparedConversion | None = None
         self.state = AppState()
 
     def load_profiles(self) -> AppState:
@@ -122,6 +138,7 @@ class AccountingConverterController:
             selected_profile_id=selected,
             preflight_status=ProfilePreflightStatus.UNKNOWN.value,
             conversion_available=False,
+            conversion_summary=None,
             user_message=(
                 "変換設定を選択しました。"
                 if selected is not None
@@ -145,6 +162,134 @@ class AccountingConverterController:
                 if selected is not None
                 else "入力ファイルが未選択です。"
             ),
+            developer_error=None,
+        )
+        return self.state
+
+    def select_context_file(self, path: Path | str | None) -> AppState:
+        selected = Path(path) if path is not None else None
+        self._target_context = None
+        self._prepared = None
+        if selected is None:
+            self.state = replace(
+                self.state,
+                selected_context_file=None,
+                conversion_available=False,
+                conversion_summary=None,
+                user_message="JDL設定が未選択です。",
+            )
+            return self.state
+        try:
+            self._target_context = self.context_loader.load(selected)
+        except JdlTargetContextLoadError as error:
+            return self._fail_state(
+                "JDL設定ファイルを確認できませんでした。",
+                error,
+                diagnostic_status=self.state.diagnostic_status,
+            )
+        self.state = replace(
+            self.state,
+            selected_context_file=selected,
+            conversion_available=False,
+            conversion_summary=None,
+            user_message="確認済みJDL設定を読み込みました。",
+            developer_error=None,
+        )
+        return self.state
+
+    def select_output_file(self, path: Path | str | None) -> AppState:
+        selected = Path(path) if path is not None else None
+        self._prepared = None
+        self.state = replace(
+            self.state,
+            selected_output_file=selected,
+            conversion_available=False,
+            conversion_summary=None,
+            user_message=(
+                "出力先を選択しました。" if selected else "出力先が未選択です。"
+            ),
+            developer_error=None,
+        )
+        return self.state
+
+    def prepare_conversion(self) -> AppState:
+        try:
+            self._prepared = self.conversion_workflow.prepare(
+                input_path=self.state.selected_file,
+                output_path=self.state.selected_output_file,
+                profile=self._selected_profile(),
+                context=self._target_context,
+            )
+        except Exception as error:
+            self._prepared = None
+            return self._fail_state(
+                "実行前チェックを完了できませんでした。",
+                error,
+                diagnostic_status=self.state.diagnostic_status,
+            )
+        summary = self._prepared.summary
+        self.state = replace(
+            self.state,
+            conversion_summary=summary,
+            conversion_available=summary.readiness.value == "READY",
+            preflight_status=summary.readiness.value,
+            messages=summary.blocking_reasons,
+            result_summary=None,
+            verification_report=None,
+            user_message=(
+                "変換を実行できます。内容を確認してください。"
+                if not summary.blocking_reasons
+                else summary.blocking_reasons[0]
+            ),
+            developer_error=None,
+        )
+        return self.state
+
+    def execute_conversion(self, confirmed: bool) -> AppState:
+        if not confirmed:
+            self.state = replace(self.state, user_message="変換をキャンセルしました。")
+            return self.state
+        if self._prepared is None or not self.state.conversion_available:
+            self.state = replace(
+                self.state,
+                conversion_available=False,
+                user_message="実行前チェックを先に完了してください。",
+            )
+            return self.state
+        result = self.conversion_workflow.execute(self._prepared)
+        if result is None:
+            self.state = replace(
+                self.state,
+                conversion_available=False,
+                user_message="変換条件が整っていないため停止しました。",
+            )
+            return self.state
+        output_status = (
+            "成功"
+            if result.output_validation_result
+            and result.output_validation_result.success
+            else "未完了"
+        )
+        result_summary = "\n".join(
+            (
+                f"結果: {getattr(result.status, 'value', result.status)}",
+                f"入力仕訳数: {result.input_journal_count}",
+                f"出力レコード数: {result.output_record_count}",
+                f"借方合計: {result.debit_total}",
+                f"貸方合計: {result.credit_total}",
+                f"未確認の対応: {result.unresolved_mapping_count}",
+                f"出力検証: {output_status}",
+                f"出力先: {result.output_path if result.output_path else '生成なし'}",
+            )
+        )
+        self.state = replace(
+            self.state,
+            conversion_available=False,
+            preflight_status=getattr(result.status, "value", result.status),
+            result_summary=result_summary,
+            verification_report=result.verification_report,
+            user_message=conversion_result_message(result),
+            messages=tuple(item.message for item in result.validation_results),
             developer_error=None,
         )
         return self.state

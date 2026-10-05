@@ -77,3 +77,11 @@ Yayoi AE19 observed 25-field synthetic CSVを正式`YayoiInputAdapter`で読み�
 - `ConversionRequest`: Profileとrun-scoped Contextを明示注入
 
 context欠落・不整合は`BLOCKED_BY_TARGET_CONTEXT`で停止する。global customer default、module-level mutable state、前回context再利用、fuzzy補完は行わない。Verification Reportへは製品/version、検証状態、master件数、税分類、Mapping整合結果だけを記録する。
+
+## First Release GUI release candidate
+
+GUIは入力CSV、ConversionProfile、確認済みJDL設定JSON、出力先を明示選択し、Applicationの`FirstReleaseConversionWorkflow`を呼ぶ。workflowはYayoi AE19 observed subsetをstrict parseし、confirmed exact Mapping、JDL IBEX出納帳35.5、免税、補助なし、部門なし、税情報なし、検証済み1借方1貸方またはexact 1借方3貸方構成だけをroute assignmentへ変換する。複数groupはOutput preflightの検証済み順序・件数制約をそのまま適用する。
+
+実行前にはsource/profile/target/context/mapping/feature/output/no-overwriteをprivacy-safeに表示する。最終確認後だけ`ConversionService`を実行し、成功時は件数、貸借合計、出力検証、Evidence profileを含む既存Verification Reportを表示する。出力済みpath、sourceとの衝突、未確認Mapping、unsupported featureは正式ファイルを生成せず停止する。
+
+この導線の追加はproduction Registryの状態を変更しない。Windows packaged appでGUIから生成し、JDL実機Importまで確認するまではJDL outputは`UNAVAILABLE`、YayoiからJDLはNOT READYを維持する。

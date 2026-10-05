@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
+from accounting_converter.application.first_release_workflow import FirstReleaseSummary
+
 
 class DiagnosticKind(str, Enum):
     JDL = "JDL"
@@ -43,6 +45,8 @@ class AppState:
     profiles: tuple[ProfileOption, ...] = ()
     selected_profile_id: str | None = None
     selected_file: Path | None = None
+    selected_context_file: Path | None = None
+    selected_output_file: Path | None = None
     diagnostic_kind: DiagnosticKind = DiagnosticKind.YAYOI
     diagnostic_status: DiagnosticStatus = DiagnosticStatus.NOT_RUN
     diagnostic_summary: DiagnosticSummary | None = None
@@ -51,4 +55,6 @@ class AppState:
     user_message: str = "入力ファイルと変換設定を選択してください。"
     developer_error: str | None = None
     messages: tuple[str, ...] = field(default_factory=tuple)
-
+    conversion_summary: FirstReleaseSummary | None = None
+    result_summary: str | None = None
+    verification_report: str | None = None

@@ -327,6 +327,10 @@ PreparationがREADYでも、ConversionService内のStructural Validation、Mappi
 
 `JdlTargetContext`はtarget FormatIdentity、製品/version、勘定科目・親科目付き補助科目・部門master、会社の税処理、確認状態、privacy-safe provenanceをimmutableに保持する。Builderは重複code/identity、存在しない補助親科目、部門設定矛盾、未確認税設定、CP932不適合をErrorにする。
 
+First Release GUIは`FirstReleaseConversionWorkflow`をApplication境界として利用する。Controllerは明示選択された入力、ConversionProfile、ローカルJDL target snapshot、出力先を渡し、workflowがexact Registry registrationを解決して`ConversionRequest`と`ConversionService`を構築する。GUIからAdapterを生成せず、CSV serializeやpreflight迂回も行わない。JDL output registrationはpackaged app E2E完了までproduction無効のままとし、workflowだけがEvidence限定registrationをrelease candidateとして明示利用する。
+
+GUIのJDL設定ファイルはschema version、製品/version、会社税設定、確認状態・provenance、確認済みmaster snapshotを持つローカルJSONである。選択なし、JDL IBEX出納帳35.5以外、免税以外、部門/補助あり、曖昧なmaster、fuzzy matchingまたは自動置換許可はBLOCKする。顧客固有masterはProfileやsource codeへ埋め込まず、Git管理もしない。
+
 `ConversionRequest`は選択済みProfileとrun-scoped contextを渡す。`RuntimeOutputFactory`はProfile metadataのtarget code/正式名称とsnapshotをexact照合し、成功したrunだけに新しいAdapter/Validator pairを生成する。module global、singleton、thread-local、暗黙defaultは使用しない。欠落・不整合は`BLOCKED_BY_TARGET_CONTEXT`とする。
 
 最低限以下を提供する。

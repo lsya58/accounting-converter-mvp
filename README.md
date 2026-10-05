@@ -90,6 +90,10 @@ Yayoi AE19 observed subsetからCommon Journal Modelを経由し、Evidence-limi
 
 JDL出力では、Conversion Profileと`JdlTargetContext`を分離します。Profileはsourceからtargetへの確認済みMapping、Contextは今回実行するJDL製品/version、target master、会社・税設定の確認済みsnapshotです。`JdlTargetContextBuilder`がidentity、master重複、補助親科目、部門、税設定を検証し、context-aware factoryがProfileのtarget code/正式名称とsnapshotを照合します。context不在・不整合は`BLOCKED_BY_TARGET_CONTEXT`で停止し、global customer defaultや前回contextの再利用はしません。
 
+First Release候補GUIでは、入力ファイル、保存済み変換設定、ローカルの確認済みJDL設定JSON、出力先を利用者が明示選択します。実行前チェックはMapping件数、JDL IBEX出納帳35.5、免税、master件数、単一/複合仕訳件数、no-overwriteを表示し、未確認Mapping、課税、補助、部門、未検証仕訳構成、既存出力を停止します。GUIはCSVを生成せず、Application workflowがRegistry、`ConversionRequest`、`ConversionService`を組み立てます。JDL設定JSONは顧客別ローカルデータとしてGit管理せず、sample masterや既定値を自動投入しません。
+
+このGUI経路はWindows packaged app E2E前のrelease candidateです。production JDL output registrationは引き続き無効で、YayoiからJDLへの一般変換をREADYとは扱いません。
+
 ## Conversion Profileの方針
 
 同じ顧問先や同じ変換条件を翌月以降再利用できるよう、安全に確定した勘定科目・補助科目・部門・税区分等のMappingをローカルのConversion Profileとして保存可能にする基盤があります。
