@@ -477,12 +477,44 @@
   - 採番、一般的なblank-to-zero規則、generator defaultとは解釈しない
 - readiness decision:
   - strict scopeのcore Yayoi -> JDL conversion engineはruntime validated
-  - 現在はtarget master/tax/company contextの明示的runtime注入を実装済み。ただしcontext-aware経路自体の実機再検証前なのでproduction lookupは`UNAVAILABLE`
+  - 当該Evidence時点ではcontext-aware経路自体が実機未確認だった。後続の`EVID-JDL-CONTEXT-AWARE-RUNTIME-E2E-001`で限定scopeのruntime wiringを確認した
   - 一般的なYayoi -> JDL routeとGUIはNOT READY
 - limits:
   - tax、subaccount、department付きYayoi -> JDLは未検証
   - simple+simple、compound+compound、10-20 records mixed batch、任意batch sizeは未検証
   - 任意compound shape、別Yayoi/JDL製品・version、Format全体へ一般化しない
+
+## EVID-JDL-CONTEXT-AWARE-RUNTIME-E2E-001
+
+- source: 完全架空Yayoi AE19 observed 25-field CSVをcontext-aware正式経路へ入力したartifact
+- product/version evidence: Yayoi Accounting AE 19 observed identity -> JDL IBEX出納帳 35.5
+- evidence level: `VERIFIED_BY_REAL_IMPORT`（このruntime wiringとstrict allow-listに限定）
+- verified runtime path:
+  - `ConversionRequest.target_runtime_context` -> `AdapterRegistry`
+  - `JdlOutputRuntimeFactory` -> immutable `JdlTargetContext` validation
+  - confirmed Mappingとtarget masterのexact cross-check
+  - `JDLOutputAdapter` -> `JDLOutputValidator` -> Verification Report -> atomic publish
+- verified scope:
+  - 免税、補助/部門/税なし、同日simple 1件 + exact 1D3C compound 1件
+  - outputは`1111 -> 1110 -> 1100 -> 1101`の4 records
+  - JDL実機は4 recordsを認識し、exactly 2 vouchersとして正常Import
+  - merge、compound split、duplicateなし。UIで貸借、科目配置、摘要、group境界を確認
+- raw re-export:
+  - 873 bytes、SHA-256 `d303545279f99e013fea773eeba21e5da69898a85eb79bdd33c50c62a45f0546`
+  - CP932/Shift_JIS strict round-trip可能、UTF-8不可、BOMなし、CRLF
+  - preamble 3 rows、official header 1 row、30-column data 4 rows
+  - 120 fields中88 `PRESERVED`、32 `BLANK_REEXPORT_NONBLANK`
+  - `NORMALIZED`、`DIFFERENT`、`UNKNOWN`は0。semantic differenceも0
+- voucher evidence separation:
+  - candidateは全4 recordsの伝番blank
+  - runtime UIは2 vouchersとも伝票番号欄blank
+  - re-exportは全4 recordsの伝番`0`
+  - 今回の未指定伝番がself-export上で`0`表現になったことだけを示す。採番、一般的なblank-to-zero規則、generation defaultとはしない
+- limits/readiness:
+  - core engineとcontext-aware wiringはこのscopeでruntime validated
+  - 任意customer context、simple+simple、compound+compound、10-20 records batchは未検証
+  - tax/subaccount/department、別製品/version、一般GUI workflowへ一般化しない
+  - production lookupは`UNAVAILABLE`、一般的なYayoi -> JDL routeとGUIはNOT READYを維持
 
 ## Generator-authored 1000 department experiment
 
@@ -689,10 +721,10 @@
 
 ## Next Verification Gate
 
-単一simple、単一compound、限定master/tax条件、同日simple+compound、正式ConversionService生成artifactに加え、正式YayoiInputAdapter起点artifactの実機Import・UI確認・self re-export比較まで完了した。strict scopeのcore conversion engineはruntime validatedであり、context-aware registry wiringも実装済み。ただし、この新しい生成経路の実機再検証と一般利用readinessは別gateとして残る。
+単一simple、単一compound、限定master/tax条件、同日simple+compound、正式YayoiInputAdapter起点artifactに加え、context-aware registry/factory経路の実機Import・UI確認・self re-export比較まで完了した。strict scopeのcore conversion engineとruntime wiringはvalidatedだが、複数group境界、operational batch、GUI確認と一般利用readinessは別gateとして残る。
 
 1. production registryにはcontext-aware implementationの存在を登録するが、production lookupは`UNAVAILABLE`を維持する。
-2. selected ConversionProfile、confirmed target master、tax/company settingsから`JdlTargetContext`をruntime構築し、factory経由でAdapterを生成する。context欠落・不整合は明示的にblockする。
+2. selected ConversionProfile、confirmed target master、tax/company settingsから`JdlTargetContext`をruntime構築し、factory経由でAdapterを生成する経路は実機確認済み。context欠落・不整合は引き続き明示的にblockする。
 3. simple+simple、compound+compound、10-20 records mixed batchは、simple + verified compoundを初期release scopeへ含める前のruntime gateとする。
 4. subaccount付きrouteは早期follow-up、tax/department付きrouteは別の限定Evidence取得後に判断する。
 5. 未確認の組合せは引き続きstrict preflightでblockし、official schema identityをFormat全体の実機検証済みへ昇格しない。

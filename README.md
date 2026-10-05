@@ -226,4 +226,4 @@ GitHub ActionsではPython 3.12で同じテストを実行し、`tests/fixtures/
 
 `experiments/jdl_import/` には、JDL IBEX出納帳のofficial documented 30-column schemaとJDL IBEX出納帳35.5 observed-compatible serializationを使った研究用CSV generatorがあります。これは正式JDLOutputAdapterではなく、完全架空データでJDL実機の取込条件を確認するための実験環境です。
 
-JDL-origin `1111` round-trip、各generator-authored subset、正式ConversionService生成artifactに加え、正式YayoiInputAdapterを起点とする同日simple+compound artifactもJDL IBEX出納帳35.5へのImport、exactly 2 vouchersのUI確認、self re-export比較まで成功しました（`EVID-JDL-YAYOI-TO-JDL-E2E-001`）。strict scopeのcore conversion engineはruntime validatedで、target contextのregistry wiringも実装済みです。ただし新しいcontext-aware instantiation pathの実機確認と一般ユーザー向け実行制御が残るため、production registryとYayoiからJDL readinessはまだ変更していません。
+JDL-origin `1111` round-trip、各generator-authored subset、正式YayoiInputAdapter起点E2Eに加え、ConversionRequest、Registry、context-aware factory、validated target snapshotを通るartifactもJDL IBEX出納帳35.5へのImport、exactly 2 vouchersのUI確認、self re-export比較まで成功しました（`EVID-JDL-CONTEXT-AWARE-RUNTIME-E2E-001`）。strict scopeのcore engineとruntime wiringはvalidatedです。ただし複数group境界、operational batch、一般ユーザー向けContext確認UIが残るため、production registryとYayoiからJDL readinessはまだ変更していません。

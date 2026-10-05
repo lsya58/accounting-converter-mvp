@@ -74,6 +74,20 @@ class VerificationReportGenerator:
                 f"mapping/context consistency: {'failed' if mapping_failed else 'success'}",
             ]
 
+        mapping_required = 0
+        mapping_confirmed = 0
+        profile = request.conversion_profile
+        if profile is not None:
+            mappings = (
+                *profile.account_mappings.values(),
+                *profile.subaccount_mappings.values(),
+                *profile.subaccount_context_mappings.values(),
+                *profile.department_mappings.values(),
+                *profile.tax_mappings.values(),
+            )
+            mapping_required = len(mappings)
+            mapping_confirmed = sum(mapping.is_resolved for mapping in mappings)
+
         lines = [
             "変換検証レポート",
             "",
@@ -94,6 +108,8 @@ class VerificationReportGenerator:
             f"貸方総額: {result.credit_total}",
             f"Error件数: {result.error_count}",
             f"Warning件数: {result.warning_count}",
+            f"required mapping件数: {mapping_required}",
+            f"confirmed mapping件数: {mapping_confirmed}",
             f"unresolved mapping件数: {result.unresolved_mapping_count}",
             f"unsupported output profile件数: {unsupported_profile_count}",
             f"JDL Evidence profile: {evidence_profiles}",

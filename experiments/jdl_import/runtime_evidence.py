@@ -34,6 +34,9 @@ EVIDENCE_ID_GENERATOR_MULTIGROUP_SIMPLE_COMPOUND = (
 )
 EVIDENCE_ID_CONVERSION_SERVICE_E2E = "EVID-JDL-CONVERSION-SERVICE-E2E-001"
 EVIDENCE_ID_YAYOI_TO_JDL_E2E = "EVID-JDL-YAYOI-TO-JDL-E2E-001"
+EVIDENCE_ID_CONTEXT_AWARE_RUNTIME_E2E = (
+    "EVID-JDL-CONTEXT-AWARE-RUNTIME-E2E-001"
+)
 EVIDENCE_ID = EVIDENCE_ID_1111
 VERIFIED_ARTIFACT_STATUS = "GENERATOR_AUTHORED_1111_VERIFIED_BY_REAL_IMPORT_SCOPED"
 VERIFIED_ARTIFACT_STATUS_1000 = "GENERATOR_AUTHORED_1000_VERIFIED_BY_REAL_IMPORT_SCOPED"
@@ -55,6 +58,9 @@ VERIFIED_ARTIFACT_STATUS_CONVERSION_SERVICE_E2E = (
 )
 VERIFIED_ARTIFACT_STATUS_YAYOI_TO_JDL_E2E = (
     "YAYOI_TO_JDL_E2E_VERIFIED_BY_REAL_IMPORT_SCOPED"
+)
+VERIFIED_ARTIFACT_STATUS_CONTEXT_AWARE_RUNTIME_E2E = (
+    "CONTEXT_AWARE_RUNTIME_E2E_VERIFIED_BY_REAL_IMPORT_SCOPED"
 )
 OFFICIAL_HEADER = jdl_ibex_cashbook_official_journal_import_spec().column_names
 
@@ -715,6 +721,44 @@ def yayoi_to_jdl_e2e_real_import_evidence() -> ScopedJdlImportEvidence:
     )
 
 
+def context_aware_runtime_e2e_real_import_evidence() -> ScopedJdlImportEvidence:
+    return ScopedJdlImportEvidence(
+        evidence_id=EVIDENCE_ID_CONTEXT_AWARE_RUNTIME_E2E,
+        evidence_level=EvidenceLevel.VERIFIED_BY_REAL_IMPORT,
+        product="JDL IBEX 出納帳",
+        observed_version="35.5",
+        verified_scope=(
+            "synthetic Yayoi AE19 observed 25-field CP932 input",
+            "formal YayoiInputAdapter and structural validation",
+            "Common Journal Model with one simple and one exact 1D3C compound journal",
+            "confirmed four-account ConversionProfile mapping",
+            "ConversionRequest target runtime context injection",
+            "immutable validated JdlTargetContext snapshot",
+            "AdapterRegistry context-required implementation resolution",
+            "JdlOutputRuntimeFactory and exact mapping-context cross-check",
+            "explicit JDL evidence-profile assignment without feature inference",
+            "formal JDLOutputAdapter, validator, report, and atomic publish",
+            "exempt company with no tax, subaccount, or department fields",
+            "same-date 1111 then 1110/1100/1101 four-record output",
+            "runtime recognized four records and produced exactly two vouchers",
+            "no merge, compound split, or duplicate observed",
+            "runtime UI voucher-number fields observed blank for both vouchers",
+            "post-import JDL self re-export compared across 120 fields",
+        ),
+        not_verified=(
+            "arbitrary customer target contexts or mappings",
+            "simple plus simple or compound plus compound boundaries",
+            "ten-to-twenty-record mixed operational batch",
+            "arbitrary batch sizes, compound shapes, or group combinations",
+            "tax, subaccount, or department in the Yayoi to JDL route",
+            "other Yayoi or JDL products and versions",
+            "general-user GUI context confirmation workflow",
+            "format-wide production readiness",
+        ),
+        production_output_enabled=False,
+    )
+
+
 def generator_authored_1111_tax_exclusive_real_import_evidence(
 ) -> ScopedJdlImportEvidence:
     return ScopedJdlImportEvidence(
@@ -946,6 +990,7 @@ def compare_generator_multi_group_runtime(
     *,
     runtime_ui_vouchers_blank: bool,
     runtime_logical_voucher_count: int,
+    evidence_id: str = EVIDENCE_ID_GENERATOR_MULTIGROUP_SIMPLE_COMPOUND,
 ) -> MultiGroupRuntimeComparison:
     if runtime_logical_voucher_count < 1:
         raise ValueError("runtime logical voucher count must be positive")
@@ -979,7 +1024,7 @@ def compare_generator_multi_group_runtime(
 
     compared_rows = zip(candidate["rows"], reexport["rows"], strict=True)
     return MultiGroupRuntimeComparison(
-        evidence_id=EVIDENCE_ID_GENERATOR_MULTIGROUP_SIMPLE_COMPOUND,
+        evidence_id=evidence_id,
         candidate_fields=comparisons,
         candidate_structure=candidate["structure"],
         reexport_structure=reexport["structure"],
@@ -1031,6 +1076,19 @@ def compare_generator_multi_group_runtime(
         compound_balanced=balanced(candidate["rows"][1:]) and balanced(
             reexport["rows"][1:]
         ),
+    )
+
+
+def compare_context_aware_runtime_e2e(
+    candidate_path: Path,
+    reexport_path: Path,
+) -> MultiGroupRuntimeComparison:
+    return compare_generator_multi_group_runtime(
+        candidate_path,
+        reexport_path,
+        runtime_ui_vouchers_blank=True,
+        runtime_logical_voucher_count=2,
+        evidence_id=EVIDENCE_ID_CONTEXT_AWARE_RUNTIME_E2E,
     )
 
 

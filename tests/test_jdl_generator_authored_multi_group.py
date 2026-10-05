@@ -32,9 +32,11 @@ from experiments.jdl_import.generator_authored_multi_group import (
     generate_candidate,
 )
 from experiments.jdl_import.runtime_evidence import (
+    EVIDENCE_ID_CONTEXT_AWARE_RUNTIME_E2E,
     EVIDENCE_ID_CONVERSION_SERVICE_E2E,
     EVIDENCE_ID_GENERATOR_MULTIGROUP_SIMPLE_COMPOUND,
     RuntimeReexportFieldStatus,
+    compare_context_aware_runtime_e2e,
     compare_generator_multi_group_runtime,
     conversion_service_e2e_real_import_evidence,
     generator_authored_multi_group_real_import_evidence,
@@ -248,6 +250,35 @@ class JdlGeneratorAuthoredMultiGroupTests(unittest.TestCase):
         )
         for private_value in ("借方甲", "貸方甲", "単純摘要", "複合摘要", "20990103"):
             self.assertNotIn(private_value, serialized)
+
+    def test_context_aware_comparison_uses_distinct_evidence_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            generated = generate_candidate(
+                self.config(),
+                root / "data/private/experiments/jdl_import/multi_group",
+            )
+            reexport = root / "runtime_reexport.csv"
+            self._write_synthetic_reexport(generated.csv_path, reexport)
+            comparison = compare_context_aware_runtime_e2e(
+                generated.csv_path,
+                reexport,
+            )
+
+        self.assertEqual(
+            comparison.evidence_id,
+            EVIDENCE_ID_CONTEXT_AWARE_RUNTIME_E2E,
+        )
+        self.assertTrue(comparison.candidate_vouchers_blank)
+        self.assertTrue(comparison.runtime_ui_vouchers_blank)
+        self.assertTrue(comparison.reexport_vouchers_zero)
+        self.assertEqual(
+            dict(comparison.status_counts),
+            {
+                RuntimeReexportFieldStatus.INPUT_BLANK_REEXPORT_NONBLANK.value: 32,
+                RuntimeReexportFieldStatus.INPUT_PRESERVED.value: 88,
+            },
+        )
 
     @staticmethod
     def _write_synthetic_reexport(candidate: Path, destination: Path) -> None:

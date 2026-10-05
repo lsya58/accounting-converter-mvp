@@ -55,7 +55,9 @@ from accounting_converter.profiles.yayoi_official import (
     yayoi_accounting_05_official_import_spec,
 )
 from experiments.jdl_import.runtime_evidence import (
+    EVIDENCE_ID_CONTEXT_AWARE_RUNTIME_E2E,
     EVIDENCE_ID_YAYOI_TO_JDL_E2E,
+    context_aware_runtime_e2e_real_import_evidence,
     yayoi_to_jdl_e2e_real_import_evidence,
 )
 
@@ -114,6 +116,8 @@ class YayoiToJdlFormalE2ETests(unittest.TestCase):
         self.assertEqual(result.debit_total, Decimal("1700"))
         self.assertEqual(result.credit_total, Decimal("1700"))
         self.assertEqual(result.unresolved_mapping_count, 0)
+        self.assertIn("required mapping件数: 4", result.verification_report)
+        self.assertIn("confirmed mapping件数: 4", result.verification_report)
         self.assertIn("target context validation: success", result.verification_report)
         self.assertIn("account master count: 4", result.verification_report)
         self.assertIn("mapping/context consistency: success", result.verification_report)
@@ -127,14 +131,14 @@ class YayoiToJdlFormalE2ETests(unittest.TestCase):
             jdl_ibex_cashbook_official_journal_import_spec().column_names,
         )
         self.assertEqual([row[0] for row in rows[1:]], ["1111", "1110", "1100", "1101"])
-        self.assertEqual({row[2] for row in rows[1:]}, {"20261015"})
+        self.assertEqual({row[2] for row in rows[1:]}, {"20261016"})
         self.assertTrue(all(row[1] == "" for row in rows[1:]))
         self.assertTrue(all(len(row) == 30 for row in rows[1:]))
         self.assertEqual(
             [(row[4], row[11], row[14], row[21], row[23]) for row in rows[1:]],
             [
-                ("現金", "700", "普通預金", "700", "弥生E2E-SIMPLE"),
-                ("現金", "1000", "普通預金", "500", "弥生E2E-COMPOUND"),
+                ("現金", "700", "普通預金", "700", "CTX-E2E-SIMPLE"),
+                ("現金", "1000", "普通預金", "500", "CTX-E2E-COMPOUND"),
                 ("", "0", "当座預金", "300", ""),
                 ("", "0", "小口現金", "200", ""),
             ],
@@ -387,6 +391,27 @@ class YayoiToJdlFormalE2ETests(unittest.TestCase):
             evidence.not_verified,
         )
 
+    def test_context_aware_runtime_evidence_is_scoped_and_not_production_enabled(
+        self,
+    ) -> None:
+        evidence = context_aware_runtime_e2e_real_import_evidence()
+
+        self.assertEqual(evidence.evidence_id, EVIDENCE_ID_CONTEXT_AWARE_RUNTIME_E2E)
+        self.assertEqual(evidence.evidence_level, EvidenceLevel.VERIFIED_BY_REAL_IMPORT)
+        self.assertFalse(evidence.production_output_enabled)
+        self.assertIn(
+            "JdlOutputRuntimeFactory and exact mapping-context cross-check",
+            evidence.verified_scope,
+        )
+        self.assertIn(
+            "post-import JDL self re-export compared across 120 fields",
+            evidence.verified_scope,
+        )
+        self.assertIn(
+            "general-user GUI context confirmation workflow",
+            evidence.not_verified,
+        )
+
     def service(
         self,
         profile: ConversionProfile,
@@ -568,7 +593,7 @@ class YayoiToJdlFormalE2ETests(unittest.TestCase):
                 debit_amount="700",
                 credit_account="普通預金",
                 credit_amount="700",
-                description="弥生E2E-SIMPLE",
+                description="CTX-E2E-SIMPLE",
             ),
             self.row(
                 "2110",
@@ -577,7 +602,7 @@ class YayoiToJdlFormalE2ETests(unittest.TestCase):
                 debit_amount="1000",
                 credit_account="普通預金",
                 credit_amount="500",
-                description="弥生E2E-COMPOUND",
+                description="CTX-E2E-COMPOUND",
             ),
             self.row(
                 "2100",
@@ -619,7 +644,7 @@ class YayoiToJdlFormalE2ETests(unittest.TestCase):
             {
                 "識別フラグ": flag,
                 "伝票No.": voucher,
-                "取引日付": "R.08/10/15",
+                "取引日付": "R.08/10/16",
                 "借方勘定科目": debit_account,
                 "借方金額": debit_amount,
                 "貸方勘定科目": credit_account,

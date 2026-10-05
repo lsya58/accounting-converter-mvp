@@ -2,7 +2,7 @@
 
 ## Status
 
-`JDLOutputAdapter`と`JDLOutputValidator`は正式`src`配下に実装済み。`EVID-JDL-CONVERSION-SERVICE-E2E-001`によりConversionService経由artifactを、`EVID-JDL-YAYOI-TO-JDL-E2E-001`によりYayoiInputAdapter起点artifactをJDL実機でImportし、UI確認、self re-export比較まで完了した。context-aware factoryもRegistryへ登録済みだがproduction無効で、YayoiからJDLへのreadinessは`ADAPTER_UNAVAILABLE`のままとする。
+`JDLOutputAdapter`と`JDLOutputValidator`は正式`src`配下に実装済み。ConversionService、YayoiInputAdapter起点に加え、`EVID-JDL-CONTEXT-AWARE-RUNTIME-E2E-001`でRegistryとcontext-aware factoryを通るartifactもJDL実機Import、UI確認、self re-export比較まで完了した。実装はRegistry登録済みだがproduction無効で、YayoiからJDLへのreadinessは`ADAPTER_UNAVAILABLE`のままとする。
 
 Target identityはJDL IBEX出納帳35.5 / Journal CSV Input / official documented 30-column schema。schema自体のEvidence levelは`OFFICIAL_DOCUMENTED`から変更しない。adapter behaviorだけを個別の`VERIFIED_BY_REAL_IMPORT` Evidenceへ結び付ける。
 
@@ -48,7 +48,9 @@ unknown product/version、未知Evidence profile、未確認master、1000+tax/de
 
 正式ConversionServiceで生成した同日simple+compound artifactは、JDL IBEX出納帳35.5で4 records / exactly 2 vouchersとしてImport成功した。candidate/re-exportの120 fieldsは88 preserved、32 blank-to-nonblankで、semantic differenceは0だった。
 
-Adapter behaviorのruntime gateとstrict scopeのYayoiInputAdapter起点runtime E2Eは通過した。Registryはcontext-aware factoryを保持し、runごとの確認済みsnapshotからAdapter/Validatorを生成できる。ただしこの新しいinstantiation pathは実機未確認であり、一般ユーザー向け実行制御も未完成のためregistryは`UNAVAILABLE`、YayoiからJDLはNOT READYを維持する。
+Adapter behavior、strict scopeのYayoiInputAdapter起点E2E、context-aware instantiation pathはruntime gateを通過した。ただしsimple+simple、compound+compound、10-20 records mixed batch、一般ユーザー向けContext確認UIが未完了のためregistryは`UNAVAILABLE`、YayoiからJDLはNOT READYを維持する。
+
+初回release前の優先度は、simple+simple、compound+compound、10-20 records mixed batch、GUIでのProfile/Context確認、production有効化判断を`MUST BEFORE FIRST RELEASE`とする。subaccount付きYayoi -> JDLは`SHOULD SOON AFTER`、tax/department付き経路は`OPTIONAL / POST-MVP`とする。
 
 ## Yayoi Input Software E2E
 
