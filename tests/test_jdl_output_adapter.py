@@ -172,12 +172,40 @@ class JDLOutputAdapterV0Tests(unittest.TestCase):
         self.assertEqual(result.journal_count, 2)
         self.assertIn("EVID-JDL-GENERATOR-MULTIGROUP-SIMPLE-COMPOUND-001", result.evidence_profiles)
 
-    def test_simple_plus_simple_multi_group_blocks(self) -> None:
+    def test_verified_simple_plus_simple_same_date_passes(self) -> None:
         entries = (
             self.simple(JdlEvidenceProfile.BASIC_1111, entry_id="A"),
             self.simple(JdlEvidenceProfile.BASIC_1111, entry_id="B"),
         )
-        errors = JDLOutputAdapter(self.exempt_context()).preflight(entries, self.profile)
+        rows, result = self.roundtrip(entries, self.exempt_context())
+        self.assertTrue(result.success)
+        self.assertEqual([row[0] for row in rows[1:]], ["1111", "1111"])
+        self.assertEqual(result.record_count, 2)
+        self.assertEqual(result.journal_count, 2)
+        self.assertIn(
+            "EVID-JDL-SIMPLE-PLUS-SIMPLE-RUNTIME-001",
+            result.evidence_profiles,
+        )
+
+    def test_three_simple_journals_remain_blocked(self) -> None:
+        entries = tuple(
+            self.simple(JdlEvidenceProfile.BASIC_1111, entry_id=entry_id)
+            for entry_id in ("A", "B", "C")
+        )
+        errors = JDLOutputAdapter(self.exempt_context()).preflight(
+            entries,
+            self.profile,
+        )
+        self.assertIn("JDL-OUT-MULTIGROUP-SCOPE", {item.rule_id for item in errors})
+
+    def test_simple_pair_with_different_dates_remains_blocked(self) -> None:
+        first = self.simple(JdlEvidenceProfile.BASIC_1111, entry_id="A")
+        second = self.simple(JdlEvidenceProfile.BASIC_1111, entry_id="B")
+        second.date = date(2099, 1, 2)
+        errors = JDLOutputAdapter(self.exempt_context()).preflight(
+            (first, second),
+            self.profile,
+        )
         self.assertIn("JDL-OUT-MULTIGROUP-SCOPE", {item.rule_id for item in errors})
 
     def test_reduced_or_unknown_tax_blocks(self) -> None:

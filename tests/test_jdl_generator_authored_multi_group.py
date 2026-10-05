@@ -35,11 +35,14 @@ from experiments.jdl_import.runtime_evidence import (
     EVIDENCE_ID_CONTEXT_AWARE_RUNTIME_E2E,
     EVIDENCE_ID_CONVERSION_SERVICE_E2E,
     EVIDENCE_ID_GENERATOR_MULTIGROUP_SIMPLE_COMPOUND,
+    EVIDENCE_ID_SIMPLE_PLUS_SIMPLE_RUNTIME,
     RuntimeReexportFieldStatus,
     compare_context_aware_runtime_e2e,
     compare_generator_multi_group_runtime,
+    compare_simple_plus_simple_runtime,
     conversion_service_e2e_real_import_evidence,
     generator_authored_multi_group_real_import_evidence,
+    simple_plus_simple_runtime_real_import_evidence,
 )
 
 
@@ -280,6 +283,50 @@ class JdlGeneratorAuthoredMultiGroupTests(unittest.TestCase):
             },
         )
 
+    def test_simple_pair_runtime_evidence_is_verified_but_strictly_scoped(
+        self,
+    ) -> None:
+        evidence = simple_plus_simple_runtime_real_import_evidence()
+        self.assertEqual(evidence.evidence_id, EVIDENCE_ID_SIMPLE_PLUS_SIMPLE_RUNTIME)
+        self.assertEqual(evidence.evidence_level, EvidenceLevel.VERIFIED_BY_REAL_IMPORT)
+        self.assertFalse(evidence.production_output_enabled)
+        self.assertIn("exactly two same-date simple journals", evidence.verified_scope)
+        self.assertIn(
+            "three or more simple journals or arbitrary batch sizes",
+            evidence.not_verified,
+        )
+
+    def test_simple_pair_runtime_comparison_is_privacy_safe(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            candidate = root / "candidate.csv"
+            reexport = root / "reexport.csv"
+            self._write_simple_pair_candidate(candidate)
+            self._write_synthetic_reexport(candidate, reexport)
+            comparison = compare_simple_plus_simple_runtime(
+                candidate,
+                reexport,
+                runtime_ui_vouchers_blank=True,
+                runtime_logical_voucher_count=2,
+            )
+            payload = comparison.to_privacy_safe_dict()
+
+        self.assertEqual(comparison.evidence_id, EVIDENCE_ID_SIMPLE_PLUS_SIMPLE_RUNTIME)
+        self.assertTrue(comparison.flag_order_preserved)
+        self.assertTrue(comparison.row_order_preserved)
+        self.assertTrue(comparison.independently_balanced)
+        self.assertEqual(
+            dict(comparison.status_counts),
+            {
+                RuntimeReexportFieldStatus.INPUT_BLANK_REEXPORT_NONBLANK.value: 18,
+                RuntimeReexportFieldStatus.INPUT_PRESERVED.value: 42,
+            },
+        )
+        self.assertIn("not a generator default", payload["interpretation"])
+        serialized = json.dumps(payload, ensure_ascii=False)
+        for private_value in ("借方甲", "貸方甲", "摘要甲", "20990104"):
+            self.assertNotIn(private_value, serialized)
+
     @staticmethod
     def _write_synthetic_reexport(candidate: Path, destination: Path) -> None:
         rows = list(csv.reader(candidate.read_text(encoding="cp932").splitlines()))
@@ -300,6 +347,31 @@ class JdlGeneratorAuthoredMultiGroupTests(unittest.TestCase):
         with destination.open("w", encoding="cp932", newline="") as handle:
             csv.writer(handle, lineterminator="\r\n").writerows(
                 (["// synthetic metadata"], ["// synthetic period"], [], header, *records)
+            )
+
+    @staticmethod
+    def _write_simple_pair_candidate(destination: Path) -> None:
+        rows = []
+        for debit, credit, amount, description in (
+            ("借方甲", "貸方甲", "70", "摘要甲"),
+            ("借方乙", "貸方乙", "90", "摘要乙"),
+        ):
+            row = {name: "" for name in OFFICIAL_HEADER}
+            row.update(
+                {
+                    "//識別フラグ": "1111",
+                    "日付": "20990104",
+                    "借方科目名称": debit,
+                    "借方金額": amount,
+                    "貸方科目名称": credit,
+                    "貸方金額": amount,
+                    "摘要": description,
+                }
+            )
+            rows.append([row[name] for name in OFFICIAL_HEADER])
+        with destination.open("w", encoding="cp932", newline="") as handle:
+            csv.writer(handle, lineterminator="\r\n").writerows(
+                (OFFICIAL_HEADER, *rows)
             )
 
     def assert_blocked(

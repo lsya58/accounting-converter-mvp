@@ -8,7 +8,6 @@ from accounting_converter.profiles.jdl_official import JdlTaxProcessingMode
 
 
 JDL_OUTPUT_METADATA_KEY = "jdl_output_evidence_profile"
-JDL_FILE_COMBINATION_GATE_METADATA_KEY = "jdl_output_file_combination_gate"
 JDL_OUTPUT_FORMAT_ID = "jdl-ibex-cashbook-journal-csv-30-v0"
 
 
@@ -20,10 +19,6 @@ class JdlEvidenceProfile(str, Enum):
     TAX_INCLUDED_1111 = "SUPPORTED_1111_TAX_INCLUDED"
     TAX_EXCLUDED_1111 = "SUPPORTED_1111_TAX_EXCLUDED"
     COMPOUND_1D3C = "SUPPORTED_COMPOUND_1D3C"
-
-
-class JdlFileCombinationGate(str, Enum):
-    SIMPLE_PLUS_SIMPLE_UNTESTED = "UNTESTED_SIMPLE_PLUS_SIMPLE_RELEASE_GATE"
 
 
 class JdlContextConfirmationState(str, Enum):

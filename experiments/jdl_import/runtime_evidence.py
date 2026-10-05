@@ -37,6 +37,9 @@ EVIDENCE_ID_YAYOI_TO_JDL_E2E = "EVID-JDL-YAYOI-TO-JDL-E2E-001"
 EVIDENCE_ID_CONTEXT_AWARE_RUNTIME_E2E = (
     "EVID-JDL-CONTEXT-AWARE-RUNTIME-E2E-001"
 )
+EVIDENCE_ID_SIMPLE_PLUS_SIMPLE_RUNTIME = (
+    "EVID-JDL-SIMPLE-PLUS-SIMPLE-RUNTIME-001"
+)
 EVIDENCE_ID = EVIDENCE_ID_1111
 VERIFIED_ARTIFACT_STATUS = "GENERATOR_AUTHORED_1111_VERIFIED_BY_REAL_IMPORT_SCOPED"
 VERIFIED_ARTIFACT_STATUS_1000 = "GENERATOR_AUTHORED_1000_VERIFIED_BY_REAL_IMPORT_SCOPED"
@@ -265,6 +268,68 @@ class MultiGroupRuntimeComparison:
                 "fields imported as two logical vouchers and re-exported with zero "
                 "voucher fields. Zero is not a generator default or proof of an "
                 "internally assigned voucher number."
+            ),
+            "privacy_note": (
+                "Field values, account names, descriptions, dates, amounts, "
+                "voucher values, and raw rows are omitted."
+            ),
+        }
+
+
+@dataclass(frozen=True)
+class SimplePairRuntimeComparison:
+    evidence_id: str
+    candidate_fields: tuple[CompoundRuntimeFieldComparison, ...]
+    candidate_structure: dict[str, Any]
+    reexport_structure: dict[str, Any]
+    flag_order_preserved: bool
+    row_order_preserved: bool
+    date_preserved: bool
+    account_placement_preserved: bool
+    amounts_and_positions_preserved: bool
+    descriptions_and_positions_preserved: bool
+    candidate_vouchers_blank: bool
+    runtime_ui_vouchers_blank: bool
+    reexport_vouchers_zero: bool
+    runtime_logical_voucher_count: int
+    independently_balanced: bool
+
+    @property
+    def status_counts(self) -> tuple[tuple[str, int], ...]:
+        counts = Counter(field.status.value for field in self.candidate_fields)
+        return tuple(sorted(counts.items()))
+
+    def to_privacy_safe_dict(self) -> dict[str, Any]:
+        return {
+            "evidence_id": self.evidence_id,
+            "candidate_to_reexport_status_counts": dict(self.status_counts),
+            "structures": {
+                "candidate": self.candidate_structure,
+                "runtime_reexport": self.reexport_structure,
+            },
+            "flag_order_preserved": self.flag_order_preserved,
+            "row_order_preserved": self.row_order_preserved,
+            "date_preserved": self.date_preserved,
+            "account_placement_preserved": self.account_placement_preserved,
+            "amounts_and_positions_preserved": self.amounts_and_positions_preserved,
+            "descriptions_and_positions_preserved": (
+                self.descriptions_and_positions_preserved
+            ),
+            "voucher_evidence": {
+                "candidate_raw_fields_blank": self.candidate_vouchers_blank,
+                "runtime_ui_fields_blank_operator_observed": (
+                    self.runtime_ui_vouchers_blank
+                ),
+                "reexport_raw_fields_zero": self.reexport_vouchers_zero,
+            },
+            "runtime_logical_voucher_count_operator_observed": (
+                self.runtime_logical_voucher_count
+            ),
+            "independently_balanced": self.independently_balanced,
+            "interpretation": (
+                "For this exact two-journal artifact, same-date 1111 records with "
+                "blank candidate voucher fields imported as two separate vouchers. "
+                "Re-export zero is not a generator default or a general numbering rule."
             ),
             "privacy_note": (
                 "Field values, account names, descriptions, dates, amounts, "
@@ -759,6 +824,37 @@ def context_aware_runtime_e2e_real_import_evidence() -> ScopedJdlImportEvidence:
     )
 
 
+def simple_plus_simple_runtime_real_import_evidence() -> ScopedJdlImportEvidence:
+    return ScopedJdlImportEvidence(
+        evidence_id=EVIDENCE_ID_SIMPLE_PLUS_SIMPLE_RUNTIME,
+        evidence_level=EvidenceLevel.VERIFIED_BY_REAL_IMPORT,
+        product="JDL IBEX 出納帳",
+        observed_version="35.5",
+        verified_scope=(
+            "synthetic Yayoi AE19 input through the formal context-aware route",
+            "confirmed four-account mapping and validated exempt target context",
+            "exactly two same-date simple journals",
+            "exact 1111/1111 output order with blank candidate voucher fields",
+            "no tax, subaccount, or department fields",
+            "runtime recognized two records and produced exactly two vouchers",
+            "no merge, split, or duplicate observed",
+            "balances, account placement, descriptions, and row order preserved",
+            "runtime UI voucher-number fields observed blank for both vouchers",
+            "post-import JDL self re-export compared across 60 fields",
+        ),
+        not_verified=(
+            "three or more simple journals or arbitrary batch sizes",
+            "different dates, arbitrary group orders, or nonblank voucher numbers",
+            "compound plus compound boundaries",
+            "tax, subaccount, or department in repeated simple journals",
+            "other Yayoi or JDL products and versions",
+            "general-user GUI workflow",
+            "format-wide production readiness",
+        ),
+        production_output_enabled=False,
+    )
+
+
 def generator_authored_1111_tax_exclusive_real_import_evidence(
 ) -> ScopedJdlImportEvidence:
     return ScopedJdlImportEvidence(
@@ -1016,7 +1112,6 @@ def compare_generator_multi_group_runtime(
         for field_index, name in enumerate(OFFICIAL_HEADER)
     )
     indexes = {name: OFFICIAL_HEADER.index(name) for name in OFFICIAL_HEADER}
-
     def balanced(rows: tuple[tuple[str, ...], ...]) -> bool:
         debit = sum(int(row[indexes["借方金額"]] or 0) for row in rows)
         credit = sum(int(row[indexes["貸方金額"]] or 0) for row in rows)
@@ -1089,6 +1184,103 @@ def compare_context_aware_runtime_e2e(
         runtime_ui_vouchers_blank=True,
         runtime_logical_voucher_count=2,
         evidence_id=EVIDENCE_ID_CONTEXT_AWARE_RUNTIME_E2E,
+    )
+
+
+def compare_simple_plus_simple_runtime(
+    candidate_path: Path,
+    reexport_path: Path,
+    *,
+    runtime_ui_vouchers_blank: bool,
+    runtime_logical_voucher_count: int,
+) -> SimplePairRuntimeComparison:
+    if runtime_logical_voucher_count != 2:
+        raise ValueError("runtime logical voucher count must be exactly two")
+    candidate = _read_records(candidate_path, expected_count=2)
+    reexport = _read_records(reexport_path, expected_count=2)
+    expected_flags = ("1111", "1111")
+    candidate_flags = tuple(row[0] for row in candidate["rows"])
+    reexport_flags = tuple(row[0] for row in reexport["rows"])
+    if candidate_flags != expected_flags or reexport_flags != expected_flags:
+        raise ValueError("candidate and re-export must preserve 1111/1111")
+
+    comparisons = tuple(
+        CompoundRuntimeFieldComparison(
+            record_index=record_index,
+            field_name=name,
+            status=_field_status(candidate_row[field_index], reexport_row[field_index]),
+        )
+        for record_index, (candidate_row, reexport_row) in enumerate(
+            zip(candidate["rows"], reexport["rows"], strict=True), start=1
+        )
+        for field_index, name in enumerate(OFFICIAL_HEADER)
+    )
+    indexes = {name: OFFICIAL_HEADER.index(name) for name in OFFICIAL_HEADER}
+    row_identity_indexes = tuple(
+        indexes[name]
+        for name in (
+            "//識別フラグ",
+            "日付",
+            "借方科目名称",
+            "借方金額",
+            "貸方科目名称",
+            "貸方金額",
+            "摘要",
+        )
+    )
+
+    def balanced(row: tuple[str, ...]) -> bool:
+        return int(row[indexes["借方金額"]]) == int(row[indexes["貸方金額"]])
+
+    return SimplePairRuntimeComparison(
+        evidence_id=EVIDENCE_ID_SIMPLE_PLUS_SIMPLE_RUNTIME,
+        candidate_fields=comparisons,
+        candidate_structure=candidate["structure"],
+        reexport_structure=reexport["structure"],
+        flag_order_preserved=candidate_flags == reexport_flags == expected_flags,
+        row_order_preserved=all(
+            all(candidate_row[index] == reexport_row[index] for index in row_identity_indexes)
+            for candidate_row, reexport_row in zip(
+                candidate["rows"], reexport["rows"], strict=True
+            )
+        ),
+        date_preserved=all(
+            candidate_row[indexes["日付"]] == reexport_row[indexes["日付"]]
+            for candidate_row, reexport_row in zip(
+                candidate["rows"], reexport["rows"], strict=True
+            )
+        ),
+        account_placement_preserved=all(
+            candidate_row[index] == reexport_row[index]
+            for candidate_row, reexport_row in zip(
+                candidate["rows"], reexport["rows"], strict=True
+            )
+            for index in (indexes["借方科目名称"], indexes["貸方科目名称"])
+        ),
+        amounts_and_positions_preserved=all(
+            candidate_row[index] == reexport_row[index]
+            for candidate_row, reexport_row in zip(
+                candidate["rows"], reexport["rows"], strict=True
+            )
+            for index in (indexes["借方金額"], indexes["貸方金額"])
+        ),
+        descriptions_and_positions_preserved=all(
+            candidate_row[indexes["摘要"]] == reexport_row[indexes["摘要"]]
+            for candidate_row, reexport_row in zip(
+                candidate["rows"], reexport["rows"], strict=True
+            )
+        ),
+        candidate_vouchers_blank=all(
+            not row[indexes["伝番"]] for row in candidate["rows"]
+        ),
+        runtime_ui_vouchers_blank=runtime_ui_vouchers_blank,
+        reexport_vouchers_zero=all(
+            row[indexes["伝番"]] == "0" for row in reexport["rows"]
+        ),
+        runtime_logical_voucher_count=runtime_logical_voucher_count,
+        independently_balanced=all(
+            balanced(row) for row in (*candidate["rows"], *reexport["rows"])
+        ),
     )
 
 

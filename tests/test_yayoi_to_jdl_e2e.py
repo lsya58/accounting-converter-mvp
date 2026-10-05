@@ -20,11 +20,10 @@ from accounting_converter.adapters.output.jdl import (
     JdlContextProvenance,
     JdlDepartmentIdentity,
     JdlEvidenceProfile,
-    JdlFileCombinationGate,
     JdlTargetContext,
     JdlTargetContextBuilder,
     JdlSubaccountIdentity,
-    SIMPLE_PLUS_SIMPLE_UNTESTED_GATE_ID,
+    SIMPLE_PLUS_SIMPLE_EVIDENCE_ID,
     jdl_ibex_35_5_output_profile,
 )
 from accounting_converter.application.conversion import (
@@ -180,7 +179,7 @@ class YayoiToJdlFormalE2ETests(unittest.TestCase):
         self.assertEqual(result.unresolved_mapping_count, 1)
         self.assertFalse(output_exists)
 
-    def test_context_aware_simple_plus_simple_release_gate_is_explicitly_untested(
+    def test_context_aware_simple_plus_simple_uses_verified_runtime_evidence(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -216,9 +215,6 @@ class YayoiToJdlFormalE2ETests(unittest.TestCase):
                     "202": JdlEvidenceProfile.BASIC_1111,
                 },
                 route_id="SIMPLE-PLUS-SIMPLE-RUNTIME-GATE",
-                file_combination_gate=(
-                    JdlFileCombinationGate.SIMPLE_PLUS_SIMPLE_UNTESTED
-                ),
             )
             result = self.service(profile, route).convert(
                 self.request(source, output, profile)
@@ -235,11 +231,7 @@ class YayoiToJdlFormalE2ETests(unittest.TestCase):
         self.assertEqual(result.credit_total, Decimal("1600"))
         self.assertEqual([row[0] for row in rows[1:]], ["1111", "1111"])
         self.assertIn(
-            SIMPLE_PLUS_SIMPLE_UNTESTED_GATE_ID,
-            result.output_validation_result.evidence_profiles,
-        )
-        self.assertNotIn(
-            "EVID-JDL-SIMPLE-PLUS-SIMPLE-RUNTIME-001",
+            SIMPLE_PLUS_SIMPLE_EVIDENCE_ID,
             result.output_validation_result.evidence_profiles,
         )
 

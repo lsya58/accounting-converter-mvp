@@ -14,12 +14,10 @@ from accounting_converter.profiles.jdl_official import (
 )
 
 from .models import (
-    JDL_FILE_COMBINATION_GATE_METADATA_KEY,
     JDL_OUTPUT_FORMAT_ID,
     JDL_OUTPUT_METADATA_KEY,
     JdlDepartmentIdentity,
     JdlEvidenceProfile,
-    JdlFileCombinationGate,
     JdlOutputPlan,
     JdlOutputRow,
     JdlSubaccountIdentity,
@@ -50,9 +48,7 @@ EVIDENCE_IDS = {
     ),
 }
 MULTIGROUP_EVIDENCE_ID = "EVID-JDL-GENERATOR-MULTIGROUP-SIMPLE-COMPOUND-001"
-SIMPLE_PLUS_SIMPLE_UNTESTED_GATE_ID = (
-    "UNTESTED-JDL-SIMPLE-PLUS-SIMPLE-RUNTIME-GATE"
-)
+SIMPLE_PLUS_SIMPLE_EVIDENCE_ID = "EVID-JDL-SIMPLE-PLUS-SIMPLE-RUNTIME-001"
 
 
 class JdlOutputBlockedError(ValueError):
@@ -404,17 +400,12 @@ class JdlOutputPreflight:
         if len(profiles) == 1:
             return
         allowed = (JdlEvidenceProfile.BASIC_1111, JdlEvidenceProfile.COMPOUND_1D3C)
-        simple_release_gate = (
+        verified_simple_pair = (
             profiles == (JdlEvidenceProfile.BASIC_1111,) * 2
             and len(entries) == 2
             and entries[0].date == entries[1].date
-            and all(
-                entry.metadata.get(JDL_FILE_COMBINATION_GATE_METADATA_KEY)
-                == JdlFileCombinationGate.SIMPLE_PLUS_SIMPLE_UNTESTED.value
-                for entry in entries
-            )
         )
-        if not simple_release_gate and (
+        if not verified_simple_pair and (
             profiles != allowed
             or len(entries) != 2
             or entries[0].date != entries[1].date
@@ -422,7 +413,7 @@ class JdlOutputPreflight:
             errors.append(
                 self._error(
                     "JDL-OUT-MULTIGROUP-SCOPE",
-                    "複数groupは検証済み1111+compound同日構成、または明示UNTESTED release gateだけ対応します。",
+                    "複数groupは検証済みの同日1111+1111または1111+compound構成だけ対応します。",
                     "journal_groups",
                 )
             )

@@ -18,9 +18,7 @@ Target identityはJDL IBEX出納帳35.5 / Journal CSV Input / official documente
 | `SUPPORTED_1111_TAX_EXCLUDED` | `EVID-JDL-GENERATOR-1111-TAX-EXCLUSIVE-001` | 原則課税・個別対応・税抜、借方`仕　入`/`10%`/`内税`/明示税額。税額は検証済み10%内税・端数切捨てpatternと一致する場合だけ許可 |
 | `SUPPORTED_COMPOUND_1D3C` | `EVID-JDL-GENERATOR-COMPOUND-1110-1100-1101-001` | 免税、1借方対3貸方、exact 3-record sequence |
 
-file-level multi-groupは`SUPPORTED_1111_BASIC`の後に`SUPPORTED_COMPOUND_1D3C`を同日で1件ずつ置くexact combinationだけを`EVID-JDL-GENERATOR-MULTIGROUP-SIMPLE-COMPOUND-001`で許可する。profileは仕訳metadataへ明示し、特徴から推測しない。
-
-同日`SUPPORTED_1111_BASIC + SUPPORTED_1111_BASIC`は通常のallow-listでは引き続きblockする。実機group境界確認用に限り、呼出側が`UNTESTED_SIMPLE_PLUS_SIMPLE_RELEASE_GATE`を明示したexact 2-journal構成だけprivate candidate生成を許可する。このmarkerはEvidence IDではなく、production capabilityやreadinessを変更しない。実機成功後もself re-export比較前にはEvidenceへ昇格しない。
+file-level multi-groupは、同日の`SUPPORTED_1111_BASIC + SUPPORTED_COMPOUND_1D3C`を`EVID-JDL-GENERATOR-MULTIGROUP-SIMPLE-COMPOUND-001`で、同日の`SUPPORTED_1111_BASIC + SUPPORTED_1111_BASIC`を`EVID-JDL-SIMPLE-PLUS-SIMPLE-RUNTIME-001`で許可する。いずれもexact 2-journal combinationに限定し、profileは仕訳metadataへ明示して特徴から推測しない。3 journals以上、compound+compound、異なる日付、他profileの組合せは引き続きblockする。
 
 ## Preflight
 
@@ -44,15 +42,15 @@ file-level multi-groupは`SUPPORTED_1111_BASIC`の後に`SUPPORTED_COMPOUND_1D3C
 
 ## Must Block
 
-unknown product/version、未知Evidence profile、未確認master、1000+tax/department、department+tax、8%/売上側/未知tax literal、取引科目、compound内tax/subaccount/department、2借方対1貸方、many-to-many、2-record compound、複数compound、明示UNTESTED gateのないsimple+simple、3 groups以上、nonblank伝番、CP932変換不能、truncate/normalize/inferred valueをblockする。
+unknown product/version、未知Evidence profile、未確認master、1000+tax/department、department+tax、8%/売上側/未知tax literal、取引科目、compound内tax/subaccount/department、2借方対1貸方、many-to-many、2-record compound、複数compound、検証済みexact pair以外のmulti-group、3 groups以上、nonblank伝番、CP932変換不能、truncate/normalize/inferred valueをblockする。
 
 ## Release Gate Result
 
 正式ConversionServiceで生成した同日simple+compound artifactは、JDL IBEX出納帳35.5で4 records / exactly 2 vouchersとしてImport成功した。candidate/re-exportの120 fieldsは88 preserved、32 blank-to-nonblankで、semantic differenceは0だった。
 
-Adapter behavior、strict scopeのYayoiInputAdapter起点E2E、context-aware instantiation pathはruntime gateを通過した。ただしsimple+simple、compound+compound、10-20 records mixed batch、一般ユーザー向けContext確認UIが未完了のためregistryは`UNAVAILABLE`、YayoiからJDLはNOT READYを維持する。
+Adapter behavior、strict scopeのYayoiInputAdapter起点E2E、context-aware instantiation pathに加え、同日`1111 + 1111`のexact 2-journal境界もruntime gateを通過した。ただしcompound+compound、10-20 records mixed batch、一般ユーザー向けContext確認UIが未完了のためregistryは`UNAVAILABLE`、YayoiからJDLはNOT READYを維持する。
 
-初回release前の優先度は、simple+simple、compound+compound、10-20 records mixed batch、GUIでのProfile/Context確認、production有効化判断を`MUST BEFORE FIRST RELEASE`とする。subaccount付きYayoi -> JDLは`SHOULD SOON AFTER`、tax/department付き経路は`OPTIONAL / POST-MVP`とする。
+初回release前の優先度は、10-20 records mixed batch、GUIでのProfile/Context確認、production有効化判断を`MUST BEFORE FIRST RELEASE`とする。compound+compoundは初回scopeに複合仕訳を含める場合の追加gate、subaccount付きYayoi -> JDLは`SHOULD SOON AFTER`、tax/department付き経路は`OPTIONAL / POST-MVP`とする。
 
 ## Yayoi Input Software E2E
 

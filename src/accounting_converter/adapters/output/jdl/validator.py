@@ -21,7 +21,7 @@ from .models import JDL_OUTPUT_FORMAT_ID, JdlEvidenceProfile, JdlTargetContext
 from .preflight import (
     EVIDENCE_IDS,
     MULTIGROUP_EVIDENCE_ID,
-    SIMPLE_PLUS_SIMPLE_UNTESTED_GATE_ID,
+    SIMPLE_PLUS_SIMPLE_EVIDENCE_ID,
     JdlOutputPreflight,
 )
 
@@ -86,7 +86,7 @@ class JDLOutputValidator:
         evidence_profiles = tuple(EVIDENCE_IDS[item] for item in preflight.plan.evidence_profiles)
         if len(preflight.plan.evidence_profiles) == 2:
             combination_id = (
-                SIMPLE_PLUS_SIMPLE_UNTESTED_GATE_ID
+                SIMPLE_PLUS_SIMPLE_EVIDENCE_ID
                 if preflight.plan.evidence_profiles
                 == (JdlEvidenceProfile.BASIC_1111,) * 2
                 else MULTIGROUP_EVIDENCE_ID

@@ -261,12 +261,14 @@ Manualは税抜時に課区/税区/税入力方法/消費税を必要とし、�
 - exact FormatIdentity、対象version、会社/profile条件をpreflightで確認
 - 確認済みaccount/subaccount/department mappingだけを使用し、fuzzy matchingや自動置換を禁止
 - 検証済みtax literal/会社設定の組合せだけを許可
-- `1000`、`1111`、検証済み`1110 -> 1100 -> 1101` shapeとsimple+compound順だけを個別capabilityとして扱う
+- `1000`、`1111`、検証済み`1110 -> 1100 -> 1101` shape、exact simple+compound、exact simple+simpleだけを個別capabilityとして扱う
 - sequence、row order、日付制約、group貸借、必須/空欄field、Evidence coverageを検証
 - CP932、BOMなし、CRLF、first-row exact headerで一時出力し、再読込self-validation後だけAtomic Outputへ渡す
 - unsupported compound shape、未知master、未検証feature combination、任意JDL versionをblock
 - VerificationReportには件数・合計・validation結果だけを記録し、会計本文を保存しない
 
-追加実機候補の優先度は、A simple+simple=`SHOULD BEFORE RELEASE`、B compound+compound=`SHOULD BEFORE RELEASE`、C 3 groups以上の個別網羅=`OPTIONAL / POST-MVP`、D 10-20 records mixed batch=`SHOULD BEFORE RELEASE`、E Evidence-limited adapterのpreflight/serializer contract=`MUST BEFORE ADAPTER`とする。A-Dをすべて終えるまで実装開始を遅らせず、release gateと実装開始gateを分離する。
+同日simple+simpleのrelease gateは、context-aware正式経路から生成した`1111 + 1111`が実機でexactly 2 vouchersとなり、self re-export 60 fieldsのsemantic difference 0を確認した（`EVID-JDL-SIMPLE-PLUS-SIMPLE-RUNTIME-001`）。candidate伝番blank、UI blank、re-export `0`は別Evidenceとして保持し、`0`をgenerator defaultにしない。
+
+残る追加実機候補の優先度は、10-20 records mixed batch=`MUST BEFORE FIRST RELEASE`、GUIでのProfile/Context確認=`MUST BEFORE FIRST RELEASE`、compound+compound=`初回scopeに複合仕訳を含める場合の追加gate`、3 groups以上の個別網羅=`OPTIONAL / POST-MVP`とする。
 
 上記方針に基づく`JDLOutputAdapter v0`、Evidence Coverage preflight、CP932 serializer、`JDLOutputValidator`、ConversionService E2Eを実装した。研究generatorはproduction codeからimportせず、30列headerはofficial schemaをsource of truthとしている。ConversionService生成artifactとYayoiInputAdapter起点artifactはstrict scopeで実機Import成功済みであり、confirmed target contextをregistry/factoryからruntime注入する配線も実装済み。ただし、この新経路は実機再検証前で、一般ユーザー向け実行制御も未完了のため、production lookupは`UNAVAILABLE`、YayoiからJDLはNOT READYを維持する。詳細は`docs/design/jdl_output_adapter_v0.md`を参照。
