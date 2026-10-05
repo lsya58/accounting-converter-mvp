@@ -20,9 +20,11 @@ from accounting_converter.adapters.output.jdl import (
     JdlContextProvenance,
     JdlDepartmentIdentity,
     JdlEvidenceProfile,
+    JdlFileCombinationGate,
     JdlTargetContext,
     JdlTargetContextBuilder,
     JdlSubaccountIdentity,
+    SIMPLE_PLUS_SIMPLE_UNTESTED_GATE_ID,
     jdl_ibex_35_5_output_profile,
 )
 from accounting_converter.application.conversion import (
@@ -177,6 +179,69 @@ class YayoiToJdlFormalE2ETests(unittest.TestCase):
         self.assertEqual(result.status, ConversionStatus.BLOCKED_BY_MAPPING)
         self.assertEqual(result.unresolved_mapping_count, 1)
         self.assertFalse(output_exists)
+
+    def test_context_aware_simple_plus_simple_release_gate_is_explicitly_untested(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = self.write_source(
+                root / "yayoi_simple_plus_simple.csv",
+                rows=[
+                    self.row(
+                        "2111",
+                        "201",
+                        debit_account="現金",
+                        debit_amount="700",
+                        credit_account="普通預金",
+                        credit_amount="700",
+                        description="SIMPLE2-A",
+                    ),
+                    self.row(
+                        "2111",
+                        "202",
+                        debit_account="当座預金",
+                        debit_amount="900",
+                        credit_account="小口現金",
+                        credit_amount="900",
+                        description="SIMPLE2-B",
+                    ),
+                ],
+            )
+            output = root / "jdl_simple_plus_simple.csv"
+            profile = self.conversion_profile(self.accounts)
+            route = ExplicitJdlEvidenceRoutePolicy(
+                {
+                    "201": JdlEvidenceProfile.BASIC_1111,
+                    "202": JdlEvidenceProfile.BASIC_1111,
+                },
+                route_id="SIMPLE-PLUS-SIMPLE-RUNTIME-GATE",
+                file_combination_gate=(
+                    JdlFileCombinationGate.SIMPLE_PLUS_SIMPLE_UNTESTED
+                ),
+            )
+            result = self.service(profile, route).convert(
+                self.request(source, output, profile)
+            )
+            rows = list(
+                csv.reader(io.StringIO(output.read_text(encoding="cp932"), newline=""))
+            )
+
+        self.assertEqual(result.status, ConversionStatus.SUCCESS)
+        self.assertEqual(result.input_journal_count, 2)
+        self.assertEqual(result.output_record_count, 2)
+        self.assertEqual(result.output_journal_count, 2)
+        self.assertEqual(result.debit_total, Decimal("1600"))
+        self.assertEqual(result.credit_total, Decimal("1600"))
+        self.assertEqual([row[0] for row in rows[1:]], ["1111", "1111"])
+        self.assertIn(
+            SIMPLE_PLUS_SIMPLE_UNTESTED_GATE_ID,
+            result.output_validation_result.evidence_profiles,
+        )
+        self.assertNotIn(
+            "EVID-JDL-SIMPLE-PLUS-SIMPLE-RUNTIME-001",
+            result.output_validation_result.evidence_profiles,
+        )
 
     def test_missing_target_context_blocks_without_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

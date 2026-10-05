@@ -17,8 +17,13 @@ from accounting_converter.profiles.jdl_official import (
     jdl_ibex_cashbook_official_journal_import_spec,
 )
 
-from .models import JDL_OUTPUT_FORMAT_ID, JdlTargetContext
-from .preflight import EVIDENCE_IDS, MULTIGROUP_EVIDENCE_ID, JdlOutputPreflight
+from .models import JDL_OUTPUT_FORMAT_ID, JdlEvidenceProfile, JdlTargetContext
+from .preflight import (
+    EVIDENCE_IDS,
+    MULTIGROUP_EVIDENCE_ID,
+    SIMPLE_PLUS_SIMPLE_UNTESTED_GATE_ID,
+    JdlOutputPreflight,
+)
 
 
 class JDLOutputValidator:
@@ -80,7 +85,13 @@ class JDLOutputValidator:
 
         evidence_profiles = tuple(EVIDENCE_IDS[item] for item in preflight.plan.evidence_profiles)
         if len(preflight.plan.evidence_profiles) == 2:
-            evidence_profiles = (*evidence_profiles, MULTIGROUP_EVIDENCE_ID)
+            combination_id = (
+                SIMPLE_PLUS_SIMPLE_UNTESTED_GATE_ID
+                if preflight.plan.evidence_profiles
+                == (JdlEvidenceProfile.BASIC_1111,) * 2
+                else MULTIGROUP_EVIDENCE_ID
+            )
+            evidence_profiles = (*evidence_profiles, combination_id)
         return OutputValidationResult(
             success=not errors,
             record_count=len(actual_rows),
@@ -106,4 +117,3 @@ class JDLOutputValidator:
             except InvalidOperation:
                 errors.append(output_validation_error("JDL-VAL-NUMERIC", "金額fieldを数値として解釈できません。", "amount", "invalid"))
         return debit, credit
-

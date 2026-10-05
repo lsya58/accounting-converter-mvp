@@ -20,6 +20,8 @@ Target identityはJDL IBEX出納帳35.5 / Journal CSV Input / official documente
 
 file-level multi-groupは`SUPPORTED_1111_BASIC`の後に`SUPPORTED_COMPOUND_1D3C`を同日で1件ずつ置くexact combinationだけを`EVID-JDL-GENERATOR-MULTIGROUP-SIMPLE-COMPOUND-001`で許可する。profileは仕訳metadataへ明示し、特徴から推測しない。
 
+同日`SUPPORTED_1111_BASIC + SUPPORTED_1111_BASIC`は通常のallow-listでは引き続きblockする。実機group境界確認用に限り、呼出側が`UNTESTED_SIMPLE_PLUS_SIMPLE_RELEASE_GATE`を明示したexact 2-journal構成だけprivate candidate生成を許可する。このmarkerはEvidence IDではなく、production capabilityやreadinessを変更しない。実機成功後もself re-export比較前にはEvidenceへ昇格しない。
+
 ## Preflight
 
 - exact product/version/format profile
@@ -42,7 +44,7 @@ file-level multi-groupは`SUPPORTED_1111_BASIC`の後に`SUPPORTED_COMPOUND_1D3C
 
 ## Must Block
 
-unknown product/version、未知Evidence profile、未確認master、1000+tax/department、department+tax、8%/売上側/未知tax literal、取引科目、compound内tax/subaccount/department、2借方対1貸方、many-to-many、2-record compound、複数compound、simple+simple、3 groups以上、nonblank伝番、CP932変換不能、truncate/normalize/inferred valueをblockする。
+unknown product/version、未知Evidence profile、未確認master、1000+tax/department、department+tax、8%/売上側/未知tax literal、取引科目、compound内tax/subaccount/department、2借方対1貸方、many-to-many、2-record compound、複数compound、明示UNTESTED gateのないsimple+simple、3 groups以上、nonblank伝番、CP932変換不能、truncate/normalize/inferred valueをblockする。
 
 ## Release Gate Result
 
