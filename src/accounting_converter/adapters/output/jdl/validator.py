@@ -20,6 +20,8 @@ from accounting_converter.profiles.jdl_official import (
 from .models import JDL_OUTPUT_FORMAT_ID, JdlEvidenceProfile, JdlTargetContext
 from .preflight import (
     EVIDENCE_IDS,
+    MIXED_BATCH_PROFILE_SEQUENCE,
+    MIXED_BATCH_UNTESTED_GATE_ID,
     MULTIGROUP_EVIDENCE_ID,
     SIMPLE_PLUS_SIMPLE_EVIDENCE_ID,
     JdlOutputPreflight,
@@ -84,7 +86,9 @@ class JDLOutputValidator:
             errors.append(output_validation_error("JDL-VAL-TOTAL", "出力合計が期待値と一致しません。", "amount", "mismatch"))
 
         evidence_profiles = tuple(EVIDENCE_IDS[item] for item in preflight.plan.evidence_profiles)
-        if len(preflight.plan.evidence_profiles) == 2:
+        if preflight.plan.evidence_profiles == MIXED_BATCH_PROFILE_SEQUENCE:
+            evidence_profiles = (*evidence_profiles, MIXED_BATCH_UNTESTED_GATE_ID)
+        elif len(preflight.plan.evidence_profiles) == 2:
             combination_id = (
                 SIMPLE_PLUS_SIMPLE_EVIDENCE_ID
                 if preflight.plan.evidence_profiles

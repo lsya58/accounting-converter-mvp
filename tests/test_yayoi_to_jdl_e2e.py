@@ -20,9 +20,11 @@ from accounting_converter.adapters.output.jdl import (
     JdlContextProvenance,
     JdlDepartmentIdentity,
     JdlEvidenceProfile,
+    JdlFileCombinationGate,
     JdlTargetContext,
     JdlTargetContextBuilder,
     JdlSubaccountIdentity,
+    MIXED_BATCH_UNTESTED_GATE_ID,
     SIMPLE_PLUS_SIMPLE_EVIDENCE_ID,
     jdl_ibex_35_5_output_profile,
 )
@@ -234,6 +236,70 @@ class YayoiToJdlFormalE2ETests(unittest.TestCase):
             SIMPLE_PLUS_SIMPLE_EVIDENCE_ID,
             result.output_validation_result.evidence_profiles,
         )
+
+    def test_context_aware_mixed_batch_release_gate_is_explicitly_untested(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = self.write_source(
+                root / "yayoi_mixed_batch.csv",
+                rows=self.mixed_batch_rows(),
+            )
+            output = root / "jdl_mixed_batch.csv"
+            profile = self.conversion_profile(self.accounts)
+            result = self.service(profile, self.mixed_batch_route(gated=True)).convert(
+                self.request(source, output, profile)
+            )
+            rows = list(
+                csv.reader(io.StringIO(output.read_text(encoding="cp932"), newline=""))
+            )
+
+        self.assertEqual(result.status, ConversionStatus.SUCCESS)
+        self.assertEqual(result.input_record_count, 22)
+        self.assertEqual(result.input_journal_count, 12)
+        self.assertEqual(result.output_record_count, 22)
+        self.assertEqual(result.output_journal_count, 12)
+        self.assertEqual(result.debit_total, Decimal("8800"))
+        self.assertEqual(result.credit_total, Decimal("8800"))
+        self.assertEqual(
+            [row[0] for row in rows[1:]],
+            [
+                "1111", "1111", "1110", "1100", "1101",
+                "1110", "1100", "1101", "1111",
+                "1110", "1100", "1101", "1111", "1111",
+                "1110", "1100", "1101", "1111",
+                "1110", "1100", "1101", "1111",
+            ],
+        )
+        self.assertIn(
+            MIXED_BATCH_UNTESTED_GATE_ID,
+            result.output_validation_result.evidence_profiles,
+        )
+        self.assertNotIn(
+            "EVID-JDL-MIXED-BATCH-RUNTIME-001",
+            result.output_validation_result.evidence_profiles,
+        )
+
+    def test_mixed_batch_without_release_gate_remains_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = self.write_source(
+                root / "yayoi_mixed_batch.csv",
+                rows=self.mixed_batch_rows(),
+            )
+            output = root / "must_not_exist.csv"
+            profile = self.conversion_profile(self.accounts)
+            result = self.service(profile, self.mixed_batch_route(gated=False)).convert(
+                self.request(source, output, profile)
+            )
+
+        self.assertEqual(result.status, ConversionStatus.BLOCKED_BY_OUTPUT_PREFLIGHT)
+        self.assertIn(
+            "JDL-OUT-MULTIGROUP-SCOPE",
+            {item.rule_id for item in result.validation_results},
+        )
+        self.assertFalse(output.exists())
 
     def test_missing_target_context_blocks_without_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -636,6 +702,73 @@ class YayoiToJdlFormalE2ETests(unittest.TestCase):
             route_id="YAYOI-AE19-TO-JDL-35.5-BASIC-COMPOUND-V0",
         )
 
+    @staticmethod
+    def mixed_batch_route(*, gated: bool) -> ExplicitJdlEvidenceRoutePolicy:
+        profiles = (
+            JdlEvidenceProfile.BASIC_1111,
+            JdlEvidenceProfile.BASIC_1111,
+            JdlEvidenceProfile.COMPOUND_1D3C,
+            JdlEvidenceProfile.COMPOUND_1D3C,
+            JdlEvidenceProfile.BASIC_1111,
+            JdlEvidenceProfile.COMPOUND_1D3C,
+            JdlEvidenceProfile.BASIC_1111,
+            JdlEvidenceProfile.BASIC_1111,
+            JdlEvidenceProfile.COMPOUND_1D3C,
+            JdlEvidenceProfile.BASIC_1111,
+            JdlEvidenceProfile.COMPOUND_1D3C,
+            JdlEvidenceProfile.BASIC_1111,
+        )
+        assignments = {
+            f"B{index:02d}": profile
+            for index, profile in enumerate(profiles, start=1)
+        }
+        return ExplicitJdlEvidenceRoutePolicy(
+            assignments,
+            route_id="MIXED-BATCH-RUNTIME-GATE",
+            file_combination_gate=(
+                JdlFileCombinationGate.MIXED_BATCH_UNTESTED if gated else None
+            ),
+        )
+
+    def mixed_batch_rows(self) -> list[tuple[str, ...]]:
+        specifications = (
+            ("simple", "現金", "100", (("普通預金", "100"),), "BATCH-S01"),
+            ("simple", "当座預金", "200", (("小口現金", "200"),), "BATCH-S02"),
+            ("compound", "現金", "1000", (("普通預金", "500"), ("当座預金", "300"), ("小口現金", "200")), "BATCH-C03"),
+            ("compound", "普通預金", "1100", (("現金", "500"), ("当座預金", "400"), ("小口現金", "200")), "BATCH-C04"),
+            ("simple", "現金", "300", (("当座預金", "300"),), "BATCH-S05"),
+            ("compound", "当座預金", "1200", (("現金", "500"), ("普通預金", "400"), ("小口現金", "300")), "BATCH-C06"),
+            ("simple", "普通預金", "400", (("小口現金", "400"),), "BATCH-S07"),
+            ("simple", "現金", "500", (("普通預金", "500"),), "BATCH-S08"),
+            ("compound", "小口現金", "1300", (("現金", "600"), ("普通預金", "400"), ("当座預金", "300")), "BATCH-C09"),
+            ("simple", "当座預金", "600", (("現金", "600"),), "BATCH-S10"),
+            ("compound", "現金", "1400", (("普通預金", "600"), ("当座預金", "500"), ("小口現金", "300")), "BATCH-C11"),
+            ("simple", "小口現金", "700", (("普通預金", "700"),), "BATCH-S12"),
+        )
+        rows: list[tuple[str, ...]] = []
+        for index, (kind, debit, debit_amount, credits, description) in enumerate(
+            specifications,
+            start=1,
+        ):
+            voucher = f"B{index:02d}"
+            flags = ("2111",) if kind == "simple" else ("2110", "2100", "2101")
+            for row_index, (flag, (credit, credit_amount)) in enumerate(
+                zip(flags, credits, strict=True)
+            ):
+                rows.append(
+                    self.row(
+                        flag,
+                        voucher,
+                        date_value="R.08/10/18",
+                        debit_account=debit if row_index == 0 else "",
+                        debit_amount=debit_amount if row_index == 0 else "0",
+                        credit_account=credit,
+                        credit_amount=credit_amount,
+                        description=description if row_index == 0 else "",
+                    )
+                )
+        return rows
+
     def write_source(
         self,
         path: Path,
@@ -689,6 +822,7 @@ class YayoiToJdlFormalE2ETests(unittest.TestCase):
         flag: str,
         voucher: str,
         *,
+        date_value: str = "R.08/10/16",
         debit_account: str = "現金",
         debit_amount: str = "100",
         credit_account: str = "普通預金",
@@ -701,7 +835,7 @@ class YayoiToJdlFormalE2ETests(unittest.TestCase):
             {
                 "識別フラグ": flag,
                 "伝票No.": voucher,
-                "取引日付": "R.08/10/16",
+                "取引日付": date_value,
                 "借方勘定科目": debit_account,
                 "借方金額": debit_amount,
                 "貸方勘定科目": credit_account,

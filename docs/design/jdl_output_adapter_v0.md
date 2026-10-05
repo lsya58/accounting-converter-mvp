@@ -20,6 +20,8 @@ Target identityはJDL IBEX出納帳35.5 / Journal CSV Input / official documente
 
 file-level multi-groupは、同日の`SUPPORTED_1111_BASIC + SUPPORTED_COMPOUND_1D3C`を`EVID-JDL-GENERATOR-MULTIGROUP-SIMPLE-COMPOUND-001`で、同日の`SUPPORTED_1111_BASIC + SUPPORTED_1111_BASIC`を`EVID-JDL-SIMPLE-PLUS-SIMPLE-RUNTIME-001`で許可する。いずれもexact 2-journal combinationに限定し、profileは仕訳metadataへ明示して特徴から推測しない。3 journals以上、compound+compound、異なる日付、他profileの組合せは引き続きblockする。
 
+operational batchの実機確認用として、`MIXED_BATCH_RELEASE_GATE_UNTESTED`を全仕訳へ明示した場合だけ、同日12 journals（simple 7 / exact 1D3C compound 5）の固定profile順を生成できる。この例外は22 physical recordsのprivate candidate専用で、通常allow-list、Evidence、production capabilityではない。markerなし、順序・件数・日付の差異、未対応featureの混入はblockし、Human Importとself re-export比較後にのみ`EVID-JDL-MIXED-BATCH-RUNTIME-001`への昇格を再評価する。
+
 ## Preflight
 
 - exact product/version/format profile
