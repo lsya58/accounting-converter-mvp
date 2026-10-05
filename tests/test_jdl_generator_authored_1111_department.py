@@ -249,14 +249,14 @@ class JdlGeneratorAuthored1111DepartmentTests(unittest.TestCase):
         for private_value in ("架空部門", "架空短", "架空旅費", "架空摘要"):
             self.assertNotIn(private_value, serialized)
 
-    def test_1000_department_remains_inconclusive_and_production_unavailable(self) -> None:
+    def test_1000_department_remains_inconclusive_while_registry_is_available(self) -> None:
         schema = jdl_ibex_cashbook_official_journal_import_schema_definition()
 
         self.assertEqual(DEPARTMENT_1000_EXPERIMENT_STATUS, "INCONCLUSIVE_NOT_VERIFIED")
         self.assertEqual(schema.identity.evidence_level, EvidenceLevel.OFFICIAL_DOCUMENTED)
         self.assertEqual(
             production_adapter_registry().get_exact_output(schema.identity).status,
-            AdapterAvailabilityStatus.UNAVAILABLE,
+            AdapterAvailabilityStatus.EXACT,
         )
 
     def assert_blocked(

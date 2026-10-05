@@ -269,8 +269,8 @@ Manualは税抜時に課区/税区/税入力方法/消費税を必要とし、�
 
 同日simple+simpleのrelease gateは、context-aware正式経路から生成した`1111 + 1111`が実機でexactly 2 vouchersとなり、self re-export 60 fieldsのsemantic difference 0を確認した（`EVID-JDL-SIMPLE-PLUS-SIMPLE-RUNTIME-001`）。candidate伝番blank、UI blank、re-export `0`は別Evidenceとして保持し、`0`をgenerator defaultにしない。
 
-残る初回release作業の優先度は、GUIでのProfile/Context確認、production enable設計、Windows package E2Eを`MUST BEFORE FIRST RELEASE`とする。任意batch拡張、subaccount/tax/department E2Eは別scopeで扱う。
+GUIでのProfile/Context確認、Windows package E2E、scroll/resize、未対応versionの停止、strict production enableは完了した。任意batch拡張、subaccount/tax/department付きYayoi E2Eは別scopeで扱う。
 
 mixed batch release gateでは、全4 boundaryを1 fileで確認するため、同日12 logical journals（simple 7 / exact 1D3C compound 5）、22 physical recordsを採用した。実機は22 recordsをexactly 12 logical journalsとしてImportし、merge/split/duplicateなしをUIで確認した。self re-export 660 fieldsは482 `PRESERVED`、178 `BLANK_REEXPORT_NONBLANK`、semantic difference 0だったため、`EVID-JDL-MIXED-BATCH-RUNTIME-001`として固定profile順だけをstrict allow-listへ昇格した。任意batchには一般化せず、production registryとYayoi -> JDL readinessは変更しない。
 
-上記方針に基づく`JDLOutputAdapter v0`、Evidence Coverage preflight、CP932 serializer、`JDLOutputValidator`、ConversionService E2Eを実装した。研究generatorはproduction codeからimportせず、30列headerはofficial schemaをsource of truthとしている。ConversionService生成artifactとYayoiInputAdapter起点artifactはstrict scopeで実機Import成功済みであり、confirmed target contextをregistry/factoryからruntime注入する配線も実装済み。ただし、この新経路は実機再検証前で、一般ユーザー向け実行制御も未完了のため、production lookupは`UNAVAILABLE`、YayoiからJDLはNOT READYを維持する。詳細は`docs/design/jdl_output_adapter_v0.md`を参照。
+上記方針に基づく`JDLOutputAdapter v0`、Evidence Coverage preflight、CP932 serializer、`JDLOutputValidator`、ConversionService E2Eを実装した。研究generatorはproduction codeからimportせず、30列headerはofficial schemaをsource of truthとしている。ConversionService生成artifact、YayoiInputAdapter起点artifact、confirmed target contextを注入するRegistry/factory、Windows packaged GUIのpositive/negative pathはstrict scopeで実機確認済みである。現在はJDL IBEX出納帳35.5のexact identityと既存allow-listだけproduction利用可能で、その他は引き続きblockする。詳細は`docs/design/jdl_output_adapter_v0.md`を参照。

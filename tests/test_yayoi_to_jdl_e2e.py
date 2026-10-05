@@ -471,12 +471,12 @@ class YayoiToJdlFormalE2ETests(unittest.TestCase):
 
         self.assertIn("YAYOI-STRUCT-LINE-END", {item.rule_id for item in results})
 
-    def test_registry_and_route_readiness_remain_unavailable(self) -> None:
+    def test_registry_is_available_and_still_requires_runtime_context(self) -> None:
         target = jdl_ibex_cashbook_official_journal_import_schema_definition()
         registry = production_adapter_registry()
         self.assertEqual(
             registry.get_exact_output(target.identity).status,
-            AdapterAvailabilityStatus.UNAVAILABLE,
+            AdapterAvailabilityStatus.EXACT,
         )
         implementation = registry.get_exact_output(
             target.identity,
@@ -484,7 +484,7 @@ class YayoiToJdlFormalE2ETests(unittest.TestCase):
         )
         self.assertEqual(implementation.status, AdapterAvailabilityStatus.EXACT)
         self.assertTrue(implementation.registration.requires_runtime_context)
-        self.assertFalse(implementation.registration.production_enabled)
+        self.assertTrue(implementation.registration.production_enabled)
 
     def test_real_import_evidence_is_runtime_verified_but_not_production_enabled(
         self,

@@ -179,6 +179,14 @@ class AccountingConverterController:
                 user_message="JDL設定が未選択です。",
             )
             return self.state
+        self.state = replace(
+            self.state,
+            selected_context_file=selected,
+            conversion_available=False,
+            conversion_summary=None,
+            user_message=f"JDL設定を確認しています: {selected.name}",
+            developer_error=None,
+        )
         try:
             self._target_context = self.context_loader.load(selected)
         except JdlTargetContextLoadError as error:

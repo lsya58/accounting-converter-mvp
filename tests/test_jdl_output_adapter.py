@@ -430,11 +430,11 @@ class JDLOutputAdapterV0Tests(unittest.TestCase):
         self.assertEqual(result.status, ConversionStatus.INPUT_OUTPUT_PATH_CONFLICT)
         self.assertEqual(after, b"original")
 
-    def test_production_registry_remains_unavailable(self) -> None:
+    def test_production_registry_is_available_for_exact_official_identity(self) -> None:
         schema = jdl_ibex_cashbook_official_journal_import_schema_definition()
         self.assertEqual(
             production_adapter_registry().get_exact_output(schema.identity).status,
-            AdapterAvailabilityStatus.UNAVAILABLE,
+            AdapterAvailabilityStatus.EXACT,
         )
 
     def roundtrip(

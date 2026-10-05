@@ -32,10 +32,48 @@ from accounting_converter.profiles.yayoi_official import (
 from accounting_converter.infrastructure.conversion_profile_store import (
     ConversionProfileStore,
 )
+from accounting_converter.infrastructure.jdl_target_context_loader import (
+    JdlTargetContextLoadError,
+)
 from accounting_converter.ui.controllers import AccountingConverterController
 
 
 class FirstReleaseGuiWorkflowTests(unittest.TestCase):
+    def test_invalid_context_selection_updates_display_and_disables_execution(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            class RejectingContextLoader:
+                def load(self, path):
+                    _ = path
+                    raise JdlTargetContextLoadError("unsupported version")
+
+            class MustNotExecuteWorkflow:
+                def execute(self, prepared):
+                    _ = prepared
+                    raise AssertionError("blocked context must not execute conversion")
+
+            controller = AccountingConverterController(
+                profile_store=ConversionProfileStore(root / "profiles"),
+                context_loader=RejectingContextLoader(),
+                conversion_workflow=MustNotExecuteWorkflow(),
+            )
+            invalid = root / "jdl_context_bad_version.json"
+
+            state = controller.select_context_file(invalid)
+
+            self.assertEqual(state.selected_context_file, invalid)
+            self.assertFalse(state.conversion_available)
+            self.assertIsNone(state.conversion_summary)
+            self.assertIn("確認できませんでした", state.user_message)
+
+            stopped = controller.execute_conversion(confirmed=True)
+
+            self.assertFalse(stopped.conversion_available)
+            self.assertIn("実行前チェック", stopped.user_message)
+
     def test_controller_success_exposes_privacy_safe_result_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

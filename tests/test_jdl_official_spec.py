@@ -92,13 +92,13 @@ class JdlOfficialSpecTests(unittest.TestCase):
         )
         self.assertTrue(rules[JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED].tax_amount_required)
 
-    def test_official_documented_schema_does_not_enable_production_output(self) -> None:
+    def test_exact_official_identity_resolves_enabled_production_output(self) -> None:
         registry = production_adapter_registry()
         schema = jdl_ibex_cashbook_official_journal_import_schema_definition()
 
         self.assertEqual(
             registry.get_exact_output(schema.identity).status,
-            AdapterAvailabilityStatus.UNAVAILABLE,
+            AdapterAvailabilityStatus.EXACT,
         )
 
 

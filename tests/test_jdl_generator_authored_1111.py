@@ -231,12 +231,12 @@ class JdlGeneratorAuthored1111Tests(unittest.TestCase):
         for private_value in ("現金", "普通預金", "生成テスト摘要", "20261002"):
             self.assertNotIn(private_value, payload)
 
-    def test_scoped_experiment_does_not_register_production_output(self) -> None:
+    def test_final_registry_is_available_without_promoting_experiment_scope(self) -> None:
         schema = jdl_ibex_cashbook_official_journal_import_schema_definition()
 
         self.assertEqual(
             production_adapter_registry().get_exact_output(schema.identity).status,
-            AdapterAvailabilityStatus.UNAVAILABLE,
+            AdapterAvailabilityStatus.EXACT,
         )
 
     def write_export(self, path: Path, row: list[str]) -> Path:

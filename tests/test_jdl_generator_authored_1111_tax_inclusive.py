@@ -232,7 +232,7 @@ class JdlGeneratorAuthored1111TaxInclusiveTests(unittest.TestCase):
 
             self.assertEqual(first.csv_path.read_bytes(), before)
 
-    def test_report_is_privacy_safe_and_production_remains_unavailable(self) -> None:
+    def test_report_is_privacy_safe_and_exact_registry_is_available(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             config = self.config()
@@ -261,7 +261,7 @@ class JdlGeneratorAuthored1111TaxInclusiveTests(unittest.TestCase):
         self.assertEqual(schema.identity.evidence_level, EvidenceLevel.OFFICIAL_DOCUMENTED)
         self.assertEqual(
             production_adapter_registry().get_exact_output(schema.identity).status,
-            AdapterAvailabilityStatus.UNAVAILABLE,
+            AdapterAvailabilityStatus.EXACT,
         )
 
     def assert_blocked(

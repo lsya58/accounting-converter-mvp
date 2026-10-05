@@ -908,6 +908,10 @@ def windows_gui_e2e_real_import_evidence() -> ScopedJdlImportEvidence:
             "runtime UI account, amount, description, and balance verification",
             "post-import JDL self re-export compared across 60 fields",
             "semantic preservation with zero semantic differences",
+            "packaged GUI scrolling by mouse wheel and scrollbar",
+            "packaged GUI remains inspectable after window resize",
+            "unsupported target version is blocked before conversion",
+            "blocked target context disables conversion and creates no output",
         ),
         not_verified=(
             "arbitrary profiles, customer contexts, or mappings",
@@ -916,7 +920,7 @@ def windows_gui_e2e_real_import_evidence() -> ScopedJdlImportEvidence:
             "other Yayoi or JDL products and versions",
             "format-wide production readiness",
         ),
-        production_output_enabled=False,
+        production_output_enabled=True,
     )
 
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-`JDLOutputAdapter`と`JDLOutputValidator`は正式`src`配下に実装済み。ConversionService、YayoiInputAdapter起点に加え、`EVID-JDL-CONTEXT-AWARE-RUNTIME-E2E-001`でRegistryとcontext-aware factoryを通るartifactもJDL実機Import、UI確認、self re-export比較まで完了した。実装はRegistry登録済みだがproduction無効で、YayoiからJDLへのreadinessは`ADAPTER_UNAVAILABLE`のままとする。
+`JDLOutputAdapter`と`JDLOutputValidator`は正式`src`配下に実装済み。ConversionService、YayoiInputAdapter、Registry、context-aware factory、Windows packaged GUIを通るstrict scopeのartifactはJDL実機Import、UI確認、self re-export比較まで完了した。JDL IBEX出納帳35.5のexact identityに限りRegistryをproduction有効とし、Context、Mapping、Evidence allow-listのどれかを満たさない入力は停止する。
 
 Target identityはJDL IBEX出納帳35.5 / Journal CSV Input / official documented 30-column schema。schema自体のEvidence levelは`OFFICIAL_DOCUMENTED`から変更しない。adapter behaviorだけを個別の`VERIFIED_BY_REAL_IMPORT` Evidenceへ結び付ける。
 
@@ -50,9 +50,9 @@ unknown product/version、未知Evidence profile、未確認master、1000+tax/de
 
 正式ConversionServiceで生成した同日simple+compound artifactは、JDL IBEX出納帳35.5で4 records / exactly 2 vouchersとしてImport成功した。candidate/re-exportの120 fieldsは88 preserved、32 blank-to-nonblankで、semantic differenceは0だった。
 
-Adapter behavior、strict scopeのYayoiInputAdapter起点E2E、context-aware instantiation path、同日`1111 + 1111`のexact pair、固定mixed batchに加え、Windows packaged GUI経路もruntime gateを通過した。production enable判断、packaged negative-path確認、scroll修正版のWindows再確認が未完了のためregistryは`UNAVAILABLE`、YayoiからJDLはNOT READYを維持する。
+Adapter behavior、strict scopeのYayoiInputAdapter起点E2E、context-aware instantiation path、同日`1111 + 1111`のexact pair、固定mixed batchに加え、Windows packaged GUI経路もruntime gateを通過した。scroll/resizeと未対応versionを実行前に停止するnegative pathもWindows実機で確認したため、strict scopeのRegistryは`AVAILABLE`、First Release経路はREADYとする。
 
-初回release前は、scroll修正版Windows packageの表示確認、packaged negative-path、production有効化判断とoperator checklistを`MUST BEFORE FIRST RELEASE`とする。subaccount付きYayoi -> JDLは`SHOULD SOON AFTER`、tax/department付き経路と任意batch拡張は`OPTIONAL / POST-MVP`とする。
+subaccount/tax/department付きYayoi -> JDL、任意batch拡張、他JDL versionはFirst Release対象外であり、追加Evidenceを得るまでblockする。
 
 ## Yayoi Input Software E2E
 
@@ -66,7 +66,7 @@ Yayoi AE19 observed 25-field synthetic CSVを正式`YayoiInputAdapter`で読み�
 
 生成artifactはJDL IBEX出納帳35.5で4 records / exactly 2 vouchersとしてImportされ、UIとself re-exportでsemantic preservationを確認した。candidate/re-exportの120 fieldsは88 preserved、32 blank-to-nonblank、semantic difference 0だった。これによりstrict allow-list内のcore conversion engineはruntime validatedとする。
 
-一方、tax/subaccount/department、任意compound、任意batch、別製品/versionは未検証である。`AdapterRegistry`はcontext-aware実装を保持するがproduction無効、YayoiからJDLの一般利用readinessはNOT READYを維持する。candidate伝番blank、UI blank、re-export `0`は別Evidenceとして保持し、`0`を生成defaultにしない。
+一方、tax/subaccount/department、任意compound、任意batch、別製品/versionはFirst Release対象外である。RegistryがAVAILABLEでもpreflight allow-list外としてblockする。candidate伝番blank、UI blank、re-export `0`は別Evidenceとして保持し、`0`を生成defaultにしない。
 
 ## Runtime Target Context
 
@@ -86,4 +86,19 @@ GUIは入力CSV、ConversionProfile、確認済みJDL設定JSON、出力先を�
 
 `EVID-JDL-WINDOWS-GUI-E2E-001`により、Windows packaged appでProfile、Context、input、outputを明示選択し、この導線から生成した同日simple 2件がJDL実機へImportされ、UI確認とself re-export比較（60 fields、semantic difference 0）まで完了した。candidate伝番blank、runtime UI blank、re-export `0`は分離し、runtime追加値をgeneration defaultへ昇格しない。
 
-このEvidence反映だけではproduction Registryを自動変更しない。First Releaseのstrict scopeを有効化する判断、packaged app negative-path、運用手順は別gateとして扱う。Windows実機で結果欄の縦方向見切れが観測されたため、既存layoutを維持した縦scrollをFirst Release前のUX修正として追加する。
+Windows packaged appでは、縦scroll、mouse wheel、resize後の結果欄到達を確認した。未対応target version `99.9`はpreflightでBLOCKされ、作成buttonが無効のまま変換・出力されないことも確認した。この最終acceptanceを根拠に、strict scopeだけproduction Registryを有効化する。
+
+## Operator Acceptance Checklist
+
+変換前:
+
+- Sourceが弥生AE19の直接Exportであること
+- 正しいConversionProfileとJDL Target Contextを明示選択したこと
+- targetがJDL IBEX出納帳35.5、会社設定が免税であること
+- Mapping unresolvedが0、出力先が新規、実行前判定がREADYであること
+
+変換後:
+
+- 結果がSUCCESSで、logical journal数とphysical record数が想定どおりであること
+- 借方/貸方合計が一致し、unresolvedが0、Output Validationが成功していること
+- JDL Import前に出納帳ファイルを退避し、Import時にJDL側の認識件数を確認すること

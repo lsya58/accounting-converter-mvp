@@ -313,7 +313,7 @@ class JdlExp01CandidateTests(unittest.TestCase):
         self.assertNotEqual(readiness.status, ConversionReadinessStatus.READY)
         self.assertEqual(
             readiness.adapter_availability.output_status,
-            AdapterAvailabilityStatus.UNAVAILABLE,
+            AdapterAvailabilityStatus.EXACT,
         )
 
     def test_exempt_tax_processing_blocks_unnecessary_tax_fields(self) -> None:

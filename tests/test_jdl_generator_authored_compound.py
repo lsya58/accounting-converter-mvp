@@ -237,12 +237,12 @@ class JdlGeneratorAuthoredCompoundTests(unittest.TestCase):
         for private_value in ("借方甲", "貸方甲", "貸方乙", "架空複合摘要", "20990102"):
             self.assertNotIn(private_value, serialized)
 
-    def test_production_jdl_output_remains_unavailable(self) -> None:
+    def test_production_jdl_output_is_available_for_exact_identity(self) -> None:
         schema = jdl_ibex_cashbook_official_journal_import_schema_definition()
         self.assertEqual(schema.identity.evidence_level, EvidenceLevel.OFFICIAL_DOCUMENTED)
         self.assertEqual(
             production_adapter_registry().get_exact_output(schema.identity).status,
-            AdapterAvailabilityStatus.UNAVAILABLE,
+            AdapterAvailabilityStatus.EXACT,
         )
 
     def assert_generation_blocked(

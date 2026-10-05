@@ -73,7 +73,7 @@ Output Validation
 
 入力は「対応する仕訳データファイル」として扱う。`.csv` や `.txt` などの拡張子だけでフォーマットを断定せず、FormatProfileに基づいて判定する。
 
-現在はYayoi AE19 observed subsetのInputAdapterと、JDL IBEX出納帳35.5の実機Evidence subsetだけを扱うEvidence-limited JDLOutputAdapter v0を実装済みである。YayoiInputAdapter起点artifactは実機Import・UI確認・再Export比較まで成功した。JDL Outputはcontext-aware factoryとしてRegistryへ登録済みだが、検証範囲は免税・補助/部門/税なし・同日simple 1件 + exact 1D3C compound 1件に限定され、新factory path自体は実機未確認のためproduction無効を維持する。
+現在はYayoi AE19 observed subsetのInputAdapterと、JDL IBEX出納帳35.5の実機Evidence subsetだけを扱うEvidence-limited JDLOutputAdapter v0を実装済みである。YayoiInputAdapter、context-aware factory、Windows packaged GUIを通るartifactは実機Import・UI確認・再Export比較まで成功した。JDL Outputはexact identityと既存Evidence allow-listに限定してproduction有効であり、未確認Context・Mapping・feature・製品/versionは停止する。
 
 出力profileの選択が必要な場合は、Application層のvendor-neutralな`JournalRoutePolicy`境界を使う。JDL実装は仕訳IDごとのEvidence profile明示割当だけを許可し、仕訳形状から自動推測しない。未割当、余剰割当、重複IDは正式出力前にErrorとして停止する。
 
@@ -327,7 +327,7 @@ PreparationがREADYでも、ConversionService内のStructural Validation、Mappi
 
 `JdlTargetContext`はtarget FormatIdentity、製品/version、勘定科目・親科目付き補助科目・部門master、会社の税処理、確認状態、privacy-safe provenanceをimmutableに保持する。Builderは重複code/identity、存在しない補助親科目、部門設定矛盾、未確認税設定、CP932不適合をErrorにする。
 
-First Release GUIは`FirstReleaseConversionWorkflow`をApplication境界として利用する。Controllerは明示選択された入力、ConversionProfile、ローカルJDL target snapshot、出力先を渡し、workflowがexact Registry registrationを解決して`ConversionRequest`と`ConversionService`を構築する。GUIからAdapterを生成せず、CSV serializeやpreflight迂回も行わない。Windows packaged GUIのstrict scopeは実機E2E済みだが、production有効化は別gateのままとし、workflowだけがEvidence限定registrationをrelease candidateとして明示利用する。画面は縦scroll可能とし、小さい表示領域でも実行前確認と結果へ到達できるようにする。
+First Release GUIは`FirstReleaseConversionWorkflow`をApplication境界として利用する。Controllerは明示選択された入力、ConversionProfile、ローカルJDL target snapshot、出力先を渡し、workflowがproduction有効なexact Registry registrationを解決して`ConversionRequest`と`ConversionService`を構築する。GUIからAdapterを生成せず、CSV serializeやpreflight迂回も行わない。Windows packaged GUIのstrict scope、scroll/resize、未対応target versionの停止は実機確認済みである。画面は縦scroll可能とし、小さい表示領域でも実行前確認と結果へ到達できるようにする。
 
 GUIのJDL設定ファイルはschema version、製品/version、会社税設定、確認状態・provenance、確認済みmaster snapshotを持つローカルJSONである。選択なし、JDL IBEX出納帳35.5以外、免税以外、部門/補助あり、曖昧なmaster、fuzzy matchingまたは自動置換許可はBLOCKする。顧客固有masterはProfileやsource codeへ埋め込まず、Git管理もしない。
 

@@ -449,6 +449,8 @@
   - 2 logical journals / 2 physical records、同日、flag order `1111 -> 1111`
   - JDLは2 recordsを認識し、exactly 2 vouchersとして正常Import
   - merge、split、duplicateなし。UIで科目配置、金額、摘要、各voucherの貸借を確認
+  - scroll修正版packaged appでmouse wheel、scrollbar、resize後の結果/検証欄到達を確認
+  - target version `99.9`のprivate test ContextはpreflightでBLOCKされ、作成button無効、変換未実行、出力なしを確認
 - raw candidate/re-export:
   - candidateは483 bytes、CP932、BOMなし、CRLF、preambleなし、official header、30-column data 2 rows
   - re-exportは672 bytes、SHA-256 `79b749277d3f2952ecf0cbfd0a520d9978e1d764a90232bbc098435c49b598ac`
@@ -463,7 +465,8 @@
 - limits/readiness:
   - arbitrary Profile/customer Context、tax、department、subaccount、任意batch、他製品/versionへ一般化しない
   - core engine、context-aware runtime、Windows packaged GUIのstrict verified scopeはruntime acceptance済み
-  - production RegistryとFirst Release READYへの昇格は別判断として維持する
+  - positive/negative packaged acceptance完了後、JDL IBEX出納帳35.5のexact identityと既存Evidence allow-listに限りproduction Registryを有効化する
+  - Context、confirmed Mapping、no-overwrite等の既存停止条件は維持し、allow-list外はREADYにしない
 
 ## EVID-JDL-MIXED-BATCH-RUNTIME-001
 
@@ -602,7 +605,7 @@
   - core engineとcontext-aware wiringはこのscopeでruntime validated
   - 任意customer context、simple+simple、compound+compound、10-20 records batchは未検証
   - tax/subaccount/department、別製品/version、一般GUI workflowへ一般化しない
-  - production lookupは`UNAVAILABLE`、一般的なYayoi -> JDL routeとGUIはNOT READYを維持
+  - 当該Evidence取得時点ではproduction lookupは`UNAVAILABLE`、一般的なYayoi -> JDL routeとGUIはNOT READYとしていた。現在判断は末尾のNext Verification Gateを参照
 
 ## Generator-authored 1000 department experiment
 
@@ -809,10 +812,10 @@
 
 ## Next Verification Gate
 
-単一simple、単一compound、限定master/tax条件、同日simple+compound、同日simple+simple、正式YayoiInputAdapter起点artifact、context-aware registry/factory経路に加え、固定12-journal mixed batchの実機Import・UI確認・self re-export比較まで完了した。strict scopeのcore conversion engine、exact boundary、限定operational batchはvalidatedだが、GUI確認と一般利用readinessは別gateとして残る。
+単一simple、単一compound、限定master/tax条件、同日simple+compound、同日simple+simple、正式YayoiInputAdapter起点artifact、context-aware registry/factory経路、固定12-journal mixed batch、Windows packaged GUIの実機Import・UI確認・self re-export比較まで完了した。さらにscroll/resizeと未対応target versionの安全停止もWindows実機で確認した。
 
-1. production registryにはcontext-aware implementationの存在を登録するが、production lookupは`UNAVAILABLE`を維持する。
+1. JDL IBEX出納帳35.5のexact identityに限りproduction Registryを`AVAILABLE`とする。別version/製品は`UNAVAILABLE`のままとする。
 2. selected ConversionProfile、confirmed target master、tax/company settingsから`JdlTargetContext`をruntime構築し、factory経由でAdapterを生成する経路は実機確認済み。context欠落・不整合は引き続き明示的にblockする。
-3. simple+simple exact pair、固定12-journal mixed batch、Windows packaged GUIのstrict scopeはruntime確認済み。次はscroll修正版Windows表示、packaged negative-path、production enable判断とoperator checklistを確認する。
-4. subaccount付きrouteは早期follow-up、tax/department付きrouteは別の限定Evidence取得後に判断する。
+3. strict scopeのcore engine、context-aware runtime、Windows packaged GUI、Yayoi AE19からJDL IBEX出納帳35.5へのFirst Release経路はREADYとする。
+4. subaccount/tax/department付きYayoi routeと任意batch拡張は別の限定Evidence取得後に判断する。
 5. 未確認の組合せは引き続きstrict preflightでblockし、official schema identityをFormat全体の実機検証済みへ昇格しない。

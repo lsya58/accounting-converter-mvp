@@ -92,9 +92,9 @@ JDL出力では、Conversion Profileと`JdlTargetContext`を分離します。Pr
 
 First Release候補GUIでは、入力ファイル、保存済み変換設定、ローカルの確認済みJDL設定JSON、出力先を利用者が明示選択します。実行前チェックはMapping件数、JDL IBEX出納帳35.5、免税、master件数、単一/複合仕訳件数、no-overwriteを表示し、未確認Mapping、課税、補助、部門、未検証仕訳構成、既存出力を停止します。GUIはCSVを生成せず、Application workflowがRegistry、`ConversionRequest`、`ConversionService`を組み立てます。JDL設定JSONは顧客別ローカルデータとしてGit管理せず、sample masterや既定値を自動投入しません。
 
-Windows packaged appのGUIでProfile、JDL Context、入力、出力を利用者が明示選択し、生成した同日simple 2件をJDL IBEX出納帳35.5へImport、UI確認、self re-export比較まで完了しました（`EVID-JDL-WINDOWS-GUI-E2E-001`）。このexact scopeでは60 fieldsのsemantic differenceは0です。arbitrary Profile/Context、tax、補助、部門、任意batchへ一般化せず、production Registryの有効化とFirst Release READYは別gateとして扱います。
+Windows packaged appのGUIでProfile、JDL Context、入力、出力を利用者が明示選択し、生成した同日simple 2件をJDL IBEX出納帳35.5へImport、UI確認、self re-export比較まで完了しました（`EVID-JDL-WINDOWS-GUI-E2E-001`）。このexact scopeでは60 fieldsのsemantic differenceは0です。scroll/resize操作と、未対応version `99.9`を選択したときに変換を実行せずBLOCKするnegative pathもWindows実機で確認済みです。arbitrary Profile/Context、tax、補助、部門、任意batchへは一般化しません。
 
-Windows実機で結果欄の縦方向見切れが確認されたため、画面全体に縦Scrollbarとmouse wheel操作を追加しています。変換処理やEvidence scopeは変更しません。
+画面全体の縦Scrollbar、mouse wheel、resize後の結果/検証欄への到達はWindows packaged appで確認済みです。変換処理やEvidence scopeは変更しません。
 
 ## Conversion Profileの方針
 
@@ -136,7 +136,7 @@ PYTHONPATH=src python3 -m accounting_converter.ui.app
 - ConversionPreflightServiceによる事前確認
 - 状態、件数、Error/Warning件数の表示
 
-最小YayoiInputAdapterはproduction利用可能です。JDLOutputAdapterはcontext-aware実装としてRegistryに存在しますがproduction無効のため、GUIの「変換する」ボタンは有効化しません。ダミーCSVを生成して成功したように見せる処理もありません。
+最小YayoiInputAdapterとstrict scopeのJDLOutputAdapterはproduction利用可能です。GUIの作成ボタンは、exact JDL IBEX出納帳35.5 Context、confirmed Mapping、Evidence allow-listなど全条件がREADYの場合だけ有効になります。ダミーCSVを生成して成功したように見せる処理はありません。
 
 GUIは生CSV全文、摘要全文、個別仕訳全文、個別金額を既定表示しません。表示するのはファイル名、形式候補、件数、構造状態、Error/Warning件数、Preflight状態などに限定します。
 
@@ -173,7 +173,7 @@ Readiness status:
 
 `TransformationPlan` にStepが存在しても、それだけで実装済みとは扱いません。`MASTER_MAPPING` / `TAX_MAPPING` は確認済みConversion Profileがある場合のみ `SUPPORTED_WITH_PROFILE` になり、`UNKNOWN` / `UNSUPPORTED` / lossyな変換は通常のREADYにしません。
 
-`AdapterRegistry` は `FormatIdentity` のexact/candidate/unavailableを区別します。Candidateは自動採用しません。Yayoi AE19 Inputはproduction利用可能です。JDL Output v0は`RuntimeOutputFactory`付き実装として登録され、確認済みcontextなしには生成できません。context-aware path自体の実機再確認前なので`production_enabled=False`を維持し、production lookupは`UNAVAILABLE`です。Demo Adapterは登録しません。
+`AdapterRegistry` は `FormatIdentity` のexact/candidate/unavailableを区別します。Candidateは自動採用しません。Yayoi AE19 Inputはproduction利用可能です。JDL Output v0はJDL IBEX出納帳35.5のexact identityに限り`RuntimeOutputFactory`付きでproduction利用可能です。確認済み`JdlTargetContext`、confirmed Mapping、Evidence allow-listを満たさなければ生成・変換を停止します。Demo Adapterは登録しません。
 
 Preparationが `READY` になった場合のみ、薄い実行層が既存 `ConversionService` を呼び出します。ConversionService内のstructural / mapping / business / output validation、atomic output、overwrite safety、Verification Reportは引き続き残り、二重安全性を維持します。
 
@@ -232,4 +232,4 @@ GitHub ActionsではPython 3.12で同じテストを実行し、`tests/fixtures/
 
 `experiments/jdl_import/` には、JDL IBEX出納帳のofficial documented 30-column schemaとJDL IBEX出納帳35.5 observed-compatible serializationを使った研究用CSV generatorがあります。これは正式JDLOutputAdapterではなく、完全架空データでJDL実機の取込条件を確認するための実験環境です。
 
-JDL-origin `1111` round-trip、各generator-authored subset、正式YayoiInputAdapter起点E2E、context-aware factory経路、固定mixed batchに加え、Windows packaged GUIから生成したartifactもJDL IBEX出納帳35.5へのImport、UI確認、self re-export比較まで成功しました（`EVID-JDL-WINDOWS-GUI-E2E-001`）。strict scopeのcore engine、runtime wiring、GUI操作経路はvalidatedです。production enable判断、packaged negative-path確認、scroll修正版のWindows再確認が残るため、production registryとYayoiからJDL readinessはまだ変更していません。
+JDL-origin `1111` round-trip、各generator-authored subset、正式YayoiInputAdapter起点E2E、context-aware factory経路、固定mixed batchに加え、Windows packaged GUIから生成したartifactもJDL IBEX出納帳35.5へのImport、UI確認、self re-export比較まで成功しました（`EVID-JDL-WINDOWS-GUI-E2E-001`）。packaged negative pathとscroll/resizeも確認済みのため、strict scopeに限りproduction RegistryとYayoi AE19からJDL IBEX出納帳35.5へのFirst Release経路を有効化します。未確認scopeは引き続きBLOCKします。

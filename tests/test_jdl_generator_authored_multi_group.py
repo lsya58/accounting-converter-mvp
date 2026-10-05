@@ -147,12 +147,12 @@ class JdlGeneratorAuthoredMultiGroupTests(unittest.TestCase):
         ):
             self.assertNotIn(private_value, serialized)
 
-    def test_production_readiness_remains_unchanged(self) -> None:
+    def test_production_registry_is_available_only_for_official_exact_identity(self) -> None:
         schema = jdl_ibex_cashbook_official_journal_import_schema_definition()
         self.assertEqual(schema.identity.evidence_level, EvidenceLevel.OFFICIAL_DOCUMENTED)
         self.assertEqual(
             production_adapter_registry().get_exact_output(schema.identity).status,
-            AdapterAvailabilityStatus.UNAVAILABLE,
+            AdapterAvailabilityStatus.EXACT,
         )
 
     def test_runtime_evidence_is_verified_but_strictly_scoped(self) -> None:
@@ -316,14 +316,14 @@ class JdlGeneratorAuthoredMultiGroupTests(unittest.TestCase):
             evidence.not_verified,
         )
 
-    def test_windows_gui_e2e_evidence_is_verified_but_not_production_enabled(
+    def test_windows_gui_e2e_evidence_enables_strict_production_output(
         self,
     ) -> None:
         evidence = windows_gui_e2e_real_import_evidence()
 
         self.assertEqual(evidence.evidence_id, EVIDENCE_ID_WINDOWS_GUI_E2E)
         self.assertEqual(evidence.evidence_level, EvidenceLevel.VERIFIED_BY_REAL_IMPORT)
-        self.assertFalse(evidence.production_output_enabled)
+        self.assertTrue(evidence.production_output_enabled)
         self.assertIn("Windows packaged application and Tkinter GUI", evidence.verified_scope)
         self.assertIn("format-wide production readiness", evidence.not_verified)
 

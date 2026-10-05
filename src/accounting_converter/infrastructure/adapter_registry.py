@@ -223,10 +223,11 @@ def production_adapter_registry() -> AdapterRegistry:
             evidence_level=EvidenceLevel.VERIFIED_BY_REAL_IMPORT,
             runtime_factory=JdlOutputRuntimeFactory(),
             verified_by_real_import=True,
-            production_enabled=False,
+            production_enabled=True,
             notes=(
-                "Context-aware implementation exists, but production activation "
-                "remains blocked pending runtime verification of the registry path."
+                "Strict JDL IBEX Cashbook 35.5 output enabled after packaged GUI "
+                "positive and negative runtime acceptance. Runtime context and "
+                "evidence allow-list validation remain mandatory."
             ),
         )
     )

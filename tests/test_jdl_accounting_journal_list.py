@@ -177,7 +177,7 @@ class JdlAccountingJournalListTests(unittest.TestCase):
         self.assertEqual(result.header_column_count, 21)
         self.assertEqual(result.comparison_to_cashbook_30_column, JdlAccountingJournalListComparison.DIFFERENT_STRUCTURE)
 
-    def test_production_jdl_output_registry_remains_unavailable(self) -> None:
+    def test_observed_jdl_output_identity_remains_unavailable(self) -> None:
         registry = production_adapter_registry()
         target = jdl_ibex_cashbook_35_5_observed_schema_definition()
 

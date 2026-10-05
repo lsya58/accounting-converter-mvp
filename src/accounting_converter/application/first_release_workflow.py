@@ -100,11 +100,7 @@ class FirstReleaseConversionWorkflow:
             return self._blocked(input_path, output_path, profile, context, ("選択した変換設定の形式が一致しません。",))
 
         input_lookup = self.registry.get_exact_input(source_schema.identity)
-        # The output remains production-disabled until the packaged-app human gate.
-        output_lookup = self.registry.get_exact_output(
-            target_schema.identity,
-            production_only=False,
-        )
+        output_lookup = self.registry.get_exact_output(target_schema.identity)
         if (
             input_lookup.status is not AdapterAvailabilityStatus.EXACT
             or input_lookup.registration is None

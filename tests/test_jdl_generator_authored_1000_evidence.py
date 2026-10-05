@@ -104,13 +104,13 @@ class JdlGeneratorAuthored1000EvidenceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "expected identifier flag"):
                 compare_generator_1000_runtime(candidate, reexport)
 
-    def test_scoped_1000_evidence_does_not_enable_production_output(self) -> None:
+    def test_production_registry_is_enabled_by_final_acceptance_only(self) -> None:
         schema = jdl_ibex_cashbook_official_journal_import_schema_definition()
 
         self.assertEqual(schema.identity.evidence_level, EvidenceLevel.OFFICIAL_DOCUMENTED)
         self.assertEqual(
             production_adapter_registry().get_exact_output(schema.identity).status,
-            AdapterAvailabilityStatus.UNAVAILABLE,
+            AdapterAvailabilityStatus.EXACT,
         )
 
     def synthetic_row(self) -> list[str]:
