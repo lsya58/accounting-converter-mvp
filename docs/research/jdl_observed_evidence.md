@@ -438,6 +438,33 @@
   - 3件以上、任意batch size、異なる日付、tax/subaccount/department付きsimple、別製品/versionには拡張しない
   - production registryは`UNAVAILABLE`、一般Yayoi -> JDL readinessはNOT READYを維持する
 
+## EVID-JDL-WINDOWS-GUI-E2E-001
+
+- source: Windows packaged applicationのTkinter GUIから完全架空Yayoi CSV、明示選択Profile、明示選択JDL Contextを使用して生成した同日simple 2件
+- product/version evidence: JDL IBEX出納帳 35.5
+- evidence level: `VERIFIED_BY_REAL_IMPORT`（このGUI経路、artifact、会社設定に限定）
+- verified path/scope:
+  - GUI -> `FirstReleaseConversionWorkflow` -> `ConversionRequest` -> Registry -> `JdlOutputRuntimeFactory` -> `ConversionService` -> Adapter/Validator
+  - confirmed exact Mapping 4/4、unresolved 0、validated target Context、免税、補助/部門/taxなし
+  - 2 logical journals / 2 physical records、同日、flag order `1111 -> 1111`
+  - JDLは2 recordsを認識し、exactly 2 vouchersとして正常Import
+  - merge、split、duplicateなし。UIで科目配置、金額、摘要、各voucherの貸借を確認
+- raw candidate/re-export:
+  - candidateは483 bytes、CP932、BOMなし、CRLF、preambleなし、official header、30-column data 2 rows
+  - re-exportは672 bytes、SHA-256 `79b749277d3f2952ecf0cbfd0a520d9978e1d764a90232bbc098435c49b598ac`
+  - re-exportはCP932、BOMなし、CRLF、preamble 3 rows、official header、30-column data 2 rows
+  - 60 fields中42 `PRESERVED`、18 `BLANK_REEXPORT_NONBLANK`。`NORMALIZED`、`DIFFERENT`、`UNKNOWN`、semantic differenceは0
+  - runtime追加は伝番、account code/正式名称、tax amount 0、department code 0として観測したが、generation defaultへ昇格しない
+- voucher evidence separation:
+  - candidate rawは両recordとも伝番blank
+  - runtime UIは両voucherとも伝票番号欄blank
+  - re-export rawは両recordとも伝番`0`
+  - 今回の未指定伝番がself-export上で`0`表現になったことだけを示し、採番、一般blank-to-zero規則、generator defaultとはしない
+- limits/readiness:
+  - arbitrary Profile/customer Context、tax、department、subaccount、任意batch、他製品/versionへ一般化しない
+  - core engine、context-aware runtime、Windows packaged GUIのstrict verified scopeはruntime acceptance済み
+  - production RegistryとFirst Release READYへの昇格は別判断として維持する
+
 ## EVID-JDL-MIXED-BATCH-RUNTIME-001
 
 - source: 完全架空Yayoi 25-field sourceからcontext-aware正式経路で生成したmixed batch
@@ -786,6 +813,6 @@
 
 1. production registryにはcontext-aware implementationの存在を登録するが、production lookupは`UNAVAILABLE`を維持する。
 2. selected ConversionProfile、confirmed target master、tax/company settingsから`JdlTargetContext`をruntime構築し、factory経由でAdapterを生成する経路は実機確認済み。context欠落・不整合は引き続き明示的にblockする。
-3. simple+simple exact pairと固定12-journal mixed batchはallow-listへ追加済み。次はGUIのProfile/Context確認、production enable設計、Windows package E2Eを順に確認する。
+3. simple+simple exact pair、固定12-journal mixed batch、Windows packaged GUIのstrict scopeはruntime確認済み。次はscroll修正版Windows表示、packaged negative-path、production enable判断とoperator checklistを確認する。
 4. subaccount付きrouteは早期follow-up、tax/department付きrouteは別の限定Evidence取得後に判断する。
 5. 未確認の組合せは引き続きstrict preflightでblockし、official schema identityをFormat全体の実機検証済みへ昇格しない。

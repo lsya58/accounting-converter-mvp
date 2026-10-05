@@ -41,6 +41,7 @@ EVIDENCE_ID_SIMPLE_PLUS_SIMPLE_RUNTIME = (
     "EVID-JDL-SIMPLE-PLUS-SIMPLE-RUNTIME-001"
 )
 EVIDENCE_ID_MIXED_BATCH_RUNTIME = "EVID-JDL-MIXED-BATCH-RUNTIME-001"
+EVIDENCE_ID_WINDOWS_GUI_E2E = "EVID-JDL-WINDOWS-GUI-E2E-001"
 EVIDENCE_ID = EVIDENCE_ID_1111
 VERIFIED_ARTIFACT_STATUS = "GENERATOR_AUTHORED_1111_VERIFIED_BY_REAL_IMPORT_SCOPED"
 VERIFIED_ARTIFACT_STATUS_1000 = "GENERATOR_AUTHORED_1000_VERIFIED_BY_REAL_IMPORT_SCOPED"
@@ -888,6 +889,37 @@ def mixed_batch_runtime_real_import_evidence() -> ScopedJdlImportEvidence:
     )
 
 
+def windows_gui_e2e_real_import_evidence() -> ScopedJdlImportEvidence:
+    return ScopedJdlImportEvidence(
+        evidence_id=EVIDENCE_ID_WINDOWS_GUI_E2E,
+        evidence_level=EvidenceLevel.VERIFIED_BY_REAL_IMPORT,
+        product="JDL IBEX 出納帳",
+        observed_version="35.5",
+        verified_scope=(
+            "Windows packaged application and Tkinter GUI",
+            "explicit ConversionProfile and JdlTargetContext selection",
+            "FirstReleaseConversionWorkflow through ConversionService",
+            "AdapterRegistry and JdlOutputRuntimeFactory resolution",
+            "confirmed four-account mapping and validated exempt context",
+            "two same-date simple journals with no tax, subaccount, or department",
+            "exact 1111/1111 output with blank candidate voucher fields",
+            "runtime recognized two records and produced exactly two vouchers",
+            "no merge, split, or duplicate observed",
+            "runtime UI account, amount, description, and balance verification",
+            "post-import JDL self re-export compared across 60 fields",
+            "semantic preservation with zero semantic differences",
+        ),
+        not_verified=(
+            "arbitrary profiles, customer contexts, or mappings",
+            "tax, subaccount, or department workflows",
+            "unsupported or arbitrary batch shapes",
+            "other Yayoi or JDL products and versions",
+            "format-wide production readiness",
+        ),
+        production_output_enabled=False,
+    )
+
+
 def generator_authored_1111_tax_exclusive_real_import_evidence(
 ) -> ScopedJdlImportEvidence:
     return ScopedJdlImportEvidence(
@@ -1226,6 +1258,7 @@ def compare_simple_plus_simple_runtime(
     *,
     runtime_ui_vouchers_blank: bool,
     runtime_logical_voucher_count: int,
+    evidence_id: str = EVIDENCE_ID_SIMPLE_PLUS_SIMPLE_RUNTIME,
 ) -> SimplePairRuntimeComparison:
     if runtime_logical_voucher_count != 2:
         raise ValueError("runtime logical voucher count must be exactly two")
@@ -1266,7 +1299,7 @@ def compare_simple_plus_simple_runtime(
         return int(row[indexes["借方金額"]]) == int(row[indexes["貸方金額"]])
 
     return SimplePairRuntimeComparison(
-        evidence_id=EVIDENCE_ID_SIMPLE_PLUS_SIMPLE_RUNTIME,
+        evidence_id=evidence_id,
         candidate_fields=comparisons,
         candidate_structure=candidate["structure"],
         reexport_structure=reexport["structure"],
@@ -1314,6 +1347,19 @@ def compare_simple_plus_simple_runtime(
         independently_balanced=all(
             balanced(row) for row in (*candidate["rows"], *reexport["rows"])
         ),
+    )
+
+
+def compare_windows_gui_e2e_runtime(
+    candidate_path: Path,
+    reexport_path: Path,
+) -> SimplePairRuntimeComparison:
+    return compare_simple_plus_simple_runtime(
+        candidate_path,
+        reexport_path,
+        runtime_ui_vouchers_blank=True,
+        runtime_logical_voucher_count=2,
+        evidence_id=EVIDENCE_ID_WINDOWS_GUI_E2E,
     )
 
 

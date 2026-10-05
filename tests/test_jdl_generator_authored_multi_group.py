@@ -37,6 +37,7 @@ from experiments.jdl_import.runtime_evidence import (
     EVIDENCE_ID_GENERATOR_MULTIGROUP_SIMPLE_COMPOUND,
     EVIDENCE_ID_MIXED_BATCH_RUNTIME,
     EVIDENCE_ID_SIMPLE_PLUS_SIMPLE_RUNTIME,
+    EVIDENCE_ID_WINDOWS_GUI_E2E,
     RuntimeReexportFieldStatus,
     compare_context_aware_runtime_e2e,
     compare_generator_multi_group_runtime,
@@ -45,6 +46,7 @@ from experiments.jdl_import.runtime_evidence import (
     generator_authored_multi_group_real_import_evidence,
     mixed_batch_runtime_real_import_evidence,
     simple_plus_simple_runtime_real_import_evidence,
+    windows_gui_e2e_real_import_evidence,
 )
 
 
@@ -313,6 +315,17 @@ class JdlGeneratorAuthoredMultiGroupTests(unittest.TestCase):
             "arbitrary journal counts, profile orders, dates, or batch sizes",
             evidence.not_verified,
         )
+
+    def test_windows_gui_e2e_evidence_is_verified_but_not_production_enabled(
+        self,
+    ) -> None:
+        evidence = windows_gui_e2e_real_import_evidence()
+
+        self.assertEqual(evidence.evidence_id, EVIDENCE_ID_WINDOWS_GUI_E2E)
+        self.assertEqual(evidence.evidence_level, EvidenceLevel.VERIFIED_BY_REAL_IMPORT)
+        self.assertFalse(evidence.production_output_enabled)
+        self.assertIn("Windows packaged application and Tkinter GUI", evidence.verified_scope)
+        self.assertIn("format-wide production readiness", evidence.not_verified)
 
     def test_simple_pair_runtime_comparison_is_privacy_safe(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

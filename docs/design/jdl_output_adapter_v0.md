@@ -50,9 +50,9 @@ unknown product/version、未知Evidence profile、未確認master、1000+tax/de
 
 正式ConversionServiceで生成した同日simple+compound artifactは、JDL IBEX出納帳35.5で4 records / exactly 2 vouchersとしてImport成功した。candidate/re-exportの120 fieldsは88 preserved、32 blank-to-nonblankで、semantic differenceは0だった。
 
-Adapter behavior、strict scopeのYayoiInputAdapter起点E2E、context-aware instantiation path、同日`1111 + 1111`のexact pairに加え、12 journals / 22 recordsの固定mixed batchもruntime gateを通過した。一般ユーザー向けContext確認UI、production enable設計、Windows package E2Eが未完了のためregistryは`UNAVAILABLE`、YayoiからJDLはNOT READYを維持する。
+Adapter behavior、strict scopeのYayoiInputAdapter起点E2E、context-aware instantiation path、同日`1111 + 1111`のexact pair、固定mixed batchに加え、Windows packaged GUI経路もruntime gateを通過した。production enable判断、packaged negative-path確認、scroll修正版のWindows再確認が未完了のためregistryは`UNAVAILABLE`、YayoiからJDLはNOT READYを維持する。
 
-初回release前の優先度は、GUIでのProfile/Context確認、production有効化設計、Windows package E2Eを`MUST BEFORE FIRST RELEASE`とする。subaccount付きYayoi -> JDLは`SHOULD SOON AFTER`、tax/department付き経路と任意batch拡張は`OPTIONAL / POST-MVP`とする。
+初回release前は、scroll修正版Windows packageの表示確認、packaged negative-path、production有効化判断とoperator checklistを`MUST BEFORE FIRST RELEASE`とする。subaccount付きYayoi -> JDLは`SHOULD SOON AFTER`、tax/department付き経路と任意batch拡張は`OPTIONAL / POST-MVP`とする。
 
 ## Yayoi Input Software E2E
 
@@ -84,4 +84,6 @@ GUIは入力CSV、ConversionProfile、確認済みJDL設定JSON、出力先を�
 
 実行前にはsource/profile/target/context/mapping/feature/output/no-overwriteをprivacy-safeに表示する。最終確認後だけ`ConversionService`を実行し、成功時は件数、貸借合計、出力検証、Evidence profileを含む既存Verification Reportを表示する。出力済みpath、sourceとの衝突、未確認Mapping、unsupported featureは正式ファイルを生成せず停止する。
 
-この導線の追加はproduction Registryの状態を変更しない。Windows packaged appでGUIから生成し、JDL実機Importまで確認するまではJDL outputは`UNAVAILABLE`、YayoiからJDLはNOT READYを維持する。
+`EVID-JDL-WINDOWS-GUI-E2E-001`により、Windows packaged appでProfile、Context、input、outputを明示選択し、この導線から生成した同日simple 2件がJDL実機へImportされ、UI確認とself re-export比較（60 fields、semantic difference 0）まで完了した。candidate伝番blank、runtime UI blank、re-export `0`は分離し、runtime追加値をgeneration defaultへ昇格しない。
+
+このEvidence反映だけではproduction Registryを自動変更しない。First Releaseのstrict scopeを有効化する判断、packaged app negative-path、運用手順は別gateとして扱う。Windows実機で結果欄の縦方向見切れが観測されたため、既存layoutを維持した縦scrollをFirst Release前のUX修正として追加する。

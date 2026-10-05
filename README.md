@@ -92,7 +92,9 @@ JDL出力では、Conversion Profileと`JdlTargetContext`を分離します。Pr
 
 First Release候補GUIでは、入力ファイル、保存済み変換設定、ローカルの確認済みJDL設定JSON、出力先を利用者が明示選択します。実行前チェックはMapping件数、JDL IBEX出納帳35.5、免税、master件数、単一/複合仕訳件数、no-overwriteを表示し、未確認Mapping、課税、補助、部門、未検証仕訳構成、既存出力を停止します。GUIはCSVを生成せず、Application workflowがRegistry、`ConversionRequest`、`ConversionService`を組み立てます。JDL設定JSONは顧客別ローカルデータとしてGit管理せず、sample masterや既定値を自動投入しません。
 
-このGUI経路はWindows packaged app E2E前のrelease candidateです。production JDL output registrationは引き続き無効で、YayoiからJDLへの一般変換をREADYとは扱いません。
+Windows packaged appのGUIでProfile、JDL Context、入力、出力を利用者が明示選択し、生成した同日simple 2件をJDL IBEX出納帳35.5へImport、UI確認、self re-export比較まで完了しました（`EVID-JDL-WINDOWS-GUI-E2E-001`）。このexact scopeでは60 fieldsのsemantic differenceは0です。arbitrary Profile/Context、tax、補助、部門、任意batchへ一般化せず、production Registryの有効化とFirst Release READYは別gateとして扱います。
+
+Windows実機で結果欄の縦方向見切れが確認されたため、画面全体に縦Scrollbarとmouse wheel操作を追加しています。変換処理やEvidence scopeは変更しません。
 
 ## Conversion Profileの方針
 
@@ -230,4 +232,4 @@ GitHub ActionsではPython 3.12で同じテストを実行し、`tests/fixtures/
 
 `experiments/jdl_import/` には、JDL IBEX出納帳のofficial documented 30-column schemaとJDL IBEX出納帳35.5 observed-compatible serializationを使った研究用CSV generatorがあります。これは正式JDLOutputAdapterではなく、完全架空データでJDL実機の取込条件を確認するための実験環境です。
 
-JDL-origin `1111` round-trip、各generator-authored subset、正式YayoiInputAdapter起点E2Eに加え、ConversionRequest、Registry、context-aware factory、validated target snapshotを通るartifactもJDL IBEX出納帳35.5へのImport、UI確認、self re-export比較まで成功しました（`EVID-JDL-CONTEXT-AWARE-RUNTIME-E2E-001`）。さらに、同日12 logical journals / 22 physical recordsの固定mixed batchもexactly 12 journalsとしてImportされ、4種類のboundaryと660 fieldsのsemantic difference 0を確認しました（`EVID-JDL-MIXED-BATCH-RUNTIME-001`）。strict scopeのcore engine、runtime wiring、限定batchはvalidatedです。ただし一般ユーザー向けContext確認UI、production enable設計、Windows package E2Eが残るため、production registryとYayoiからJDL readinessはまだ変更していません。
+JDL-origin `1111` round-trip、各generator-authored subset、正式YayoiInputAdapter起点E2E、context-aware factory経路、固定mixed batchに加え、Windows packaged GUIから生成したartifactもJDL IBEX出納帳35.5へのImport、UI確認、self re-export比較まで成功しました（`EVID-JDL-WINDOWS-GUI-E2E-001`）。strict scopeのcore engine、runtime wiring、GUI操作経路はvalidatedです。production enable判断、packaged negative-path確認、scroll修正版のWindows再確認が残るため、production registryとYayoiからJDL readinessはまだ変更していません。

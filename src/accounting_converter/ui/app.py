@@ -41,10 +41,32 @@ class AccountingConverterApp:
         self._render(self.controller.load_profiles())
 
     def _build(self) -> None:
-        main = ttk.Frame(self.root, padding=16)
-        main.grid(row=0, column=0, sticky="nsew")
+        container = ttk.Frame(self.root)
+        container.grid(row=0, column=0, sticky="nsew")
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
+        container.columnconfigure(0, weight=1)
+        container.rowconfigure(0, weight=1)
+
+        self.canvas = tk.Canvas(container, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(
+            container,
+            orient="vertical",
+            command=self.canvas.yview,
+        )
+        self.canvas.configure(yscrollcommand=scrollbar.set)
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
+
+        main = ttk.Frame(self.canvas, padding=16)
+        self._canvas_window = self.canvas.create_window(
+            (0, 0),
+            window=main,
+            anchor="nw",
+        )
+        main.bind("<Configure>", self._update_scroll_region)
+        self.canvas.bind("<Configure>", self._resize_scroll_content)
+        self.root.bind_all("<MouseWheel>", self._on_mouse_wheel)
         main.columnconfigure(1, weight=1)
 
         title = ttk.Label(main, text="会計データ変換ツール", font=("", 18, "bold"))
@@ -167,6 +189,16 @@ class AccountingConverterApp:
         ttk.Button(main, text="検証レポート", command=self._show_report).grid(
             row=12, column=2, sticky="ew", pady=(12, 0)
         )
+
+    def _update_scroll_region(self, _event=None) -> None:
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def _resize_scroll_content(self, event) -> None:
+        self.canvas.itemconfigure(self._canvas_window, width=event.width)
+
+    def _on_mouse_wheel(self, event) -> None:
+        if event.delta:
+            self.canvas.yview_scroll(-int(event.delta / 120), "units")
 
     def _reload_profiles(self) -> None:
         self._render(self.controller.load_profiles())
