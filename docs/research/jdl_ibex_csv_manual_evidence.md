@@ -85,6 +85,8 @@ JDL IBEX出納帳35.5の完全架空3行振替伝票self-exportでも、`1110 ->
 
 さらに、同日・全伝番blankの `1111 + 1110 -> 1100 -> 1101` を1 CSVに置いたgenerator-authored artifactが実機でexactly 2 vouchersとしてImportされた（`EVID-JDL-GENERATOR-MULTIGROUP-SIMPLE-COMPOUND-001`）。同じcontext-aware正式経路で生成した同日`1111 + 1111`もexactly 2 vouchersとしてImportされ、self re-export比較60 fieldsのsemantic differenceは0だった（`EVID-JDL-SIMPLE-PLUS-SIMPLE-RUNTIME-001`）。いずれもUI伝票番号欄はblank、self re-exportの伝番は`0`だった。この結果はManualのflag semanticsと整合するが、JDL内部grouping algorithm、任意件数・順序、blank/`0`の一般規則を証明しない。candidate raw、runtime UI、re-export rawの3層を分離して保持する。
 
+同じ正式経路で生成した固定12-journal mixed batchも、22 recordsからexactly 12 logical journalsとしてImportされた（`EVID-JDL-MIXED-BATCH-RUNTIME-001`）。simple/compoundを繰り返す4種類のboundary、各group貸借、row orderをUIとself re-exportで確認し、660 fieldsのsemantic differenceは0だった。これは当該固定順とstrict feature scopeのEvidenceであり、任意batch size/orderやJDL内部grouping algorithmを示さない。
+
 ## Account And Master Rules
 
 - 勘定科目は、科目コード、科目名称、科目正式名称のいずれか1つが入力されていれば取り込めると記載されている。

@@ -14,12 +14,10 @@ from accounting_converter.profiles.jdl_official import (
 )
 
 from .models import (
-    JDL_FILE_COMBINATION_GATE_METADATA_KEY,
     JDL_OUTPUT_FORMAT_ID,
     JDL_OUTPUT_METADATA_KEY,
     JdlDepartmentIdentity,
     JdlEvidenceProfile,
-    JdlFileCombinationGate,
     JdlOutputPlan,
     JdlOutputRow,
     JdlSubaccountIdentity,
@@ -51,7 +49,7 @@ EVIDENCE_IDS = {
 }
 MULTIGROUP_EVIDENCE_ID = "EVID-JDL-GENERATOR-MULTIGROUP-SIMPLE-COMPOUND-001"
 SIMPLE_PLUS_SIMPLE_EVIDENCE_ID = "EVID-JDL-SIMPLE-PLUS-SIMPLE-RUNTIME-001"
-MIXED_BATCH_UNTESTED_GATE_ID = "UNTESTED-JDL-MIXED-BATCH-RUNTIME-GATE"
+MIXED_BATCH_EVIDENCE_ID = "EVID-JDL-MIXED-BATCH-RUNTIME-001"
 MIXED_BATCH_PROFILE_SEQUENCE = (
     JdlEvidenceProfile.BASIC_1111,
     JdlEvidenceProfile.BASIC_1111,
@@ -414,31 +412,12 @@ class JdlOutputPreflight:
         profiles: tuple[JdlEvidenceProfile, ...],
         errors: list[ValidationResult],
     ) -> None:
-        has_mixed_batch_gate = any(
-            entry.metadata.get(JDL_FILE_COMBINATION_GATE_METADATA_KEY)
-            == JdlFileCombinationGate.MIXED_BATCH_UNTESTED.value
-            for entry in entries
-        )
-        mixed_batch_release_gate = (
+        verified_mixed_batch = (
             profiles == MIXED_BATCH_PROFILE_SEQUENCE
             and len(entries) == len(MIXED_BATCH_PROFILE_SEQUENCE)
             and len({entry.date for entry in entries}) == 1
-            and all(
-                entry.metadata.get(JDL_FILE_COMBINATION_GATE_METADATA_KEY)
-                == JdlFileCombinationGate.MIXED_BATCH_UNTESTED.value
-                for entry in entries
-            )
         )
-        if has_mixed_batch_gate and not mixed_batch_release_gate:
-            errors.append(
-                self._error(
-                    "JDL-OUT-RELEASE-GATE-SCOPE",
-                    "mixed batch release gateは検証対象のexact 12-journal同日構成だけ許可します。",
-                    "journal_groups",
-                )
-            )
-            return
-        if mixed_batch_release_gate:
+        if verified_mixed_batch:
             return
         if len(profiles) == 1:
             return

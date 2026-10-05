@@ -438,6 +438,38 @@
   - 3件以上、任意batch size、異なる日付、tax/subaccount/department付きsimple、別製品/versionには拡張しない
   - production registryは`UNAVAILABLE`、一般Yayoi -> JDL readinessはNOT READYを維持する
 
+## EVID-JDL-MIXED-BATCH-RUNTIME-001
+
+- source: 完全架空Yayoi 25-field sourceからcontext-aware正式経路で生成したmixed batch
+- product/version evidence: JDL IBEX出納帳 35.5
+- evidence level: `VERIFIED_BY_REAL_IMPORT`（このexact batch sequenceと会社設定に限定）
+- verified structure:
+  - 同日12 logical journals / 22 physical records
+  - simple 7件は`1111`、compound 5件はexact `1110 -> 1100 -> 1101`
+  - simple-simple、simple-compound、compound-compound、compound-simpleの4 boundaryを含む固定順
+  - candidate伝番は全22 recordsでblank、免税、補助/部門/tax fieldsなし
+  - confirmed 4-account Mapping、validated runtime Context、OutputValidator、atomic publishを経由
+- runtime result:
+  - JDLは22 recordsを認識してImportを正常終了
+  - UIでexactly 12 logical journalsを確認
+  - merge、split、duplicateは観測されず、全groupの科目・金額・摘要・貸借を確認
+- raw re-export:
+  - 2883 bytes、SHA-256 `46a2f5686ddcf61020941683bf9d51c14c90827f803f7f78b76391de3eb052dc`
+  - CP932/Shift_JIS strict round-trip可能、UTF-8不可、BOMなし、CRLF
+  - preamble 3 rows、official header 1 row、30-column data 22 rows
+  - candidate/re-export 660 fields中482 `PRESERVED`、178 `BLANK_REEXPORT_NONBLANK`
+  - `NORMALIZED`、`DIFFERENT`、`UNKNOWN`は0。semantic differenceも0
+- voucher evidence separation:
+  - candidate raw: 全22 recordsの伝番blank
+  - runtime UI: voucher number未指定として観測
+  - self re-export raw: 全22 recordsの伝番`0`
+  - 今回の未指定伝番がself-export上で`0`表現になったことだけを示す
+  - 採番、一般的なblank-to-zero規則、generation defaultとは解釈しない
+- strict allow-list decision:
+  - 今回の固定12-journal profile順、同日、strict basic/1D3C feature scopeだけを許可する
+  - 任意件数・順序、別compound shape、tax/subaccount/department付きbatch、別製品/versionへ一般化しない
+  - production registryは`UNAVAILABLE`、一般Yayoi -> JDL readinessとGUI-safe判定は変更しない
+
 ## EVID-JDL-CONVERSION-SERVICE-E2E-001
 
 - source: 完全架空JSONを正式`ConversionService`経路で変換したrelease-gate artifact
@@ -750,10 +782,10 @@
 
 ## Next Verification Gate
 
-単一simple、単一compound、限定master/tax条件、同日simple+compound、同日simple+simple、正式YayoiInputAdapter起点artifactに加え、context-aware registry/factory経路の実機Import・UI確認・self re-export比較まで完了した。strict scopeのcore conversion engineとexact 2-journal境界はvalidatedだが、operational batch、GUI確認と一般利用readinessは別gateとして残る。
+単一simple、単一compound、限定master/tax条件、同日simple+compound、同日simple+simple、正式YayoiInputAdapter起点artifact、context-aware registry/factory経路に加え、固定12-journal mixed batchの実機Import・UI確認・self re-export比較まで完了した。strict scopeのcore conversion engine、exact boundary、限定operational batchはvalidatedだが、GUI確認と一般利用readinessは別gateとして残る。
 
 1. production registryにはcontext-aware implementationの存在を登録するが、production lookupは`UNAVAILABLE`を維持する。
 2. selected ConversionProfile、confirmed target master、tax/company settingsから`JdlTargetContext`をruntime構築し、factory経由でAdapterを生成する経路は実機確認済み。context欠落・不整合は引き続き明示的にblockする。
-3. simple+simpleはexact pairだけallow-listへ追加済み。10-20 records mixed batchを次の最優先runtime gateとし、compound+compoundは初回scopeに複合仕訳を含める場合の追加gateとする。
+3. simple+simple exact pairと固定12-journal mixed batchはallow-listへ追加済み。次はGUIのProfile/Context確認、production enable設計、Windows package E2Eを順に確認する。
 4. subaccount付きrouteは早期follow-up、tax/department付きrouteは別の限定Evidence取得後に判断する。
 5. 未確認の組合せは引き続きstrict preflightでblockし、official schema identityをFormat全体の実機検証済みへ昇格しない。

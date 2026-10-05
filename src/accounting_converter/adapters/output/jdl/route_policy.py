@@ -7,12 +7,7 @@ from accounting_converter.application.journal_route import JournalRouteResult
 from accounting_converter.domain.journal import JournalEntry
 from accounting_converter.domain.validation import Severity, ValidationResult
 
-from .models import (
-    JDL_FILE_COMBINATION_GATE_METADATA_KEY,
-    JDL_OUTPUT_METADATA_KEY,
-    JdlEvidenceProfile,
-    JdlFileCombinationGate,
-)
+from .models import JDL_OUTPUT_METADATA_KEY, JdlEvidenceProfile
 
 
 class ExplicitJdlEvidenceRoutePolicy:
@@ -23,11 +18,9 @@ class ExplicitJdlEvidenceRoutePolicy:
         assignments: Mapping[str, JdlEvidenceProfile],
         *,
         route_id: str,
-        file_combination_gate: JdlFileCombinationGate | None = None,
     ) -> None:
         self._assignments = dict(assignments)
         self._route_id = route_id
-        self._file_combination_gate = file_combination_gate
 
     def apply(self, entries: Sequence[JournalEntry]) -> JournalRouteResult:
         errors: list[ValidationResult] = []
@@ -64,15 +57,6 @@ class ExplicitJdlEvidenceRoutePolicy:
                     JDL_OUTPUT_METADATA_KEY: self._assignments[entry.id].value,
                     "jdl_output_route_assignment": "EXPLICIT",
                     "jdl_output_route_id": self._route_id,
-                    **(
-                        {
-                            JDL_FILE_COMBINATION_GATE_METADATA_KEY: (
-                                self._file_combination_gate.value
-                            )
-                        }
-                        if self._file_combination_gate is not None
-                        else {}
-                    ),
                 },
             )
             for entry in entries

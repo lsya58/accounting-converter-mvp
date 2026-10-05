@@ -20,11 +20,10 @@ from accounting_converter.adapters.output.jdl import (
     JdlContextProvenance,
     JdlDepartmentIdentity,
     JdlEvidenceProfile,
-    JdlFileCombinationGate,
     JdlTargetContext,
     JdlTargetContextBuilder,
     JdlSubaccountIdentity,
-    MIXED_BATCH_UNTESTED_GATE_ID,
+    MIXED_BATCH_EVIDENCE_ID,
     SIMPLE_PLUS_SIMPLE_EVIDENCE_ID,
     jdl_ibex_35_5_output_profile,
 )
@@ -237,7 +236,7 @@ class YayoiToJdlFormalE2ETests(unittest.TestCase):
             result.output_validation_result.evidence_profiles,
         )
 
-    def test_context_aware_mixed_batch_release_gate_is_explicitly_untested(
+    def test_context_aware_mixed_batch_uses_verified_runtime_evidence(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -248,7 +247,7 @@ class YayoiToJdlFormalE2ETests(unittest.TestCase):
             )
             output = root / "jdl_mixed_batch.csv"
             profile = self.conversion_profile(self.accounts)
-            result = self.service(profile, self.mixed_batch_route(gated=True)).convert(
+            result = self.service(profile, self.mixed_batch_route()).convert(
                 self.request(source, output, profile)
             )
             rows = list(
@@ -273,24 +272,22 @@ class YayoiToJdlFormalE2ETests(unittest.TestCase):
             ],
         )
         self.assertIn(
-            MIXED_BATCH_UNTESTED_GATE_ID,
-            result.output_validation_result.evidence_profiles,
-        )
-        self.assertNotIn(
-            "EVID-JDL-MIXED-BATCH-RUNTIME-001",
+            MIXED_BATCH_EVIDENCE_ID,
             result.output_validation_result.evidence_profiles,
         )
 
-    def test_mixed_batch_without_release_gate_remains_blocked(self) -> None:
+    def test_mixed_batch_with_unverified_order_remains_blocked(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
+            rows = self.mixed_batch_rows()
+            unverified_order = [*rows[:5], *rows[8:9], *rows[5:8], *rows[9:]]
             source = self.write_source(
                 root / "yayoi_mixed_batch.csv",
-                rows=self.mixed_batch_rows(),
+                rows=unverified_order,
             )
             output = root / "must_not_exist.csv"
             profile = self.conversion_profile(self.accounts)
-            result = self.service(profile, self.mixed_batch_route(gated=False)).convert(
+            result = self.service(profile, self.mixed_batch_route()).convert(
                 self.request(source, output, profile)
             )
 
@@ -703,7 +700,7 @@ class YayoiToJdlFormalE2ETests(unittest.TestCase):
         )
 
     @staticmethod
-    def mixed_batch_route(*, gated: bool) -> ExplicitJdlEvidenceRoutePolicy:
+    def mixed_batch_route() -> ExplicitJdlEvidenceRoutePolicy:
         profiles = (
             JdlEvidenceProfile.BASIC_1111,
             JdlEvidenceProfile.BASIC_1111,
@@ -725,9 +722,6 @@ class YayoiToJdlFormalE2ETests(unittest.TestCase):
         return ExplicitJdlEvidenceRoutePolicy(
             assignments,
             route_id="MIXED-BATCH-RUNTIME-GATE",
-            file_combination_gate=(
-                JdlFileCombinationGate.MIXED_BATCH_UNTESTED if gated else None
-            ),
         )
 
     def mixed_batch_rows(self) -> list[tuple[str, ...]]:

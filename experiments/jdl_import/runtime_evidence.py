@@ -40,6 +40,7 @@ EVIDENCE_ID_CONTEXT_AWARE_RUNTIME_E2E = (
 EVIDENCE_ID_SIMPLE_PLUS_SIMPLE_RUNTIME = (
     "EVID-JDL-SIMPLE-PLUS-SIMPLE-RUNTIME-001"
 )
+EVIDENCE_ID_MIXED_BATCH_RUNTIME = "EVID-JDL-MIXED-BATCH-RUNTIME-001"
 EVIDENCE_ID = EVIDENCE_ID_1111
 VERIFIED_ARTIFACT_STATUS = "GENERATOR_AUTHORED_1111_VERIFIED_BY_REAL_IMPORT_SCOPED"
 VERIFIED_ARTIFACT_STATUS_1000 = "GENERATOR_AUTHORED_1000_VERIFIED_BY_REAL_IMPORT_SCOPED"
@@ -847,6 +848,38 @@ def simple_plus_simple_runtime_real_import_evidence() -> ScopedJdlImportEvidence
             "different dates, arbitrary group orders, or nonblank voucher numbers",
             "compound plus compound boundaries",
             "tax, subaccount, or department in repeated simple journals",
+            "other Yayoi or JDL products and versions",
+            "general-user GUI workflow",
+            "format-wide production readiness",
+        ),
+        production_output_enabled=False,
+    )
+
+
+def mixed_batch_runtime_real_import_evidence() -> ScopedJdlImportEvidence:
+    return ScopedJdlImportEvidence(
+        evidence_id=EVIDENCE_ID_MIXED_BATCH_RUNTIME,
+        evidence_level=EvidenceLevel.VERIFIED_BY_REAL_IMPORT,
+        product="JDL IBEX 出納帳",
+        observed_version="35.5",
+        verified_scope=(
+            "synthetic Yayoi AE19 input through the formal context-aware route",
+            "confirmed four-account mapping and validated exempt target context",
+            "exactly twelve same-date logical journals and twenty-two physical records",
+            "seven basic 1111 journals and five exact 1110/1100/1101 groups",
+            "the verified fixed simple and compound profile order",
+            "simple-simple, simple-compound, compound-compound, and compound-simple boundaries",
+            "blank candidate voucher fields across all records",
+            "runtime recognized twenty-two records and produced exactly twelve journals",
+            "no merge, split, or duplicate observed",
+            "all group balances, row order, account placement, amounts, and descriptions preserved",
+            "post-import JDL self re-export compared across 660 fields",
+        ),
+        not_verified=(
+            "arbitrary journal counts, profile orders, dates, or batch sizes",
+            "compound shapes other than exact one-debit-to-three-credit groups",
+            "tax, subaccount, or department in a mixed batch",
+            "nonblank supplied voucher numbers",
             "other Yayoi or JDL products and versions",
             "general-user GUI workflow",
             "format-wide production readiness",

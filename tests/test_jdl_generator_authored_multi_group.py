@@ -35,6 +35,7 @@ from experiments.jdl_import.runtime_evidence import (
     EVIDENCE_ID_CONTEXT_AWARE_RUNTIME_E2E,
     EVIDENCE_ID_CONVERSION_SERVICE_E2E,
     EVIDENCE_ID_GENERATOR_MULTIGROUP_SIMPLE_COMPOUND,
+    EVIDENCE_ID_MIXED_BATCH_RUNTIME,
     EVIDENCE_ID_SIMPLE_PLUS_SIMPLE_RUNTIME,
     RuntimeReexportFieldStatus,
     compare_context_aware_runtime_e2e,
@@ -42,6 +43,7 @@ from experiments.jdl_import.runtime_evidence import (
     compare_simple_plus_simple_runtime,
     conversion_service_e2e_real_import_evidence,
     generator_authored_multi_group_real_import_evidence,
+    mixed_batch_runtime_real_import_evidence,
     simple_plus_simple_runtime_real_import_evidence,
 )
 
@@ -293,6 +295,22 @@ class JdlGeneratorAuthoredMultiGroupTests(unittest.TestCase):
         self.assertIn("exactly two same-date simple journals", evidence.verified_scope)
         self.assertIn(
             "three or more simple journals or arbitrary batch sizes",
+            evidence.not_verified,
+        )
+
+    def test_mixed_batch_runtime_evidence_is_verified_but_strictly_scoped(
+        self,
+    ) -> None:
+        evidence = mixed_batch_runtime_real_import_evidence()
+        self.assertEqual(evidence.evidence_id, EVIDENCE_ID_MIXED_BATCH_RUNTIME)
+        self.assertEqual(evidence.evidence_level, EvidenceLevel.VERIFIED_BY_REAL_IMPORT)
+        self.assertFalse(evidence.production_output_enabled)
+        self.assertIn(
+            "exactly twelve same-date logical journals and twenty-two physical records",
+            evidence.verified_scope,
+        )
+        self.assertIn(
+            "arbitrary journal counts, profile orders, dates, or batch sizes",
             evidence.not_verified,
         )
 

@@ -20,7 +20,7 @@ Target identityはJDL IBEX出納帳35.5 / Journal CSV Input / official documente
 
 file-level multi-groupは、同日の`SUPPORTED_1111_BASIC + SUPPORTED_COMPOUND_1D3C`を`EVID-JDL-GENERATOR-MULTIGROUP-SIMPLE-COMPOUND-001`で、同日の`SUPPORTED_1111_BASIC + SUPPORTED_1111_BASIC`を`EVID-JDL-SIMPLE-PLUS-SIMPLE-RUNTIME-001`で許可する。いずれもexact 2-journal combinationに限定し、profileは仕訳metadataへ明示して特徴から推測しない。3 journals以上、compound+compound、異なる日付、他profileの組合せは引き続きblockする。
 
-operational batchの実機確認用として、`MIXED_BATCH_RELEASE_GATE_UNTESTED`を全仕訳へ明示した場合だけ、同日12 journals（simple 7 / exact 1D3C compound 5）の固定profile順を生成できる。この例外は22 physical recordsのprivate candidate専用で、通常allow-list、Evidence、production capabilityではない。markerなし、順序・件数・日付の差異、未対応featureの混入はblockし、Human Importとself re-export比較後にのみ`EVID-JDL-MIXED-BATCH-RUNTIME-001`への昇格を再評価する。
+同日12 journals（simple 7 / exact 1D3C compound 5）、22 physical recordsの固定profile順は、`EVID-JDL-MIXED-BATCH-RUNTIME-001`で実機検証済みのstrict allow-listとする。4種類のgroup boundaryを保持したexact sequenceだけを許可し、順序・件数・日付の差異、任意batch、未対応featureの混入はblockする。
 
 ## Preflight
 
@@ -50,9 +50,9 @@ unknown product/version、未知Evidence profile、未確認master、1000+tax/de
 
 正式ConversionServiceで生成した同日simple+compound artifactは、JDL IBEX出納帳35.5で4 records / exactly 2 vouchersとしてImport成功した。candidate/re-exportの120 fieldsは88 preserved、32 blank-to-nonblankで、semantic differenceは0だった。
 
-Adapter behavior、strict scopeのYayoiInputAdapter起点E2E、context-aware instantiation pathに加え、同日`1111 + 1111`のexact 2-journal境界もruntime gateを通過した。ただしcompound+compound、10-20 records mixed batch、一般ユーザー向けContext確認UIが未完了のためregistryは`UNAVAILABLE`、YayoiからJDLはNOT READYを維持する。
+Adapter behavior、strict scopeのYayoiInputAdapter起点E2E、context-aware instantiation path、同日`1111 + 1111`のexact pairに加え、12 journals / 22 recordsの固定mixed batchもruntime gateを通過した。一般ユーザー向けContext確認UI、production enable設計、Windows package E2Eが未完了のためregistryは`UNAVAILABLE`、YayoiからJDLはNOT READYを維持する。
 
-初回release前の優先度は、10-20 records mixed batch、GUIでのProfile/Context確認、production有効化判断を`MUST BEFORE FIRST RELEASE`とする。compound+compoundは初回scopeに複合仕訳を含める場合の追加gate、subaccount付きYayoi -> JDLは`SHOULD SOON AFTER`、tax/department付き経路は`OPTIONAL / POST-MVP`とする。
+初回release前の優先度は、GUIでのProfile/Context確認、production有効化設計、Windows package E2Eを`MUST BEFORE FIRST RELEASE`とする。subaccount付きYayoi -> JDLは`SHOULD SOON AFTER`、tax/department付き経路と任意batch拡張は`OPTIONAL / POST-MVP`とする。
 
 ## Yayoi Input Software E2E
 

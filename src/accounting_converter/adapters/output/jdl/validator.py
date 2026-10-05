@@ -20,8 +20,8 @@ from accounting_converter.profiles.jdl_official import (
 from .models import JDL_OUTPUT_FORMAT_ID, JdlEvidenceProfile, JdlTargetContext
 from .preflight import (
     EVIDENCE_IDS,
+    MIXED_BATCH_EVIDENCE_ID,
     MIXED_BATCH_PROFILE_SEQUENCE,
-    MIXED_BATCH_UNTESTED_GATE_ID,
     MULTIGROUP_EVIDENCE_ID,
     SIMPLE_PLUS_SIMPLE_EVIDENCE_ID,
     JdlOutputPreflight,
@@ -87,7 +87,7 @@ class JDLOutputValidator:
 
         evidence_profiles = tuple(EVIDENCE_IDS[item] for item in preflight.plan.evidence_profiles)
         if preflight.plan.evidence_profiles == MIXED_BATCH_PROFILE_SEQUENCE:
-            evidence_profiles = (*evidence_profiles, MIXED_BATCH_UNTESTED_GATE_ID)
+            evidence_profiles = (*evidence_profiles, MIXED_BATCH_EVIDENCE_ID)
         elif len(preflight.plan.evidence_profiles) == 2:
             combination_id = (
                 SIMPLE_PLUS_SIMPLE_EVIDENCE_ID
