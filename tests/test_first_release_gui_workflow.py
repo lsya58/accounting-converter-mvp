@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import tempfile
 import unittest
 from dataclasses import replace
@@ -39,6 +40,142 @@ from accounting_converter.ui.controllers import AccountingConverterController
 
 
 class FirstReleaseGuiWorkflowTests(unittest.TestCase):
+    def test_valid_profile_import_adds_selects_and_preserves_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source_store = ConversionProfileStore(root / "source")
+            target_store = ConversionProfileStore(root / "target")
+            profile = self.profile()
+            source_store.create(profile)
+            source = root / "source" / f"{profile.profile_id}.json"
+            before = source.read_bytes()
+            controller = AccountingConverterController(profile_store=target_store)
+
+            state = controller.import_profile(source)
+
+            self.assertEqual(source.read_bytes(), before)
+            self.assertEqual(state.selected_profile_id, profile.profile_id)
+            self.assertEqual(len(state.profiles), 1)
+            self.assertEqual(target_store.get(profile.profile_id).profile_name, profile.profile_name)
+            self.assertIn("追加しました", state.user_message)
+
+    def test_malformed_profile_json_is_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = root / "malformed.json"
+            source.write_text("{malformed", encoding="utf-8")
+            controller = AccountingConverterController(
+                profile_store=ConversionProfileStore(root / "profiles")
+            )
+
+            state = controller.import_profile(source)
+
+            self.assertEqual(state.profiles, ())
+            self.assertFalse(state.conversion_available)
+            self.assertIn("追加できませんでした", state.user_message)
+
+    def test_profile_with_missing_required_schema_field_is_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            store = ConversionProfileStore(root / "profiles")
+            payload = json.loads(store.to_json_text(self.profile()))
+            del payload["profile_name"]
+            source = root / "missing-field.json"
+            source.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            controller = AccountingConverterController(profile_store=store)
+
+            state = controller.import_profile(source)
+
+            self.assertEqual(state.profiles, ())
+            self.assertFalse(state.conversion_available)
+
+    def test_unsupported_profile_schema_version_is_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            store = ConversionProfileStore(root / "profiles")
+            payload = json.loads(store.to_json_text(self.profile()))
+            payload["schema_version"] = "999"
+            source = root / "unsupported-version.json"
+            source.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            controller = AccountingConverterController(profile_store=store)
+
+            state = controller.import_profile(source)
+
+            self.assertEqual(state.profiles, ())
+            self.assertFalse(state.conversion_available)
+
+    def test_profile_outside_first_release_identity_is_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            store = ConversionProfileStore(root / "profiles")
+            payload = json.loads(store.to_json_text(self.profile()))
+            payload["source_format_identity"]["product"] = "Unsupported Product"
+            source = root / "wrong-identity.json"
+            source.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            controller = AccountingConverterController(profile_store=store)
+
+            state = controller.import_profile(source)
+
+            self.assertEqual(state.profiles, ())
+            self.assertFalse(state.conversion_available)
+            self.assertIn("追加できませんでした", state.user_message)
+
+    def test_unresolved_mapping_profile_import_is_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            store = ConversionProfileStore(root / "profiles")
+            payload = json.loads(store.to_json_text(self.profile()))
+            for mapping in payload["account_mappings"]:
+                mapping["status"] = MappingStatus.UNRESOLVED.value
+                mapping["target_value"] = None
+            source = root / "unresolved.json"
+            source.write_text(
+                json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+            )
+            controller = AccountingConverterController(profile_store=store)
+
+            state = controller.import_profile(source)
+
+            self.assertEqual(state.profiles, ())
+            self.assertFalse(state.conversion_available)
+
+    def test_duplicate_profile_id_does_not_overwrite_existing_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            store = ConversionProfileStore(root / "profiles")
+            profile = self.profile()
+            store.create(profile)
+            existing_path = root / "profiles" / f"{profile.profile_id}.json"
+            before = existing_path.read_bytes()
+            source = root / "duplicate.json"
+            source.write_text(store.to_json_text(profile), encoding="utf-8")
+            controller = AccountingConverterController(profile_store=store)
+            controller.load_profiles()
+
+            state = controller.import_profile(source)
+
+            self.assertEqual(existing_path.read_bytes(), before)
+            self.assertEqual(len(state.profiles), 1)
+            self.assertIn("上書きしません", state.user_message)
+
+    def test_duplicate_profile_name_with_new_id_is_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            store = ConversionProfileStore(root / "profiles")
+            profile = self.profile()
+            store.create(profile)
+            duplicate_name = replace(profile, profile_id="another-profile-id")
+            source = root / "duplicate-name.json"
+            source.write_text(store.to_json_text(duplicate_name), encoding="utf-8")
+            controller = AccountingConverterController(profile_store=store)
+            controller.load_profiles()
+
+            state = controller.import_profile(source)
+
+            self.assertEqual(len(state.profiles), 1)
+            self.assertFalse((root / "profiles" / "another-profile-id.json").exists())
+            self.assertIn("上書きしません", state.user_message)
+
     def test_invalid_context_selection_updates_display_and_disables_execution(
         self,
     ) -> None:

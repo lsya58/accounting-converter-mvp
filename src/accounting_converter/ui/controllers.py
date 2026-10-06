@@ -21,10 +21,15 @@ from accounting_converter.application.conversion_preparation import (
 )
 from accounting_converter.diagnostics.jdl_csv import JdlCsvStructuralAnalyzer
 from accounting_converter.diagnostics.yayoi_csv import YayoiCsvAnalyzer
-from accounting_converter.domain.conversion_profile import ConversionProfile
+from accounting_converter.domain.conversion_profile import (
+    ConversionProfile,
+    FormatIdentityMatchStatus,
+)
+from accounting_converter.domain.mapping import MappingStatus
 from accounting_converter.infrastructure.conversion_profile_store import (
     ConversionProfileStore,
     ConversionProfileStoreError,
+    DuplicateProfileError,
     default_profile_store_dir,
 )
 from accounting_converter.infrastructure.jdl_target_context_loader import (
@@ -33,6 +38,8 @@ from accounting_converter.infrastructure.jdl_target_context_loader import (
 )
 from accounting_converter.profiles.known_formats import (
     jdl_ibex_cashbook_35_5_observed_schema_definition,
+    jdl_ibex_cashbook_official_journal_import_schema_definition,
+    yayoi_ae19_direct_export_observed_schema,
     yayoi_desktop_import_25_documented_schema,
 )
 
@@ -108,10 +115,53 @@ class AccountingConverterController:
             self.state,
             profiles=profiles,
             user_message=(
-                "保存済み変換設定はありません。"
+                "変換設定がまだ登録されていません。管理者から受け取った"
+                "変換設定ファイルを「設定を追加」から登録してください。"
                 if not profiles
                 else "保存済み変換設定を読み込みました。"
             ),
+            developer_error=None,
+        )
+        return self.state
+
+    def import_profile(self, path: Path | str) -> AppState:
+        source = Path(path)
+        self._prepared = None
+        try:
+            profile = self.profile_store.from_json_text(
+                source.read_text(encoding="utf-8")
+            )
+            self._validate_first_release_profile(profile)
+            existing = self.profile_store.list()
+            if any(item.profile_id == profile.profile_id for item in existing):
+                raise DuplicateProfileError(
+                    f"profile already exists: {profile.profile_id}"
+                )
+            if any(item.profile_name == profile.profile_name for item in existing):
+                raise DuplicateProfileError(
+                    f"profile name already exists: {profile.profile_name}"
+                )
+            imported = self.profile_store.import_profile(source)
+        except DuplicateProfileError as error:
+            return self._fail_state(
+                "同じIDまたは名前の変換設定が既にあります。既存設定は上書きしません。",
+                error,
+                diagnostic_status=self.state.diagnostic_status,
+            )
+        except (ConversionProfileStoreError, OSError, UnicodeError) as error:
+            return self._fail_state(
+                "変換設定ファイルを追加できませんでした。内容とversionを確認してください。",
+                error,
+                diagnostic_status=self.state.diagnostic_status,
+            )
+
+        self.load_profiles()
+        self.select_profile(imported.profile_id)
+        self.state = replace(
+            self.state,
+            conversion_available=False,
+            conversion_summary=None,
+            user_message=f"変換設定を追加しました: {imported.profile_name}",
             developer_error=None,
         )
         return self.state
@@ -176,7 +226,10 @@ class AccountingConverterController:
                 selected_context_file=None,
                 conversion_available=False,
                 conversion_summary=None,
-                user_message="JDL設定が未選択です。",
+                user_message=(
+                    "JDL設定が未選択です。管理者から受け取った、この会社専用の"
+                    "確認済みJDL設定ファイルを選択してください。"
+                ),
             )
             return self.state
         self.state = replace(
@@ -423,6 +476,35 @@ class AccountingConverterController:
         if self.state.selected_profile_id is None:
             return None
         return self.profile_store.get(self.state.selected_profile_id)
+
+    @staticmethod
+    def _validate_first_release_profile(profile: ConversionProfile) -> None:
+        identity_status = profile.verify_format_identity(
+            yayoi_ae19_direct_export_observed_schema().identity,
+            jdl_ibex_cashbook_official_journal_import_schema_definition().identity,
+        )
+        if identity_status not in {
+            FormatIdentityMatchStatus.MATCH,
+            FormatIdentityMatchStatus.COMPATIBLE_CANDIDATE,
+        }:
+            raise ConversionProfileStoreError(
+                "profile format identity is outside the First Release route"
+            )
+        mappings = (
+            *profile.account_mappings.values(),
+            *profile.subaccount_mappings.values(),
+            *profile.subaccount_context_mappings.values(),
+            *profile.department_mappings.values(),
+            *profile.tax_mappings.values(),
+        )
+        if any(
+            mapping.status is not MappingStatus.USER_CONFIRMED
+            or mapping.target_value is None
+            for mapping in mappings
+        ):
+            raise ConversionProfileStoreError(
+                "First Release profile contains unconfirmed or unresolved mappings"
+            )
 
     def _source_candidate_identity(self) -> Any:
         if self.state.diagnostic_kind is DiagnosticKind.JDL:

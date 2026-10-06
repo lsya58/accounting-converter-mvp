@@ -40,7 +40,7 @@ class UiControllerTests(unittest.TestCase):
             state = controller.load_profiles()
 
         self.assertEqual(state.profiles, ())
-        self.assertIn("保存済み変換設定はありません", state.user_message)
+        self.assertIn("設定を追加", state.user_message)
 
     def test_profile_list_is_loaded(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

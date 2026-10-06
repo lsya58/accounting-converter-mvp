@@ -80,11 +80,16 @@ class AccountingConverterApp:
         )
         self.profile_combo.grid(row=1, column=1, sticky="ew", padx=8)
         self.profile_combo.bind("<<ComboboxSelected>>", self._on_profile_selected)
-        ttk.Button(main, text="再読込", command=self._reload_profiles).grid(
-            row=1,
-            column=2,
-            sticky="ew",
+        profile_actions = ttk.Frame(main)
+        profile_actions.grid(row=1, column=2, sticky="ew")
+        ttk.Button(profile_actions, text="再読込", command=self._reload_profiles).grid(
+            row=0, column=0, sticky="ew"
         )
+        ttk.Button(
+            profile_actions,
+            text="設定を追加",
+            command=self._import_profile,
+        ).grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
         ttk.Label(main, text="入力ファイル").grid(row=2, column=0, sticky="w", pady=(12, 0))
         ttk.Label(main, textvariable=self.file_var).grid(
@@ -132,7 +137,9 @@ class AccountingConverterApp:
             pady=(16, 0),
         )
 
-        ttk.Label(main, text="JDL設定").grid(row=5, column=0, sticky="w", pady=(16, 0))
+        ttk.Label(main, text="JDL設定（会社別）").grid(
+            row=5, column=0, sticky="w", pady=(16, 0)
+        )
         ttk.Label(main, textvariable=self.context_var).grid(
             row=5, column=1, sticky="ew", padx=8, pady=(16, 0)
         )
@@ -202,6 +209,14 @@ class AccountingConverterApp:
 
     def _reload_profiles(self) -> None:
         self._render(self.controller.load_profiles())
+
+    def _import_profile(self) -> None:
+        filename = filedialog.askopenfilename(
+            title="管理者から受け取った変換設定を追加",
+            filetypes=(("JSON", "*.json"), ("All files", "*.*")),
+        )
+        if filename:
+            self._render(self.controller.import_profile(Path(filename)))
 
     def _on_profile_selected(self, _event=None) -> None:
         index = self.profile_combo.current()
