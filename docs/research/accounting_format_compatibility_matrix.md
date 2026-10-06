@@ -34,6 +34,7 @@
 | JDL | JDL-origin export sample | Observed 30-column CSV | Export evidence | 30 observed | Observed header exists | CP932 observed | Identifier flags observed; meaning unresolved | OBSERVED | private export observation | Medium | Product/versionは未検証。35.5固有Evidenceへ無条件統合しない。Known Good Import Fileとは呼ばない。 |
 | JDL | JDL IBEX 出納帳net | CSV入出力 | Import/Export | UNKNOWN | 1行目に項目名称が必要と公開情報から確認 | UNKNOWN | UNKNOWN | OFFICIAL_DOCUMENTED | https://www.jdlibex.net/ab-net/renkei-csv.html | Medium | JDL IBEX出納帳35.5のObserved Schemaと同一視しない。 |
 | JDL | JDL IBEX 会計 / net | JDL IBEX 会計形式 | Import candidate | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | OFFICIAL_DOCUMENTED | https://www.jdlibex.net/ | Low | 詳細CSV仕様は未取得。正式JDL FormatProfileではない。 |
+| Money Forward | Money Forward クラウド会計 | 仕訳帳CSV Export | Export evidence | 19 observed | exact observed headerあり | CP932、BOMなし、LF observed | 同一非空取引Noの連続rowsによる1D3Cをobserved | OBSERVED | EVID-MF-JOURNAL-EXPORT-OBSERVED-001 | Medium for exact synthetic artifacts only | 2026-10-06 runtime。simple、1D3C、補助、部門、tax 1 literal、取引先、tag/memoを段階的な累積Exportで観測。version/buildはCSV内に無くUNKNOWN。production MFInputAdapter、MF -> JDL READYには昇格しない。 |
 | Money Forward | Money Forward Cloud Accounting | JDL（IBEX 会計）仕訳エクスポート | Export | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | OFFICIAL_DOCUMENTED | https://biz.moneyforward.com/support/account/guide/data02/dat01.html | Medium | JDL向けエクスポート機能と検索キー設定が案内されている。内部CSV仕様は推測しない。 |
 
 ## 確認済みの差分
@@ -45,7 +46,7 @@
 - JDL IBEX出納帳操作マニュアルP319-P322/P326-P327で、CSV仕訳データ入力の30項目、1行目header requirement、identifier flag meanings、税処理ごとのconditional requirements、error CSV behaviorを確認した。
 - Manualの30項目field names/orderと、JDL IBEX出納帳35.5 observed 30-column headerは一致した。JDL-origin `1111` round-tripとgenerator-authored `1111` / `1000` 各1件は、厳密に限定した条件で実Importに成功した。
 - バージョン未検証のJDL由来Export sampleでも30列header family、CP932、CRLF、BOMなし、同じ識別フラグ集合が再観測された。ただし35.5固有仕様として統合しない。
-- Money Forward Cloud AccountingにはJDL（IBEX 会計）向け仕訳エクスポート機能が案内されているが、内部CSV仕様はこの調査ではUNKNOWN。
+- Money Forward クラウド会計の仕訳帳Exportでは、完全架空の段階的7 artifactsから19列exact header、CP932、BOMなし、LF、同一非空取引Noによる1D3C grouping候補、補助/部門/tax/取引先/tag/memo field populationを観測した。これはJDL向けExportとは別routeであり、同一schemaと仮定しない。
 
 ## 未確定のまま残す事項
 
