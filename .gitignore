@@ -14,6 +14,7 @@ env/
 htmlcov/
 build/
 dist/
+release/
 *.spec
 
 # IDE
