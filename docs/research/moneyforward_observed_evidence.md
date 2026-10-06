@@ -27,6 +27,8 @@
 
 7ファイルは累積Exportで、前ファイルの全data rowsが次ファイルのprefixとして完全一致した。`mf_02`は複合仕訳の3 rowsを追加し、それ以降は各1 rowを追加している。
 
+追加の同日raw Evidenceとして、元ファイル名を維持した10ファイル（`1908`から`1957`）をprivate領域で再解析した。最大artifactは25 data rows / 20 logical journal candidatesで、19列、CP932、BOMなし、LF、exact header、全field quoteを維持した。これらから1D3C、3D1C、2D2Cをraw再確認した。依頼時点の作業環境には`1957`より後のraw fileは存在しないため、3D3C、invoice、multiple tags等はHuman runtime observationとして保持し、当該rawの再確認済みとは記載しない。
+
 ## Observed Structure
 
 - CP932 decode: success
@@ -87,6 +89,13 @@ CP932とstrict Shift_JISの両方でdecodeできた事実は、全MF Exportがst
 
 摘要位置を「常に最後」と一般化しない。今回のEvidenceが支持するのは、group内に1個の非空摘要がありlogical journalへ関連付けられることまで。
 
+### Additional grouping observations
+
+- 3 debit : 1 credit、2 debit : 2 creditをprivate rawで再確認した。
+- 3 debit : 3 creditはHuman runtime observationとして確認された。
+- v0はshape名をハードコードせず、各physical rowが各side最大1 line、同一非空取引Noが連続し、日付一致・side pair完全・group貸借一致の場合だけgroup化する。
+- 金額編集後も取引Noが維持された一方、削除した番号が新規仕訳で再利用された。取引Noはfile-local traceabilityであり、永続/global IDではない。
+
 ### Additional populated fields
 
 - 借方補助科目: synthetic subaccount 1件をfield 4で観測。貸方補助は未観測
@@ -94,9 +103,15 @@ CP932とstrict Shift_JISの両方でdecodeできた事実は、全MF Exportがst
 - 借方税区分: CSV literal `課税仕入 10%`を1件観測
 - 貸方税区分: 同tax journalでは`対象外`
 - UI略称`課仕 10%`とCSV literalを同一表現として扱わない
-- 借方/貸方インボイス: 全Evidenceでblank。非空 semanticsは未観測
+- initial raw setでは借方/貸方インボイスはblank。追加Human runtime observationで限定条件下の`70%控除`を確認
 - 貸方取引先: synthetic partner 1件をfield 13で観測。借方取引先は未観測
 - タグ/メモ: synthetic値をfields 18/19で同一journalに観測。摘要はblank
+
+追加Human Evidenceでは、借貸双方の補助・部門・取引先が同一physical rowに共存できること、借貸双方の税区分が同時に保持されることを確認した。CSV formal tax literalsとして`課税売上 10%`、`課税仕入 (軽)8%`、`課税売上 (軽)8%`、`非課税仕入`を追加観測した。UI略称から推測せずCSV literalをraw categoryとして保持する。
+
+invoiceは、自動入力補完ON、登録番号なしの取引先、課税仕入、観測日付という限定条件でCSV literal `70%控除`をHuman確認した。登録番号なしなら常に同値になるとは一般化しない。
+
+multiple tagsは`|`を含む1つのCSV fieldとしてHuman確認した。comma/double quoteは標準CSV quotingで保持された。摘要・メモのUI改行は今回のExportでraw multilineではなく正規化されたが、その正規化規則は未確定でありAdapterでは追加変換しない。`123456789`の整数金額を観測した。UIは今回の条件でzero/negativeを拒否したが、全Exportへの不在は断定しない。
 
 ## Physical Rows And Logical Journal Candidates
 
@@ -123,12 +138,12 @@ Observed scopeでは、連続する同じ非空`取引No`を1 logical journal ca
 | 補助科目 | `JournalLine.sub_account` | A | blankと非空を区別。親科目contextをMappingで保持 |
 | 部門 | `JournalLine.department` | A | side別に保持 |
 | 税区分 | `TaxInfo.category` | A/E | raw literal保持は可能。意味mappingは未実装・未解決 |
-| インボイス | `TaxInfo.invoice_classification` | C/E | model slotはあるが非空Evidenceなし。v0では非空をBLOCK |
+| インボイス | `TaxInfo.invoice_classification` | A/E | raw literalを保持。日付・取引先等から値を推測しない |
 | 金額(円) | `JournalLine.amount` | B | blankを0にせず、非空整数を`Decimal`へstrict parse |
 | 摘要 | `JournalEntry.description` | A | group内0または1 distinct nonblankのみ安全 |
-| 取引先 | structured source metadata | C + D | 現モデルにline-level fieldなし。安易にdomain拡張しない |
-| タグ | `JournalEntry.metadata` candidate | D | lossless target表現がなければ変換BLOCK/明示確認 |
-| メモ | `JournalEntry.metadata` candidate | D | 摘要へ自動結合しない |
+| 取引先 | `JournalLine.metadata` | A + D | side別raw value保持。target表現がなければ変換BLOCK |
+| タグ | `JournalEntry.metadata` | A + D | row numberとraw field保持。`|`を自動分割しない |
+| メモ | `JournalEntry.metadata` | A + D | row numberとraw field保持。摘要へ自動結合しない |
 | tax amount | 対応source fieldなし | E | CSVから算出・推測しない |
 
 取引先をEntry metadataへ平坦化すると借貸sideとphysical rowの関係を失うため、parser内部のstructured source-row metadata候補として設計し、Common Journal Model拡張は複数source formatで必要性を確認してから判断する。
@@ -136,26 +151,21 @@ Observed scopeでは、連続する同じ非空`取引No`を1 logical journal ca
 ## Unresolved Risks
 
 - product version/buildをCSV単体から識別できない
-- 取引Noの欠落、再採番、重複、非連続再出現
-- 3 debit : 1 credit、many-to-many、複数摘要の表現
-- 借方部門・取引先、貸方補助、両側同時population
-- 課税売上、軽減8%、非課税、不課税、免税、税額、税込/税抜
-- invoice nonblank、控除割合
-- multiple tagsのdelimiter/escaping
-- comma、double quote、改行を含む摘要・タグ・メモ
-- zero/negative/very large amount
+- product version/buildとschema variation
+- 取引Noのfile間identity、欠落、非連続再出現
+- 複数の異なる非空摘要を持つgroupの意味
+- 不課税、免税、独立税額、税込/税抜の意味変換
+- invoice値の条件と将来の別literal
+- `|`を含むtag名のescaping規則
+- newline正規化規則
+- zero/negative amountを含む外部生成CSV
 - Export option、期間、並び替えによる構造変化
 
 ## Next Human Experiments (Priority Order)
 
-1. 3 debit : 1 creditとmany-to-manyのgrouping/blank-side表現
-2. 同じ取引Noの安定性（期間を変えた再Export、欠番・削除後の再Export）
-3. 借方部門・借方取引先・貸方補助、および両側同時population
-4. group内の摘要入力位置variationと複数行摘要
-5. 課税売上10%とCSV tax literal
-6. 軽減税率8%、非課税、不課税、免税
-7. invoice field nonblankと控除割合
-8. 税込/税抜、tax amountのExport上の扱い
-9. multiple tagsとcomma/double quote/newlineを含む摘要・タグ・メモ
-10. zero/negative/large amountのUI rejectionまたはExport表現
-
+1. product/versionまたはschema revisionを識別できるExport metadata
+2. 不課税、免税、税込/税抜、tax amountのExport上の扱い
+3. invoiceの別条件・別literalと適用期間境界
+4. `|`を含むtag名とnewline正規化規則
+5. zero/negative amountを含む外部生成CSVの製品側挙動
+6. MF Input -> Mapping -> JDL Outputのloss policyと実機Import E2E

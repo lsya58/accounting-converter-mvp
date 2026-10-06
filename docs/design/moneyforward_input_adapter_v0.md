@@ -2,7 +2,7 @@
 
 ## Status
 
-設計のみ。production implementation、AdapterRegistry登録、GUI route、Money Forward -> JDL READY化は行わない。Evidenceは`EVID-MF-JOURNAL-EXPORT-OBSERVED-001`の`OBSERVED` scopeに限定する。
+Input Adapter v0実装済み。production AdapterRegistry登録、GUI route、Money Forward -> JDL READY化は行わない。Evidenceは`EVID-MF-JOURNAL-EXPORT-OBSERVED-001`の`OBSERVED` scopeに限定する。
 
 ## Proposed Source Identity
 
@@ -37,11 +37,12 @@ src/accounting_converter/adapters/input/moneyforward/
 4. nonblank`取引No`を読み、同一番号の連続rowsをgroup candidate化。
 5. 同じ番号の非連続再出現、group内date不一致をblock。
 6. sideごとにaccount/amount pairを検証し、blank sideをlineへ変換しない。
-7. dateをexact `YYYY/MM/DD`、amountを正の整数円としてstrict parse。zero/negativeはEvidence取得までblock候補。
+7. dateをexact `YYYY/MM/DD`、amountを正の整数円としてstrict parse。zero/negativeはUIで登録拒否を観測したが、任意CSVでの意味は未確認なのでv0ではblock。
 8. groupの借方/貸方lineを構築し、total不一致をblock。
 9. group内descriptionは0または1 distinct nonblankだけ許可。位置で意味を推測しない。
-10. subaccount/department/tax raw literalを対応model fieldへ保持するが、未確認semantic mappingは別validationでblock可能にする。
-11. partner/tag/memo/invoice nonblankはlossless traceabilityを保持できる構造を先に確定し、未確定の間はproduction conversionをblock。
+10. subaccount/department/tax/invoice raw literalを対応model fieldへ保持する。tax amountは存在しないため計算しない。
+11. 取引先は`JournalLine.metadata["moneyforward_trade_partner"]`へside別に保持する。
+12. tag/memoはrow numberとraw valueを`JournalEntry.metadata`へ保持する。`|`を分割せず、摘要へ結合しない。
 
 ## Unsupported / Ambiguous Conditions
 
@@ -53,9 +54,8 @@ src/accounting_converter/adapters/input/moneyforward/
 - parse不能date/amount、zero/negative amount（未観測）
 - unbalanced group
 - multiple distinct descriptions in one group
-- nonblank invoice
 - unknown tax literalを意味変換する要求
-- partner/tag/memoをtargetでlosslessに保持できない変換
+- partner/tag/memoをtargetでlosslessに扱えない変換経路
 - Evidence外のcompound shapeを自動推測すること
 
 ## Traceability
@@ -64,10 +64,11 @@ src/accounting_converter/adapters/input/moneyforward/
 - `SourceReference.row_number`: 各lineのphysical CSV row
 - `SourceReference.source_journal_id`: source-local transaction number
 - `JournalEntry.id`: file identityとtransaction numberから衝突しないrun-local ID
-- `JournalEntry.metadata`: Evidence ID、grouping basis、physical row numbers、raw metadata presenceをprivacy-safeに保持
+- `JournalEntry.metadata`: Evidence ID、grouping basis、physical row numbers、tag/memo raw valuesを保持
+- `JournalLine.metadata`: side別trade partner raw valueを保持
 
-会計本文をVerification Reportへ出さない。partner/tag/memoのraw valueは通常reportに含めず、presence/countだけを出す。
+会計本文をVerification Reportへ出さない。partner/tag/memoのraw valueは通常reportに含めず、presence/countだけを出す。MappingEngineはdataclass `replace`によりline metadataを保持するが、JDL出力での表現は未定義なので正式E2E前にloss policyを追加する。
 
 ## Production Gate
 
-実装後も、synthetic fixturesによるUnit testだけでproduction登録しない。追加raw Evidence、source identityの安定性、unsupported field policy、Common Journal Modelのlossless方針、正式ConversionService経路の検証を別gateとする。JDL OutputのEvidence requirementは緩和しない。
+実装済みv0はexact identityを指定した直接利用だけを許可し、production registryへ登録しない。source identityのversion識別、取引先/tag/memoのtarget loss policy、MF -> JDL実機Import、ConversionService E2Eを別gateとする。JDL OutputのEvidence requirementは緩和しない。

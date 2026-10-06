@@ -79,6 +79,24 @@ JDL_IBEX_CASHBOOK_MANUAL_SOURCE = SourceProvenance(
     ),
 )
 
+MONEYFORWARD_JOURNAL_EXPORT_OBSERVED_SOURCE = SourceProvenance(
+    title="Money Forward クラウド会計 仕訳帳CSV Export observed evidence",
+    url=None,
+    evidence_level=EvidenceLevel.OBSERVED,
+    verified_at=date(2026, 10, 6),
+    notes=(
+        "Human-created synthetic journals exported from Money Forward Cloud "
+        "Accounting. Product version/build is unknown; this is not a universal schema."
+    ),
+)
+
+MONEYFORWARD_JOURNAL_EXPORT_HEADER = (
+    "取引No", "取引日", "借方勘定科目", "借方補助科目", "借方部門",
+    "借方取引先", "借方税区分", "借方インボイス", "借方金額(円)",
+    "貸方勘定科目", "貸方補助科目", "貸方部門", "貸方取引先",
+    "貸方税区分", "貸方インボイス", "貸方金額(円)", "摘要", "タグ", "メモ",
+)
+
 
 _YAYOI_SEMANTIC_FIELDS: dict[str, SemanticField] = {
     "識別フラグ": SemanticField.IDENTIFIER_FLAG,
@@ -153,6 +171,90 @@ _JDL_OFFICIAL_FIELDS: dict[str, SemanticField] = {
     "貸方部門コード": SemanticField.CREDIT_DEPARTMENT,
     "貸方部門名称": SemanticField.CREDIT_DEPARTMENT,
 }
+
+_MONEYFORWARD_OBSERVED_FIELDS: dict[str, SemanticField] = {
+    "取引No": SemanticField.VOUCHER_NUMBER,
+    "取引日": SemanticField.DATE,
+    "借方勘定科目": SemanticField.DEBIT_ACCOUNT,
+    "借方補助科目": SemanticField.DEBIT_SUBACCOUNT,
+    "借方部門": SemanticField.DEBIT_DEPARTMENT,
+    "借方税区分": SemanticField.DEBIT_TAX_CATEGORY,
+    "借方インボイス": SemanticField.INVOICE_CLASSIFICATION,
+    "借方金額(円)": SemanticField.DEBIT_AMOUNT,
+    "貸方勘定科目": SemanticField.CREDIT_ACCOUNT,
+    "貸方補助科目": SemanticField.CREDIT_SUBACCOUNT,
+    "貸方部門": SemanticField.CREDIT_DEPARTMENT,
+    "貸方税区分": SemanticField.CREDIT_TAX_CATEGORY,
+    "貸方インボイス": SemanticField.INVOICE_CLASSIFICATION,
+    "貸方金額(円)": SemanticField.CREDIT_AMOUNT,
+    "摘要": SemanticField.DESCRIPTION,
+    "メモ": SemanticField.JOURNAL_MEMO,
+}
+
+
+def moneyforward_cloud_journal_export_observed_schema() -> SchemaDefinition:
+    fields = tuple(
+        FieldDefinition(
+            field_id=f"moneyforward_journal_export_col_{position:02d}",
+            display_name=name,
+            semantic_field=_MONEYFORWARD_OBSERVED_FIELDS.get(name, SemanticField.UNKNOWN),
+            column_position=position,
+            required=name in {"取引No", "取引日"},
+            data_type=(
+                FieldDataType.DATE if name == "取引日" else
+                FieldDataType.DECIMAL if name.endswith("金額(円)") else
+                FieldDataType.TEXT
+            ),
+            blank_policy=(
+                BlankPolicy.REQUIRED if name in {"取引No", "取引日"}
+                else BlankPolicy.OPTIONAL
+            ),
+            evidence=EvidenceLevel.OBSERVED,
+            source=MONEYFORWARD_JOURNAL_EXPORT_OBSERVED_SOURCE,
+        )
+        for position, name in enumerate(MONEYFORWARD_JOURNAL_EXPORT_HEADER, start=1)
+    )
+    return SchemaDefinition(
+        identity=FormatIdentity(
+            vendor="Money Forward",
+            product="Money Forward クラウド会計",
+            format_name="仕訳帳 CSV Export Observed 19-column",
+            direction=FormatDirection.INPUT,
+            evidence_level=EvidenceLevel.OBSERVED,
+            source_reference=MONEYFORWARD_JOURNAL_EXPORT_OBSERVED_SOURCE,
+            notes="Exact observed 19-column export identity; product version/build unknown.",
+        ),
+        fields=fields,
+        capabilities=FormatCapabilities(
+            supports_subaccount=Capability(CapabilityStatus.SUPPORTED),
+            supports_department=Capability(CapabilityStatus.SUPPORTED),
+            supports_tax_category=Capability(CapabilityStatus.SUPPORTED),
+            supports_tax_amount=Capability(CapabilityStatus.UNSUPPORTED),
+            supports_invoice_classification=Capability(CapabilityStatus.SUPPORTED),
+            supports_description=Capability(CapabilityStatus.SUPPORTED),
+            supports_voucher_number=Capability(CapabilityStatus.SUPPORTED),
+            supports_compound_journal=Capability(CapabilityStatus.SUPPORTED),
+            supports_multiple_debit_lines=Capability(CapabilityStatus.SUPPORTED),
+            supports_multiple_credit_lines=Capability(CapabilityStatus.SUPPORTED),
+            supports_header=Capability(CapabilityStatus.SUPPORTED),
+            accepted_extensions=(".csv",),
+            encoding_candidates=("cp932",),
+            delimiter=",",
+            column_count_rules=(19,),
+            journal_grouping_strategy=JournalGroupingStrategy.TRANSACTION_NUMBER_CONTIGUOUS,
+        ),
+        delimiter=",",
+        encoding="cp932",
+        has_header=CapabilityStatus.SUPPORTED,
+        column_count=19,
+        date_formats=("%Y/%m/%d",),
+        numeric_format="positive_integer_yen_observed",
+        blank_representation="empty_quoted_field",
+        notes=(
+            "Observed input adapter scope only. Header match does not identify all "
+            "Money Forward versions or enable an MF-to-JDL production route."
+        ),
+    )
 
 
 def yayoi_desktop_import_25_documented_schema() -> SchemaDefinition:
@@ -510,6 +612,7 @@ def jdl_ibex_cashbook_official_journal_import_schema_definition() -> SchemaDefin
     )
 def default_format_schemas() -> tuple[SchemaDefinition, ...]:
     return (
+        moneyforward_cloud_journal_export_observed_schema(),
         yayoi_desktop_import_25_documented_schema(),
         yayoi_ae19_direct_export_observed_schema(),
         yayoi_next_documented_candidate_schema(25),

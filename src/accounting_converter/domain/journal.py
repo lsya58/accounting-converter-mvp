@@ -39,6 +39,7 @@ class JournalLine:
     sub_account: str | None = None
     department: str | None = None
     tax_info: TaxInfo | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
