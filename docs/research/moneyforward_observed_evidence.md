@@ -24,10 +24,18 @@
 | `mf_05_tax10.csv` | 1132 | `80c58691509cf08aabe42f4918cc7e24263f60136407e93716b7bcfd8f8239e2` | 9 | 8 | 6 |
 | `mf_06_partner.csv` | 1261 | `0ef79a489cea0705c8c120f6561f273131dd9e79893001c6e961d67d06b449f2` | 10 | 9 | 7 |
 | `mf_07_tag_memo.csv` | 1384 | `3b96e340ff06e3ffdbaccdae7dd3446a41239ca447514ca807ea1e041a92822a` | 11 | 10 | 8 |
+| `仕訳帳_20261006_2021.csv` | 4416 | `2a3470eba1882f56de9c778e9076e0fedfd1c24d6e62d9f80d52167354a8c19f` | 35 | 34 | 27 |
+| `仕訳帳_20261006_2035.csv` | 4558 | `504d884e5fe35d49b5f497581372932d1ed91dcfd2b1b2d114355da65e2e442b` | 36 | 35 | 28 |
 
 7ファイルは累積Exportで、前ファイルの全data rowsが次ファイルのprefixとして完全一致した。`mf_02`は複合仕訳の3 rowsを追加し、それ以降は各1 rowを追加している。
 
-追加の同日raw Evidenceとして、元ファイル名を維持した10ファイル（`1908`から`1957`）をprivate領域で再解析した。最大artifactは25 data rows / 20 logical journal candidatesで、19列、CP932、BOMなし、LF、exact header、全field quoteを維持した。これらから1D3C、3D1C、2D2Cをraw再確認した。依頼時点の作業環境には`1957`より後のraw fileは存在しないため、3D3C、invoice、multiple tags等はHuman runtime observationとして保持し、当該rawの再確認済みとは記載しない。
+追加の同日raw Evidenceとして、元ファイル名を維持した12ファイル（`1908`から`2035`）をprivate領域で再解析した。最大artifactは35 data rows / 28 logical journal candidatesで、19列、CP932、BOMなし、LF、exact header、全field quoteを維持した。全19 artifactsは既存`MoneyForwardInputAdapter v0`でparse成功し、全logical journal candidateが貸借一致した。
+
+`2021`と`2035`で新たにraw確認した範囲は次のとおり。
+
+- `2021`: 3D3C、multiple tagsの`|`表現、`課税売上 (軽)8%`、借貸双方の非`対象外`tax population、large integer amount、comma/double quote escaping
+- `2035`: 上記構造の継続とinvoice raw literal `70%控除`
+- 両artifactともraw multiline fieldは0。これはExport bytes上の事実であり、UI入力からの正規化規則そのものは証明しない。
 
 ## Observed Structure
 
@@ -92,9 +100,9 @@ CP932とstrict Shift_JISの両方でdecodeできた事実は、全MF Exportがst
 ### Additional grouping observations
 
 - 3 debit : 1 credit、2 debit : 2 creditをprivate rawで再確認した。
-- 3 debit : 3 creditはHuman runtime observationとして確認された。
+- 3 debit : 3 creditを`2021`と`2035`のprivate rawで再確認した。
 - v0はshape名をハードコードせず、各physical rowが各side最大1 line、同一非空取引Noが連続し、日付一致・side pair完全・group貸借一致の場合だけgroup化する。
-- 金額編集後も取引Noが維持された一方、削除した番号が新規仕訳で再利用された。取引Noはfile-local traceabilityであり、永続/global IDではない。
+- 金額編集後も取引Noが維持された一方、削除した番号が新規仕訳で再利用されたことをHuman操作で確認した。chronological raw snapshotでは`2021`から`2035`の間に、同一取引Noで内容が変化したcandidateが1件ある。ただしsnapshotだけでは編集と削除後再利用を区別できない。取引Noはfile-local traceabilityであり、永続/global IDではない。
 
 ### Additional populated fields
 
@@ -107,11 +115,11 @@ CP932とstrict Shift_JISの両方でdecodeできた事実は、全MF Exportがst
 - 貸方取引先: synthetic partner 1件をfield 13で観測。借方取引先は未観測
 - タグ/メモ: synthetic値をfields 18/19で同一journalに観測。摘要はblank
 
-追加Human Evidenceでは、借貸双方の補助・部門・取引先が同一physical rowに共存できること、借貸双方の税区分が同時に保持されることを確認した。CSV formal tax literalsとして`課税売上 10%`、`課税仕入 (軽)8%`、`課税売上 (軽)8%`、`非課税仕入`を追加観測した。UI略称から推測せずCSV literalをraw categoryとして保持する。
+追加Evidenceでは、借貸双方の補助・部門・取引先が同一physical rowに共存できること、借貸双方の税区分が同時に保持されることを確認した。CSV formal tax literalsとして`課税売上 10%`、`課税仕入 (軽)8%`、`課税売上 (軽)8%`、`非課税仕入`を観測し、`課税売上 (軽)8%`と両側tax populationは`2021` rawでも再確認した。UI略称から推測せずCSV literalをraw categoryとして保持する。
 
-invoiceは、自動入力補完ON、登録番号なしの取引先、課税仕入、観測日付という限定条件でCSV literal `70%控除`をHuman確認した。登録番号なしなら常に同値になるとは一般化しない。
+invoiceは、自動入力補完ON、登録番号なしの取引先、課税仕入、観測日付という限定条件でCSV literal `70%控除`をHuman確認し、`2035` rawの借方インボイスfieldでも再確認した。登録番号なしなら常に同値になるとは一般化しない。
 
-multiple tagsは`|`を含む1つのCSV fieldとしてHuman確認した。comma/double quoteは標準CSV quotingで保持された。摘要・メモのUI改行は今回のExportでraw multilineではなく正規化されたが、その正規化規則は未確定でありAdapterでは追加変換しない。`123456789`の整数金額を観測した。UIは今回の条件でzero/negativeを拒否したが、全Exportへの不在は断定しない。
+multiple tagsは`|`を含む1つのCSV fieldとして`2021` rawで再確認した。comma/double quoteは`1957`以降のrawで標準CSV quotingにより保持された。摘要・メモのUI改行はHuman入力後のExportにraw multilineとして存在しなかったが、正規化規則は未確定でありAdapterでは追加変換しない。large integer amountは`2021` rawで再確認した。UIによるzero/negative拒否はHuman operation evidenceであり、CSV bytesからは証明できないため、全Exportへの不在は断定しない。
 
 ## Physical Rows And Logical Journal Candidates
 
