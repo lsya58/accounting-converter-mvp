@@ -169,6 +169,21 @@ Observed scopeでは、連続する同じ非空`取引No`を1 logical journal ca
 - zero/negative amountを含む外部生成CSV
 - Export option、期間、並び替えによる構造変化
 
+## Private Real-Data Compatibility Audit (2026-10-07)
+
+父親事務所由来のprivate CSV 1件を、値を記録せず構造だけ監査した。このfileはCP932 decode可能、BOMなし、LFという一部のstructural propertyは共有するが、仕訳帳Exportのexact 19-column identityとは異なる。
+
+- physical rows: 51
+- preamble candidates: 2 rows
+- header candidate: physical row 3、6 columns
+- data rows: 48、すべて6 columns
+- 19-column仕訳帳header: 不一致
+- `MoneyForwardInputAdapter v0`: expected BLOCK
+- logical journal count: semantic columns不足のため算出不能
+- tax/invoice/compound pattern: 対応fieldがなく評価対象外
+
+この結果はAdapterの対応範囲を広げる根拠ではない。6-column fileを仕訳へ推測変換せず、`INCOMPATIBLE_EXPORT_FORMAT`として停止する。Money Forward内の別Export routeまたはmaster/list系formatの可能性はあるが、画面上のExport route Evidenceなしには正式identityを付与しない。
+
 ## Next Human Experiments (Priority Order)
 
 1. product/versionまたはschema revisionを識別できるExport metadata
