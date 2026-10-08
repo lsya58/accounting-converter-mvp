@@ -10,9 +10,9 @@ Microsoft Defenderによる検出を、根拠なく誤検知と断定しない�
 
 - Python 3.12のclean virtual environmentを作る。
 - `pyproject.toml`の`build` extraからPyInstallerを導入する。
-- `src/accounting_converter/ui/app.py`をentry pointとするone-folder buildである。
+- 既定では`src/accounting_converter/ui_qt/app.py`をentry pointとするPySide6 one-folder buildである。`-TkFallback`指定時だけ従来の`src/accounting_converter/ui/app.py`を使用する。
 - custom spec、hook、icon、downloaded binary、post-build binary patchは使用していない。
-- bundleはPython runtime、Tcl/Tk、標準ライブラリとアプリのPython modulesを含む。
+- Qt版bundleはPython runtime、PySide6、Qt platform plugins/styles/DLL、標準ライブラリとアプリのPython modulesを含む。Tk fallbackはTcl/Tkを含む。
 - `_internal`は実行に必要であり、exe単体では配布しない。
 
 `--collect-submodules accounting_converter`はアプリpackage全体を収集する。現時点では確実なpackagingを優先して維持するが、通常のimport解析だけでWindows smoke testを通せるかは将来検証し、不要であることが確認できた場合にのみ削減する。
@@ -33,7 +33,7 @@ Microsoft Defenderによる検出を、根拠なく誤検知と断定しない�
 
 ## Dependency and reproducibility
 
-runtimeのthird-party dependencyは宣言されていない。GUIはPython標準のTkinterを使用する。build dependencyはPyInstallerとそのtransitive dependenciesである。
+runtime dependencyとして`PySide6>=6.8,<7`を宣言する。build dependencyはPyInstallerとそのtransitive dependenciesである。PySide6はQt runtime、plugins、DLLを同梱するためTkinter版よりartifact sizeが増える。network、telemetry、auto update、remote codeは追加しない。
 
 現状の`pyinstaller>=6`は完全な再現性を保証しない。次回のclean Windows buildで実際のversion、dependency一覧、Defender scan、smoke testを記録し、その組合せを確認してからbuild lockを導入する。検証前のversionを推測で固定しない。
 

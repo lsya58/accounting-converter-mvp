@@ -1,3 +1,7 @@
+param(
+  [switch]$TkFallback
+)
+
 $ErrorActionPreference = "Stop"
 
 $RepositoryRoot = Split-Path -Parent $PSScriptRoot
@@ -26,6 +30,13 @@ py -3.12 -m venv $BuildVenv
 & ".\$BuildVenv\Scripts\Activate.ps1"
 python -m pip install --upgrade pip
 python -m pip install -e ".[build]"
+$EntryPoint = "src\accounting_converter\ui_qt\app.py"
+$QtArguments = @("--collect-all", "PySide6")
+if ($TkFallback) {
+  $EntryPoint = "src\accounting_converter\ui\app.py"
+  $QtArguments = @()
+}
+
 python -m PyInstaller `
   --noconfirm `
   --clean `
@@ -33,7 +44,8 @@ python -m PyInstaller `
   --name "AccountingConverter" `
   --paths "src" `
   --collect-submodules "accounting_converter" `
-  "src\accounting_converter\ui\app.py"
+  @QtArguments `
+  $EntryPoint
 
 $GitCommit = git rev-parse HEAD
 $PythonVersion = python -c "import platform; print(platform.python_version())"
@@ -49,4 +61,5 @@ python scripts\generate_release_manifest.py `
   --dependencies-json "build\build_dependencies.json"
 
 Write-Host "Build finished. Review dist\AccountingConverter and its release manifest."
+Write-Host "GUI entry point: $EntryPoint"
 Write-Host "Do not distribute until Defender scan, clean-PC smoke test, and ZIP hashing pass."

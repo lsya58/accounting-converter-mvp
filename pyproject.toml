@@ -7,6 +7,7 @@ name = "accounting-converter"
 version = "0.1.0"
 description = "Local accounting journal converter MVP"
 requires-python = ">=3.12"
+dependencies = ["PySide6>=6.8,<7"]
 
 [project.optional-dependencies]
 build = ["pyinstaller>=6"]

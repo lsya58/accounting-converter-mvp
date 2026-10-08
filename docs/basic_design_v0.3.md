@@ -79,7 +79,7 @@ Output Validation
 
 ### 2.1 Presentation層
 
-`accounting_converter.ui` はWindows向けデスクトップアプリの薄いGUIプロトタイプである。標準ライブラリの `tkinter` を使用し、Electron、Web server、Cloud serviceは使用しない。
+`accounting_converter.ui_qt`はWindows向けPySide6 presentation layerである。既存Application Service、Controller、ViewModelを再利用し、drag/drop、file dialog、状態表示、結果表示だけを担当する。`accounting_converter.ui`のTkinter版はQt版のWindows smoke test完了までfallbackとして維持する。Electron、Web server、Cloud serviceは使用しない。
 
 責務:
 

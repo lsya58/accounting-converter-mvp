@@ -116,13 +116,15 @@ PYTHONPATH=src python3 -m accounting_converter.cli profile --store-dir <profile-
 PYTHONPATH=src python3 -m accounting_converter.cli profile validate <profile-json>
 ```
 
-## GUIプロトタイプ
+## デスクトップGUI
 
-`accounting_converter.ui` には、Windows向けローカルデスクトップアプリを想定した薄いGUIプロトタイプがあります。GUI frameworkは標準ライブラリの `tkinter` を使用し、Web server、Electron、Cloud serviceは使用しません。
+`accounting_converter.ui_qt`にはWindows向けPySide6 GUIがあります。Qt標準drag/drop、高DPI、layout managerを使用し、Web server、Electron、Cloud serviceは使用しません。`accounting_converter.ui`のTkinter GUIはQt版のWindows smoke test完了までfallbackとして残します。
 
 起動:
 
 ```bash
+PYTHONPATH=src python3 -m accounting_converter.ui_qt.app
+# fallback
 PYTHONPATH=src python3 -m accounting_converter.ui.app
 ```
 
@@ -221,8 +223,10 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -e ".[build]"
-python -m PyInstaller --windowed --name "AccountingConverter" --paths "src" --collect-submodules "accounting_converter" "src\accounting_converter\ui\app.py"
+python -m PyInstaller --windowed --name "AccountingConverter" --paths "src" --collect-submodules "accounting_converter" --collect-all "PySide6" "src\accounting_converter\ui_qt\app.py"
 ```
+
+Tkinter fallbackをbuildする場合は`build_windows.ps1 -TkFallback`を使用します。
 
 `dist/`、`build/`、`*.spec` はGit管理対象外です。Linux/WSL上でWindows `.exe` が生成できるとは仮定しません。現開発環境ではWindows実機ビルドは未検証です。
 
