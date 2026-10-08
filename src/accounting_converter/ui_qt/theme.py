@@ -20,6 +20,9 @@ COLORS = {
     "blocked_soft": "#FBEAEA",
     "neutral": "#5E6C78",
     "neutral_soft": "#EAF0F5",
+    "disabled_text": "#697681",
+    "disabled_surface": "#E9EDF1",
+    "focus": "#4B8FC5",
 }
 
 
@@ -34,7 +37,10 @@ def status_visual(status: UserFacingStatus) -> tuple[str, str, str]:
 
 
 APP_STYLE_SHEET = f"""
-QMainWindow, QScrollArea, QWidget#page {{ background: {COLORS['page']}; }}
+QMainWindow, QDialog, QMessageBox, QScrollArea, QWidget#page {{
+    background: {COLORS['page']};
+    color: {COLORS['text']};
+}}
 QWidget {{ color: {COLORS['text']}; font-size: 14px; }}
 QFrame#card {{
     background: {COLORS['surface']};
@@ -43,6 +49,7 @@ QFrame#card {{
 }}
 QLabel#title {{ font-size: 28px; font-weight: 700; }}
 QLabel#subtitle, QLabel#muted {{ color: {COLORS['muted']}; }}
+QLabel:disabled {{ color: {COLORS['disabled_text']}; }}
 QLabel#sectionTitle {{ font-size: 17px; font-weight: 600; }}
 QLabel#statusTitle {{ font-size: 20px; font-weight: 650; }}
 QLabel#stepBadge {{
@@ -64,6 +71,12 @@ QPushButton {{
 }}
 QPushButton:hover {{ background: #F1F5F8; border-color: #9EABB7; }}
 QPushButton:pressed {{ background: #E6EBF0; }}
+QPushButton:focus {{ border: 2px solid {COLORS['focus']}; }}
+QPushButton:disabled {{
+    color: {COLORS['disabled_text']};
+    background: {COLORS['disabled_surface']};
+    border-color: #C8D0D8;
+}}
 QPushButton#primaryButton {{
     min-height: 52px;
     min-width: 210px;
@@ -86,5 +99,37 @@ QFrame#dropZone[dragActive="true"] {{
     background: #EAF3FA;
     border-color: {COLORS['accent']};
 }}
-QComboBox {{ min-height: 36px; padding: 0 10px; }}
+QLineEdit, QComboBox, QListWidget {{
+    min-height: 38px;
+    padding: 0 10px;
+    color: {COLORS['text']};
+    background: {COLORS['surface']};
+    border: 1px solid #B8C3CD;
+    border-radius: 6px;
+    selection-background-color: #DCECF8;
+    selection-color: {COLORS['text']};
+}}
+QLineEdit:focus, QComboBox:focus, QListWidget:focus {{
+    border: 2px solid {COLORS['focus']};
+}}
+QLineEdit:disabled, QComboBox:disabled, QListWidget:disabled {{
+    color: {COLORS['disabled_text']};
+    background: {COLORS['disabled_surface']};
+    border-color: #C8D0D8;
+}}
+QComboBox::drop-down {{
+    width: 34px;
+    border-left: 1px solid #C8D0D8;
+    background: #F4F7F9;
+}}
+QComboBox QAbstractItemView {{
+    color: {COLORS['text']};
+    background: {COLORS['surface']};
+    border: 1px solid #B8C3CD;
+    selection-background-color: #DCECF8;
+    selection-color: {COLORS['text']};
+    outline: 0;
+    padding: 4px;
+}}
+QStackedWidget {{ background: {COLORS['page']}; }}
 """
