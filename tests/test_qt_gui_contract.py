@@ -55,6 +55,16 @@ class QtGuiContractTests(unittest.TestCase):
             self.assertTrue(label)
             self.assertNotEqual(foreground, background)
 
+    def test_company_setting_ui_is_visible_without_internal_terminology(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(encoding="utf-8")
+        for label in ("会社設定を選択", "会社を追加", "名前を変更", "入力元", "対応設定"):
+            self.assertIn(label, source)
+        visible_literals = (
+            "Conversion Profile", "JdlTargetContext", "Evidence ID", "fingerprint"
+        )
+        for literal in visible_literals:
+            self.assertNotIn(f'"{literal}"', source)
+
 
 if __name__ == "__main__":
     unittest.main()

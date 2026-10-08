@@ -78,6 +78,8 @@ class ConversionResultPresentation:
 
 @dataclass(frozen=True)
 class AppState:
+    companies: tuple[CompanyOption, ...] = ()
+    selected_company_setting_id: str | None = None
     profiles: tuple[ProfileOption, ...] = ()
     selected_profile_id: str | None = None
     selected_file: Path | None = None
@@ -96,6 +98,14 @@ class AppState:
     result_summary: str | None = None
     result_presentation: ConversionResultPresentation | None = None
     verification_report: str | None = None
+
+
+@dataclass(frozen=True)
+class CompanyOption:
+    company_setting_id: str
+    display_name: str
+    source_label: str
+    status_label: str
 
 
 @dataclass(frozen=True)

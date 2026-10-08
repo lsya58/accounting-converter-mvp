@@ -9,6 +9,7 @@ from accounting_converter.application.first_release_workflow import (
     FirstReleasePreparedConversion,
     conversion_result_message,
 )
+from accounting_converter.application.company_settings import CompanySettingService
 
 from accounting_converter.application.profile_preflight import (
     ConversionPreflightService,
@@ -39,6 +40,16 @@ from accounting_converter.infrastructure.jdl_target_context_loader import (
     JdlTargetContextLoadError,
     JdlTargetContextLoader,
 )
+from accounting_converter.infrastructure.company_setting_store import (
+    CompanySettingStore,
+    CompanySettingStoreError,
+    default_company_store_dir,
+)
+from accounting_converter.infrastructure.application_preferences import (
+    ApplicationPreferences,
+    ApplicationPreferencesStore,
+    default_preferences_path,
+)
 from accounting_converter.profiles.known_formats import (
     jdl_ibex_cashbook_35_5_observed_schema_definition,
     jdl_ibex_cashbook_official_journal_import_schema_definition,
@@ -53,6 +64,7 @@ from .view_models import (
     DiagnosticStatus,
     DiagnosticSummary,
     ConversionResultPresentation,
+    CompanyOption,
     FileRecognition,
     ProfileOption,
     RecognizedFormat,
@@ -92,6 +104,8 @@ class AccountingConverterController:
         yayoi_analyzer: YayoiCsvAnalyzer | None = None,
         conversion_workflow: FirstReleaseConversionWorkflow | None = None,
         context_loader: JdlTargetContextLoader | None = None,
+        company_store: CompanySettingStore | None = None,
+        preferences_store: ApplicationPreferencesStore | None = None,
     ) -> None:
         self.profile_store = profile_store or ConversionProfileStore(
             default_profile_store_dir()
@@ -102,6 +116,13 @@ class AccountingConverterController:
         self.yayoi_analyzer = yayoi_analyzer or YayoiCsvAnalyzer()
         self.conversion_workflow = conversion_workflow or FirstReleaseConversionWorkflow()
         self.context_loader = context_loader or JdlTargetContextLoader()
+        self.company_store = company_store or CompanySettingStore(
+            default_company_store_dir(), self.profile_store
+        )
+        self.company_setting_service = CompanySettingService(self.company_store)
+        self.preferences_store = preferences_store or ApplicationPreferencesStore(
+            default_preferences_path()
+        )
         self._target_context = None
         self._prepared: FirstReleasePreparedConversion | None = None
         self.state = AppState()
@@ -131,6 +152,134 @@ class AccountingConverterController:
             ),
             developer_error=None,
         )
+        self._auto_select_company_for_recognized_file()
+        return self.state
+
+    def load_company_settings(self) -> AppState:
+        try:
+            settings = self.company_store.list()
+            options = tuple(self._company_option(item.company_setting_id) for item in settings)
+        except (CompanySettingStoreError, OSError) as error:
+            return self._fail_state(
+                "会社設定を読み込めませんでした。",
+                error,
+                diagnostic_status=self.state.diagnostic_status,
+            )
+        known = {item.company_setting_id for item in options}
+        selected = self.state.selected_company_setting_id
+        if selected not in known:
+            selected = None
+        self.state = replace(self.state, companies=options, selected_company_setting_id=selected)
+        if self.state.file_recognition is not None:
+            self._auto_select_company_for_recognized_file()
+        return self.state
+
+    def add_company_setting(
+        self,
+        *,
+        display_name: str,
+        source_label: str,
+        conversion_profile_id: str,
+        context_source: Path,
+    ) -> AppState:
+        import uuid
+
+        try:
+            profile = self.profile_store.get(conversion_profile_id)
+            expected_label = self._source_label(profile.source_format_identity.stable_key)
+            if expected_label != source_label:
+                raise CompanySettingStoreError("selected source and profile do not match")
+            setting = self.company_store.create(
+                company_setting_id=f"company-{uuid.uuid4().hex}",
+                display_name=display_name,
+                conversion_profile_id=conversion_profile_id,
+                context_source=context_source,
+            )
+        except (CompanySettingStoreError, ConversionProfileStoreError, OSError) as error:
+            return self._fail_state("会社設定を保存できませんでした。内容を確認してください。", error)
+        self.load_company_settings()
+        return self.select_company_setting(setting.company_setting_id)
+
+    def select_company_setting(self, company_setting_id: str | None) -> AppState:
+        self._prepared = None
+        if company_setting_id is None:
+            self._target_context = None
+            self.state = replace(
+                self.state,
+                selected_company_setting_id=None,
+                selected_profile_id=None,
+                selected_context_file=None,
+                conversion_available=False,
+                conversion_summary=None,
+                user_message="会社設定を選択してください。",
+            )
+            return self.state
+        resolved = self.company_setting_service.resolve_for_source(
+            company_setting_id, self._recognized_source_key()
+        )
+        if not resolved.available or resolved.profile is None or resolved.context is None:
+            self._target_context = None
+            self.state = replace(
+                self.state,
+                selected_company_setting_id=company_setting_id,
+                selected_profile_id=None,
+                selected_context_file=None,
+                conversion_available=False,
+                conversion_summary=None,
+                user_message=resolved.user_message or "会社設定を確認してください。",
+            )
+            return self.state
+        self._target_context = resolved.context
+        self.preferences_store.save(ApplicationPreferences(company_setting_id))
+        self.state = replace(
+            self.state,
+            selected_company_setting_id=company_setting_id,
+            selected_profile_id=resolved.profile.profile_id,
+            selected_context_file=self.company_store.context_path(resolved.setting),
+            conversion_available=False,
+            conversion_summary=None,
+            result_presentation=None,
+            user_message="会社設定を選択しました。",
+        )
+        return self.state
+
+    def rename_company_setting(self, company_setting_id: str, display_name: str) -> AppState:
+        try:
+            self.company_store.rename(company_setting_id, display_name)
+        except (CompanySettingStoreError, OSError) as error:
+            return self._fail_state("会社設定の名前を変更できませんでした。", error)
+        self.load_company_settings()
+        self.state = replace(self.state, user_message="会社設定の名前を変更しました。")
+        return self.state
+
+    def profiles_for_source(self, source_label: str) -> tuple[ProfileOption, ...]:
+        return tuple(
+            item
+            for item in self.state.profiles
+            if self._source_label(
+                self.profile_store.get(item.profile_id).source_format_identity.stable_key
+            )
+            == source_label
+        )
+
+    def delete_company_setting(self, company_setting_id: str) -> AppState:
+        try:
+            self.company_store.delete(company_setting_id)
+        except (CompanySettingStoreError, OSError) as error:
+            return self._fail_state("会社設定を削除できませんでした。", error)
+        if self.state.selected_company_setting_id == company_setting_id:
+            self._target_context = None
+            self.state = replace(
+                self.state,
+                selected_company_setting_id=None,
+                selected_profile_id=None,
+                selected_context_file=None,
+                conversion_available=False,
+                conversion_summary=None,
+            )
+        self.preferences_store.save(ApplicationPreferences())
+        self.load_company_settings()
+        self.state = replace(self.state, user_message="会社設定を削除しました。")
         return self.state
 
     def import_profile(self, path: Path | str) -> AppState:
@@ -231,6 +380,7 @@ class AccountingConverterController:
             ),
             developer_error=None,
         )
+        self._auto_select_company_for_recognized_file()
         return self.state
 
     def select_context_file(self, path: Path | str | None) -> AppState:
@@ -510,6 +660,51 @@ class AccountingConverterController:
             return None
         return self.profile_store.get(self.state.selected_profile_id)
 
+    def _company_option(self, company_setting_id: str) -> CompanyOption:
+        resolved = self.company_setting_service.resolve_for_source(company_setting_id)
+        return CompanyOption(
+            company_setting_id=company_setting_id,
+            display_name=resolved.setting.display_name,
+            source_label=self._source_label(resolved.setting.expected_source_format_key),
+            status_label="利用可能" if resolved.available else "確認が必要",
+        )
+
+    def _auto_select_company_for_recognized_file(self) -> None:
+        source_key = self._recognized_source_key()
+        if source_key is None or not self.state.companies:
+            return
+        candidates = []
+        for option in self.state.companies:
+            resolved = self.company_setting_service.resolve_for_source(
+                option.company_setting_id, source_key
+            )
+            if resolved.available and resolved.setting.expected_source_format_key == source_key:
+                candidates.append(option.company_setting_id)
+        preferences = self.preferences_store.load(set(candidates))
+        selected = preferences.last_company_setting_id
+        if selected is None and len(candidates) == 1:
+            selected = candidates[0]
+        if selected is not None:
+            self.select_company_setting(selected)
+
+    def _recognized_source_key(self) -> str | None:
+        recognition = self.state.file_recognition
+        if recognition is None:
+            return None
+        if recognition.format is RecognizedFormat.YAYOI:
+            return yayoi_ae19_direct_export_observed_schema().identity.stable_key
+        if recognition.format is RecognizedFormat.MONEYFORWARD:
+            return moneyforward_cloud_journal_export_observed_schema().identity.stable_key
+        return None
+
+    @staticmethod
+    def _source_label(source_key: str) -> str:
+        if source_key == yayoi_ae19_direct_export_observed_schema().identity.stable_key:
+            return "弥生"
+        if source_key == moneyforward_cloud_journal_export_observed_schema().identity.stable_key:
+            return "Money Forward"
+        return "未対応"
+
     @staticmethod
     def _validate_first_release_profile(profile: ConversionProfile) -> None:
         identity_status = profile.verify_format_identity(
@@ -594,13 +789,13 @@ class AccountingConverterController:
         self,
         user_message: str,
         error: Exception,
-        diagnostic_status: DiagnosticStatus,
+        diagnostic_status: DiagnosticStatus | None = None,
         diagnostic_kind: DiagnosticKind | None = None,
     ) -> AppState:
         self.state = replace(
             self.state,
             diagnostic_kind=diagnostic_kind or self.state.diagnostic_kind,
-            diagnostic_status=diagnostic_status,
+            diagnostic_status=diagnostic_status or self.state.diagnostic_status,
             conversion_available=False,
             user_message=user_message,
             developer_error=error.__class__.__name__,

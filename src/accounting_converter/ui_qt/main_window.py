@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -36,7 +37,8 @@ class AccountingConverterMainWindow(QMainWindow):
         self.resize(900, 780)
         self.setMinimumSize(720, 620)
         self._build()
-        self._render(self.controller.load_profiles())
+        self.controller.load_profiles()
+        self._render(self.controller.load_company_settings())
 
     def _build(self) -> None:
         scroll = QScrollArea()
@@ -71,6 +73,17 @@ class AccountingConverterMainWindow(QMainWindow):
         header.addLayout(titles, 1)
         header.addWidget(self.settings_button, alignment=Qt.AlignmentFlag.AlignTop)
         layout.addLayout(header)
+
+        company_row = QHBoxLayout()
+        company_row.addWidget(QLabel("会社"))
+        self.company_combo = QComboBox()
+        self.company_combo.setPlaceholderText("会社設定を選択")
+        self.company_combo.currentIndexChanged.connect(self._select_company)
+        company_row.addWidget(self.company_combo, 1)
+        company_settings_button = QPushButton("会社設定")
+        company_settings_button.clicked.connect(self._open_settings)
+        company_row.addWidget(company_settings_button)
+        layout.addLayout(company_row)
 
         self.drop_zone = CsvDropZone()
         self.drop_zone.choose_button.clicked.connect(self._choose_input)
@@ -211,6 +224,11 @@ class AccountingConverterMainWindow(QMainWindow):
         self._render(self.controller.state)
         self._prepare_if_complete()
 
+    def _select_company(self, index: int) -> None:
+        company_id = self.company_combo.itemData(index) if index >= 0 else None
+        self._render(self.controller.select_company_setting(company_id))
+        self._prepare_if_complete()
+
     def _show_drop_error(self, message: str) -> None:
         QMessageBox.warning(self, "ファイルを確認してください", message)
 
@@ -238,6 +256,20 @@ class AccountingConverterMainWindow(QMainWindow):
 
     def _render(self, state: AppState) -> None:
         presentation = present_main_screen(state)
+        self.company_combo.blockSignals(True)
+        self.company_combo.clear()
+        for item in state.companies:
+            self.company_combo.addItem(item.display_name, item.company_setting_id)
+        selected_index = next(
+            (
+                index
+                for index in range(self.company_combo.count())
+                if self.company_combo.itemData(index) == state.selected_company_setting_id
+            ),
+            -1,
+        )
+        self.company_combo.setCurrentIndex(selected_index)
+        self.company_combo.blockSignals(False)
         self.file_name_label.setText(state.selected_file.name if state.selected_file else "")
         self.recognition_label.setText(presentation.recognition_text)
         self.recognition_card.setVisible(state.selected_file is not None)
@@ -282,6 +314,29 @@ class SettingsDialog(QDialog):
         title = QLabel("会社設定")
         title.setObjectName("title")
         layout.addWidget(title)
+
+        company_row = QHBoxLayout()
+        company_row.addWidget(QLabel("会社設定"))
+        self.company_combo = QComboBox()
+        for item in controller.state.companies:
+            self.company_combo.addItem(
+                f"{item.display_name}  /  {item.source_label} → JDL  /  {item.status_label}",
+                item.company_setting_id,
+            )
+        company_row.addWidget(self.company_combo, 1)
+        layout.addLayout(company_row)
+        company_actions = QHBoxLayout()
+        add_company = QPushButton("会社を追加")
+        add_company.clicked.connect(self._add_company)
+        rename_company = QPushButton("名前を変更")
+        rename_company.clicked.connect(self._rename_company)
+        delete_company = QPushButton("削除")
+        delete_company.clicked.connect(self._delete_company)
+        company_actions.addWidget(add_company)
+        company_actions.addWidget(rename_company)
+        company_actions.addWidget(delete_company)
+        company_actions.addStretch(1)
+        layout.addLayout(company_actions)
 
         profile_row = QHBoxLayout()
         profile_row.addWidget(QLabel("対応設定"))
@@ -345,3 +400,69 @@ class SettingsDialog(QDialog):
             state = self.controller.select_context_file(Path(filename))
             self.context_label.setText("設定済み" if state.selected_context_file else "未設定")
             self.message_label.setText(state.user_message)
+
+    def _add_company(self) -> None:
+        name, accepted = QInputDialog.getText(self, "会社を追加", "会社設定名")
+        if not accepted or not name.strip():
+            return
+        source, accepted = QInputDialog.getItem(
+            self, "会社を追加", "入力元", ("Money Forward", "弥生"), 0, False
+        )
+        if not accepted:
+            return
+        candidates = list(self.controller.profiles_for_source(source))
+        if not candidates:
+            self.message_label.setText("選択した入力元で利用できる対応設定がありません。")
+            return
+        profile_name, accepted = QInputDialog.getItem(
+            self, "会社を追加", "対応設定", tuple(item.profile_name for item in candidates), 0, False
+        )
+        if not accepted:
+            return
+        profile_id = next(item.profile_id for item in candidates if item.profile_name == profile_name)
+        filename, _ = QFileDialog.getOpenFileName(self, "JDL設定を選択", "", "JSON files (*.json)")
+        if not filename:
+            return
+        confirmation = QMessageBox.question(
+            self,
+            "会社設定の確認",
+            f"会社設定名: {name.strip()}\n"
+            f"入力元: {source}\n"
+            "出力先: JDL IBEX 出納帳 35.5\n"
+            f"対応設定: {profile_name}\n"
+            "JDL設定: 選択済み\n\n"
+            "内容を安全確認して保存します。よろしいですか。",
+        )
+        if confirmation != QMessageBox.StandardButton.Yes:
+            return
+        state = self.controller.add_company_setting(
+            display_name=name.strip(), source_label=source,
+            conversion_profile_id=profile_id, context_source=Path(filename),
+        )
+        self._reload_companies(state)
+
+    def _rename_company(self) -> None:
+        company_id = self.company_combo.currentData()
+        if not company_id:
+            return
+        current = self.company_combo.currentText().split("  /  ", 1)[0]
+        name, accepted = QInputDialog.getText(self, "名前を変更", "会社設定名", text=current)
+        if accepted and name.strip():
+            self._reload_companies(self.controller.rename_company_setting(company_id, name.strip()))
+
+    def _delete_company(self) -> None:
+        company_id = self.company_combo.currentData()
+        if not company_id:
+            return
+        answer = QMessageBox.question(self, "会社設定を削除", "この会社設定を削除しますか。対応設定と元のJDL設定は削除されません。")
+        if answer == QMessageBox.StandardButton.Yes:
+            self._reload_companies(self.controller.delete_company_setting(company_id))
+
+    def _reload_companies(self, state: AppState) -> None:
+        self.company_combo.clear()
+        for item in state.companies:
+            self.company_combo.addItem(
+                f"{item.display_name}  /  {item.source_label} → JDL  /  {item.status_label}",
+                item.company_setting_id,
+            )
+        self.message_label.setText(state.user_message)
