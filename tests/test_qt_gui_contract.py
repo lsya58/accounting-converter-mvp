@@ -94,6 +94,27 @@ class QtGuiContractTests(unittest.TestCase):
             self.assertIn(selector, APP_STYLE_SHEET)
         self.assertIn(COLORS["disabled_text"], APP_STYLE_SHEET)
 
+    def test_moneyforward_profile_creation_route_is_user_facing(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(encoding="utf-8")
+        expected = (
+            "この入力元の対応設定がまだありません。",
+            "対応設定を作成",
+            "Money Forwardの仕訳CSVから対応設定を作成",
+            "Money Forwardの仕訳CSV",
+            "JDLの科目を確認",
+            "確認しました",
+            "完全一致する候補は初期表示されていますが、まだ確定していません。",
+            "このCSVには現在設定できない項目があります",
+            "対応設定を保存",
+        )
+        for text in expected:
+            self.assertIn(text, source)
+        for internal in (
+            "MappingRequirementExtractor", "USER_CONFIRMED", "JdlTargetContext",
+            "fingerprint", "Evidence ID",
+        ):
+            self.assertNotIn(f'"{internal}"', source)
+
 
 if __name__ == "__main__":
     unittest.main()

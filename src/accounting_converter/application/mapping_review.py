@@ -259,6 +259,7 @@ class MappingConfirmationService:
         profile_id: str,
         key: MappingKey,
         target_value: str,
+        metadata: dict[str, str] | None = None,
     ) -> ConversionProfile:
         if not target_value.strip():
             raise ValueError("target_value is required")
@@ -271,7 +272,10 @@ class MappingConfirmationService:
                 target_value=target_value,
                 status=MappingStatus.USER_CONFIRMED,
                 parent_account=key.parent_account,
-                metadata=({"observed_side": key.side} if key.side else {}),
+                metadata={
+                    **({"observed_side": key.side} if key.side else {}),
+                    **(metadata or {}),
+                },
             ),
         )
         return self.store.update(with_updated_timestamp(updated))

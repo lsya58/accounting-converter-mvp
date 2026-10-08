@@ -27,4 +27,12 @@ JDL設定は既存Loaderで検証してから会社専用directoryへatomic copy
 
 ## 互換性と範囲
 
-Conversion Profile schema v3とJDL Context schema v1は変更しない。従来のProfile/JDL設定直接選択は移行用fallbackとして残す。会社設定の追加によってproduction Registry、Evidence gate、Money ForwardからJDLへのREADY範囲は変更しない。Mapping作成、JDL master自動取得、税・補助・部門Mapping UIは次段階とする。
+Conversion Profile schema v3とJDL Context schema v1は変更しない。従来のProfile/JDL設定直接選択は移行用fallbackとして残す。会社設定の追加によってproduction Registry、Evidence gate、Money ForwardからJDLへのREADY範囲は変更しない。JDL master自動取得、税・補助・部門Mapping UIは次段階とする。
+
+## Money Forward対応設定の初回作成
+
+Money Forward用Profileがない場合に限り、会社追加画面から仕訳CSVと確認済みJDL設定を明示選択して科目対応を作成できる。CSVは`MoneyForwardInputAdapter`でexact parseし、永続保存しない。必要科目は既存`MappingRequirementExtractor`から取得する。
+
+source科目名とJDL masterの名称・正式名称が完全一致し、候補が一意でも、候補表示に留める。各行でユーザーが「確認しました」を選んだ後にだけ、既存`MappingConfirmationService`を通じて`USER_CONFIRMED`としてschema v3 Profileへ保存する。fuzzy、contains、表記補正、AI推測は行わない。
+
+初回MVPは科目mappingだけを対象とする。補助科目、部門、税区分、取引先、インボイス、タグ、メモが入力に含まれる場合、値を捨てず種類だけを表示してProfile作成をBLOCKする。Profile作成後もMoney Forward production Adapter登録とREADY gateは変更しない。

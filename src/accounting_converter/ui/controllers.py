@@ -10,6 +10,10 @@ from accounting_converter.application.first_release_workflow import (
     conversion_result_message,
 )
 from accounting_converter.application.company_settings import CompanySettingService
+from accounting_converter.application.moneyforward_profile_setup import (
+    MoneyForwardProfileSetupAnalysis,
+    MoneyForwardProfileSetupService,
+)
 
 from accounting_converter.application.profile_preflight import (
     ConversionPreflightService,
@@ -120,6 +124,9 @@ class AccountingConverterController:
             default_company_store_dir(), self.profile_store
         )
         self.company_setting_service = CompanySettingService(self.company_store)
+        self.moneyforward_profile_setup_service = MoneyForwardProfileSetupService(
+            self.profile_store
+        )
         self.preferences_store = preferences_store or ApplicationPreferencesStore(
             default_preferences_path()
         )
@@ -261,6 +268,28 @@ class AccountingConverterController:
             )
             == source_label
         )
+
+    def analyze_moneyforward_profile_setup(
+        self, source_path: Path, context_path: Path
+    ) -> MoneyForwardProfileSetupAnalysis:
+        return self.moneyforward_profile_setup_service.analyze(source_path, context_path)
+
+    def create_moneyforward_profile(
+        self,
+        *,
+        company_display_name: str,
+        analysis: MoneyForwardProfileSetupAnalysis,
+        selections: dict[str, str],
+        explicitly_confirmed: set[str],
+    ) -> ConversionProfile:
+        profile = self.moneyforward_profile_setup_service.save_confirmed_profile(
+            company_display_name=company_display_name,
+            analysis=analysis,
+            selections=selections,
+            explicitly_confirmed=explicitly_confirmed,
+        )
+        self.load_profiles()
+        return profile
 
     def delete_company_setting(self, company_setting_id: str) -> AppState:
         try:

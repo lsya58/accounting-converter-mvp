@@ -5,11 +5,13 @@ from pathlib import Path
 from PySide6.QtCore import QUrl, Qt
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QFileDialog,
     QFrame,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QMainWindow,
@@ -18,6 +20,8 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QStackedWidget,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -523,9 +527,23 @@ class CompanyAddDialog(QDialog):
             "変換設定を選択",
             "この会社で使用する対応設定とJDL設定を選択してください。",
         )
-        layout.addWidget(QLabel("対応設定"))
+        self.profile_label = QLabel("対応設定")
+        layout.addWidget(self.profile_label)
         self.profile_combo = QComboBox()
         layout.addWidget(self.profile_combo)
+        self.no_profile_message = QLabel(
+            "この入力元の対応設定がまだありません。\n"
+            "Money Forwardの仕訳CSVから対応設定を作成します。\n"
+            "JDL設定を読み込み、必要な科目対応を確認して新しい対応設定を作成できます。"
+        )
+        self.no_profile_message.setObjectName("muted")
+        self.no_profile_message.setWordWrap(True)
+        self.no_profile_message.hide()
+        layout.addWidget(self.no_profile_message)
+        self.create_profile_button = QPushButton("対応設定を作成")
+        self.create_profile_button.clicked.connect(self._create_moneyforward_profile)
+        self.create_profile_button.hide()
+        layout.addWidget(self.create_profile_button, alignment=Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(QLabel("JDL設定"))
         context_row = QHBoxLayout()
         self.context_label = QLabel("ファイルはまだ選択されていません")
@@ -573,11 +591,23 @@ class CompanyAddDialog(QDialog):
         if index == 1:
             candidates = list(self.controller.profiles_for_source(self.source_combo.currentText()))
             if not candidates:
-                self.error_label.setText("選択した入力元で利用できる対応設定がありません。")
-                return
-            self.profile_ids = [item.profile_id for item in candidates]
-            self.profile_combo.clear()
-            self.profile_combo.addItems([item.profile_name for item in candidates])
+                if self.source_combo.currentText() != "Money Forward":
+                    self.error_label.setText("選択した入力元で利用できる対応設定がありません。")
+                    return
+                self.profile_ids = []
+                self.profile_combo.clear()
+                self.profile_combo.hide()
+                self.profile_label.hide()
+                self.no_profile_message.show()
+                self.create_profile_button.show()
+            else:
+                self.profile_combo.show()
+                self.profile_label.show()
+                self.no_profile_message.hide()
+                self.create_profile_button.hide()
+                self.profile_ids = [item.profile_id for item in candidates]
+                self.profile_combo.clear()
+                self.profile_combo.addItems([item.profile_name for item in candidates])
         if index == 2:
             if self.profile_combo.currentIndex() < 0:
                 self.error_label.setText("対応設定を選択してください。")
@@ -591,6 +621,23 @@ class CompanyAddDialog(QDialog):
             return
         self.pages.setCurrentIndex(index + 1)
         self._update_actions()
+
+    def _create_moneyforward_profile(self) -> None:
+        dialog = MoneyForwardProfileSetupDialog(
+            self.controller, self.name_edit.text().strip(), self
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        self.profile_ids = [dialog.profile_id]
+        self.profile_combo.clear()
+        self.profile_combo.addItem(dialog.profile_name)
+        self.profile_combo.show()
+        self.profile_label.show()
+        self.no_profile_message.hide()
+        self.create_profile_button.hide()
+        self.context_path = dialog.context_path
+        self.context_label.setText(self.context_path.name)
+        self.error_label.setText("対応設定を保存しました。次へ進んでください。")
 
     def _render_confirmation(self) -> None:
         self.confirmation_label.setText(
@@ -626,6 +673,185 @@ class CompanyAddDialog(QDialog):
         index = self.pages.currentIndex()
         self.back_button.setVisible(index > 0)
         self.next_button.setText("保存" if index == self.pages.count() - 1 else "次へ")
+
+
+class MoneyForwardProfileSetupDialog(QDialog):
+    def __init__(
+        self,
+        controller: AccountingConverterController,
+        company_display_name: str,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self.controller = controller
+        self.company_display_name = company_display_name
+        self.source_path: Path | None = None
+        self.context_path: Path | None = None
+        self.analysis = None
+        self.profile_id = ""
+        self.profile_name = ""
+        self.row_controls: list[tuple[str, QComboBox, QCheckBox]] = []
+        self.setWindowTitle("Money Forwardの対応設定を作成")
+        self.setMinimumSize(760, 560)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(30, 26, 30, 24)
+        layout.setSpacing(14)
+        title = QLabel("Money Forwardの対応設定を作成")
+        title.setObjectName("sectionTitle")
+        description = QLabel(
+            "Money Forwardの仕訳CSVとJDL設定を読み込み、必要な科目対応を確認します。\n"
+            "完全一致する科目も、自動確定せず確認が必要です。"
+        )
+        description.setObjectName("muted")
+        description.setWordWrap(True)
+        layout.addWidget(title)
+        layout.addWidget(description)
+
+        source_row = QHBoxLayout()
+        source_row.addWidget(QLabel("Money Forwardの仕訳CSV"))
+        self.source_label = QLabel("未選択")
+        self.source_label.setObjectName("muted")
+        source_button = QPushButton("CSVを選択")
+        source_button.clicked.connect(self._choose_source)
+        source_row.addWidget(self.source_label, 1)
+        source_row.addWidget(source_button)
+        layout.addLayout(source_row)
+
+        context_row = QHBoxLayout()
+        context_row.addWidget(QLabel("JDL設定"))
+        self.context_label = QLabel("未選択")
+        self.context_label.setObjectName("muted")
+        context_button = QPushButton("JDL設定を選択")
+        context_button.clicked.connect(self._choose_context)
+        context_row.addWidget(self.context_label, 1)
+        context_row.addWidget(context_button)
+        layout.addLayout(context_row)
+
+        analyze_button = QPushButton("科目を確認")
+        analyze_button.clicked.connect(self._analyze)
+        layout.addWidget(analyze_button, alignment=Qt.AlignmentFlag.AlignLeft)
+
+        guidance = QLabel("JDLの科目を確認し、各行の「確認しました」を選択してください。")
+        guidance.setObjectName("muted")
+        guidance.setWordWrap(True)
+        layout.addWidget(guidance)
+        self.table = QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels(("Money Forward", "JDL", "状態"))
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        layout.addWidget(self.table, 1)
+
+        self.message_label = QLabel("")
+        self.message_label.setObjectName("muted")
+        self.message_label.setWordWrap(True)
+        layout.addWidget(self.message_label)
+        actions = QHBoxLayout()
+        cancel = QPushButton("キャンセル")
+        cancel.clicked.connect(self.reject)
+        self.save_button = QPushButton("対応設定を保存")
+        self.save_button.setObjectName("primaryButton")
+        self.save_button.setEnabled(False)
+        self.save_button.clicked.connect(self._save)
+        actions.addStretch(1)
+        actions.addWidget(cancel)
+        actions.addWidget(self.save_button)
+        layout.addLayout(actions)
+
+    def _choose_source(self) -> None:
+        filename, _ = QFileDialog.getOpenFileName(
+            self, "Money Forwardの仕訳CSVを選択", "", "CSV files (*.csv)"
+        )
+        if filename:
+            self.source_path = Path(filename)
+            self.source_label.setText(self.source_path.name)
+            self._clear_analysis()
+
+    def _choose_context(self) -> None:
+        filename, _ = QFileDialog.getOpenFileName(
+            self, "JDL設定を選択", "", "JSON files (*.json)"
+        )
+        if filename:
+            self.context_path = Path(filename)
+            self.context_label.setText(self.context_path.name)
+            self._clear_analysis()
+
+    def _clear_analysis(self) -> None:
+        self.analysis = None
+        self.row_controls.clear()
+        self.table.setRowCount(0)
+        self.save_button.setEnabled(False)
+        self.message_label.clear()
+
+    def _analyze(self) -> None:
+        if self.source_path is None:
+            self.message_label.setText("Money Forwardの仕訳CSVを選択してください。")
+            return
+        if self.context_path is None:
+            self.message_label.setText("JDL設定を選択してください。")
+            return
+        try:
+            analysis = self.controller.analyze_moneyforward_profile_setup(
+                self.source_path, self.context_path
+            )
+        except Exception:
+            self._clear_analysis()
+            self.message_label.setText(
+                "CSVまたはJDL設定を確認できませんでした。対応するファイルを選択してください。"
+            )
+            return
+        self.analysis = analysis
+        self.table.setRowCount(0)
+        self.row_controls.clear()
+        if analysis.unsupported_field_types:
+            self.message_label.setText(
+                "このCSVには現在設定できない項目があります: "
+                + "、".join(analysis.unsupported_field_types)
+            )
+            self.save_button.setEnabled(False)
+            return
+        for row_index, item in enumerate(analysis.account_items):
+            self.table.insertRow(row_index)
+            self.table.setItem(row_index, 0, QTableWidgetItem(item.source_value))
+            target = QComboBox()
+            target.addItems(item.available_targets)
+            if item.exact_candidate in item.available_targets:
+                target.setCurrentIndex(item.available_targets.index(item.exact_candidate))
+            else:
+                target.setCurrentIndex(-1)
+            confirmed = QCheckBox("確認しました")
+            self.table.setCellWidget(row_index, 1, target)
+            self.table.setCellWidget(row_index, 2, confirmed)
+            self.row_controls.append((item.source_value, target, confirmed))
+        self.message_label.setText(
+            "完全一致する候補は初期表示されていますが、まだ確定していません。"
+        )
+        self.save_button.setEnabled(bool(self.row_controls))
+
+    def _save(self) -> None:
+        if self.analysis is None:
+            return
+        selections: dict[str, str] = {}
+        confirmed: set[str] = set()
+        for source_value, target, checkbox in self.row_controls:
+            if target.currentIndex() >= 0:
+                selections[source_value] = target.currentText()
+            if checkbox.isChecked():
+                confirmed.add(source_value)
+        try:
+            profile = self.controller.create_moneyforward_profile(
+                company_display_name=self.company_display_name,
+                analysis=self.analysis,
+                selections=selections,
+                explicitly_confirmed=confirmed,
+            )
+        except Exception:
+            self.message_label.setText("すべての科目対応を選択し、明示的に確認してください。")
+            return
+        self.profile_id = profile.profile_id
+        self.profile_name = profile.profile_name
+        self.accept()
 
 
 class CompanyRenameDialog(QDialog):
