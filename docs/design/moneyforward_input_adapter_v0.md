@@ -2,7 +2,7 @@
 
 ## Status
 
-Input Adapter v0実装済み。production AdapterRegistry登録、GUI route、Money Forward -> JDL READY化は行わない。Evidenceは`EVID-MF-JOURNAL-EXPORT-OBSERVED-001`の`OBSERVED` scopeに限定する。
+Input Adapter v0実装済み。production AdapterRegistry登録、GUI route、Money Forward -> JDL READY化は行わない。Evidenceは`EVID-MF-JOURNAL-EXPORT-OBSERVED-001`の`OBSERVED` scopeに限定する。2026-10-08時点でConversionServiceを通るsynthetic E2Eを追加したが、これは配線とfail-closed動作の検証であり、MF -> JDL実機Import Evidenceではない。
 
 ## Proposed Source Identity
 
@@ -71,4 +71,19 @@ src/accounting_converter/adapters/input/moneyforward/
 
 ## Production Gate
 
-実装済みv0はexact identityを指定した直接利用だけを許可し、production registryへ登録しない。source identityのversion識別、取引先/tag/memoのtarget loss policy、MF -> JDL実機Import、ConversionService E2Eを別gateとする。JDL OutputのEvidence requirementは緩和しない。
+実装済みv0はexact identityを指定した直接利用だけを許可し、production registryへ登録しない。source identityのversion識別、MF -> JDL実機Importを別gateとする。JDL OutputのEvidence requirementは緩和しない。
+
+## Synthetic MF -> JDL E2E
+
+既存`ConversionService`、`MappingEngine`、`ExplicitJdlEvidenceRoutePolicy`、`JdlOutputRuntimeFactory`、`JDLOutputValidator`を再利用し、test-onlyの明示Mapping/target contextで次を確認した。
+
+- tax field空欄・補助/部門/取引先/tag/memo/invoiceなしのsimple 1件
+- 同日simple 2件の確認済みJDL `1111 + 1111`構成
+- exact 1D3Cの確認済みJDL `1110/1100/1101`構成
+- source非変更、count/total、temp output validation、成功後だけのatomic publish
+
+MF raw Evidenceで通常観測した`対象外`をJDL空欄へ変換するcross-product tax mappingは未確認であり、自動変換しない。`3D1C`、`2D2C`、`3D3C`はMF Inputでは解析できてもJDL Output v0 Evidence外なのでblockする。
+
+`MoneyForwardToJdlLossRule`は、JDL Output v0で表現先が確認できない取引先、tag、memo、invoice classificationを値非表示のValidation Errorとしてblockする。source/evidence/grouping metadataは内部traceabilityであり、会計fieldの代替表現としてJDL CSVへ埋め込まない。将来loss acknowledgementを導入する場合も、明示的な利用者確認なしに破棄しない。
+
+このsynthetic E2Eによってproduction Registry、GUI、READY判定は変更しない。実業務source profile、cross-product tax mapping、MF起点JDL実機Importと再Export比較が後続gateである。

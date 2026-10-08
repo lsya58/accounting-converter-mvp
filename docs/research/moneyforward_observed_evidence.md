@@ -191,4 +191,10 @@ Observed scopeでは、連続する同じ非空`取引No`を1 logical journal ca
 3. invoiceの別条件・別literalと適用期間境界
 4. `|`を含むtag名とnewline正規化規則
 5. zero/negative amountを含む外部生成CSVの製品側挙動
-6. MF Input -> Mapping -> JDL Outputのloss policyと実機Import E2E
+6. MF Input -> Mapping -> JDL Outputの実機Import E2E
+
+## Synthetic JDL Pipeline Check (2026-10-08)
+
+完全synthetic CSVを使い、MoneyForwardInputAdapterからCommon Journal Model、Mapping/Validation、Evidence-limited JDL Output、Output Validation、Verification Reportまで既存ConversionService経路で接続確認した。simple、同日simple pair、exact 1D3Cだけが、test-onlyの明示Mapping、確認済みJDL target context、MF tax field空欄という限定条件で成功した。
+
+これは`OBSERVED` source Evidenceの昇格でも、MF -> JDL real-import Evidenceでもない。実rawで観測した`対象外`をJDLの免税時空欄へ対応させるMappingは未確認のためblockする。MFでは解析可能な3D1C/2D2C/3D3CもJDL側Evidence外としてblockする。取引先、tag、memo、invoice classificationはJDL Output v0でlosslessな表現先が未確認のためsilent dropせずblockする。
