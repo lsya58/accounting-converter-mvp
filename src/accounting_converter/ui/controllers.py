@@ -21,11 +21,14 @@ from accounting_converter.application.conversion_preparation import (
 )
 from accounting_converter.diagnostics.jdl_csv import JdlCsvStructuralAnalyzer
 from accounting_converter.diagnostics.yayoi_csv import YayoiCsvAnalyzer
+from accounting_converter.adapters.input.moneyforward import MoneyForwardInputAdapter
+from accounting_converter.adapters.input.yayoi import YayoiInputAdapter
 from accounting_converter.domain.conversion_profile import (
     ConversionProfile,
     FormatIdentityMatchStatus,
 )
 from accounting_converter.domain.mapping import MappingStatus
+from accounting_converter.domain.profile import FormatProfile
 from accounting_converter.infrastructure.conversion_profile_store import (
     ConversionProfileStore,
     ConversionProfileStoreError,
@@ -39,6 +42,7 @@ from accounting_converter.infrastructure.jdl_target_context_loader import (
 from accounting_converter.profiles.known_formats import (
     jdl_ibex_cashbook_35_5_observed_schema_definition,
     jdl_ibex_cashbook_official_journal_import_schema_definition,
+    moneyforward_cloud_journal_export_observed_schema,
     yayoi_ae19_direct_export_observed_schema,
     yayoi_desktop_import_25_documented_schema,
 )
@@ -48,7 +52,10 @@ from .view_models import (
     DiagnosticKind,
     DiagnosticStatus,
     DiagnosticSummary,
+    ConversionResultPresentation,
+    FileRecognition,
     ProfileOption,
+    RecognizedFormat,
 )
 
 
@@ -111,9 +118,11 @@ class AccountingConverterController:
                 error,
                 diagnostic_status=self.state.diagnostic_status,
             )
+        selected_id = profiles[0].profile_id if len(profiles) == 1 else self.state.selected_profile_id
         self.state = replace(
             self.state,
             profiles=profiles,
+            selected_profile_id=selected_id,
             user_message=(
                 "変換設定がまだ登録されていません。管理者から受け取った"
                 "変換設定ファイルを「設定を追加」から登録してください。"
@@ -161,6 +170,7 @@ class AccountingConverterController:
             self.state,
             conversion_available=False,
             conversion_summary=None,
+            result_presentation=None,
             user_message=f"変換設定を追加しました: {imported.profile_name}",
             developer_error=None,
         )
@@ -188,6 +198,7 @@ class AccountingConverterController:
             selected_profile_id=selected,
             preflight_status=ProfilePreflightStatus.UNKNOWN.value,
             conversion_available=False,
+            result_presentation=None,
             conversion_summary=None,
             user_message=(
                 "変換設定を選択しました。"
@@ -200,15 +211,21 @@ class AccountingConverterController:
 
     def select_file(self, path: Path | str | None) -> AppState:
         selected = Path(path) if path is not None else None
+        recognition = self._recognize_file(selected) if selected is not None else None
         self.state = replace(
             self.state,
             selected_file=selected,
             diagnostic_status=DiagnosticStatus.NOT_RUN,
             diagnostic_summary=None,
+            file_recognition=recognition,
             preflight_status=ProfilePreflightStatus.UNKNOWN.value,
             conversion_available=False,
+            conversion_summary=None,
+            result_presentation=None,
             user_message=(
-                f"入力ファイルを選択しました: {selected.name}"
+                recognition.display_name + "を認識しました。"
+                if recognition is not None and recognition.format is not RecognizedFormat.UNKNOWN
+                else "このCSVは現在対応している仕訳形式ではありません。"
                 if selected is not None
                 else "入力ファイルが未選択です。"
             ),
@@ -237,6 +254,7 @@ class AccountingConverterController:
             selected_context_file=selected,
             conversion_available=False,
             conversion_summary=None,
+            result_presentation=None,
             user_message=f"JDL設定を確認しています: {selected.name}",
             developer_error=None,
         )
@@ -253,6 +271,7 @@ class AccountingConverterController:
             selected_context_file=selected,
             conversion_available=False,
             conversion_summary=None,
+            result_presentation=None,
             user_message="確認済みJDL設定を読み込みました。",
             developer_error=None,
         )
@@ -266,6 +285,7 @@ class AccountingConverterController:
             selected_output_file=selected,
             conversion_available=False,
             conversion_summary=None,
+            result_presentation=None,
             user_message=(
                 "出力先を選択しました。" if selected else "出力先が未選択です。"
             ),
@@ -348,6 +368,19 @@ class AccountingConverterController:
             conversion_available=False,
             preflight_status=getattr(result.status, "value", result.status),
             result_summary=result_summary,
+            result_presentation=ConversionResultPresentation(
+                successful=getattr(result.status, "value", result.status) == "SUCCESS",
+                input_journal_count=result.input_journal_count,
+                output_journal_count=result.output_journal_count,
+                debit_total=str(result.debit_total),
+                credit_total=str(result.credit_total),
+                error_count=result.error_count,
+                output_validation_success=bool(
+                    result.output_validation_result
+                    and result.output_validation_result.success
+                ),
+                output_path=result.output_path,
+            ),
             verification_report=result.verification_report,
             user_message=conversion_result_message(result),
             messages=tuple(item.message for item in result.validation_results),
@@ -510,6 +543,52 @@ class AccountingConverterController:
         if self.state.diagnostic_kind is DiagnosticKind.JDL:
             return jdl_ibex_cashbook_35_5_observed_schema_definition().identity
         return yayoi_desktop_import_25_documented_schema().identity
+
+    def _recognize_file(self, path: Path) -> FileRecognition:
+        candidates = (
+            (
+                RecognizedFormat.MONEYFORWARD,
+                "Money Forwardの仕訳帳CSV",
+                MoneyForwardInputAdapter(),
+                moneyforward_cloud_journal_export_observed_schema(),
+                "Money Forward",
+                "Money Forward クラウド会計",
+                "UNKNOWN",
+            ),
+            (
+                RecognizedFormat.YAYOI,
+                "弥生会計の仕訳データ",
+                YayoiInputAdapter(),
+                yayoi_ae19_direct_export_observed_schema(),
+                "Yayoi",
+                "Yayoi Accounting AE 19",
+                "19",
+            ),
+        )
+        for kind, label, adapter, schema, software, product, version in candidates:
+            profile = FormatProfile(
+                software=software,
+                product=product,
+                version=version,
+                format_id=schema.identity.stable_key,
+                encoding="cp932",
+            )
+            try:
+                entries = adapter.read(path, profile)
+            except Exception:
+                continue
+            dates = sorted({entry.date for entry in entries})
+            return FileRecognition(
+                format=kind,
+                display_name=label,
+                journal_count=len(entries),
+                period_start=dates[0].isoformat() if dates else None,
+                period_end=dates[-1].isoformat() if dates else None,
+            )
+        return FileRecognition(
+            format=RecognizedFormat.UNKNOWN,
+            display_name="未対応のCSV",
+        )
 
     def _fail_state(
         self,
