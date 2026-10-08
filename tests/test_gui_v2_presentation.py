@@ -18,9 +18,19 @@ from accounting_converter.ui.view_models import (
 )
 from accounting_converter.adapters.input.moneyforward import MONEYFORWARD_OBSERVED_HEADER
 from accounting_converter.infrastructure.conversion_profile_store import ConversionProfileStore
+from accounting_converter.ui.app import GUI_PALETTE, status_visual
 
 
 class GuiV2PresentationTests(unittest.TestCase):
+    def test_visual_tokens_cover_every_user_facing_status(self) -> None:
+        self.assertEqual(GUI_PALETTE["surface"], "#FFFFFF")
+        for status in UserFacingStatus:
+            label, foreground, background = status_visual(status)
+            self.assertTrue(label)
+            self.assertRegex(foreground, r"^#[0-9A-F]{6}$")
+            self.assertRegex(background, r"^#[0-9A-F]{6}$")
+            self.assertNotEqual(foreground, background)
+
     def test_initial_state_is_plain_and_conversion_disabled(self) -> None:
         view = present_main_screen(AppState())
 

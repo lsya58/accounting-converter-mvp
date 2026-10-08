@@ -23,6 +23,17 @@ ProfileまたはJDL Contextが未設定の場合は、通常フローを増や�
 
 色だけに依存せず、status textと記号を併記する。内部enumは通常画面へ出さない。
 
+## Visual System
+
+- pageは淡いgray、操作単位はwhite surfaceとborderを持つ独立cardとして表示する。
+- 3ステップには番号badgeを置き、線やSeparatorに依存せず視線を上から下へ導く。
+- 主操作だけをblueの大型buttonとし、secondary actionはWindows標準に近いttk buttonへ分離する。
+- 状態は`未準備`、`準備完了`、`要確認`、`停止`、`完了`のbadgeと本文を併記する。green/amber/redだけで意味を伝えない。
+- title、section、body、supporting textのfont hierarchyを定義し、余白と行間で密度を調整する。
+- 小さいwindowでは縦scrollを許可し、カードや結果表示の重なりを防ぐ。
+
+Windowsでは`Yu Gothic UI`、`Meiryo UI`、`Segoe UI`の順で利用可能fontを選び、Tk named fontへ適用する。Tk root生成前にPer-Monitor DPI awarenessをbest effortで設定し、APIがない環境ではOS/Tkの既定動作へfallbackする。独自の固定scaling値は指定せず、WindowsとTkが算出するscaleを尊重する。
+
 ## Hidden Internal Concepts
 
 次の概念はbackendに維持するが、通常画面には表示しない。
