@@ -15,7 +15,7 @@ Money Forwardの税区分とJDL IBEX出納帳35.5の税fieldを推測で結び�
 
 JDL側の課区、税区、税入力方法、消費税についてcase別Evidenceがない間、candidate生成は`PROBE_BLOCKED_MISSING_JDL_TAX_EVIDENCE`で停止する。MF literalからJDL codeや略称を推測しない。
 
-`tax_purchase_10`だけは、`EVID-JDL-TAX-PURCHASE-10-INCLUSIVE-HAND-001`により、JDL IBEX出納帳35.5、課税・税込、1111、1 debit / 1 credit、補助・部門なしの範囲でcandidate生成まで進められる。これはHuman手入力したsynthetic仕訳のJDL再Exportを根拠とする`OBSERVED` Evidenceであり、app-generated candidateのImport成功Evidenceではない。
+`tax_purchase_10`は、Human手入力Exportの`EVID-JDL-TAX-PURCHASE-10-INCLUSIVE-HAND-001`と、app-generated candidateのImport・再Export比較`EVID-JDL-MF-TAX-PURCHASE-10-ROUNDTRIP-001`を持つ。後者はJDL IBEX出納帳35.5、課税・税込、1111、1 debit / 1 credit、補助・部門・取引先なしに限定した`VERIFIED_BY_REAL_IMPORT` Evidenceである。
 
 ## Evidence取得手順
 
@@ -69,4 +69,6 @@ PYTHONPATH=src python3 -m accounting_converter.tools.generate_jdl_probe \
 
 ## 現在のGate
 
-`tax_purchase_10`はcross-product candidate生成のみ可能。他の5 tax casesと`simple_with_tax`は引き続きBLOCKする。candidateのJDL Import、再Export、Human手入力Evidenceとのsemantic comparisonが完了するまではmappingをproductionへ昇格しない。production Registry、MF READY、GUIは変更しない。
+`tax_purchase_10`はapp-generated candidateのJDL Import、再Export、Human手入力Evidenceとのsemantic comparisonまで成功した。ただし、これは1 category・1会社設定・1D1Cのexperimental scopeであり、会社設定Tax UIやproduction routeには未接続である。他の5 tax casesと`simple_with_tax`は引き続きBLOCKする。production Registry、MF READY、GUIは変更しない。
+
+再Export比較では、JDLがcandidateで空欄だったaccount master identityと消費税欄を再Export表現へ補完した。これは比較上の観測分類であり、generator defaultや一般的な正規化規則にはしない。

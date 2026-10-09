@@ -28,8 +28,10 @@ from accounting_converter.tools.generate_jdl_probe import (
 )
 from accounting_converter.tools.jdl_tax_evidence import (
     EVIDENCE_ID_JDL_PURCHASE_10_INCLUSIVE_HAND,
+    EVIDENCE_ID_MF_JDL_PURCHASE_10_ROUNDTRIP,
     JdlTaxEvidenceError,
     analyze_purchase_10_inclusive_evidence,
+    compare_purchase_10_roundtrip,
 )
 from accounting_converter.profiles.jdl_official import (
     jdl_ibex_cashbook_official_journal_import_spec,
@@ -69,6 +71,12 @@ class JdlProbeWorkflowTests(unittest.TestCase):
             },
         )
         self.assertNotIn("compound_3d1c", names)
+        purchase = next(
+            item for item in PROBE_DEFINITIONS if item.name == "tax_purchase_10"
+        )
+        self.assertEqual(
+            purchase.availability, "VERIFIED_BY_REAL_IMPORT_EXPERIMENTAL"
+        )
         self.assertEqual(main(["--list"]), 0)
 
     def test_simple_and_two_journal_candidates_validate(self) -> None:
@@ -205,6 +213,56 @@ class JdlProbeWorkflowTests(unittest.TestCase):
         with self.assertRaises(JdlTaxEvidenceError):
             analyze_purchase_10_inclusive_evidence(evidence)
 
+    def test_purchase_10_roundtrip_comparison_is_scoped_and_privacy_safe(self) -> None:
+        human = self.private / "human.csv"
+        candidate = self.private / "candidate.csv"
+        reexport = self.private / "reexport.csv"
+        human_row = self._tax_row(description="human description", reexport=True)
+        candidate_row = self._tax_row(description="candidate description", reexport=False)
+        actual_row = self._tax_row(description="candidate description", reexport=True)
+        self._write_official_rows(human, [human_row], preamble=True)
+        self._write_official_rows(candidate, [candidate_row])
+        self._write_official_rows(
+            reexport, [human_row, actual_row], preamble=True
+        )
+
+        comparison = compare_purchase_10_roundtrip(human, candidate, reexport)
+        result = comparison.privacy_safe_result()
+        serialized = json.dumps(result, ensure_ascii=False)
+
+        self.assertTrue(comparison.passed)
+        self.assertEqual(comparison.candidate_match_count, 1)
+        self.assertEqual(
+            result["evidence_id"], EVIDENCE_ID_MF_JDL_PURCHASE_10_ROUNDTRIP
+        )
+        self.assertEqual(result["evidence_level"], "VERIFIED_BY_REAL_IMPORT")
+        self.assertFalse(result["mapping_promotion_allowed"])
+        self.assertIn("account_master_identity", result["jdl_normalized_field_categories"])
+        for private_value in (
+            "human description",
+            "candidate description",
+            "消耗品費",
+            "現金",
+            "1100",
+        ):
+            self.assertNotIn(private_value, serialized)
+
+    def test_purchase_10_roundtrip_does_not_guess_ambiguous_match(self) -> None:
+        human = self.private / "human.csv"
+        candidate = self.private / "candidate.csv"
+        reexport = self.private / "reexport.csv"
+        human_row = self._tax_row(description="human description", reexport=True)
+        candidate_row = self._tax_row(description="candidate description", reexport=False)
+        actual_row = self._tax_row(description="candidate description", reexport=True)
+        self._write_official_rows(human, [human_row], preamble=True)
+        self._write_official_rows(candidate, [candidate_row])
+        self._write_official_rows(reexport, [actual_row, actual_row], preamble=True)
+
+        comparison = compare_purchase_10_roundtrip(human, candidate, reexport)
+
+        self.assertFalse(comparison.passed)
+        self.assertEqual(comparison.candidate_match_count, 2)
+
     def test_tax_result_template_is_private_safe_and_no_overwrite(self) -> None:
         destination = self.private / "tax_sales_10_result.json"
         generator = JdlProbeGenerator(self.private)
@@ -320,28 +378,42 @@ class JdlProbeWorkflowTests(unittest.TestCase):
 
     @staticmethod
     def _write_tax_evidence(path: Path) -> None:
+        JdlProbeWorkflowTests._write_official_rows(
+            path,
+            [JdlProbeWorkflowTests._tax_row("架空証拠摘要", reexport=True)],
+            preamble=True,
+        )
+
+    @staticmethod
+    def _tax_row(description: str, *, reexport: bool) -> list[str]:
         header = jdl_ibex_cashbook_official_journal_import_spec().column_names
         values = {name: "" for name in header}
-        values.update(
-            {
-                "//識別フラグ": "1111",
-                "日付": "20261021",
-                "借方科目名称": "消耗品費",
-                "借方課区": "仕　入",
-                "借方税区": "10%",
-                "借方金額": "1100",
-                "借方消費税": "0",
-                "貸方科目名称": "現金",
-                "貸方金額": "1100",
-                "貸方消費税": "0",
-                "摘要": "架空証拠摘要",
-            }
-        )
+        values.update({
+            "//識別フラグ": "1111", "日付": "20261021",
+            "借方科目名称": "消耗品費", "借方課区": "仕　入",
+            "借方税区": "10%", "借方金額": "1100",
+            "貸方科目名称": "現金", "貸方金額": "1100", "摘要": description,
+        })
+        if reexport:
+            values.update({
+                "借方科目": "8001", "借方科目正式名称": "消耗品費",
+                "借方消費税": "0", "貸方科目": "1001",
+                "貸方科目正式名称": "現金", "貸方消費税": "0",
+                "借方部門コード": "0", "貸方部門コード": "0",
+            })
+        return [values[name] for name in header]
+
+    @staticmethod
+    def _write_official_rows(
+        path: Path, rows: list[list[str]], *, preamble: bool = False
+    ) -> None:
+        header = jdl_ibex_cashbook_official_journal_import_spec().column_names
         output = io.StringIO(newline="")
         writer = csv.writer(output, lineterminator="\r\n")
-        writer.writerow(("// synthetic preamble",))
+        if preamble:
+            writer.writerow(("// synthetic preamble",))
         writer.writerow(header)
-        writer.writerow([values[name] for name in header])
+        writer.writerows(rows)
         path.write_bytes(output.getvalue().encode("cp932"))
 
     def _context(self):

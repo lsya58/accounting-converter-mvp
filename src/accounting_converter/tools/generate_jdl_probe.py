@@ -75,7 +75,7 @@ PROBE_DEFINITIONS = (
     ProbeDefinition("simple_with_subaccount", 1, JdlEvidenceProfile.SUBACCOUNT_1000, "EVIDENCE_GATED", "親科目付き補助科目の受理確認"),
     ProbeDefinition("compound_1d3c", 1, JdlEvidenceProfile.COMPOUND_1D3C, "EVIDENCE_GATED", "観測済み1D3Cの受理確認"),
     ProbeDefinition("tax_sales_10", 1, None, "BLOCKED_MISSING_JDL_TAX_EVIDENCE", "売上10%税表現の確認"),
-    ProbeDefinition("tax_purchase_10", 1, JdlEvidenceProfile.TAX_INCLUDED_1111, "EVIDENCE_GATED_EXPERIMENTAL", "仕入10%税表現の確認"),
+    ProbeDefinition("tax_purchase_10", 1, JdlEvidenceProfile.TAX_INCLUDED_1111, "VERIFIED_BY_REAL_IMPORT_EXPERIMENTAL", "仕入10%税表現の確認"),
     ProbeDefinition("tax_sales_reduced_8", 1, None, "BLOCKED_MISSING_JDL_TAX_EVIDENCE", "軽減売上8%税表現の確認"),
     ProbeDefinition("tax_purchase_reduced_8", 1, None, "BLOCKED_MISSING_JDL_TAX_EVIDENCE", "軽減仕入8%税表現の確認"),
     ProbeDefinition("tax_non_taxable_purchase", 1, None, "BLOCKED_MISSING_JDL_TAX_EVIDENCE", "非課税仕入税表現の確認"),
