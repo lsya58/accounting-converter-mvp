@@ -71,9 +71,21 @@ class ProbeDefinition:
 PROBE_DEFINITIONS = (
     ProbeDefinition("simple_no_tax", 1, JdlEvidenceProfile.BASIC_1111, "EVIDENCE_GATED", "基本1仕訳の受理確認"),
     ProbeDefinition("simple_two_journals", 2, JdlEvidenceProfile.BASIC_1111, "EVIDENCE_GATED", "独立2仕訳の受理確認"),
-    ProbeDefinition("simple_with_tax", 1, None, "BLOCKED_MISSING_TAX_EVIDENCE", "税項目mappingの受理確認"),
+    ProbeDefinition("simple_with_tax", 1, None, "BLOCKED_MISSING_JDL_TAX_EVIDENCE", "税項目mappingの受理確認"),
     ProbeDefinition("simple_with_subaccount", 1, JdlEvidenceProfile.SUBACCOUNT_1000, "EVIDENCE_GATED", "親科目付き補助科目の受理確認"),
     ProbeDefinition("compound_1d3c", 1, JdlEvidenceProfile.COMPOUND_1D3C, "EVIDENCE_GATED", "観測済み1D3Cの受理確認"),
+    ProbeDefinition("tax_sales_10", 1, None, "BLOCKED_MISSING_JDL_TAX_EVIDENCE", "売上10%税表現の確認"),
+    ProbeDefinition("tax_purchase_10", 1, None, "BLOCKED_MISSING_JDL_TAX_EVIDENCE", "仕入10%税表現の確認"),
+    ProbeDefinition("tax_sales_reduced_8", 1, None, "BLOCKED_MISSING_JDL_TAX_EVIDENCE", "軽減売上8%税表現の確認"),
+    ProbeDefinition("tax_purchase_reduced_8", 1, None, "BLOCKED_MISSING_JDL_TAX_EVIDENCE", "軽減仕入8%税表現の確認"),
+    ProbeDefinition("tax_non_taxable_purchase", 1, None, "BLOCKED_MISSING_JDL_TAX_EVIDENCE", "非課税仕入税表現の確認"),
+    ProbeDefinition("tax_out_of_scope", 1, None, "BLOCKED_MISSING_JDL_TAX_EVIDENCE", "対象外税表現の確認"),
+)
+
+TAX_PROBE_CASES = frozenset(
+    definition.name
+    for definition in PROBE_DEFINITIONS
+    if definition.name.startswith("tax_")
 )
 
 
@@ -99,7 +111,7 @@ class JdlProbeGenerator:
         definition = self._definition(case_name)
         if definition.evidence_profile is None:
             raise JdlProbeError(
-                "PROBE_BLOCKED_MISSING_TAX_EVIDENCE",
+                "PROBE_BLOCKED_MISSING_JDL_TAX_EVIDENCE",
                 "MF税区分からJDL税項目への実機確認済みmappingがないため生成できません。",
             )
         output_path = output_path.resolve()
@@ -138,6 +150,41 @@ class JdlProbeGenerator:
         finally:
             if source_path is not None and source_path.exists():
                 source_path.unlink()
+
+    def write_tax_result_template(
+        self, *, case_name: str, destination: Path
+    ) -> Path:
+        if case_name not in TAX_PROBE_CASES:
+            raise JdlProbeError(
+                "PROBE_RESULT_CASE_NOT_TAX", "税区分probe caseを指定してください。"
+            )
+        destination = destination.resolve()
+        if not destination.is_relative_to(self.private_root):
+            raise JdlProbeError(
+                "PROBE_PRIVATE_PATH_REQUIRED", "保存先は指定private root配下に限定されます。"
+            )
+        if destination.exists():
+            raise JdlProbeError(
+                "PROBE_OUTPUT_EXISTS", "result templateが既に存在します。上書きしません。"
+            )
+        self._atomic_json_write(
+            destination,
+            {
+                "schema_version": "1",
+                "probe_case": case_name,
+                "result_status": "UNTESTED",
+                "imported": None,
+                "reexport_present": None,
+                "jdl_product": "JDL IBEX 出納帳",
+                "jdl_version": "35.5",
+                "observed_tax_fields_present": None,
+                "notes": "",
+                "mapping_promotion_allowed": False,
+                "NOT_FOR_PRODUCTION": True,
+                "safety_notice": SAFETY_NOTICE,
+            },
+        )
+        return destination
 
     def _validate_destination(self, output_path: Path, manifest_path: Path) -> None:
         if not output_path.is_relative_to(self.private_root):
@@ -302,6 +349,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--profile", type=Path)
     parser.add_argument("--context", type=Path)
     parser.add_argument("--private-root", type=Path, default=Path("data/private"))
+    parser.add_argument("--result-template", type=Path)
     return parser
 
 
@@ -311,6 +359,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.list:
         for item in PROBE_DEFINITIONS:
             print(f"{item.name}: {item.availability}")
+        return 0
+    if args.result_template:
+        if not args.case:
+            print("--case is required with --result-template")
+            return 2
+        try:
+            destination = JdlProbeGenerator(args.private_root).write_tax_result_template(
+                case_name=args.case, destination=args.result_template
+            )
+        except (JdlProbeError, OSError, ValueError) as exc:
+            code = exc.code if isinstance(exc, JdlProbeError) else "PROBE_INPUT_ERROR"
+            print(f"BLOCKED: {code}: {exc}")
+            return 1
+        print(f"Tax probe result template: {destination}")
         return 0
     if not all((args.case, args.output, args.profile, args.context)):
         print("--case, --output, --profile, --context are required")

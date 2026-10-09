@@ -47,6 +47,13 @@ class PrivateCsvBatchAuditTests(unittest.TestCase):
         self.assertEqual(result.sha256, hashlib.sha256(raw).hexdigest())
         self.assertIsNone(result.relative_path)
         self.assertIn(("simple_journals", 1), result.feature_population_counts)
+        self.assertIn(("journals_with_tax", 1), result.feature_population_counts)
+        self.assertIn(
+            ("journals_with_tax_only_blocker", 1),
+            result.feature_population_counts,
+        )
+        self.assertIn(("journals_clear_current", 0), result.feature_population_counts)
+        self.assertIn(("journals_clear_after_tax", 1), result.feature_population_counts)
         self.assertEqual(result.journal_shape_counts, (("1D1C", 1),))
 
     def test_valid_yayoi_is_pass(self) -> None:

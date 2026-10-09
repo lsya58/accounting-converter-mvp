@@ -23,6 +23,7 @@ from accounting_converter.tools.generate_jdl_probe import (
     JdlProbeError,
     JdlProbeGenerator,
     PROBE_DEFINITIONS,
+    TAX_PROBE_CASES,
     main,
 )
 
@@ -51,6 +52,12 @@ class JdlProbeWorkflowTests(unittest.TestCase):
                 "simple_with_tax",
                 "simple_with_subaccount",
                 "compound_1d3c",
+                "tax_sales_10",
+                "tax_purchase_10",
+                "tax_sales_reduced_8",
+                "tax_purchase_reduced_8",
+                "tax_non_taxable_purchase",
+                "tax_out_of_scope",
             },
         )
         self.assertNotIn("compound_3d1c", names)
@@ -101,8 +108,42 @@ class JdlProbeWorkflowTests(unittest.TestCase):
         self.assertIn(account_error.exception.code, {"PROBE_CONVERSION_BLOCKED", "PROBE_INPUT_ERROR"})
         with self.assertRaises(JdlProbeError) as tax_error:
             self._generate("simple_with_tax", self.private / "tax.csv")
-        self.assertEqual(tax_error.exception.code, "PROBE_BLOCKED_MISSING_TAX_EVIDENCE")
+        self.assertEqual(
+            tax_error.exception.code,
+            "PROBE_BLOCKED_MISSING_JDL_TAX_EVIDENCE",
+        )
         self.assertFalse((self.private / "tax.csv").exists())
+
+    def test_all_tax_cases_block_without_guessed_jdl_values(self) -> None:
+        for case_name in sorted(TAX_PROBE_CASES):
+            with self.subTest(case=case_name):
+                output = self.private / f"{case_name}.csv"
+                with self.assertRaises(JdlProbeError) as caught:
+                    self._generate(case_name, output)
+                self.assertEqual(
+                    caught.exception.code,
+                    "PROBE_BLOCKED_MISSING_JDL_TAX_EVIDENCE",
+                )
+                self.assertFalse(output.exists())
+
+    def test_tax_result_template_is_private_safe_and_no_overwrite(self) -> None:
+        destination = self.private / "tax_sales_10_result.json"
+        generator = JdlProbeGenerator(self.private)
+        generator.write_tax_result_template(
+            case_name="tax_sales_10", destination=destination
+        )
+        payload = json.loads(destination.read_text(encoding="utf-8"))
+        self.assertEqual(payload["result_status"], "UNTESTED")
+        self.assertIsNone(payload["imported"])
+        self.assertFalse(payload["mapping_promotion_allowed"])
+        self.assertTrue(payload["NOT_FOR_PRODUCTION"])
+        serialized = json.dumps(payload, ensure_ascii=False)
+        for value in ("課税売上 10%", "現金", "普通預金"):
+            self.assertNotIn(value, serialized)
+        with self.assertRaises(JdlProbeError):
+            generator.write_tax_result_template(
+                case_name="tax_sales_10", destination=destination
+            )
 
     def test_manifest_is_privacy_safe_and_temporary_source_is_removed(self) -> None:
         before = {path.name for path in self.private.iterdir()}

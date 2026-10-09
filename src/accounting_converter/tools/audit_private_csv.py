@@ -484,6 +484,14 @@ def _moneyforward_feature_counts(entries) -> tuple[tuple[str, int], ...]:
             if item.get("value")
         }
         counts["journals_with_multiple_descriptions"] += len(descriptions) > 1
+        blockers = _moneyforward_entry_blockers(entry)
+        counts["journals_with_tax"] += "tax" in blockers
+        counts["journals_with_tax_only_blocker"] += blockers == {"tax"}
+        counts["journals_clear_current"] += not blockers
+        counts["journals_clear_after_tax"] += not (blockers - {"tax"})
+        counts["journals_clear_after_tax_and_subaccount"] += not (
+            blockers - {"tax", "subaccount"}
+        )
         for line in entry.lines:
             counts["lines_with_subaccount"] += bool(line.sub_account)
             counts["lines_with_department"] += bool(line.department)
@@ -497,6 +505,33 @@ def _moneyforward_feature_counts(entries) -> tuple[tuple[str, int], ...]:
                 line.tax_info and line.tax_info.invoice_classification
             )
     return tuple(sorted(counts.items()))
+
+
+def _moneyforward_entry_blockers(entry) -> set[str]:
+    blockers: set[str] = set()
+    descriptions = {
+        item["value"]
+        for item in entry.metadata.get("moneyforward_descriptions", ())
+        if item.get("value")
+    }
+    if len(descriptions) > 1:
+        blockers.add("description")
+    if entry.metadata.get("moneyforward_tags"):
+        blockers.add("tag")
+    if entry.metadata.get("moneyforward_memos"):
+        blockers.add("memo")
+    for line in entry.lines:
+        if line.sub_account:
+            blockers.add("subaccount")
+        if line.department:
+            blockers.add("department")
+        if line.metadata.get("moneyforward_trade_partner"):
+            blockers.add("trade_partner")
+        if line.tax_info and line.tax_info.category:
+            blockers.add("tax")
+        if line.tax_info and line.tax_info.invoice_classification:
+            blockers.add("invoice")
+    return blockers
 
 
 def _moneyforward_shape_counts(entries) -> tuple[tuple[str, int], ...]:
