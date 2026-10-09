@@ -14,6 +14,7 @@ from accounting_converter.adapters.input.moneyforward import (
 from accounting_converter.application.moneyforward_profile_setup import (
     MoneyForwardProfileSetupError,
     MoneyForwardProfileSetupService,
+    profile_pending_setup_field_types,
 )
 from accounting_converter.application.profile_preflight import (
     ConversionPreflightService,
@@ -26,6 +27,7 @@ from accounting_converter.application.mapping_review import (
 from accounting_converter.domain.mapping import MappingStatus
 from accounting_converter.domain.profile import FormatProfile
 from accounting_converter.infrastructure.company_setting_store import CompanySettingStore
+from accounting_converter.infrastructure.company_setting_store import CompanySettingStoreError
 from accounting_converter.infrastructure.application_preferences import (
     ApplicationPreferencesStore,
 )
@@ -94,6 +96,7 @@ class MoneyForwardProfileSetupTests(unittest.TestCase):
             MappingStatus.UNRESOLVED,
         )
         self.assertIsNone(profile.tax_mappings["課税仕入 10%"].target_value)
+        self.assertEqual(profile_pending_setup_field_types(profile), ("税区分",))
 
         entries = MoneyForwardInputAdapter().read(
             self.source,
@@ -166,6 +169,44 @@ class MoneyForwardProfileSetupTests(unittest.TestCase):
             conversion_profile_id=profile.profile_id, context_source=self.context,
         )
         self.assertTrue(company_store.resolve(setting.company_setting_id).available)
+
+    def test_profile_setup_context_cannot_be_silently_substituted(self) -> None:
+        analysis = self.service.analyze(self.source, self.context)
+        selections = {
+            item.source_value: item.exact_candidate
+            for item in analysis.account_items
+            if item.exact_candidate
+        }
+        profile = self.service.save_confirmed_profile(
+            company_display_name="架空会社",
+            analysis=analysis,
+            selections=selections,
+            explicitly_confirmed=set(selections),
+        )
+        replacement = self.root / "different-jdl.json"
+        payload = json.loads(self.context.read_text(encoding="utf-8"))
+        payload["account_master"].append(
+            {
+                "mapping_value": "架空追加科目",
+                "target_master_code": "1999",
+                "target_name": "架空追加科目",
+                "target_formal_name": "架空追加科目",
+            }
+        )
+        replacement.write_text(
+            json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+        )
+        company_store = CompanySettingStore(self.root / "companies", self.profile_store)
+
+        with self.assertRaisesRegex(CompanySettingStoreError, "different JDL"):
+            company_store.create(
+                company_setting_id="company-substitution",
+                display_name="架空会社",
+                conversion_profile_id=profile.profile_id,
+                context_source=replacement,
+            )
+
+        self.assertFalse((self.root / "companies" / "company-substitution").exists())
 
     @staticmethod
     def _write_source(path: Path, *, debit_tax: str = "") -> None:

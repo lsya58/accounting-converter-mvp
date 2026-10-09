@@ -64,6 +64,19 @@ class MoneyForwardInputAdapterTests(unittest.TestCase):
         self.assertEqual(entries[0].metadata["transaction_number_scope"], "SOURCE_FILE_LOCAL")
         self.assertFalse(entries[0].metadata["production_registry_enabled"])
 
+    def test_strict_cp932_alias_bytes_do_not_require_canonical_reencoding(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "input.csv"
+            self._write(path, [self._row("1", description="≒")])
+            raw = path.read_bytes().replace(b"\x81\xe0", b"\x87\x90")
+            self.assertNotEqual(raw.decode("cp932").encode("cp932"), raw)
+            path.write_bytes(raw)
+
+            entries = self.adapter.read(path, self.profile)
+
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].description, "≒")
+
     def test_supported_compound_shapes(self) -> None:
         shapes = {
             "1D3C": [
@@ -210,8 +223,20 @@ class MoneyForwardInputAdapterTests(unittest.TestCase):
             with self.assertRaises(MoneyForwardInputAdapterError):
                 self.adapter.read(path, self.profile)
 
-    def test_raw_multiline_field_blocks(self) -> None:
-        self._assert_blocked([self._row("1", memo="架空1行目\n架空2行目")])
+    def test_raw_multiline_fields_are_preserved_by_csv_parser(self) -> None:
+        entry = self._read([
+            self._row(
+                "1",
+                description="架空1行目\n架空2行目",
+                memo="架空メモ1\n架空メモ2",
+            )
+        ])[0]
+
+        self.assertEqual(entry.description, "架空1行目\n架空2行目")
+        self.assertEqual(
+            entry.metadata["moneyforward_memos"][0]["value"],
+            "架空メモ1\n架空メモ2",
+        )
 
     def test_invalid_date_amount_zero_and_negative_block(self) -> None:
         self._assert_blocked([self._row("1", date_value="2026-10-06")])
@@ -219,11 +244,17 @@ class MoneyForwardInputAdapterTests(unittest.TestCase):
         self._assert_blocked([self._row("1", debit_amount="0", credit_amount="0")])
         self._assert_blocked([self._row("1", debit_amount="-1", credit_amount="-1")])
 
-    def test_multiple_conflicting_descriptions_block(self) -> None:
-        self._assert_blocked([
+    def test_multiple_descriptions_are_preserved_without_selecting_one(self) -> None:
+        entry = self._read([
             self._row("1", debit_amount="500", credit_amount="500", description="架空A"),
             self._row("1", debit_amount="500", credit_amount="500", description="架空B"),
-        ])
+        ])[0]
+
+        self.assertIsNone(entry.description)
+        self.assertEqual(
+            tuple(item["value"] for item in entry.metadata["moneyforward_descriptions"]),
+            ("架空A", "架空B"),
+        )
 
     def test_bom_crlf_utf8_and_non_quote_all_block(self) -> None:
         row = self._row("1")

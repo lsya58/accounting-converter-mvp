@@ -38,6 +38,7 @@ defaultではfile nameとrelative pathをreportへ含めない。調査上必要
 - raw CSVを変更、上書き、copyしない。
 - network access、外部API、AI inferenceを使用しない。
 - reportには匿名file ID、hash、size、構造件数、format metadataだけを含める。
+- Money Forwardとしてparseできたfileでは、optional fieldのpopulation件数と`1D1C`等のjournal shape件数だけを追加する。field値、科目、摘要、金額は含めない。
 - `data/private/`と生成reportをGit管理しない。
 
 Format detectionはMoney Forwardのexact observed 19-column headerと、Yayoi AE19で観測済みのidentifier flagsに限定する。認識後のparseはaudit専用parserではなく既存`MoneyForwardInputAdapter`または`YayoiInputAdapter`を使用する。

@@ -64,9 +64,6 @@ class MoneyForwardObservedParser:
             text = raw.decode("cp932", errors="strict")
         except UnicodeDecodeError as exc:
             raise MoneyForwardObservedParserError("CSV is not strict CP932") from exc
-        if text.encode("cp932", errors="strict") != raw:
-            raise MoneyForwardObservedParserError("CP932 round-trip mismatch")
-
         try:
             parsed = list(csv.reader(io.StringIO(text, newline=""), strict=True))
         except csv.Error as exc:
@@ -77,10 +74,6 @@ class MoneyForwardObservedParser:
             raise MoneyForwardObservedParserError("CSV has no data rows")
         if any(len(row) != 19 for row in parsed):
             raise MoneyForwardObservedParserError("every header and data row must have 19 columns")
-        if any("\n" in value or "\r" in value for row in parsed for value in row):
-            raise MoneyForwardObservedParserError(
-                "raw multiline fields are outside the observed v0 scope"
-            )
         self._validate_quote_all_serialization(text, parsed)
         return [
             MoneyForwardObservedRow(row_number=index, values=tuple(row))
@@ -129,8 +122,6 @@ class MoneyForwardObservedParser:
             raise MoneyForwardObservedParserError("group contains multiple transaction dates")
         entry_date = self._parse_date(rows[0].date_value)
         descriptions = {row.values[16] for row in rows if row.values[16]}
-        if len(descriptions) > 1:
-            raise MoneyForwardObservedParserError("group contains conflicting descriptions")
 
         lines: list[JournalLine] = []
         for row in rows:
@@ -153,13 +144,18 @@ class MoneyForwardObservedParser:
             source_reference=source,
             date=entry_date,
             lines=lines,
-            description=next(iter(descriptions), None),
+            description=next(iter(descriptions), None) if len(descriptions) <= 1 else None,
             metadata={
                 "source": "moneyforward_cloud_journal_export_observed",
                 "evidence_id": EVIDENCE_ID,
                 "evidence_level": "OBSERVED",
                 "grouping_basis": "CONSECUTIVE_SOURCE_LOCAL_TRANSACTION_NUMBER",
                 "physical_row_numbers": tuple(row.row_number for row in rows),
+                "moneyforward_descriptions": tuple(
+                    {"row_number": row.row_number, "value": row.values[16]}
+                    for row in rows
+                    if row.values[16]
+                ),
                 "moneyforward_tags": tuple(
                     {"row_number": row.row_number, "value": row.values[17]}
                     for row in rows if row.values[17]

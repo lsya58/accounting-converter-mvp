@@ -101,7 +101,7 @@ class QtGuiContractTests(unittest.TestCase):
             "対応設定を作成",
             "Money Forwardの仕訳CSVから対応設定を作成",
             "Money Forwardの仕訳CSV",
-            "JDLの科目を確認",
+            "Money Forwardの各科目に対応するJDL科目を確認してください。",
             "確認しました",
             "完全一致する候補は初期表示されていますが、まだ確定していません。",
             "まだ設定が必要な項目があります",
@@ -115,6 +115,26 @@ class QtGuiContractTests(unittest.TestCase):
             "fingerprint", "Evidence ID",
         ):
             self.assertNotIn(f'"{internal}"', source)
+
+    def test_moneyforward_mapping_table_is_readable_and_requires_confirmation(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
+            encoding="utf-8"
+        )
+        expected = (
+            "self.resize(1040, 760)",
+            "self.setMinimumSize(900, 680)",
+            "self.table.setMinimumHeight(320)",
+            "self.table.verticalHeader().setDefaultSectionSize(38)",
+            "Money Forwardの科目",
+            "JDLの科目",
+            "0 / 0 件確認済み",
+            "confirmed == total",
+            "JDL IBEX 出納帳 35.5 / 設定済み",
+        )
+        for text in expected:
+            self.assertIn(text, source)
+        for selector in ("QTableWidget", "QHeaderView::section", "QScrollBar:vertical"):
+            self.assertIn(selector, APP_STYLE_SHEET)
 
 
 if __name__ == "__main__":

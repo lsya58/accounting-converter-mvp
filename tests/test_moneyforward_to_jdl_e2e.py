@@ -198,6 +198,25 @@ class MoneyForwardToJdlSyntheticE2ETests(unittest.TestCase):
                 self.assertIsNone(matching[0].input_value)
                 self.assertFalse(output.exists())
 
+    def test_conflicting_descriptions_are_losslessly_parsed_then_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = self._write(
+                root / "mf.csv",
+                [
+                    self._row("14", debit_amount="350", credit_amount="350", description="架空A"),
+                    self._row("14", debit_amount="350", credit_amount="350", description="架空B"),
+                ],
+            )
+            output = root / "blocked.csv"
+            result = self._convert(
+                source, output, {"14": JdlEvidenceProfile.BASIC_1111}
+            )
+
+        self.assertEqual(result.status, ConversionStatus.BLOCKED_BY_BUSINESS_VALIDATION)
+        self.assertTrue(any(item.field == "description" for item in result.validation_results))
+        self.assertFalse(output.exists())
+
     def test_invalid_target_context_blocks_before_output(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

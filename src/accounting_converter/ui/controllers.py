@@ -13,6 +13,7 @@ from accounting_converter.application.company_settings import CompanySettingServ
 from accounting_converter.application.moneyforward_profile_setup import (
     MoneyForwardProfileSetupAnalysis,
     MoneyForwardProfileSetupService,
+    profile_pending_setup_field_types,
 )
 
 from accounting_converter.application.profile_preflight import (
@@ -701,15 +702,18 @@ class AccountingConverterController:
         resolved = self.company_setting_service.resolve_for_source(company_setting_id)
         requires_mapping = bool(
             resolved.profile
-            and any(
-                not mapping.is_resolved
-                for mappings in (
-                    resolved.profile.subaccount_mappings,
-                    resolved.profile.subaccount_context_mappings,
-                    resolved.profile.department_mappings,
-                    resolved.profile.tax_mappings,
+            and (
+                profile_pending_setup_field_types(resolved.profile)
+                or any(
+                    not mapping.is_resolved
+                    for mappings in (
+                        resolved.profile.subaccount_mappings,
+                        resolved.profile.subaccount_context_mappings,
+                        resolved.profile.department_mappings,
+                        resolved.profile.tax_mappings,
+                    )
+                    for mapping in mappings.values()
                 )
-                for mapping in mappings.values()
             )
         )
         return CompanyOption(
@@ -722,6 +726,31 @@ class AccountingConverterController:
                 else "確認が必要"
             ),
         )
+
+    def company_setting_status_reason(self, company_setting_id: str) -> str:
+        resolved = self.company_setting_service.resolve_for_source(company_setting_id)
+        if not resolved.available or resolved.profile is None:
+            return resolved.user_message or "この会社設定は利用できません。"
+        pending = list(profile_pending_setup_field_types(resolved.profile))
+        if any(not item.is_resolved for item in resolved.profile.tax_mappings.values()):
+            pending.append("税区分")
+        if any(
+            not item.is_resolved
+            for item in (
+                *resolved.profile.subaccount_mappings.values(),
+                *resolved.profile.subaccount_context_mappings.values(),
+            )
+        ):
+            pending.append("補助科目")
+        if any(
+            not item.is_resolved
+            for item in resolved.profile.department_mappings.values()
+        ):
+            pending.append("部門")
+        pending = list(dict.fromkeys(pending))
+        if pending:
+            return "設定が完了していません: " + "、".join(pending)
+        return "会社設定を利用できます。"
 
     def _auto_select_company_for_recognized_file(self) -> None:
         source_key = self._recognized_source_key()

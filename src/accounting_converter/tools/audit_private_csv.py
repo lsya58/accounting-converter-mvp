@@ -59,6 +59,8 @@ class AuditFileResult:
     record_count: int | None
     logical_journal_count: int | None
     reason_codes: tuple[str, ...]
+    feature_population_counts: tuple[tuple[str, int], ...] = ()
+    journal_shape_counts: tuple[tuple[str, int], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -249,6 +251,16 @@ class PrivateCsvAuditor:
             (),
             record_count=records,
             logical_journal_count=len(entries),
+            feature_population_counts=(
+                _moneyforward_feature_counts(entries)
+                if adapter is self._moneyforward
+                else ()
+            ),
+            journal_shape_counts=(
+                _moneyforward_shape_counts(entries)
+                if adapter is self._moneyforward
+                else ()
+            ),
         )
 
     def _detect(self, raw: bytes, fingerprint: "_Fingerprint"):
@@ -288,6 +300,8 @@ class PrivateCsvAuditor:
         reason_codes: tuple[str, ...],
         record_count: int | None = None,
         logical_journal_count: int | None = None,
+        feature_population_counts: tuple[tuple[str, int], ...] = (),
+        journal_shape_counts: tuple[tuple[str, int], ...] = (),
     ) -> AuditFileResult:
         return AuditFileResult(
             file_id=file_id,
@@ -308,6 +322,8 @@ class PrivateCsvAuditor:
             record_count=record_count,
             logical_journal_count=logical_journal_count,
             reason_codes=reason_codes,
+            feature_population_counts=feature_population_counts,
+            journal_shape_counts=journal_shape_counts,
         )
 
     @staticmethod
@@ -455,6 +471,43 @@ def _validation_reason_code(rule_id: str) -> str:
     }.get(rule_id, "UNSUPPORTED_STRUCTURE")
 
 
+def _moneyforward_feature_counts(entries) -> tuple[tuple[str, int], ...]:
+    counts: Counter[str] = Counter()
+    for entry in entries:
+        counts["simple_journals"] += int(not entry.is_compound())
+        counts["compound_journals"] += int(entry.is_compound())
+        counts["journals_with_tag"] += bool(entry.metadata.get("moneyforward_tags"))
+        counts["journals_with_memo"] += bool(entry.metadata.get("moneyforward_memos"))
+        descriptions = {
+            item["value"]
+            for item in entry.metadata.get("moneyforward_descriptions", ())
+            if item.get("value")
+        }
+        counts["journals_with_multiple_descriptions"] += len(descriptions) > 1
+        for line in entry.lines:
+            counts["lines_with_subaccount"] += bool(line.sub_account)
+            counts["lines_with_department"] += bool(line.department)
+            counts["lines_with_trade_partner"] += bool(
+                line.metadata.get("moneyforward_trade_partner")
+            )
+            counts["lines_with_tax"] += bool(
+                line.tax_info and line.tax_info.category
+            )
+            counts["lines_with_invoice"] += bool(
+                line.tax_info and line.tax_info.invoice_classification
+            )
+    return tuple(sorted(counts.items()))
+
+
+def _moneyforward_shape_counts(entries) -> tuple[tuple[str, int], ...]:
+    counts: Counter[str] = Counter()
+    for entry in entries:
+        debit = sum(line.side.value == "DEBIT" for line in entry.lines)
+        credit = sum(line.side.value == "CREDIT" for line in entry.lines)
+        counts[f"{debit}D{credit}C"] += 1
+    return tuple(sorted(counts.items()))
+
+
 def report_to_dict(report: AuditReport) -> dict[str, object]:
     return {
         "generated_at": report.generated_at,
@@ -522,6 +575,19 @@ def report_to_text(report: AuditReport) -> str:
                 "logical_journals: "
                 f"{result.logical_journal_count if result.logical_journal_count is not None else 'N/A'}",
                 "reasons: " + (", ".join(result.reason_codes) or "none"),
+                "feature_counts: " + (
+                    ", ".join(
+                        f"{key}={value}"
+                        for key, value in result.feature_population_counts
+                    )
+                    or "none"
+                ),
+                "journal_shapes: " + (
+                    ", ".join(
+                        f"{key}={value}" for key, value in result.journal_shape_counts
+                    )
+                    or "none"
+                ),
                 "",
             )
         )

@@ -38,6 +38,9 @@ class MoneyForwardProfileSetupError(ValueError):
     pass
 
 
+PENDING_SETUP_METADATA_KEY = "pending_setup_field_types"
+
+
 @dataclass(frozen=True)
 class AccountMappingSetupItem:
     source_value: str
@@ -50,9 +53,11 @@ class MoneyForwardProfileSetupAnalysis:
     source_path: Path
     context_path: Path
     context: JdlTargetContext
+    context_sha256: str
     account_items: tuple[AccountMappingSetupItem, ...]
     unsupported_field_types: tuple[str, ...] = ()
     unresolved_tax_categories: tuple[str, ...] = ()
+    pending_field_keys: tuple[str, ...] = ()
 
     @property
     def can_configure_accounts(self) -> bool:
@@ -74,6 +79,7 @@ class MoneyForwardProfileSetupService:
         "invoice": "インボイス",
         "tag": "タグ",
         "memo": "メモ",
+        "description": "摘要",
     }
 
     def __init__(self, profile_store: ConversionProfileStore) -> None:
@@ -114,6 +120,13 @@ class MoneyForwardProfileSetupService:
                 unsupported.add("tag")
             if entry.metadata.get("moneyforward_memos"):
                 unsupported.add("memo")
+            descriptions = {
+                item["value"]
+                for item in entry.metadata.get("moneyforward_descriptions", ())
+                if item.get("value")
+            }
+            if len(descriptions) > 1:
+                unsupported.add("description")
             for line in entry.lines:
                 if line.metadata.get("moneyforward_trade_partner"):
                     unsupported.add("trade_partner")
@@ -135,6 +148,7 @@ class MoneyForwardProfileSetupService:
             source_path=source_path,
             context_path=context_path,
             context=context,
+            context_sha256=self._hash(context_path),
             account_items=items,
             unsupported_field_types=tuple(
                 self.UNSUPPORTED_LABELS[key] for key in sorted(unsupported)
@@ -142,6 +156,7 @@ class MoneyForwardProfileSetupService:
             unresolved_tax_categories=tuple(
                 item.source_value for item in requirements.tax_categories
             ),
+            pending_field_keys=tuple(sorted(unsupported)),
         )
 
     def save_confirmed_profile(
@@ -163,6 +178,11 @@ class MoneyForwardProfileSetupService:
 
         now = datetime.now(timezone.utc)
         profile_id = f"mf-jdl-{uuid.uuid4().hex}"
+        context_sha256 = self._hash(analysis.context_path)
+        if context_sha256 != analysis.context_sha256:
+            raise MoneyForwardProfileSetupError(
+                "JDL設定が確認後に変更されました。もう一度確認してください。"
+            )
         profile = ConversionProfile(
             profile_id=profile_id,
             profile_name=f"{company_display_name.strip()} Money Forward → JDL",
@@ -195,6 +215,10 @@ class MoneyForwardProfileSetupService:
                     metadata={
                         "target_code": target.target_master_code,
                         "target_formal_name": target.target_formal_name,
+                        "setup_context_sha256": context_sha256,
+                        PENDING_SETUP_METADATA_KEY: ",".join(
+                            analysis.pending_field_keys
+                        ),
                     },
                 )
             saved = self.profile_store.get(profile_id)
@@ -232,3 +256,20 @@ class MoneyForwardProfileSetupService:
     @staticmethod
     def _hash(path: Path) -> str:
         return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def profile_pending_setup_field_types(
+    profile: ConversionProfile,
+) -> tuple[str, ...]:
+    keys: set[str] = set()
+    for mapping in profile.account_mappings.values():
+        keys.update(
+            key
+            for key in mapping.metadata.get(PENDING_SETUP_METADATA_KEY, "").split(",")
+            if key
+        )
+    return tuple(
+        MoneyForwardProfileSetupService.UNSUPPORTED_LABELS[key]
+        for key in sorted(keys)
+        if key in MoneyForwardProfileSetupService.UNSUPPORTED_LABELS
+    )

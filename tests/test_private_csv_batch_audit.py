@@ -46,6 +46,8 @@ class PrivateCsvBatchAuditTests(unittest.TestCase):
         self.assertEqual(result.logical_journal_count, 1)
         self.assertEqual(result.sha256, hashlib.sha256(raw).hexdigest())
         self.assertIsNone(result.relative_path)
+        self.assertIn(("simple_journals", 1), result.feature_population_counts)
+        self.assertEqual(result.journal_shape_counts, (("1D1C", 1),))
 
     def test_valid_yayoi_is_pass(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

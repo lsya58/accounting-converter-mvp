@@ -131,7 +131,7 @@ Observed scopeでは、連続する同じ非空`取引No`を1 logical journal ca
 4. group内の取引日は全row一致必須。
 5. 各sideはaccountとamountがともに非空、またはside全体がblankでなければならない。
 6. amount/date parse failure、lineなし、group貸借不一致はBLOCKする。
-7. group内に複数の異なる非空摘要がある場合は意味を推測せずBLOCKする。
+7. group内の摘要はrow番号付きsource metadataへ保持する。複数の異なる非空摘要がある場合は1つへ集約せず、target変換をBLOCKする。
 
 取引Noの採番規則、export範囲変更時の安定性、欠番、再採番、period跨ぎ、任意compound shapeは未確認である。取引Noを会社横断・ファイル横断の永続IDとは扱わず、`file + 取引No`をsource-local traceability key候補とする。
 
@@ -148,7 +148,7 @@ Observed scopeでは、連続する同じ非空`取引No`を1 logical journal ca
 | 税区分 | `TaxInfo.category` | A/E | raw literal保持は可能。意味mappingは未実装・未解決 |
 | インボイス | `TaxInfo.invoice_classification` | A/E | raw literalを保持。日付・取引先等から値を推測しない |
 | 金額(円) | `JournalLine.amount` | B | blankを0にせず、非空整数を`Decimal`へstrict parse |
-| 摘要 | `JournalEntry.description` | A | group内0または1 distinct nonblankのみ安全 |
+| 摘要 | `JournalEntry.description` / source metadata | A + D | 0または1 distinct nonblankだけEntry descriptionへ設定。複数は全値を内部保持しtarget変換をBLOCK |
 | 取引先 | `JournalLine.metadata` | A + D | side別raw value保持。target表現がなければ変換BLOCK |
 | タグ | `JournalEntry.metadata` | A + D | row numberとraw field保持。`|`を自動分割しない |
 | メモ | `JournalEntry.metadata` | A + D | row numberとraw field保持。摘要へ自動結合しない |
@@ -183,6 +183,14 @@ Observed scopeでは、連続する同じ非空`取引No`を1 logical journal ca
 - tax/invoice/compound pattern: 対応fieldがなく評価対象外
 
 この結果はAdapterの対応範囲を広げる根拠ではない。6-column fileを仕訳へ推測変換せず、`INCOMPATIBLE_EXPORT_FORMAT`として停止する。Money Forward内の別Export routeまたはmaster/list系formatの可能性はあるが、画面上のExport route Evidenceなしには正式identityを付与しない。
+
+## Private Journal Export Audit (2026-10-09)
+
+private実運用CSV 2件を値非表示で監査した。1件は上記6-column別帳票、1件はexact 19-column仕訳帳identityだった。19-column fileはCP932 strict decode可能、BOMなし、LF、全logical row 19 columnsで、Input Adapterにより639 records / 482 logical journalsへ解析され、全journalの貸借一致を確認した。
+
+実運用仕訳帳ではCP932の非canonical byte表現とquoted multiline fieldを観測した。どちらもstrict CP932 decodeと標準CSV parserでlosslessに扱い、再encode byte一致や独自comma splitは要求しない。複数摘要を持つjournalも観測したため、Inputでは全値をsource metadataへ保持するが、JDL target表現が未確認のため変換はBLOCKする。
+
+privacy-safe集計ではsimple 439、compound 43だった。従来のsynthetic/observed集合にないshapeとして1D2C、2D1C、2D3C、4D6C、5D7C、5D8C、10D9Cを観測した。これらは新Input Evidenceであり、JDL Output対応Evidenceではない。補助科目、税区分、取引先、複数摘要のpopulationを観測し、部門、invoice、tag、memoはこのfileでは非出現だった。具体値、日付、金額、科目、摘要、顧客識別情報はtracked documentへ記録しない。
 
 ## Next Human Experiments (Priority Order)
 

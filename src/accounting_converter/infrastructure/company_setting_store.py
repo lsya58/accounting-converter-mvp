@@ -69,13 +69,24 @@ class CompanySettingStore:
         if destination.exists():
             raise DuplicateCompanySettingError("company setting already exists")
         profile = self.profile_store.get(conversion_profile_id)
+        context_bytes = context_source.read_bytes()
+        expected_context_hashes = {
+            mapping.metadata.get("setup_context_sha256")
+            for mapping in profile.account_mappings.values()
+            if mapping.metadata.get("setup_context_sha256")
+        }
+        if expected_context_hashes and expected_context_hashes != {
+            self._hash(context_bytes)
+        }:
+            raise CompanySettingStoreError(
+                "profile was confirmed against a different JDL setting"
+            )
         context = self.context_loader.load(context_source)
         runtime = JdlOutputRuntimeFactory().resolve(
             jdl_ibex_35_5_output_profile(), profile, context
         )
         if not runtime.resolved:
             raise CompanySettingStoreError("profile and JDL setting are incompatible")
-        context_bytes = context_source.read_bytes()
         now = datetime.now(timezone.utc)
         setting = CompanySetting(
             company_setting_id=company_setting_id,

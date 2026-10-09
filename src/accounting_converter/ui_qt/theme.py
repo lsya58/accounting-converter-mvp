@@ -99,7 +99,7 @@ QFrame#dropZone[dragActive="true"] {{
     background: #EAF3FA;
     border-color: {COLORS['accent']};
 }}
-QLineEdit, QComboBox, QListWidget {{
+QLineEdit, QComboBox, QListWidget, QTableWidget {{
     min-height: 38px;
     padding: 0 10px;
     color: {COLORS['text']};
@@ -109,7 +109,7 @@ QLineEdit, QComboBox, QListWidget {{
     selection-background-color: #DCECF8;
     selection-color: {COLORS['text']};
 }}
-QLineEdit:focus, QComboBox:focus, QListWidget:focus {{
+QLineEdit:focus, QComboBox:focus, QListWidget:focus, QTableWidget:focus {{
     border: 2px solid {COLORS['focus']};
 }}
 QLineEdit:disabled, QComboBox:disabled, QListWidget:disabled {{
@@ -130,6 +130,40 @@ QComboBox QAbstractItemView {{
     selection-color: {COLORS['text']};
     outline: 0;
     padding: 4px;
+}}
+QTableWidget {{
+    color: {COLORS['text']};
+    background: {COLORS['surface']};
+    alternate-background-color: #F7F9FB;
+    gridline-color: {COLORS['border']};
+    selection-background-color: #DCECF8;
+    selection-color: {COLORS['text']};
+}}
+QHeaderView::section {{
+    color: {COLORS['text']};
+    background: #EAF0F5;
+    border: 0;
+    border-right: 1px solid {COLORS['border']};
+    border-bottom: 1px solid #C8D0D8;
+    padding: 9px 10px;
+    font-weight: 600;
+}}
+QScrollBar:vertical {{
+    width: 15px;
+    background: #EEF2F5;
+}}
+QScrollBar::handle:vertical {{
+    min-height: 34px;
+    background: #AAB6C2;
+    border-radius: 6px;
+    margin: 2px;
+}}
+QLabel#warningCard {{
+    color: #704A0A;
+    background: {COLORS['confirm_soft']};
+    border: 1px solid #E5C778;
+    border-radius: 7px;
+    padding: 12px;
 }}
 QStackedWidget {{ background: {COLORS['page']}; }}
 """

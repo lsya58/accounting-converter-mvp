@@ -15,6 +15,13 @@ class MoneyForwardToJdlLossRule:
             fields.add("tag")
         if entry.metadata.get("moneyforward_memos"):
             fields.add("memo")
+        descriptions = {
+            item["value"]
+            for item in entry.metadata.get("moneyforward_descriptions", ())
+            if item.get("value")
+        }
+        if len(descriptions) > 1:
+            fields.add("description")
 
         for line in entry.lines:
             if line.metadata.get("moneyforward_trade_partner"):

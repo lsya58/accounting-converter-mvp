@@ -39,7 +39,7 @@ src/accounting_converter/adapters/input/moneyforward/
 6. sideごとにaccount/amount pairを検証し、blank sideをlineへ変換しない。
 7. dateをexact `YYYY/MM/DD`、amountを正の整数円としてstrict parse。zero/negativeはUIで登録拒否を観測したが、任意CSVでの意味は未確認なのでv0ではblock。
 8. groupの借方/貸方lineを構築し、total不一致をblock。
-9. group内descriptionは0または1 distinct nonblankだけ許可。位置で意味を推測しない。
+9. group内descriptionはrow番号付きsource metadataへすべて保持する。0または1 distinct nonblankの場合だけ`JournalEntry.description`へ設定し、複数の場合は1つを選ばずtarget変換をBLOCKする。
 10. subaccount/department/tax/invoice raw literalを対応model fieldへ保持する。tax amountは存在しないため計算しない。
 11. 取引先は`JournalLine.metadata["moneyforward_trade_partner"]`へside別に保持する。
 12. tag/memoはrow numberとraw valueを`JournalEntry.metadata`へ保持する。`|`を分割せず、摘要へ結合しない。
@@ -53,7 +53,7 @@ src/accounting_converter/adapters/input/moneyforward/
 - accountだけ/amountだけのpartial side
 - parse不能date/amount、zero/negative amount（未観測）
 - unbalanced group
-- multiple distinct descriptions in one group
+- multiple distinct descriptionsを1つへ集約するtarget変換
 - unknown tax literalを意味変換する要求
 - partner/tag/memoをtargetでlosslessに扱えない変換経路
 - Evidence外のcompound shapeを自動推測すること
@@ -84,6 +84,6 @@ src/accounting_converter/adapters/input/moneyforward/
 
 MF raw Evidenceで通常観測した`対象外`をJDL空欄へ変換するcross-product tax mappingは未確認であり、自動変換しない。`3D1C`、`2D2C`、`3D3C`はMF Inputでは解析できてもJDL Output v0 Evidence外なのでblockする。
 
-`MoneyForwardToJdlLossRule`は、JDL Output v0で表現先が確認できない取引先、tag、memo、invoice classificationを値非表示のValidation Errorとしてblockする。source/evidence/grouping metadataは内部traceabilityであり、会計fieldの代替表現としてJDL CSVへ埋め込まない。将来loss acknowledgementを導入する場合も、明示的な利用者確認なしに破棄しない。
+`MoneyForwardToJdlLossRule`は、JDL Output v0で表現先が確認できない取引先、tag、memo、invoice classification、複数摘要を値非表示のValidation Errorとしてblockする。source/evidence/grouping metadataは内部traceabilityであり、会計fieldの代替表現としてJDL CSVへ埋め込まない。将来loss acknowledgementを導入する場合も、明示的な利用者確認なしに破棄しない。
 
 このsynthetic E2Eによってproduction Registry、GUI、READY判定は変更しない。実業務source profile、cross-product tax mapping、MF起点JDL実機Importと再Export比較が後続gateである。

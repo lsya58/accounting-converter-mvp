@@ -304,6 +304,7 @@ class AccountingConverterMainWindow(QMainWindow):
                     )
                 )
             )
+        self.company_combo.currentIndexChanged.connect(self._company_changed)
 
 
 class SettingsDialog(QDialog):
@@ -411,6 +412,13 @@ class SettingsDialog(QDialog):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._reload_companies(self.controller.state)
 
+    def _company_changed(self, _index: int) -> None:
+        company_id = self.company_combo.currentData()
+        if not company_id:
+            return
+        state = self.controller.select_company_setting(company_id)
+        self._refresh_selected_setting(state)
+
     def _rename_company(self) -> None:
         company_id = self.company_combo.currentData()
         if not company_id:
@@ -431,13 +439,41 @@ class SettingsDialog(QDialog):
             self._reload_companies(self.controller.delete_company_setting(company_id))
 
     def _reload_companies(self, state: AppState) -> None:
+        self.profile_ids = [item.profile_id for item in state.profiles]
+        self.profile_combo.blockSignals(True)
+        self.profile_combo.clear()
+        self.profile_combo.addItems([item.profile_name for item in state.profiles])
+        self.profile_combo.blockSignals(False)
+        self.company_combo.blockSignals(True)
         self.company_combo.clear()
         for item in state.companies:
             self.company_combo.addItem(
                 f"{item.display_name}  /  {item.source_label} → JDL  /  {item.status_label}",
                 item.company_setting_id,
             )
-        self.message_label.setText(state.user_message)
+        selected_index = self.company_combo.findData(state.selected_company_setting_id)
+        self.company_combo.setCurrentIndex(selected_index)
+        self.company_combo.blockSignals(False)
+        self._refresh_selected_setting(state)
+
+    def _refresh_selected_setting(self, state: AppState) -> None:
+        self.context_label.setText(
+            "JDL IBEX 出納帳 35.5 / 設定済み"
+            if state.selected_context_file
+            else "未設定"
+        )
+        if state.selected_profile_id in self.profile_ids:
+            self.profile_combo.blockSignals(True)
+            self.profile_combo.setCurrentIndex(
+                self.profile_ids.index(state.selected_profile_id)
+            )
+            self.profile_combo.blockSignals(False)
+        company_id = state.selected_company_setting_id
+        self.message_label.setText(
+            self.controller.company_setting_status_reason(company_id)
+            if company_id
+            else state.user_message
+        )
 
 
 class CompanyAddDialog(QDialog):
@@ -548,10 +584,10 @@ class CompanyAddDialog(QDialog):
         context_row = QHBoxLayout()
         self.context_label = QLabel("ファイルはまだ選択されていません")
         self.context_label.setObjectName("muted")
-        context_button = QPushButton("ファイルを選択")
-        context_button.clicked.connect(self._choose_context)
+        self.context_button = QPushButton("ファイルを選択")
+        self.context_button.clicked.connect(self._choose_context)
         context_row.addWidget(self.context_label, 1)
-        context_row.addWidget(context_button)
+        context_row.addWidget(self.context_button)
         layout.addLayout(context_row)
         layout.addStretch(1)
         return page
@@ -636,7 +672,11 @@ class CompanyAddDialog(QDialog):
         self.no_profile_message.hide()
         self.create_profile_button.hide()
         self.context_path = dialog.context_path
-        self.context_label.setText(self.context_path.name)
+        self.context_label.setText(dialog.context_display)
+        self.context_button.setEnabled(False)
+        self.context_button.setToolTip(
+            "対応設定の確認に使用したJDL設定が引き継がれています。"
+        )
         self.error_label.setText("対応設定を保存しました。次へ進んでください。")
 
     def _render_confirmation(self) -> None:
@@ -646,7 +686,9 @@ class CompanyAddDialog(QDialog):
                     f"会社設定名    {self.name_edit.text().strip()}",
                     f"入力元        {self.source_combo.currentText()}",
                     f"対応設定      {self.profile_combo.currentText()}",
-                    f"JDL設定       {self.context_path.name if self.context_path else '未選択'}",
+                    "JDL設定       JDL IBEX 出納帳 35.5 / 設定済み"
+                    if self.context_path
+                    else "JDL設定       未選択",
                     "状態           保存時に安全確認します",
                 )
             )
@@ -690,9 +732,11 @@ class MoneyForwardProfileSetupDialog(QDialog):
         self.analysis = None
         self.profile_id = ""
         self.profile_name = ""
+        self.context_display = "未選択"
         self.row_controls: list[tuple[str, QComboBox, QCheckBox]] = []
         self.setWindowTitle("Money Forwardの対応設定を作成")
-        self.setMinimumSize(760, 560)
+        self.resize(1040, 760)
+        self.setMinimumSize(900, 680)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(30, 26, 30, 24)
@@ -732,16 +776,28 @@ class MoneyForwardProfileSetupDialog(QDialog):
         analyze_button.clicked.connect(self._analyze)
         layout.addWidget(analyze_button, alignment=Qt.AlignmentFlag.AlignLeft)
 
-        guidance = QLabel("JDLの科目を確認し、各行の「確認しました」を選択してください。")
+        guidance = QLabel(
+            "Money Forwardの各科目に対応するJDL科目を確認してください。\n"
+            "同じ名称の科目は候補として表示しています。内容を確認して「確認しました」を選択してください。"
+        )
         guidance.setObjectName("muted")
         guidance.setWordWrap(True)
         layout.addWidget(guidance)
         self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(("Money Forward", "JDL", "状態"))
+        self.table.setHorizontalHeaderLabels(
+            ("Money Forwardの科目", "JDLの科目", "確認")
+        )
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.setMinimumHeight(320)
+        self.table.verticalHeader().setDefaultSectionSize(38)
+        self.table.setAlternatingRowColors(True)
         layout.addWidget(self.table, 1)
+
+        self.progress_label = QLabel("0 / 0 件確認済み")
+        self.progress_label.setObjectName("muted")
+        layout.addWidget(self.progress_label)
 
         self.message_label = QLabel("")
         self.message_label.setObjectName("muted")
@@ -782,6 +838,7 @@ class MoneyForwardProfileSetupDialog(QDialog):
         self.row_controls.clear()
         self.table.setRowCount(0)
         self.save_button.setEnabled(False)
+        self.progress_label.setText("0 / 0 件確認済み")
         self.message_label.clear()
 
     def _analyze(self) -> None:
@@ -806,7 +863,9 @@ class MoneyForwardProfileSetupDialog(QDialog):
         self.row_controls.clear()
         for row_index, item in enumerate(analysis.account_items):
             self.table.insertRow(row_index)
-            self.table.setItem(row_index, 0, QTableWidgetItem(item.source_value))
+            source_item = QTableWidgetItem(item.source_value)
+            source_item.setToolTip(item.source_value)
+            self.table.setItem(row_index, 0, source_item)
             target = QComboBox()
             target.addItems(item.available_targets)
             if item.exact_candidate in item.available_targets:
@@ -814,6 +873,9 @@ class MoneyForwardProfileSetupDialog(QDialog):
             else:
                 target.setCurrentIndex(-1)
             confirmed = QCheckBox("確認しました")
+            confirmed.setMinimumHeight(34)
+            confirmed.stateChanged.connect(self._update_confirmation_progress)
+            target.currentIndexChanged.connect(self._update_confirmation_progress)
             self.table.setCellWidget(row_index, 1, target)
             self.table.setCellWidget(row_index, 2, confirmed)
             self.row_controls.append((item.source_value, target, confirmed))
@@ -830,7 +892,19 @@ class MoneyForwardProfileSetupDialog(QDialog):
             "完全一致する候補は初期表示されていますが、まだ確定していません。"
         )
         self.message_label.setText("\n".join(messages))
-        self.save_button.setEnabled(bool(self.row_controls))
+        self.message_label.setObjectName(
+            "warningCard" if analysis.unsupported_field_types else "muted"
+        )
+        self._update_confirmation_progress()
+
+    def _update_confirmation_progress(self, *_args) -> None:
+        total = len(self.row_controls)
+        confirmed = sum(
+            checkbox.isChecked() and target.currentIndex() >= 0
+            for _, target, checkbox in self.row_controls
+        )
+        self.progress_label.setText(f"{confirmed} / {total} 件確認済み")
+        self.save_button.setEnabled(total > 0 and confirmed == total)
 
     def _save(self) -> None:
         if self.analysis is None:
@@ -854,6 +928,9 @@ class MoneyForwardProfileSetupDialog(QDialog):
             return
         self.profile_id = profile.profile_id
         self.profile_name = profile.profile_name
+        self.context_display = (
+            f"{self.analysis.context.product} {self.analysis.context.version} / 設定済み"
+        )
         self.accept()
 
 
