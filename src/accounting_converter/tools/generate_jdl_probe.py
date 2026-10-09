@@ -75,7 +75,7 @@ PROBE_DEFINITIONS = (
     ProbeDefinition("simple_with_subaccount", 1, JdlEvidenceProfile.SUBACCOUNT_1000, "EVIDENCE_GATED", "親科目付き補助科目の受理確認"),
     ProbeDefinition("compound_1d3c", 1, JdlEvidenceProfile.COMPOUND_1D3C, "EVIDENCE_GATED", "観測済み1D3Cの受理確認"),
     ProbeDefinition("tax_sales_10", 1, None, "BLOCKED_MISSING_JDL_TAX_EVIDENCE", "売上10%税表現の確認"),
-    ProbeDefinition("tax_purchase_10", 1, None, "BLOCKED_MISSING_JDL_TAX_EVIDENCE", "仕入10%税表現の確認"),
+    ProbeDefinition("tax_purchase_10", 1, JdlEvidenceProfile.TAX_INCLUDED_1111, "EVIDENCE_GATED_EXPERIMENTAL", "仕入10%税表現の確認"),
     ProbeDefinition("tax_sales_reduced_8", 1, None, "BLOCKED_MISSING_JDL_TAX_EVIDENCE", "軽減売上8%税表現の確認"),
     ProbeDefinition("tax_purchase_reduced_8", 1, None, "BLOCKED_MISSING_JDL_TAX_EVIDENCE", "軽減仕入8%税表現の確認"),
     ProbeDefinition("tax_non_taxable_purchase", 1, None, "BLOCKED_MISSING_JDL_TAX_EVIDENCE", "非課税仕入税表現の確認"),
@@ -231,6 +231,18 @@ class JdlProbeGenerator:
         elif definition.name == "simple_with_subaccount":
             sub_key = self._confirmed_credit_subaccount(profile, context)
             rows = [self._row("1", "現金", sub_key.parent_account or "", "700", "JDL-PROBE-S", credit_sub=sub_key.source_value)]
+        elif definition.name == "tax_purchase_10":
+            rows = [
+                self._row(
+                    "1",
+                    "消耗品費",
+                    "現金",
+                    "1100",
+                    "JDL-TAX-PROBE-P10",
+                    debit_tax="課税仕入 10%",
+                    journal_date="2026/10/21",
+                )
+            ]
         else:
             raise JdlProbeError("PROBE_CASE_UNSUPPORTED", "未対応のprobe caseです。")
         transaction_numbers = tuple(dict.fromkeys(row[0] for row in rows))
@@ -282,9 +294,9 @@ class JdlProbeGenerator:
         return service.convert(ConversionRequest(source, output, source_profile, jdl_ibex_35_5_output_profile(), conversion_profile=profile, target_runtime_context=context))
 
     @staticmethod
-    def _row(transaction: str, debit: str, credit: str, debit_amount: str, description: str, *, credit_amount: str | None = None, credit_sub: str = "") -> tuple[str, ...]:
+    def _row(transaction: str, debit: str, credit: str, debit_amount: str, description: str, *, credit_amount: str | None = None, credit_sub: str = "", debit_tax: str = "", journal_date: str = "2026/10/20") -> tuple[str, ...]:
         return (
-            transaction, "2026/10/20", debit, "", "", "", "", "", debit_amount,
+            transaction, journal_date, debit, "", "", "", debit_tax, "", debit_amount,
             credit, credit_sub, "", "", "", "", credit_amount if credit_amount is not None else debit_amount,
             description, "", "",
         )

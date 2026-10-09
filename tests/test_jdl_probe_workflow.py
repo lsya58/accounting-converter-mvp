@@ -26,6 +26,14 @@ from accounting_converter.tools.generate_jdl_probe import (
     TAX_PROBE_CASES,
     main,
 )
+from accounting_converter.tools.jdl_tax_evidence import (
+    EVIDENCE_ID_JDL_PURCHASE_10_INCLUSIVE_HAND,
+    JdlTaxEvidenceError,
+    analyze_purchase_10_inclusive_evidence,
+)
+from accounting_converter.profiles.jdl_official import (
+    jdl_ibex_cashbook_official_journal_import_spec,
+)
 
 
 class JdlProbeWorkflowTests(unittest.TestCase):
@@ -114,8 +122,8 @@ class JdlProbeWorkflowTests(unittest.TestCase):
         )
         self.assertFalse((self.private / "tax.csv").exists())
 
-    def test_all_tax_cases_block_without_guessed_jdl_values(self) -> None:
-        for case_name in sorted(TAX_PROBE_CASES):
+    def test_unsupported_tax_cases_block_without_guessed_jdl_values(self) -> None:
+        for case_name in sorted(TAX_PROBE_CASES - {"tax_purchase_10"}):
             with self.subTest(case=case_name):
                 output = self.private / f"{case_name}.csv"
                 with self.assertRaises(JdlProbeError) as caught:
@@ -125,6 +133,77 @@ class JdlProbeWorkflowTests(unittest.TestCase):
                     "PROBE_BLOCKED_MISSING_JDL_TAX_EVIDENCE",
                 )
                 self.assertFalse(output.exists())
+
+    def test_tax_purchase_10_uses_explicit_mapping_and_output_adapter(self) -> None:
+        self._write_profile(
+            self.profile_path,
+            account_names=("消耗品費", "現金"),
+            include_purchase_tax=True,
+        )
+        self._write_context(
+            self.context_path,
+            account_names=("消耗品費", "現金"),
+            taxable_included=True,
+        )
+
+        result = self._generate(
+            "tax_purchase_10", self.private / "tax_purchase_10.csv"
+        )
+        rows = list(
+            csv.reader(
+                io.StringIO(result.output_path.read_text(encoding="cp932"), newline="")
+            )
+        )
+        header = rows[0]
+        row = rows[1]
+
+        self.assertEqual(result.conversion_result.status.value, "SUCCESS")
+        self.assertTrue(result.conversion_result.output_validation_result.success)
+        self.assertEqual(row[header.index("借方課区")], "仕　入")
+        self.assertEqual(row[header.index("借方税区")], "10%")
+        self.assertEqual(row[header.index("借方税入力方法")], "")
+        self.assertEqual(row[header.index("借方消費税")], "")
+        self.assertEqual(row[header.index("貸方税区")], "")
+
+    def test_tax_purchase_10_does_not_generate_without_explicit_tax_mapping(self) -> None:
+        self._write_profile(
+            self.profile_path, account_names=("消耗品費", "現金")
+        )
+        self._write_context(
+            self.context_path,
+            account_names=("消耗品費", "現金"),
+            taxable_included=True,
+        )
+
+        with self.assertRaises(JdlProbeError) as caught:
+            self._generate("tax_purchase_10", self.private / "blocked.csv")
+
+        self.assertEqual(caught.exception.code, "PROBE_CONVERSION_BLOCKED")
+        self.assertFalse((self.private / "blocked.csv").exists())
+
+    def test_private_tax_evidence_parser_and_manifest_are_privacy_safe(self) -> None:
+        evidence = self.private / "evidence.csv"
+        self._write_tax_evidence(evidence)
+
+        observation = analyze_purchase_10_inclusive_evidence(evidence)
+        manifest = observation.privacy_safe_manifest()
+        serialized = json.dumps(manifest, ensure_ascii=False)
+
+        self.assertEqual(
+            manifest["evidence_id"], EVIDENCE_ID_JDL_PURCHASE_10_INCLUSIVE_HAND
+        )
+        self.assertEqual(manifest["data_row_count"], 1)
+        self.assertTrue(manifest["debit_tax_scope_present"])
+        self.assertTrue(manifest["debit_tax_category_present"])
+        self.assertFalse(manifest["mapping_promotion_allowed"])
+        for private_value in ("消耗品費", "現金", "架空証拠摘要", "1100"):
+            self.assertNotIn(private_value, serialized)
+
+    def test_private_tax_evidence_parser_rejects_wrong_shape(self) -> None:
+        evidence = self.private / "bad.csv"
+        evidence.write_bytes(b"bad\r\n")
+        with self.assertRaises(JdlTaxEvidenceError):
+            analyze_purchase_10_inclusive_evidence(evidence)
 
     def test_tax_result_template_is_private_safe_and_no_overwrite(self) -> None:
         destination = self.private / "tax_sales_10_result.json"
@@ -169,8 +248,8 @@ class JdlProbeWorkflowTests(unittest.TestCase):
             context_path=self.context_path,
         )
 
-    def _write_profile(self, path: Path, account_names=("現金", "普通預金", "当座預金", "小口現金"), include_subaccount=False) -> None:
-        codes = {"現金": "1001", "普通預金": "1002", "当座預金": "1003", "小口現金": "1004"}
+    def _write_profile(self, path: Path, account_names=("現金", "普通預金", "当座預金", "小口現金"), include_subaccount=False, include_purchase_tax=False) -> None:
+        codes = {"現金": "1001", "普通預金": "1002", "当座預金": "1003", "小口現金": "1004", "消耗品費": "8001"}
         now = datetime(2026, 10, 8, tzinfo=timezone.utc)
         profile = ConversionProfile(
             profile_id="mf-jdl-probe-test",
@@ -197,18 +276,33 @@ class JdlProbeWorkflowTests(unittest.TestCase):
                 }
                 if include_subaccount else {}
             ),
+            tax_mappings=(
+                {
+                    "課税仕入 10%": MappingValue(
+                        source_value="課税仕入 10%",
+                        target_value="10%",
+                        status=MappingStatus.USER_CONFIRMED,
+                        metadata={
+                            "jdl_tax_scope": "仕　入",
+                            "jdl_evidence_id": EVIDENCE_ID_JDL_PURCHASE_10_INCLUSIVE_HAND,
+                        },
+                    )
+                }
+                if include_purchase_tax
+                else {}
+            ),
             created_at=now,
             updated_at=now,
         )
         path.write_text(ConversionProfileStore(self.private / "unused").to_json_text(profile), encoding="utf-8")
 
-    def _write_context(self, path: Path, include_subaccount=False) -> None:
-        codes = {"現金": "1001", "普通預金": "1002", "当座預金": "1003", "小口現金": "1004"}
+    def _write_context(self, path: Path, include_subaccount=False, account_names=("現金", "普通預金", "当座預金", "小口現金"), taxable_included=False) -> None:
+        codes = {"現金": "1001", "普通預金": "1002", "当座預金": "1003", "小口現金": "1004", "消耗品費": "8001"}
         payload = {
             "schema_version": "1", "product": "JDL IBEX 出納帳", "version": "35.5",
             "account_master": [
                 {"mapping_value": name, "target_master_code": code, "target_name": name, "target_formal_name": name}
-                for name, code in codes.items()
+                for name, code in codes.items() if name in account_names
             ],
             "subaccounts": ([{
                 "parent_account": "普通預金", "mapping_value": "テスト銀行",
@@ -216,13 +310,39 @@ class JdlProbeWorkflowTests(unittest.TestCase):
                 "output_name": "テスト銀行", "output_representation_confirmed": True,
                 "parent_account_code": "1002", "target_name": "テスト銀行",
             }] if include_subaccount else []),
-            "departments": [], "tax_processing_mode": "EXEMPT",
-            "department_processing_enabled": False, "standard_taxation_confirmed": False,
-            "individual_credit_method_confirmed": False, "confirmation_state": "CONFIRMED",
+            "departments": [], "tax_processing_mode": "TAXABLE_TAX_INCLUDED" if taxable_included else "EXEMPT",
+            "department_processing_enabled": False, "standard_taxation_confirmed": taxable_included,
+            "individual_credit_method_confirmed": taxable_included, "confirmation_state": "CONFIRMED",
             "provenance": "USER_CONFIRMED_RUNTIME_SNAPSHOT", "no_fuzzy_matching": True,
             "no_automatic_replacement": True,
         }
         path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    @staticmethod
+    def _write_tax_evidence(path: Path) -> None:
+        header = jdl_ibex_cashbook_official_journal_import_spec().column_names
+        values = {name: "" for name in header}
+        values.update(
+            {
+                "//識別フラグ": "1111",
+                "日付": "20261021",
+                "借方科目名称": "消耗品費",
+                "借方課区": "仕　入",
+                "借方税区": "10%",
+                "借方金額": "1100",
+                "借方消費税": "0",
+                "貸方科目名称": "現金",
+                "貸方金額": "1100",
+                "貸方消費税": "0",
+                "摘要": "架空証拠摘要",
+            }
+        )
+        output = io.StringIO(newline="")
+        writer = csv.writer(output, lineterminator="\r\n")
+        writer.writerow(("// synthetic preamble",))
+        writer.writerow(header)
+        writer.writerow([values[name] for name in header])
+        path.write_bytes(output.getvalue().encode("cp932"))
 
     def _context(self):
         from accounting_converter.infrastructure.jdl_target_context_loader import JdlTargetContextLoader

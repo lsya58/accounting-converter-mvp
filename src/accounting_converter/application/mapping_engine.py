@@ -142,15 +142,26 @@ class MappingEngine:
     ) -> TaxInfo | None:
         if tax_info is None or tax_info.category is None:
             return tax_info
+        source_category = tax_info.category
         mapped_category = self._resolve_value(
-            source=tax_info.category,
+            source=source_category,
             rules=self._rule_set.tax_categories,
             field="tax_category",
             entry=entry,
             mapping_values=mapping_values,
             validation_results=validation_results,
         )
-        return replace(tax_info, category=mapped_category)
+        mapping = self._rule_set.tax_categories.get(source_category)
+        metadata = dict(tax_info.metadata)
+        if mapping is not None and mapping.status is MappingStatus.USER_CONFIRMED:
+            metadata.update(
+                {
+                    key: value
+                    for key, value in mapping.metadata.items()
+                    if key.startswith("jdl_")
+                }
+            )
+        return replace(tax_info, category=mapped_category, metadata=metadata)
 
     def _resolve_value(
         self,

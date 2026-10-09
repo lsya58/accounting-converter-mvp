@@ -15,6 +15,8 @@ Money Forwardの税区分とJDL IBEX出納帳35.5の税fieldを推測で結び�
 
 JDL側の課区、税区、税入力方法、消費税についてcase別Evidenceがない間、candidate生成は`PROBE_BLOCKED_MISSING_JDL_TAX_EVIDENCE`で停止する。MF literalからJDL codeや略称を推測しない。
 
+`tax_purchase_10`だけは、`EVID-JDL-TAX-PURCHASE-10-INCLUSIVE-HAND-001`により、JDL IBEX出納帳35.5、課税・税込、1111、1 debit / 1 credit、補助・部門なしの範囲でcandidate生成まで進められる。これはHuman手入力したsynthetic仕訳のJDL再Exportを根拠とする`OBSERVED` Evidenceであり、app-generated candidateのImport成功Evidenceではない。
+
 ## Evidence取得手順
 
 1. JDL IBEX出納帳35.5の完全架空テスト事業所をバックアップする。
@@ -43,6 +45,28 @@ PYTHONPATH=src python3 -m accounting_converter.tools.generate_jdl_probe \
 
 結果JSONへ顧客情報、実科目、摘要、日付、金額、raw rowを記録しない。Evidence昇格時も適用製品、version、会社税処理、借貸side、rate、税込/税抜等のscopeを限定する。
 
+## tax_purchase_10の限定scope
+
+- MF source literal: `課税仕入 10%`
+- JDL debit課区: 実機再Exportで観測したexact literal
+- JDL debit税区: `10%`
+- 税入力方法: 今回の税込条件ではcandidate上は空欄
+- 消費税: official documented税込ruleに従いcandidate上は空欄
+- 貸方側tax fields: 空欄
+- 取引科目: 非消費税仕訳として空欄
+
+再Export上の消費税・部門codeのゼロ表現はgenerator defaultへ昇格しない。`ConversionProfile.tax_mappings`には、Human-confirmedなtarget categoryと`jdl_` prefixのEvidence metadataだけを保存し、fuzzy mappingや自動確認は行わない。
+
+生成例:
+
+```bash
+PYTHONPATH=src python3 -m accounting_converter.tools.generate_jdl_probe \
+  --case tax_purchase_10 \
+  --output data/private/jdl_probe/tax_purchase_10.csv \
+  --profile data/private/profiles/mf_to_jdl_tax_purchase_10_probe.json \
+  --context data/private/jdl_tax_evidence/purchase_10_inclusive/jdl_target_context_taxable.json
+```
+
 ## 現在のGate
 
-既存JDL Evidenceには限定的な税込・税抜10%実機結果がある。ただしMF tax categoryとのcross-product mappingは未確認である。6 casesはすべてcandidate生成BLOCKであり、production Registry、MF READY、ConversionProfileのtax mappingを変更しない。
+`tax_purchase_10`はcross-product candidate生成のみ可能。他の5 tax casesと`simple_with_tax`は引き続きBLOCKする。candidateのJDL Import、再Export、Human手入力Evidenceとのsemantic comparisonが完了するまではmappingをproductionへ昇格しない。production Registry、MF READY、GUIは変更しない。

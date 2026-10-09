@@ -115,6 +115,35 @@ class MappingPreparationAndAdapterRegistryTests(unittest.TestCase):
         self.assertNotIn("secret", repr(review))
         self.assertNotIn("100", repr(review))
 
+    def test_explicit_tax_mapping_carries_only_jdl_metadata(self) -> None:
+        entry = self.entry("J001", debit_account="現金", debit_tax="課税仕入 10%")
+        profile = self.profile()
+        profile.tax_mappings["課税仕入 10%"] = MappingValue(
+            "課税仕入 10%",
+            "10%",
+            MappingStatus.USER_CONFIRMED,
+            metadata={
+                "jdl_tax_scope": "仕　入",
+                "unrelated_private_hint": "must-not-propagate",
+            },
+        )
+        rules = mapping_rule_set_from_profile(profile)
+
+        mapped = MappingEngine(rules).apply((entry,)).entries[0]
+        tax = mapped.lines[0].tax_info
+
+        self.assertEqual(tax.category, "10%")
+        self.assertEqual(tax.metadata["jdl_tax_scope"], "仕　入")
+        self.assertNotIn("unrelated_private_hint", tax.metadata)
+
+        profile.tax_mappings["課税仕入 10%"].status = MappingStatus.RESOLVED
+        mapped_without_confirmation = MappingEngine(
+            mapping_rule_set_from_profile(profile)
+        ).apply((entry,)).entries[0]
+        self.assertNotIn(
+            "jdl_tax_scope", mapped_without_confirmation.lines[0].tax_info.metadata
+        )
+
     def test_context_aware_subaccount_same_parent_is_one_requirement(self) -> None:
         entries = (
             self.entry("J001", debit_account="売掛金", debit_sub="カード", row=2),
