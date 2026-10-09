@@ -19,7 +19,12 @@ from accounting_converter.application.mapping_review import (
     MappingRequirementExtractor,
 )
 from accounting_converter.domain.conversion_profile import ConversionProfile
-from accounting_converter.domain.mapping import MappingKey, MappingType
+from accounting_converter.domain.mapping import (
+    MappingKey,
+    MappingStatus,
+    MappingType,
+    MappingValue,
+)
 from accounting_converter.domain.profile import FormatProfile
 from accounting_converter.infrastructure.conversion_profile_store import ConversionProfileStore
 from accounting_converter.infrastructure.jdl_target_context_loader import JdlTargetContextLoader
@@ -47,10 +52,15 @@ class MoneyForwardProfileSetupAnalysis:
     context: JdlTargetContext
     account_items: tuple[AccountMappingSetupItem, ...]
     unsupported_field_types: tuple[str, ...] = ()
+    unresolved_tax_categories: tuple[str, ...] = ()
 
     @property
     def can_configure_accounts(self) -> bool:
-        return bool(self.account_items) and not self.unsupported_field_types
+        return bool(self.account_items)
+
+    @property
+    def requires_additional_setup(self) -> bool:
+        return bool(self.unsupported_field_types)
 
 
 class MoneyForwardProfileSetupService:
@@ -129,6 +139,9 @@ class MoneyForwardProfileSetupService:
             unsupported_field_types=tuple(
                 self.UNSUPPORTED_LABELS[key] for key in sorted(unsupported)
             ),
+            unresolved_tax_categories=tuple(
+                item.source_value for item in requirements.tax_categories
+            ),
         )
 
     def save_confirmed_profile(
@@ -140,9 +153,7 @@ class MoneyForwardProfileSetupService:
         explicitly_confirmed: set[str],
     ) -> ConversionProfile:
         if not analysis.can_configure_accounts:
-            raise MoneyForwardProfileSetupError(
-                "このCSVには現在設定できない項目があります。"
-            )
+            raise MoneyForwardProfileSetupError("設定する科目が見つかりませんでした。")
         required = {item.source_value for item in analysis.account_items}
         if set(selections) != required or explicitly_confirmed != required:
             raise MoneyForwardProfileSetupError("すべての科目対応を明示確認してください。")
@@ -157,9 +168,20 @@ class MoneyForwardProfileSetupService:
             profile_name=f"{company_display_name.strip()} Money Forward → JDL",
             source_format_identity=moneyforward_cloud_journal_export_observed_schema().identity,
             target_format_identity=jdl_ibex_cashbook_official_journal_import_schema_definition().identity,
+            tax_mappings={
+                source_value: MappingValue(
+                    source_value=source_value,
+                    target_value=None,
+                    status=MappingStatus.UNRESOLVED,
+                )
+                for source_value in analysis.unresolved_tax_categories
+            },
             created_at=now,
             updated_at=now,
-            notes="Money Forward科目対応をユーザーが明示確認して作成。production READYを意味しません。",
+            notes=(
+                "Money Forward科目対応をユーザーが明示確認して作成。"
+                "未設定項目がある場合は変換時preflightで停止。production READYを意味しません。"
+            ),
         )
         self.profile_store.create(profile)
         confirmation = MappingConfirmationService(self.profile_store)

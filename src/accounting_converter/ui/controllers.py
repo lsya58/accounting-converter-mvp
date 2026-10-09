@@ -636,6 +636,14 @@ class AccountingConverterController:
             and self.formal_conversion_adapter_registered
         )
         message = PREFLIGHT_MESSAGES[result.status]
+        if (
+            result.status is ProfilePreflightStatus.REQUIRES_MAPPING
+            and result.unknown_tax_categories
+        ):
+            message = (
+                "会社設定に未確認の項目があります。"
+                "税区分の設定が必要です。"
+            )
         if result.status is ProfilePreflightStatus.READY and not conversion_available:
             message = "現在この形式の正式変換Adapterは未登録です。"
         self.state = replace(
@@ -691,11 +699,28 @@ class AccountingConverterController:
 
     def _company_option(self, company_setting_id: str) -> CompanyOption:
         resolved = self.company_setting_service.resolve_for_source(company_setting_id)
+        requires_mapping = bool(
+            resolved.profile
+            and any(
+                not mapping.is_resolved
+                for mappings in (
+                    resolved.profile.subaccount_mappings,
+                    resolved.profile.subaccount_context_mappings,
+                    resolved.profile.department_mappings,
+                    resolved.profile.tax_mappings,
+                )
+                for mapping in mappings.values()
+            )
+        )
         return CompanyOption(
             company_setting_id=company_setting_id,
             display_name=resolved.setting.display_name,
             source_label=self._source_label(resolved.setting.expected_source_format_key),
-            status_label="利用可能" if resolved.available else "確認が必要",
+            status_label=(
+                "利用可能"
+                if resolved.available and not requires_mapping
+                else "確認が必要"
+            ),
         )
 
     def _auto_select_company_for_recognized_file(self) -> None:

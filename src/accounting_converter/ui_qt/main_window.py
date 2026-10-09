@@ -804,13 +804,6 @@ class MoneyForwardProfileSetupDialog(QDialog):
         self.analysis = analysis
         self.table.setRowCount(0)
         self.row_controls.clear()
-        if analysis.unsupported_field_types:
-            self.message_label.setText(
-                "このCSVには現在設定できない項目があります: "
-                + "、".join(analysis.unsupported_field_types)
-            )
-            self.save_button.setEnabled(False)
-            return
         for row_index, item in enumerate(analysis.account_items):
             self.table.insertRow(row_index)
             self.table.setItem(row_index, 0, QTableWidgetItem(item.source_value))
@@ -824,9 +817,19 @@ class MoneyForwardProfileSetupDialog(QDialog):
             self.table.setCellWidget(row_index, 1, target)
             self.table.setCellWidget(row_index, 2, confirmed)
             self.row_controls.append((item.source_value, target, confirmed))
-        self.message_label.setText(
+        messages = []
+        if analysis.unsupported_field_types:
+            messages.append(
+                "まだ設定が必要な項目があります: "
+                + "、".join(analysis.unsupported_field_types)
+            )
+            messages.append(
+                "科目対応は先に設定できます。未設定項目が残っている間は変換できません。"
+            )
+        messages.append(
             "完全一致する候補は初期表示されていますが、まだ確定していません。"
         )
+        self.message_label.setText("\n".join(messages))
         self.save_button.setEnabled(bool(self.row_controls))
 
     def _save(self) -> None:

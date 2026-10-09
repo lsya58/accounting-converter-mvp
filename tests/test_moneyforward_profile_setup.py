@@ -7,14 +7,33 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from accounting_converter.adapters.input.moneyforward import MONEYFORWARD_OBSERVED_HEADER
+from accounting_converter.adapters.input.moneyforward import (
+    MONEYFORWARD_OBSERVED_HEADER,
+    MoneyForwardInputAdapter,
+)
 from accounting_converter.application.moneyforward_profile_setup import (
     MoneyForwardProfileSetupError,
     MoneyForwardProfileSetupService,
 )
+from accounting_converter.application.profile_preflight import (
+    ConversionPreflightService,
+    ProfilePreflightStatus,
+)
+from accounting_converter.application.mapping_review import (
+    MappingRequirementExtractor,
+    mapping_requirements_to_observed_preflight,
+)
 from accounting_converter.domain.mapping import MappingStatus
+from accounting_converter.domain.profile import FormatProfile
 from accounting_converter.infrastructure.company_setting_store import CompanySettingStore
+from accounting_converter.infrastructure.application_preferences import (
+    ApplicationPreferencesStore,
+)
 from accounting_converter.infrastructure.conversion_profile_store import ConversionProfileStore
+from accounting_converter.ui.controllers import AccountingConverterController
+from accounting_converter.profiles.known_formats import (
+    moneyforward_cloud_journal_export_observed_schema,
+)
 
 
 class MoneyForwardProfileSetupTests(unittest.TestCase):
@@ -50,16 +69,66 @@ class MoneyForwardProfileSetupTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.service.analyze(self.source, self.context)
 
-    def test_optional_unsupported_field_blocks_without_silent_loss(self) -> None:
+    def test_tax_allows_account_setup_but_remains_unresolved(self) -> None:
         self._write_source(self.source, debit_tax="課税仕入 10%")
         analysis = self.service.analyze(self.source, self.context)
-        self.assertFalse(analysis.can_configure_accounts)
+        self.assertTrue(analysis.can_configure_accounts)
+        self.assertTrue(analysis.requires_additional_setup)
         self.assertEqual(analysis.unsupported_field_types, ("税区分",))
-        with self.assertRaisesRegex(MoneyForwardProfileSetupError, "現在設定できない"):
-            self.service.save_confirmed_profile(
-                company_display_name="架空会社", analysis=analysis,
-                selections={}, explicitly_confirmed=set(),
-            )
+        selections = {
+            item.source_value: item.exact_candidate
+            for item in analysis.account_items
+            if item.exact_candidate
+        }
+        profile = self.service.save_confirmed_profile(
+            company_display_name="架空会社",
+            analysis=analysis,
+            selections=selections,
+            explicitly_confirmed=set(selections),
+        )
+        self.assertTrue(
+            all(item.status is MappingStatus.USER_CONFIRMED for item in profile.account_mappings.values())
+        )
+        self.assertEqual(
+            profile.tax_mappings["課税仕入 10%"].status,
+            MappingStatus.UNRESOLVED,
+        )
+        self.assertIsNone(profile.tax_mappings["課税仕入 10%"].target_value)
+
+        entries = MoneyForwardInputAdapter().read(
+            self.source,
+            FormatProfile(
+                software="Money Forward",
+                product="Money Forward クラウド会計",
+                version="UNKNOWN",
+                format_id=moneyforward_cloud_journal_export_observed_schema().identity.stable_key,
+                encoding="cp932",
+            ),
+        )
+        requirements = MappingRequirementExtractor().extract(entries, profile)
+        preflight = ConversionPreflightService().check(
+            profile.source_format_identity,
+            profile.target_format_identity,
+            mapping_requirements_to_observed_preflight(requirements),
+            profile,
+        )
+        self.assertEqual(preflight.status, ProfilePreflightStatus.REQUIRES_MAPPING)
+        self.assertEqual(preflight.unknown_tax_categories, ("課税仕入 10%",))
+
+        company_store = CompanySettingStore(self.root / "companies", self.profile_store)
+        setting = company_store.create(
+            company_setting_id="company-tax-pending",
+            display_name="架空会社",
+            conversion_profile_id=profile.profile_id,
+            context_source=self.context,
+        )
+        controller = AccountingConverterController(
+            profile_store=self.profile_store,
+            company_store=company_store,
+            preferences_store=ApplicationPreferencesStore(self.root / "preferences.json"),
+        )
+        option = controller._company_option(setting.company_setting_id)
+        self.assertEqual(option.status_label, "確認が必要")
 
     def test_unresolved_or_unconfirmed_account_cannot_save(self) -> None:
         analysis = self.service.analyze(self.source, self.context)

@@ -35,4 +35,4 @@ Money Forward用Profileがない場合に限り、会社追加画面から仕訳
 
 source科目名とJDL masterの名称・正式名称が完全一致し、候補が一意でも、候補表示に留める。各行でユーザーが「確認しました」を選んだ後にだけ、既存`MappingConfirmationService`を通じて`USER_CONFIRMED`としてschema v3 Profileへ保存する。fuzzy、contains、表記補正、AI推測は行わない。
 
-初回MVPは科目mappingだけを対象とする。補助科目、部門、税区分、取引先、インボイス、タグ、メモが入力に含まれる場合、値を捨てず種類だけを表示してProfile作成をBLOCKする。Profile作成後もMoney Forward production Adapter登録とREADY gateは変更しない。
+初回MVPは科目mappingだけを対象とする。補助科目、部門、税区分、取引先、インボイス、タグ、メモが入力に含まれても、種類だけを表示して確認済み科目対応を先に保存できる。未対応項目が残る会社設定は「確認が必要」と表示し、変換実行はBLOCKする。税区分は既存Profileの未解決Mappingとして保持し、自動変換や空欄化をしない。Profile作成後もMoney Forward production Adapter登録とREADY gateは変更しない。
