@@ -108,6 +108,7 @@ class QtGuiContractTests(unittest.TestCase):
             "まだ設定が必要な項目があります",
             "科目対応は先に設定できます。未設定項目が残っている間は変換できません。",
             "対応設定を保存",
+            "新しい対応設定を作成",
         )
         for text in expected:
             self.assertIn(text, source)
@@ -116,6 +117,18 @@ class QtGuiContractTests(unittest.TestCase):
             "fingerprint", "Evidence ID",
         ):
             self.assertNotIn(f'"{internal}"', source)
+
+    def test_created_moneyforward_profile_replaces_parent_selection(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
+            encoding="utf-8"
+        )
+        method = source.split(
+            "def _create_moneyforward_profile(self)", maxsplit=1
+        )[1].split("def _render_confirmation", maxsplit=1)[0]
+        self.assertIn("self.profile_ids = [dialog.profile_id]", method)
+        self.assertIn("self.profile_combo.clear()", method)
+        self.assertIn("self.profile_combo.addItem(dialog.profile_name)", method)
+        self.assertIn("self.context_path = dialog.context_path", method)
 
     def test_moneyforward_mapping_table_is_readable_and_requires_confirmation(self) -> None:
         source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(

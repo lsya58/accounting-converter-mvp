@@ -205,9 +205,26 @@ class AccountingConverterController:
                 context_source=context_source,
             )
         except (CompanySettingStoreError, ConversionProfileStoreError, OSError) as error:
-            return self._fail_state("会社設定を保存できませんでした。内容を確認してください。", error)
+            return self._fail_state(self._company_setting_save_message(error), error)
         self.load_company_settings()
         return self.select_company_setting(setting.company_setting_id)
+
+    @staticmethod
+    def _company_setting_save_message(error: Exception) -> str:
+        reason = str(error)
+        if reason in {
+            "profile was confirmed against a different JDL setting",
+            "profile and JDL setting are incompatible",
+        }:
+            return (
+                "対応設定とJDL設定の組み合わせが一致していません。"
+                "対応設定の作成時に使用したJDL設定を選択してください。"
+            )
+        if reason == "selected source and profile do not match":
+            return "入力元と対応設定が一致していません。対応設定を選び直してください。"
+        if isinstance(error, ConversionProfileStoreError):
+            return "対応設定を読み込めませんでした。もう一度設定してください。"
+        return "会社設定を保存できませんでした。JDL設定をもう一度選択してください。"
 
     def select_company_setting(self, company_setting_id: str | None) -> AppState:
         self._prepared = None

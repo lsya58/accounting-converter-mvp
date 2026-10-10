@@ -386,6 +386,74 @@ class MoneyForwardProfileSetupTests(unittest.TestCase):
 
         self.assertFalse((self.root / "companies" / "company-substitution").exists())
 
+    def test_controller_reports_profile_context_mismatch_without_weakening_block(self) -> None:
+        analysis = self.service.analyze(self.source, self.context)
+        selections = {
+            item.source_value: item.exact_candidate
+            for item in analysis.account_items
+            if item.exact_candidate
+        }
+        profile = self.service.save_confirmed_profile(
+            company_display_name="以前の架空会社",
+            analysis=analysis,
+            selections=selections,
+            explicitly_confirmed=set(selections),
+        )
+        replacement = self.root / "taxable-jdl.json"
+        self._write_context(replacement, taxable_included=True)
+        company_store = CompanySettingStore(self.root / "companies", self.profile_store)
+        controller = AccountingConverterController(
+            profile_store=self.profile_store,
+            company_store=company_store,
+            preferences_store=ApplicationPreferencesStore(self.root / "preferences.json"),
+        )
+
+        state = controller.add_company_setting(
+            display_name="新しい架空会社",
+            source_label="Money Forward",
+            conversion_profile_id=profile.profile_id,
+            context_source=replacement,
+        )
+
+        self.assertIsNone(state.selected_company_setting_id)
+        self.assertIn("組み合わせが一致していません", state.user_message)
+        self.assertEqual(state.developer_error, "CompanySettingStoreError")
+        self.assertEqual(company_store.list(), ())
+
+    def test_new_profile_and_same_context_save_company_setting(self) -> None:
+        self._write_source(self.source, debit_tax="課税仕入 10%")
+        self._write_context(self.context, taxable_included=True)
+        analysis = self.service.analyze(self.source, self.context)
+        selections = {
+            item.source_value: item.exact_candidate
+            for item in analysis.account_items
+            if item.exact_candidate
+        }
+        profile = self.service.save_confirmed_profile(
+            company_display_name="新しい架空会社",
+            analysis=analysis,
+            selections=selections,
+            explicitly_confirmed=set(selections),
+        )
+        company_store = CompanySettingStore(self.root / "companies", self.profile_store)
+        controller = AccountingConverterController(
+            profile_store=self.profile_store,
+            company_store=company_store,
+            preferences_store=ApplicationPreferencesStore(self.root / "preferences.json"),
+        )
+
+        state = controller.add_company_setting(
+            display_name="新しい架空会社",
+            source_label="Money Forward",
+            conversion_profile_id=profile.profile_id,
+            context_source=self.context,
+        )
+
+        self.assertIsNotNone(state.selected_company_setting_id)
+        setting = company_store.get(state.selected_company_setting_id)
+        self.assertEqual(setting.conversion_profile_id, profile.profile_id)
+        self.assertEqual(profile.profile_name, "新しい架空会社 Money Forward → JDL")
+
     @staticmethod
     def _write_source(path: Path, *, debit_tax: str = "") -> None:
         text = io.StringIO(newline="")

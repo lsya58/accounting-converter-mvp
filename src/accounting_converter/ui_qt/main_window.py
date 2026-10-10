@@ -652,10 +652,13 @@ class CompanyAddDialog(QDialog):
                 self.profile_combo.show()
                 self.profile_label.show()
                 self.no_profile_message.hide()
-                self.create_profile_button.hide()
                 self.profile_ids = [item.profile_id for item in candidates]
                 self.profile_combo.clear()
                 self.profile_combo.addItems([item.profile_name for item in candidates])
+                self.create_profile_button.setVisible(
+                    self.source_combo.currentText() == "Money Forward"
+                )
+                self.create_profile_button.setText("新しい対応設定を作成")
         if index == 2:
             if self.profile_combo.currentIndex() < 0:
                 self.error_label.setText("対応設定を選択してください。")
