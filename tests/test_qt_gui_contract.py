@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import tempfile
 import tomllib
 import unittest
@@ -157,6 +158,49 @@ class QtGuiContractTests(unittest.TestCase):
         ):
             self.assertIn(text, source)
         self.assertIn("self.save_button.setEnabled(False)", source)
+
+    def test_company_selector_connections_use_handlers_owned_by_each_view(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        classes = {
+            node.name: node
+            for node in tree.body
+            if isinstance(node, ast.ClassDef)
+        }
+        main_methods = {
+            node.name for node in classes["AccountingConverterMainWindow"].body
+            if isinstance(node, ast.FunctionDef)
+        }
+        settings_methods = {
+            node.name for node in classes["SettingsDialog"].body
+            if isinstance(node, ast.FunctionDef)
+        }
+        main_window_source, settings_source = source.split(
+            "class SettingsDialog", maxsplit=1
+        )
+        self.assertIn("_select_company", main_methods)
+        self.assertNotIn("_company_changed", main_methods)
+        self.assertIn("_company_changed", settings_methods)
+        self.assertIn(
+            "self.company_combo.currentIndexChanged.connect(self._select_company)",
+            main_window_source,
+        )
+        self.assertNotIn("self._company_changed", main_window_source)
+        self.assertIn(
+            "self.company_combo.currentIndexChanged.connect(self._company_changed)",
+            settings_source,
+        )
+        self.assertIn("def _company_changed(self, _index: int)", settings_source)
+
+    def test_main_window_company_handler_uses_existing_controller_flow(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(encoding="utf-8")
+        main_window_source = source.split("class SettingsDialog", maxsplit=1)[0]
+        self.assertIn("company_id = self.company_combo.itemData(index)", main_window_source)
+        self.assertIn(
+            "self.controller.select_company_setting(company_id)",
+            main_window_source,
+        )
+        self.assertIn("self._prepare_if_complete()", main_window_source)
 
 
 if __name__ == "__main__":

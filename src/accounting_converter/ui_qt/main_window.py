@@ -304,7 +304,6 @@ class AccountingConverterMainWindow(QMainWindow):
                     )
                 )
             )
-        self.company_combo.currentIndexChanged.connect(self._company_changed)
 
 
 class SettingsDialog(QDialog):
@@ -329,6 +328,7 @@ class SettingsDialog(QDialog):
                 f"{item.display_name}  /  {item.source_label} → JDL  /  {item.status_label}",
                 item.company_setting_id,
             )
+        self.company_combo.currentIndexChanged.connect(self._company_changed)
         company_row.addWidget(self.company_combo, 1)
         layout.addLayout(company_row)
         company_actions = QHBoxLayout()
