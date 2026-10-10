@@ -165,6 +165,53 @@ class MoneyForwardProfileSetupTests(unittest.TestCase):
             "現在のJDL設定ではこの税区分を確認できません",
         )
 
+    def test_missing_purchase_tax_requirement_is_reported_without_inference(self) -> None:
+        self._write_context(self.context, taxable_included=True)
+        analysis = self.service.analyze(self.source, self.context)
+        selections = {
+            item.source_value: item.exact_candidate
+            for item in analysis.account_items
+            if item.exact_candidate
+        }
+        profile = self.service.save_confirmed_profile(
+            company_display_name="架空会社",
+            analysis=analysis,
+            selections=selections,
+            explicitly_confirmed=set(selections),
+        )
+
+        review = self.service.tax_mapping_review(
+            profile,
+            analysis.context,
+        )
+
+        self.assertTrue(review.context_compatible)
+        self.assertFalse(review.items)
+        self.assertIn("未設定要件がありません", review.user_message)
+        self.assertNotIn("課税仕入 10%", profile.tax_mappings)
+
+    def test_resolved_purchase_tax_is_not_offered_for_confirmation_again(self) -> None:
+        self._write_source(self.source, debit_tax="課税仕入 10%")
+        self._write_context(self.context, taxable_included=True)
+        analysis = self.service.analyze(self.source, self.context)
+        selections = {
+            item.source_value: item.exact_candidate
+            for item in analysis.account_items
+            if item.exact_candidate
+        }
+        profile = self.service.save_confirmed_profile(
+            company_display_name="架空会社",
+            analysis=analysis,
+            selections=selections,
+            explicitly_confirmed=set(selections),
+            explicitly_confirmed_tax={"課税仕入 10%"},
+        )
+
+        review = self.service.tax_mapping_review(profile, analysis.context)
+
+        self.assertFalse(review.items)
+        self.assertEqual(review.user_message, "「課税仕入 10%」は確認済みです。")
+
     def test_tax_is_saved_only_after_explicit_confirmation(self) -> None:
         self._write_source(self.source, debit_tax="課税仕入 10%")
         self._write_context(self.context, taxable_included=True)

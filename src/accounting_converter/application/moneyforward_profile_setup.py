@@ -301,6 +301,20 @@ class MoneyForwardProfileSetupService:
             return TaxMappingSetupReview(
                 user_message="現在のJDL設定ではこの税区分を確認できません"
             )
+        purchase_mapping = profile.tax_mappings.get(MF_PURCHASE_TAX_10)
+        if purchase_mapping is None:
+            return TaxMappingSetupReview(
+                context_compatible=self._tax_context_compatible(context),
+                user_message=(
+                    "対応設定に「課税仕入 10%」の未設定要件がありません。"
+                    "税区分を含むMoney Forward CSVから対応設定を作成してください。"
+                ),
+            )
+        if purchase_mapping.is_resolved:
+            return TaxMappingSetupReview(
+                context_compatible=self._tax_context_compatible(context),
+                user_message="「課税仕入 10%」は確認済みです。",
+            )
         unresolved = tuple(
             source_value
             for source_value, mapping in profile.tax_mappings.items()
