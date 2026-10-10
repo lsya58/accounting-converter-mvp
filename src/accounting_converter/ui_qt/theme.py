@@ -131,6 +131,14 @@ QComboBox QAbstractItemView {{
     outline: 0;
     padding: 4px;
 }}
+QCheckBox {{
+    min-height: 32px;
+    spacing: 8px;
+}}
+QCheckBox::indicator {{
+    width: 20px;
+    height: 20px;
+}}
 QTableWidget {{
     color: {COLORS['text']};
     background: {COLORS['surface']};

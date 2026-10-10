@@ -5,6 +5,7 @@ from pathlib import Path
 from PySide6.QtCore import QUrl, Qt
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -750,8 +751,8 @@ class MoneyForwardProfileSetupDialog(QDialog):
         self.context_display = "未選択"
         self.row_controls: list[tuple[str, QComboBox, QCheckBox]] = []
         self.setWindowTitle("Money Forwardの対応設定を作成")
-        self.resize(1040, 760)
-        self.setMinimumSize(900, 680)
+        self.resize(1120, 780)
+        self.setMinimumSize(920, 680)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(30, 26, 30, 24)
@@ -802,13 +803,23 @@ class MoneyForwardProfileSetupDialog(QDialog):
         self.table.setHorizontalHeaderLabels(
             ("Money Forwardの科目", "JDLの科目", "確認")
         )
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.setMinimumHeight(320)
-        self.table.verticalHeader().setDefaultSectionSize(38)
+        self.table.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+        self.table.setMinimumHeight(360)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        header.setMinimumSectionSize(150)
+        self.table.setColumnWidth(2, 168)
+        self.table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+        self.table.verticalHeader().setMinimumSectionSize(40)
+        self.table.verticalHeader().setDefaultSectionSize(40)
+        self.table.verticalHeader().hide()
+        self.table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.table.setAlternatingRowColors(True)
-        layout.addWidget(self.table, 1)
 
         self.tax_card = QFrame()
         self.tax_card.setObjectName("card")
@@ -833,16 +844,34 @@ class MoneyForwardProfileSetupDialog(QDialog):
         tax_layout.addWidget(self.tax_status_label)
         tax_layout.addWidget(self.tax_confirmed)
         self.tax_card.hide()
-        layout.addWidget(self.tax_card)
 
         self.progress_label = QLabel("0 / 0 件確認済み")
         self.progress_label.setObjectName("muted")
-        layout.addWidget(self.progress_label)
 
         self.message_label = QLabel("")
         self.message_label.setObjectName("muted")
         self.message_label.setWordWrap(True)
-        layout.addWidget(self.message_label)
+
+        mapping_area = QHBoxLayout()
+        mapping_area.setSpacing(16)
+        mapping_area.addWidget(self.table, 1)
+        mapping_sidebar = QWidget()
+        mapping_sidebar.setMinimumWidth(260)
+        mapping_sidebar.setMaximumWidth(320)
+        mapping_sidebar.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding
+        )
+        sidebar_layout = QVBoxLayout(mapping_sidebar)
+        sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        sidebar_layout.setSpacing(12)
+        sidebar_layout.addWidget(self.tax_card)
+        sidebar_layout.addWidget(self.progress_label)
+        sidebar_layout.addWidget(self.message_label)
+        sidebar_layout.addStretch(1)
+        mapping_area.addWidget(mapping_sidebar)
+        layout.addLayout(mapping_area, 1)
+        layout.setStretchFactor(mapping_area, 1)
+
         actions = QHBoxLayout()
         cancel = QPushButton("キャンセル")
         cancel.clicked.connect(self.reject)
@@ -905,10 +934,15 @@ class MoneyForwardProfileSetupDialog(QDialog):
         self.row_controls.clear()
         for row_index, item in enumerate(analysis.account_items):
             self.table.insertRow(row_index)
+            self.table.setRowHeight(row_index, 40)
             source_item = QTableWidgetItem(item.source_value)
             source_item.setToolTip(item.source_value)
             self.table.setItem(row_index, 0, source_item)
             target = QComboBox()
+            target.setSizePolicy(
+                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+            )
+            target.setMinimumHeight(34)
             target.addItems(item.available_targets)
             if item.exact_candidate in item.available_targets:
                 target.setCurrentIndex(item.available_targets.index(item.exact_candidate))
@@ -919,7 +953,12 @@ class MoneyForwardProfileSetupDialog(QDialog):
             confirmed.stateChanged.connect(self._update_confirmation_progress)
             target.currentIndexChanged.connect(self._update_confirmation_progress)
             self.table.setCellWidget(row_index, 1, target)
-            self.table.setCellWidget(row_index, 2, confirmed)
+            confirmation_cell = QWidget()
+            confirmation_layout = QHBoxLayout(confirmation_cell)
+            confirmation_layout.setContentsMargins(8, 0, 8, 0)
+            confirmation_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            confirmation_layout.addWidget(confirmed)
+            self.table.setCellWidget(row_index, 2, confirmation_cell)
             self.row_controls.append((item.source_value, target, confirmed))
         self.tax_confirmed.setChecked(False)
         self.tax_card.setVisible(bool(analysis.tax_items))

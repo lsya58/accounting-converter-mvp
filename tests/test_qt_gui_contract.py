@@ -135,10 +135,19 @@ class QtGuiContractTests(unittest.TestCase):
             encoding="utf-8"
         )
         expected = (
-            "self.resize(1040, 760)",
-            "self.setMinimumSize(900, 680)",
-            "self.table.setMinimumHeight(320)",
-            "self.table.verticalHeader().setDefaultSectionSize(38)",
+            "self.resize(1120, 780)",
+            "self.setMinimumSize(920, 680)",
+            "self.table.setMinimumHeight(360)",
+            "self.table.setSizePolicy(",
+            "layout.addLayout(mapping_area, 1)",
+            "layout.setStretchFactor(mapping_area, 1)",
+            "self.table.setColumnWidth(2, 168)",
+            "self.table.verticalHeader().setDefaultSectionSize(40)",
+            "self.table.setRowHeight(row_index, 40)",
+            "ScrollBarAlwaysOff",
+            "confirmation_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)",
+            "self.table.setCellWidget(row_index, 1, target)",
+            "self.table.setCellWidget(row_index, 2, confirmation_cell)",
             "Money Forwardの科目",
             "JDLの科目",
             "0 / 0 件確認済み",
@@ -147,7 +156,10 @@ class QtGuiContractTests(unittest.TestCase):
         )
         for text in expected:
             self.assertIn(text, source)
-        for selector in ("QTableWidget", "QHeaderView::section", "QScrollBar:vertical"):
+        for selector in (
+            "QTableWidget", "QHeaderView::section", "QScrollBar:vertical",
+            "QCheckBox::indicator",
+        ):
             self.assertIn(selector, APP_STYLE_SHEET)
 
     def test_verified_tax_confirmation_ui_is_explicit_and_scoped(self) -> None:
