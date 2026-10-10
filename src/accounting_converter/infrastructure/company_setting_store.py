@@ -142,6 +142,30 @@ class CompanySettingStore:
         )
         return updated
 
+    def refresh_profile_fingerprint(self, company_setting_id: str) -> CompanySetting:
+        current = self.get(company_setting_id)
+        profile = self.profile_store.get(current.conversion_profile_id)
+        context_path = self.context_path(current)
+        context_bytes = context_path.read_bytes()
+        context = self.context_loader.load(context_path)
+        runtime = JdlOutputRuntimeFactory().resolve(
+            jdl_ibex_35_5_output_profile(), profile, context
+        )
+        if not runtime.resolved or self._hash(context_bytes) != current.context_fingerprint:
+            raise CompanySettingStoreError(
+                "updated profile and saved JDL setting are incompatible"
+            )
+        updated = replace(
+            current,
+            profile_fingerprint=self._profile_fingerprint(profile),
+            updated_at=datetime.now(timezone.utc),
+        )
+        self._atomic_json(
+            self.root_dir / company_setting_id / self.COMPANY_FILE,
+            self._to_dict(updated),
+        )
+        return updated
+
     def delete(self, company_setting_id: str) -> None:
         self._validate_id(company_setting_id)
         directory = self.root_dir / company_setting_id

@@ -13,6 +13,7 @@ from accounting_converter.application.company_settings import CompanySettingServ
 from accounting_converter.application.moneyforward_profile_setup import (
     MoneyForwardProfileSetupAnalysis,
     MoneyForwardProfileSetupService,
+    TaxMappingSetupReview,
     profile_pending_setup_field_types,
 )
 
@@ -282,15 +283,60 @@ class AccountingConverterController:
         analysis: MoneyForwardProfileSetupAnalysis,
         selections: dict[str, str],
         explicitly_confirmed: set[str],
+        explicitly_confirmed_tax: set[str] | None = None,
     ) -> ConversionProfile:
         profile = self.moneyforward_profile_setup_service.save_confirmed_profile(
             company_display_name=company_display_name,
             analysis=analysis,
             selections=selections,
             explicitly_confirmed=explicitly_confirmed,
+            explicitly_confirmed_tax=explicitly_confirmed_tax,
         )
         self.load_profiles()
         return profile
+
+    def company_tax_mapping_review(
+        self, company_setting_id: str
+    ) -> TaxMappingSetupReview:
+        resolved = self.company_setting_service.resolve_for_source(company_setting_id)
+        if not resolved.available or resolved.profile is None or resolved.context is None:
+            return TaxMappingSetupReview(
+                user_message="現在のJDL設定ではこの税区分を確認できません"
+            )
+        return self.moneyforward_profile_setup_service.tax_mapping_review(
+            resolved.profile, resolved.context
+        )
+
+    def confirm_company_tax_mapping(
+        self, company_setting_id: str, source_value: str
+    ) -> AppState:
+        resolved = self.company_setting_service.resolve_for_source(company_setting_id)
+        if not resolved.available or resolved.profile is None or resolved.context is None:
+            return self._fail_state(
+                "現在のJDL設定ではこの税区分を確認できません。",
+                CompanySettingStoreError("company setting is unavailable"),
+            )
+        try:
+            self.moneyforward_profile_setup_service.confirm_evidence_backed_tax_mapping(
+                profile_id=resolved.profile.profile_id,
+                context=resolved.context,
+                source_value=source_value,
+            )
+            try:
+                self.company_store.refresh_profile_fingerprint(company_setting_id)
+            except Exception:
+                self.profile_store.update(resolved.profile)
+                raise
+        except (CompanySettingStoreError, ConversionProfileStoreError, ValueError) as error:
+            return self._fail_state(
+                "税区分の設定を保存できませんでした。JDL設定を確認してください。",
+                error,
+            )
+        self.load_profiles()
+        self.load_company_settings()
+        state = self.select_company_setting(company_setting_id)
+        self.state = replace(state, user_message="税区分の確認を保存しました。")
+        return self.state
 
     def delete_company_setting(self, company_setting_id: str) -> AppState:
         try:

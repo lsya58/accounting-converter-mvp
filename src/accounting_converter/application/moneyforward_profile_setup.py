@@ -39,6 +39,12 @@ class MoneyForwardProfileSetupError(ValueError):
 
 
 PENDING_SETUP_METADATA_KEY = "pending_setup_field_types"
+MF_PURCHASE_TAX_10 = "課税仕入 10%"
+JDL_PURCHASE_TAX_10 = "10%"
+JDL_PURCHASE_TAX_SCOPE = "仕　入"
+EVIDENCE_ID_MF_JDL_PURCHASE_10_ROUNDTRIP = (
+    "EVID-JDL-MF-TAX-PURCHASE-10-ROUNDTRIP-001"
+)
 
 
 @dataclass(frozen=True)
@@ -46,6 +52,21 @@ class AccountMappingSetupItem:
     source_value: str
     available_targets: tuple[str, ...]
     exact_candidate: str | None = None
+
+
+@dataclass(frozen=True)
+class TaxMappingSetupItem:
+    source_value: str
+    target_value: str
+    target_display: str
+    evidence_id: str
+
+
+@dataclass(frozen=True)
+class TaxMappingSetupReview:
+    items: tuple[TaxMappingSetupItem, ...] = ()
+    context_compatible: bool = False
+    user_message: str = ""
 
 
 @dataclass(frozen=True)
@@ -58,6 +79,9 @@ class MoneyForwardProfileSetupAnalysis:
     unsupported_field_types: tuple[str, ...] = ()
     unresolved_tax_categories: tuple[str, ...] = ()
     pending_field_keys: tuple[str, ...] = ()
+    tax_items: tuple[TaxMappingSetupItem, ...] = ()
+    tax_context_compatible: bool = False
+    tax_context_message: str = ""
 
     @property
     def can_configure_accounts(self) -> bool:
@@ -157,6 +181,15 @@ class MoneyForwardProfileSetupService:
                 item.source_value for item in requirements.tax_categories
             ),
             pending_field_keys=tuple(sorted(unsupported)),
+            tax_items=self._tax_items(
+                tuple(item.source_value for item in requirements.tax_categories),
+                context,
+            ),
+            tax_context_compatible=self._tax_context_compatible(context),
+            tax_context_message=self._tax_context_message(
+                tuple(item.source_value for item in requirements.tax_categories),
+                context,
+            ),
         )
 
     def save_confirmed_profile(
@@ -166,6 +199,7 @@ class MoneyForwardProfileSetupService:
         analysis: MoneyForwardProfileSetupAnalysis,
         selections: Mapping[str, str],
         explicitly_confirmed: set[str],
+        explicitly_confirmed_tax: set[str] | None = None,
     ) -> ConversionProfile:
         if not analysis.can_configure_accounts:
             raise MoneyForwardProfileSetupError("設定する科目が見つかりませんでした。")
@@ -175,6 +209,12 @@ class MoneyForwardProfileSetupService:
         by_target = {item.mapping_value: item for item in analysis.context.account_master}
         if any(target not in by_target for target in selections.values()):
             raise MoneyForwardProfileSetupError("JDL設定に存在しない科目が選択されています。")
+        confirmed_tax = explicitly_confirmed_tax or set()
+        eligible_tax = {item.source_value for item in analysis.tax_items}
+        if not confirmed_tax <= eligible_tax:
+            raise MoneyForwardProfileSetupError(
+                "現在のJDL設定ではこの税区分を確認できません。"
+            )
 
         now = datetime.now(timezone.utc)
         profile_id = f"mf-jdl-{uuid.uuid4().hex}"
@@ -206,6 +246,9 @@ class MoneyForwardProfileSetupService:
         self.profile_store.create(profile)
         confirmation = MappingConfirmationService(self.profile_store)
         try:
+            pending_keys = set(analysis.pending_field_keys)
+            if set(analysis.unresolved_tax_categories) <= confirmed_tax:
+                pending_keys.discard("tax")
             for source_value in sorted(required):
                 target = by_target[selections[source_value]]
                 confirmation.confirm_mapping(
@@ -217,9 +260,21 @@ class MoneyForwardProfileSetupService:
                         "target_formal_name": target.target_formal_name,
                         "setup_context_sha256": context_sha256,
                         PENDING_SETUP_METADATA_KEY: ",".join(
-                            analysis.pending_field_keys
+                            sorted(pending_keys)
                         ),
                     },
+                )
+            for source_value in sorted(confirmed_tax):
+                item = next(
+                    candidate
+                    for candidate in analysis.tax_items
+                    if candidate.source_value == source_value
+                )
+                confirmation.confirm_mapping(
+                    profile_id,
+                    MappingKey(MappingType.TAX_CATEGORY, source_value),
+                    item.target_value,
+                    metadata=self._tax_mapping_metadata(item, context_sha256),
                 )
             saved = self.profile_store.get(profile_id)
             runtime = JdlOutputRuntimeFactory().resolve(
@@ -236,6 +291,119 @@ class MoneyForwardProfileSetupService:
             except Exception:
                 pass
             raise
+
+    def tax_mapping_review(
+        self,
+        profile: ConversionProfile,
+        context: JdlTargetContext,
+    ) -> TaxMappingSetupReview:
+        if not self._profile_identity_compatible(profile):
+            return TaxMappingSetupReview(
+                user_message="現在のJDL設定ではこの税区分を確認できません"
+            )
+        unresolved = tuple(
+            source_value
+            for source_value, mapping in profile.tax_mappings.items()
+            if not mapping.is_resolved
+        )
+        items = self._tax_items(unresolved, context)
+        compatible = self._tax_context_compatible(context)
+        return TaxMappingSetupReview(
+            items=items,
+            context_compatible=compatible,
+            user_message=self._tax_context_message(unresolved, context),
+        )
+
+    def confirm_evidence_backed_tax_mapping(
+        self,
+        *,
+        profile_id: str,
+        context: JdlTargetContext,
+        source_value: str,
+    ) -> ConversionProfile:
+        profile = self.profile_store.get(profile_id)
+        review = self.tax_mapping_review(profile, context)
+        item = next(
+            (candidate for candidate in review.items if candidate.source_value == source_value),
+            None,
+        )
+        if item is None:
+            raise MoneyForwardProfileSetupError(
+                "現在のJDL設定ではこの税区分を確認できません。"
+            )
+        return MappingConfirmationService(self.profile_store).confirm_mapping(
+            profile_id,
+            MappingKey(MappingType.TAX_CATEGORY, source_value),
+            item.target_value,
+            metadata=self._tax_mapping_metadata(item),
+        )
+
+    @staticmethod
+    def _profile_identity_compatible(profile: ConversionProfile) -> bool:
+        return bool(
+            profile.source_format_identity.stable_key
+            == moneyforward_cloud_journal_export_observed_schema().identity.stable_key
+            and profile.target_format_identity.stable_key
+            == jdl_ibex_cashbook_official_journal_import_schema_definition().identity.stable_key
+        )
+
+    @staticmethod
+    def _tax_context_compatible(context: JdlTargetContext) -> bool:
+        from accounting_converter.profiles.jdl_official import JdlTaxProcessingMode
+
+        return bool(
+            context.product == "JDL IBEX 出納帳"
+            and context.version == "35.5"
+            and context.tax_processing_mode
+            is JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED
+            and context.standard_taxation_confirmed
+            and context.individual_credit_method_confirmed
+            and context.no_fuzzy_matching
+            and context.no_automatic_replacement
+        )
+
+    @classmethod
+    def _tax_items(
+        cls,
+        source_values: tuple[str, ...],
+        context: JdlTargetContext,
+    ) -> tuple[TaxMappingSetupItem, ...]:
+        if not cls._tax_context_compatible(context) or MF_PURCHASE_TAX_10 not in source_values:
+            return ()
+        return (
+            TaxMappingSetupItem(
+                source_value=MF_PURCHASE_TAX_10,
+                target_value=JDL_PURCHASE_TAX_10,
+                target_display="仕入 / 10%",
+                evidence_id=EVIDENCE_ID_MF_JDL_PURCHASE_10_ROUNDTRIP,
+            ),
+        )
+
+    @classmethod
+    def _tax_context_message(
+        cls,
+        source_values: tuple[str, ...],
+        context: JdlTargetContext,
+    ) -> str:
+        if MF_PURCHASE_TAX_10 in source_values and not cls._tax_context_compatible(context):
+            return "現在のJDL設定ではこの税区分を確認できません"
+        return ""
+
+    @staticmethod
+    def _tax_mapping_metadata(
+        item: TaxMappingSetupItem,
+        context_sha256: str | None = None,
+    ) -> dict[str, str]:
+        return {
+            "jdl_tax_scope": JDL_PURCHASE_TAX_SCOPE,
+            "jdl_evidence_id": item.evidence_id,
+            "jdl_tax_processing_mode": "TAXABLE_TAX_INCLUDED",
+            **(
+                {"setup_context_sha256": context_sha256}
+                if context_sha256 is not None
+                else {}
+            ),
+        }
 
     @staticmethod
     def _exact_candidate(
@@ -268,6 +436,10 @@ def profile_pending_setup_field_types(
             for key in mapping.metadata.get(PENDING_SETUP_METADATA_KEY, "").split(",")
             if key
         )
+    if profile.tax_mappings and all(
+        mapping.is_resolved for mapping in profile.tax_mappings.values()
+    ):
+        keys.discard("tax")
     return tuple(
         MoneyForwardProfileSetupService.UNSUPPORTED_LABELS[key]
         for key in sorted(keys)

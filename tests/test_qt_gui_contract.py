@@ -136,6 +136,28 @@ class QtGuiContractTests(unittest.TestCase):
         for selector in ("QTableWidget", "QHeaderView::section", "QScrollBar:vertical"):
             self.assertIn(selector, APP_STYLE_SHEET)
 
+    def test_verified_tax_confirmation_ui_is_explicit_and_scoped(self) -> None:
+        source = "\n".join(
+            (
+                Path("src/accounting_converter/ui_qt/main_window.py").read_text(
+                    encoding="utf-8"
+                ),
+                Path(
+                    "src/accounting_converter/application/moneyforward_profile_setup.py"
+                ).read_text(encoding="utf-8"),
+            )
+        )
+        for text in (
+            "税区分を確認",
+            "Money Forward: 課税仕入 10%",
+            "JDL: 仕入 / 10%",
+            "状態: 確認してください",
+            "確認しました",
+            "現在のJDL設定ではこの税区分を確認できません",
+        ):
+            self.assertIn(text, source)
+        self.assertIn("self.save_button.setEnabled(False)", source)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -338,8 +338,11 @@ class SettingsDialog(QDialog):
         rename_company.clicked.connect(self._rename_company)
         delete_company = QPushButton("削除")
         delete_company.clicked.connect(self._delete_company)
+        confirm_tax = QPushButton("税区分を確認")
+        confirm_tax.clicked.connect(self._confirm_tax)
         company_actions.addWidget(add_company)
         company_actions.addWidget(rename_company)
+        company_actions.addWidget(confirm_tax)
         company_actions.addWidget(delete_company)
         company_actions.addStretch(1)
         layout.addLayout(company_actions)
@@ -437,6 +440,15 @@ class SettingsDialog(QDialog):
         answer = QMessageBox.question(self, "会社設定を削除", "この会社設定を削除しますか。対応設定と元のJDL設定は削除されません。")
         if answer == QMessageBox.StandardButton.Yes:
             self._reload_companies(self.controller.delete_company_setting(company_id))
+
+    def _confirm_tax(self) -> None:
+        company_id = self.company_combo.currentData()
+        if not company_id:
+            self.message_label.setText("会社設定を選択してください。")
+            return
+        dialog = TaxMappingConfirmationDialog(self.controller, company_id, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._reload_companies(self.controller.state)
 
     def _reload_companies(self, state: AppState) -> None:
         self.profile_ids = [item.profile_id for item in state.profiles]
@@ -795,6 +807,31 @@ class MoneyForwardProfileSetupDialog(QDialog):
         self.table.setAlternatingRowColors(True)
         layout.addWidget(self.table, 1)
 
+        self.tax_card = QFrame()
+        self.tax_card.setObjectName("card")
+        tax_layout = QVBoxLayout(self.tax_card)
+        tax_layout.setContentsMargins(18, 16, 18, 16)
+        tax_title = QLabel("税区分を確認")
+        tax_title.setObjectName("sectionTitle")
+        tax_layout.addWidget(tax_title)
+        self.tax_source_label = QLabel("Money Forward: 課税仕入 10%")
+        self.tax_target_label = QLabel("JDL: 仕入 / 10%")
+        self.tax_status_label = QLabel("状態: 確認してください")
+        self.tax_confirmed = QCheckBox("確認しました")
+        self.tax_confirmed.stateChanged.connect(
+            lambda: self.tax_status_label.setText(
+                "状態: 確認済み"
+                if self.tax_confirmed.isChecked()
+                else "状態: 確認してください"
+            )
+        )
+        tax_layout.addWidget(self.tax_source_label)
+        tax_layout.addWidget(self.tax_target_label)
+        tax_layout.addWidget(self.tax_status_label)
+        tax_layout.addWidget(self.tax_confirmed)
+        self.tax_card.hide()
+        layout.addWidget(self.tax_card)
+
         self.progress_label = QLabel("0 / 0 件確認済み")
         self.progress_label.setObjectName("muted")
         layout.addWidget(self.progress_label)
@@ -840,6 +877,8 @@ class MoneyForwardProfileSetupDialog(QDialog):
         self.save_button.setEnabled(False)
         self.progress_label.setText("0 / 0 件確認済み")
         self.message_label.clear()
+        self.tax_confirmed.setChecked(False)
+        self.tax_card.hide()
 
     def _analyze(self) -> None:
         if self.source_path is None:
@@ -879,6 +918,8 @@ class MoneyForwardProfileSetupDialog(QDialog):
             self.table.setCellWidget(row_index, 1, target)
             self.table.setCellWidget(row_index, 2, confirmed)
             self.row_controls.append((item.source_value, target, confirmed))
+        self.tax_confirmed.setChecked(False)
+        self.tax_card.setVisible(bool(analysis.tax_items))
         messages = []
         if analysis.unsupported_field_types:
             messages.append(
@@ -888,6 +929,8 @@ class MoneyForwardProfileSetupDialog(QDialog):
             messages.append(
                 "科目対応は先に設定できます。未設定項目が残っている間は変換できません。"
             )
+        if analysis.tax_context_message:
+            messages.append(analysis.tax_context_message)
         messages.append(
             "完全一致する候補は初期表示されていますが、まだ確定していません。"
         )
@@ -922,6 +965,11 @@ class MoneyForwardProfileSetupDialog(QDialog):
                 analysis=self.analysis,
                 selections=selections,
                 explicitly_confirmed=confirmed,
+                explicitly_confirmed_tax=(
+                    {self.analysis.tax_items[0].source_value}
+                    if self.analysis.tax_items and self.tax_confirmed.isChecked()
+                    else set()
+                ),
             )
         except Exception:
             self.message_label.setText("すべての科目対応を選択し、明示的に確認してください。")
@@ -932,6 +980,65 @@ class MoneyForwardProfileSetupDialog(QDialog):
             f"{self.analysis.context.product} {self.analysis.context.version} / 設定済み"
         )
         self.accept()
+
+
+class TaxMappingConfirmationDialog(QDialog):
+    def __init__(
+        self,
+        controller: AccountingConverterController,
+        company_setting_id: str,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self.controller = controller
+        self.company_setting_id = company_setting_id
+        self.review = controller.company_tax_mapping_review(company_setting_id)
+        self.setWindowTitle("税区分を確認")
+        self.setMinimumWidth(520)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(14)
+        title = QLabel("税区分を確認")
+        title.setObjectName("sectionTitle")
+        layout.addWidget(title)
+        self.confirmed = QCheckBox("確認しました")
+        if self.review.items:
+            item = self.review.items[0]
+            layout.addWidget(QLabel(f"Money Forward: {item.source_value}"))
+            layout.addWidget(QLabel(f"JDL: {item.target_display}"))
+            layout.addWidget(QLabel("状態: 確認してください"))
+            layout.addWidget(self.confirmed)
+        else:
+            message = QLabel(
+                self.review.user_message
+                or "確認できる未設定の税区分はありません。"
+            )
+            message.setObjectName("warningCard")
+            message.setWordWrap(True)
+            layout.addWidget(message)
+        actions = QHBoxLayout()
+        cancel = QPushButton("キャンセル")
+        cancel.clicked.connect(self.reject)
+        self.save_button = QPushButton("確認を保存")
+        self.save_button.setObjectName("primaryButton")
+        self.save_button.setEnabled(False)
+        self.save_button.clicked.connect(self._save)
+        self.confirmed.stateChanged.connect(
+            lambda: self.save_button.setEnabled(self.confirmed.isChecked())
+        )
+        actions.addStretch(1)
+        actions.addWidget(cancel)
+        actions.addWidget(self.save_button)
+        layout.addLayout(actions)
+
+    def _save(self) -> None:
+        if not self.review.items or not self.confirmed.isChecked():
+            return
+        state = self.controller.confirm_company_tax_mapping(
+            self.company_setting_id, self.review.items[0].source_value
+        )
+        if state.user_message == "税区分の確認を保存しました。":
+            self.accept()
 
 
 class CompanyRenameDialog(QDialog):

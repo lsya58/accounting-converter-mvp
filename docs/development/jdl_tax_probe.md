@@ -69,6 +69,8 @@ PYTHONPATH=src python3 -m accounting_converter.tools.generate_jdl_probe \
 
 ## 現在のGate
 
-`tax_purchase_10`はapp-generated candidateのJDL Import、再Export、Human手入力Evidenceとのsemantic comparisonまで成功した。ただし、これは1 category・1会社設定・1D1Cのexperimental scopeであり、会社設定Tax UIやproduction routeには未接続である。他の5 tax casesと`simple_with_tax`は引き続きBLOCKする。production Registry、MF READY、GUIは変更しない。
+`tax_purchase_10`はapp-generated candidateのJDL Import、再Export、Human手入力Evidenceとのsemantic comparisonまで成功した。ただし、これは1 category・1会社設定・1D1Cのexperimental scopeであり、production routeには未接続である。他の5 tax casesと`simple_with_tax`は引き続きBLOCKする。production RegistryとMF READYは変更しない。
+
+会社設定Tax UIでは、このEvidenceに限り、Money Forward exact observed identityとJDL IBEX出納帳35.5の課税・税込Contextが一致した場合だけ候補を表示する。候補表示だけでは確定せず、ユーザーの「確認しました」操作後にのみ`USER_CONFIRMED`として保存する。他categoryとContext不一致は未解決のまま変換を停止する。これはproduction Registryやroute READYの拡張ではない。
 
 再Export比較では、JDLがcandidateで空欄だったaccount master identityと消費税欄を再Export表現へ補完した。これは比較上の観測分類であり、generator defaultや一般的な正規化規則にはしない。
