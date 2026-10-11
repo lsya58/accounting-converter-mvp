@@ -14,6 +14,7 @@ from accounting_converter.adapters.output.jdl import (
     JdlContextProvenance,
     JdlTargetContext,
     JdlTargetContextValidator,
+    JdlSubaccountIdentity,
 )
 from accounting_converter.diagnostics.jdl_csv.observed_schemas import (
     JDL_IBEX_CASHBOOK_35_5_OBSERVED_HEADER,
@@ -42,6 +43,7 @@ class JdlObservedSubaccount:
     parent_account_name: str
     code: str
     name: str
+    evidence_scope: str = "JOURNAL_RUNTIME_OBSERVED"
 
 
 @dataclass(frozen=True)
@@ -383,6 +385,20 @@ class JdlMasterObservationService:
                 jdl_ibex_cashbook_official_journal_import_schema_definition().identity
             ),
             account_master=observation.accounts,
+            subaccounts=tuple(
+                JdlSubaccountIdentity(
+                    parent_account=item.parent_account_name,
+                    mapping_value=item.name,
+                    target_master_code=item.code,
+                    output_code=item.code,
+                    output_name=item.name,
+                    output_representation_confirmed=False,
+                    parent_account_code=item.parent_account_code,
+                    target_name=item.name,
+                )
+                for item in observation.subaccounts
+                if item.evidence_scope == "PRINTED_EXPLICIT_PARENT"
+            ),
             confirmation_state=JdlContextConfirmationState.UNCONFIRMED,
             provenance=JdlContextProvenance.UNCONFIRMED,
             no_fuzzy_matching=True,

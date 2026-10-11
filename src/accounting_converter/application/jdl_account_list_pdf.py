@@ -11,6 +11,7 @@ from accounting_converter.application.jdl_master_observation import (
     JdlMasterConflict,
     JdlMasterObservation,
     JdlMasterSourceEvidence,
+    JdlObservedSubaccount,
     JdlPrintedAccount,
 )
 
@@ -33,6 +34,17 @@ class JdlAccountListPdfTextParser:
         r"(?P<name>.+?)\s{2,}"
         r"(?P<abbreviation>[借貸][^\s]*)\s*"
         r"(?P<use>[○×])(?P<tail>.*)$"
+    )
+    _PARENT_ROW = re.compile(
+        r"^\s*(?P<code>\d{3,4})-\s+"
+        r"(?P<name>.+?)\s{2,}"
+        r"(?P<abbreviation>[借貸][^\s]*)\s*"
+        r"(?P<use>[○×])(?P<tail>.*)$"
+    )
+    _SUBACCOUNT_ROW = re.compile(
+        r"^\s*-(?P<code>\d{4})\s+"
+        r"(?P<name>.+?)\s{2,}"
+        r"(?P<balance>[借貸])\s*$"
     )
     _UNCODED_ROW = re.compile(
         r"^\s{12,}(?P<name>[^\s].*?)\s{2,}"
@@ -67,6 +79,7 @@ class JdlAccountListPdfTextParser:
             raise JdlAccountListPdfParseError("PDF pageが連続していません。")
 
         accounts: list[JdlPrintedAccount] = []
+        subaccounts: list[JdlObservedSubaccount] = []
         uncoded_count = 0
         for page in page_items:
             lines = page.text.splitlines()
@@ -78,24 +91,43 @@ class JdlAccountListPdfTextParser:
                 raise JdlAccountListPdfParseError(
                     f"page {page.page_number} のpage番号を確認できません。"
                 )
+            parent: tuple[str, str, str] | None = None
             for line in lines:
-                coded = self._CODED_ROW.match(line)
-                if coded:
-                    abbreviation = coded.group("abbreviation")
-                    accounts.append(
-                        JdlPrintedAccount(
-                            code=coded.group("code"),
-                            name=coded.group("name").strip(),
-                            abbreviation=abbreviation[1:],
-                            normal_balance=(
-                                "DEBIT" if abbreviation.startswith("借") else "CREDIT"
-                            ),
-                            enabled=coded.group("use") == "○",
-                            has_observed_setting_values=bool(
-                                coded.group("tail")[:32].strip()
-                            ),
+                parent_row = self._PARENT_ROW.match(line)
+                if parent_row:
+                    account = self._printed_account(parent_row)
+                    accounts.append(account)
+                    parent = (account.code, account.name, account.normal_balance)
+                    continue
+                subaccount = self._SUBACCOUNT_ROW.match(line)
+                if subaccount:
+                    if parent is None:
+                        raise JdlAccountListPdfParseError(
+                            f"page {page.page_number} に親未解決の補助候補行があります。"
+                        )
+                    balance = (
+                        "DEBIT"
+                        if subaccount.group("balance") == "借"
+                        else "CREDIT"
+                    )
+                    if balance != parent[2]:
+                        raise JdlAccountListPdfParseError(
+                            f"page {page.page_number} の補助候補と親科目の借貸が一致しません。"
+                        )
+                    subaccounts.append(
+                        JdlObservedSubaccount(
+                            parent_account_code=parent[0],
+                            parent_account_name=parent[1],
+                            code=subaccount.group("code"),
+                            name=subaccount.group("name").strip(),
+                            evidence_scope="PRINTED_EXPLICIT_PARENT",
                         )
                     )
+                    continue
+                parent = None
+                coded = self._CODED_ROW.match(line)
+                if coded:
+                    accounts.append(self._printed_account(coded))
                     continue
                 uncoded = self._UNCODED_ROW.match(line)
                 if uncoded:
@@ -115,7 +147,7 @@ class JdlAccountListPdfTextParser:
         )
         observation = JdlMasterObservation(
             accounts=(),
-            subaccounts=(),
+            subaccounts=tuple(subaccounts),
             departments=(),
             sources=(
                 JdlMasterSourceEvidence(
@@ -145,6 +177,18 @@ class JdlAccountListPdfTextParser:
         return False
 
     @staticmethod
+    def _printed_account(match: re.Match[str]) -> JdlPrintedAccount:
+        abbreviation = match.group("abbreviation")
+        return JdlPrintedAccount(
+            code=match.group("code"),
+            name=match.group("name").strip(),
+            abbreviation=abbreviation[1:],
+            normal_balance=("DEBIT" if abbreviation.startswith("借") else "CREDIT"),
+            enabled=match.group("use") == "○",
+            has_observed_setting_values=bool(match.group("tail")[:32].strip()),
+        )
+
+    @staticmethod
     def _has_page_number(lines: list[str], expected: int) -> bool:
         return any(line.strip() == str(expected) for line in lines[:5])
 
@@ -165,6 +209,25 @@ class JdlAccountListPdfTextParser:
         conflicts.extend(
             JdlMasterConflict("PRINTED_ACCOUNT_NAME_CONFLICT")
             for values in name_values.values()
+            if len(values) > 1
+        )
+        subaccount_codes: dict[tuple[str, str], set[str]] = {}
+        subaccount_names: dict[tuple[str, str], set[str]] = {}
+        for item in observation.subaccounts:
+            subaccount_codes.setdefault(
+                (item.parent_account_code, item.code), set()
+            ).add(item.name)
+            subaccount_names.setdefault(
+                (item.parent_account_code, item.name), set()
+            ).add(item.code)
+        conflicts.extend(
+            JdlMasterConflict("SUBACCOUNT_CODE_CONFLICT")
+            for values in subaccount_codes.values()
+            if len(values) > 1
+        )
+        conflicts.extend(
+            JdlMasterConflict("SUBACCOUNT_NAME_CONFLICT")
+            for values in subaccount_names.values()
             if len(values) > 1
         )
         if conflicts:

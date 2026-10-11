@@ -70,6 +70,56 @@ class JdlAccountListPdfTextParserTests(unittest.TestCase):
         self.assertNotIn("架空予備科目", names)
         self.assertEqual(result.excluded_uncoded_printed_row_count, 5)
 
+    def test_explicit_parent_marker_extracts_subaccount_and_preserves_code(self) -> None:
+        pages = list(self._pages())
+        pages[0] = JdlAccountListTextPage(
+            1,
+            self._page_header(1)
+            + "         1311- 架空親科目                    借架空親科目 ○\n"
+            + "             -0001 架空補助科目              借\n"
+            + "               架空予備科目                 借架空予備 ×\n",
+        )
+
+        result = self._parse(tuple(pages))
+        subaccount = result.subaccounts[0]
+        draft = JdlMasterObservationService().build_unconfirmed_context_draft(result)
+
+        self.assertEqual(len(result.subaccounts), 1)
+        self.assertEqual(subaccount.parent_account_code, "1311")
+        self.assertEqual(subaccount.parent_account_name, "架空親科目")
+        self.assertEqual(subaccount.code, "0001")
+        self.assertEqual(subaccount.name, "架空補助科目")
+        self.assertEqual(draft.context.subaccounts[0].target_master_code, "0001")
+        self.assertFalse(
+            draft.context.subaccounts[0].output_representation_confirmed
+        )
+        self.assertFalse(draft.production_usable)
+
+    def test_indented_code_less_row_is_not_subaccount(self) -> None:
+        result = self._parse(self._pages())
+
+        self.assertFalse(result.subaccounts)
+        self.assertEqual(result.excluded_uncoded_printed_row_count, 5)
+
+    def test_subaccount_without_explicit_parent_or_with_wrong_balance_is_blocked(self) -> None:
+        pages = list(self._pages())
+        pages[0] = JdlAccountListTextPage(
+            1,
+            self._page_header(1)
+            + "             -0001 架空補助科目              借\n",
+        )
+        with self.assertRaises(JdlAccountListPdfParseError):
+            self._parse(tuple(pages))
+
+        pages[0] = JdlAccountListTextPage(
+            1,
+            self._page_header(1)
+            + "         1311- 架空親科目                    借架空親科目 ○\n"
+            + "             -0001 架空補助科目              貸\n",
+        )
+        with self.assertRaises(JdlAccountListPdfParseError):
+            self._parse(tuple(pages))
+
     def test_malformed_symbol_row_and_missing_page_are_blocked(self) -> None:
         pages = list(self._pages())
         pages[0] = JdlAccountListTextPage(
@@ -162,16 +212,22 @@ class JdlAccountListPdfTextParserTests(unittest.TestCase):
         return JdlAccountListTextPage(
             page_number=number,
             text=(
-                "科        目        一         覧\n"
-                "頁\n"
-                f"{number}\n"
-                "令和 8年12月31日決算\n"
-                "勘 定 科 目  略名称 使用 課区 税区 入力 固変 比率 説明\n"
-                f"         {code}  {name}                    {abbreviation}  "
+                JdlAccountListPdfTextParserTests._page_header(number)
+                + f"         {code}  {name}                    {abbreviation}  "
                 f"{enabled} 仕 入\n"
                 "               架空予備科目                 借架空予備 ×\n"
                 "         架空流動資産                       借\n"
             ),
+        )
+
+    @staticmethod
+    def _page_header(number: int) -> str:
+        return (
+            "科        目        一         覧\n"
+            "頁\n"
+            f"{number}\n"
+            "令和 8年12月31日決算\n"
+            "勘 定 科 目  略名称 使用 課区 税区 入力 固変 比率 説明\n"
         )
 
 

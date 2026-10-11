@@ -773,6 +773,26 @@
   - subaccount, department, and company tax-processing snapshots still require separate Evidence
   - customer-specific values are not copied into tracked files or generalized as format rules
 
+### Explicit subaccount follow-up
+
+- evidence ID: `EVID-JDL-MASTER-SUBACCOUNT-PRINT-001`
+- source: 同じsynthetic test companyで補助表示ONにして再取得した5-page科目一覧PDF
+- human-observed setup:
+  - code `1` を入力して完全架空の補助を親科目配下へ登録
+  - UIでは4桁の `0001` として表示
+- text-layer observation:
+  - 親科目行はaccount code末尾のdelimiterで補助展開を明示
+  - 直後の補助行は先頭delimiter、4桁code、名称、借貸を持つ
+  - PDF parserは表示されたexact `0001` を保持する
+  - account master 125件とcodeなし除外行120件は前回PDFから意味上不変
+  - 明示的な親付き補助1件だけが追加され、PDF内競合はない
+- interpretation boundary:
+  - input `1`、UI/PDF `0001` は別の観測事実として保持する
+  - leading zeroが常に無視される、またはgeneratorがどちらを出すべきかは一般化しない
+  - 通常のcodeなし行を補助科目へ昇格しない
+  - draft Contextでは親付き観測として保持するが、output representationは未確認のためproduction利用しない
+  - synthetic補助のためreal Money Forward subaccount coverageには加算しない
+
 ## EVID-JDL-003
 
 - source: JDL会計 仕訳一覧CSV
