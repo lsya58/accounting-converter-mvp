@@ -19,6 +19,8 @@ JDL側の課区、税区、税入力方法、消費税についてcase別Evidenc
 
 `tax_sales_10_with_subaccount`は`EVID-JDL-MF-TAX-SALES-10-SUBACCOUNT-ROUNDTRIP-001`を持つ。適用範囲は、同製品・課税税込・1111・1D1C・貸方売上10%・exact親科目/補助・借方tax blank・部門等なしに限定する。補助なし`tax_sales_10`はtarget master要件で拒否されたため、成功Evidenceではない。
 
+補助なし`tax_purchase_reduced_8`はtarget master要件で拒否されたため成功Evidenceではない。`tax_purchase_reduced_8_with_subaccount`は`EVID-JDL-MF-TAX-PURCHASE-REDUCED-8-SUBACCOUNT-ROUNDTRIP-001`を持つ。適用範囲は課税税込、1111/1D1C、借方仕入軽減8%、exact親科目/補助、貸方tax blank、部門等なしに限定する。Human Exportの貸方側摘要には入力残存文字列があるため、description normalization Evidenceに使用しない。
+
 ## Evidence取得手順
 
 1. JDL IBEX出納帳35.5の完全架空テスト事業所をバックアップする。

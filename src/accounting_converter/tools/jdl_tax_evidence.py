@@ -20,6 +20,12 @@ EVIDENCE_ID_MF_JDL_PURCHASE_10_ROUNDTRIP = (
 EVIDENCE_ID_MF_JDL_SALES_10_SUBACCOUNT_ROUNDTRIP = (
     "EVID-JDL-MF-TAX-SALES-10-SUBACCOUNT-ROUNDTRIP-001"
 )
+EVIDENCE_ID_JDL_PURCHASE_REDUCED_8_INCLUSIVE_HAND = (
+    "EVID-JDL-TAX-PURCHASE-REDUCED-8-INCLUSIVE-HAND-001"
+)
+EVIDENCE_ID_MF_JDL_PURCHASE_REDUCED_8_SUBACCOUNT_ROUNDTRIP = (
+    "EVID-JDL-MF-TAX-PURCHASE-REDUCED-8-SUBACCOUNT-ROUNDTRIP-001"
+)
 
 HUMAN_TAX_CASES = {
     "tax_sales_10": ("CREDIT", "売一種", "10%", "EVID-JDL-TAX-SALES-10-INCLUSIVE-HAND-001"),
@@ -60,6 +66,78 @@ class JdlScopedTaxHumanObservation:
             "mapping_promotion_allowed": False,
             "NOT_FOR_PRODUCTION": True,
         }
+
+
+@dataclass(frozen=True)
+class JdlReduced8SubaccountHumanObservation:
+    sha256: str
+    byte_size: int
+    debit_case_valid: bool
+    credit_case_valid: bool
+    debit_description_comparison_allowed: bool = True
+    credit_description_comparison_allowed: bool = False
+
+    def privacy_safe_manifest(self) -> dict[str, object]:
+        return {
+            "evidence_id": "EVID-JDL-SUBACCOUNT-TAX-REDUCED-8-HAND-001",
+            "sha256": self.sha256,
+            "byte_size": self.byte_size,
+            "evidence_level": "HUMAN_OBSERVED",
+            "data_row_count": 2,
+            "debit_parent_subaccount_reduced_8_valid": self.debit_case_valid,
+            "credit_parent_subaccount_reduced_8_valid": self.credit_case_valid,
+            "debit_description_comparison_allowed": (
+                self.debit_description_comparison_allowed
+            ),
+            "credit_description_comparison_allowed": (
+                self.credit_description_comparison_allowed
+            ),
+            "mapping_promotion_allowed": False,
+            "production_allowed": False,
+            "NOT_FOR_PRODUCTION": True,
+        }
+
+
+def analyze_reduced_8_subaccount_human_evidence(
+    path: Path,
+) -> JdlReduced8SubaccountHumanObservation:
+    raw, rows = _read_official_rows(path)
+    if len(rows) != 2:
+        raise JdlTaxEvidenceError("reduced 8 subaccount evidence must contain two rows")
+    header = jdl_ibex_cashbook_official_journal_import_spec().column_names
+    positions = {name: index for index, name in enumerate(header)}
+
+    def matching(prefix: str, other: str, scope: str) -> list[list[str]]:
+        return [
+            row
+            for row in rows
+            if row[positions["//識別フラグ"]] == "1111"
+            and row[positions[f"{prefix}補助"]]
+            and row[positions[f"{prefix}補助名称"]]
+            and row[positions[f"{prefix}課区"]] == scope
+            and row[positions[f"{prefix}税区"]] == "軽減8%"
+            and row[positions[f"{prefix}税入力方法"]] == ""
+            and row[positions[f"{prefix}消費税"]] == "0"
+            and all(
+                row[positions[f"{other}{name}"]] in {"", "0"}
+                for name in ("課区", "税区", "税入力方法", "消費税")
+            )
+            and row[positions["借方金額"]].isdigit()
+            and row[positions["借方金額"]] == row[positions["貸方金額"]]
+        ]
+
+    debit = matching("借方", "貸方", "仕　入")
+    credit = matching("貸方", "借方", "売一種")
+    if len(debit) != 1 or len(credit) != 1:
+        raise JdlTaxEvidenceError(
+            "expected one debit and one credit reduced 8 subaccount observation"
+        )
+    return JdlReduced8SubaccountHumanObservation(
+        sha256=hashlib.sha256(raw).hexdigest(),
+        byte_size=len(raw),
+        debit_case_valid=True,
+        credit_case_valid=True,
+    )
 
 
 def analyze_scoped_tax_human_evidence(
@@ -272,24 +350,67 @@ def compare_sales_10_subaccount_roundtrip(
     )
 
 
+def compare_purchase_reduced_8_roundtrip(
+    human_evidence: Path, candidate: Path, reexport: Path
+) -> JdlTaxRoundTripComparison:
+    analyze_scoped_tax_human_evidence(
+        human_evidence, "tax_purchase_reduced_8"
+    )
+    return _compare_tax_roundtrip(
+        human_evidence,
+        candidate,
+        reexport,
+        probe_case="tax_purchase_reduced_8",
+        evidence_id="EVID-JDL-MF-TAX-PURCHASE-REDUCED-8-ROUNDTRIP-001",
+        tax_prefix="借方",
+        expected_scope="仕　入",
+        expected_category="軽減8%",
+    )
+
+
+def compare_purchase_reduced_8_subaccount_roundtrip(
+    human_evidence: Path, candidate: Path, reexport: Path
+) -> JdlTaxRoundTripComparison:
+    analyze_reduced_8_subaccount_human_evidence(human_evidence)
+    return _compare_tax_roundtrip(
+        human_evidence,
+        candidate,
+        reexport,
+        probe_case="tax_purchase_reduced_8_with_subaccount",
+        evidence_id=EVIDENCE_ID_MF_JDL_PURCHASE_REDUCED_8_SUBACCOUNT_ROUNDTRIP,
+        tax_prefix="借方",
+        expected_scope="仕　入",
+        expected_category="軽減8%",
+        require_tax_side_subaccount=True,
+    )
 def _compare_tax_roundtrip(
     human_evidence: Path, candidate: Path, reexport: Path, *,
     probe_case: str, evidence_id: str, tax_prefix: str, expected_scope: str,
+    expected_category: str = "10%",
     require_tax_side_subaccount: bool = False,
 ) -> JdlTaxRoundTripComparison:
     human_raw, human_rows = _read_official_rows(human_evidence)
     candidate_raw, candidate_rows = _read_official_rows(candidate)
     reexport_raw, reexport_rows = _read_official_rows(reexport)
-    if len(human_rows) != 1 or len(candidate_rows) != 1:
-        raise JdlTaxEvidenceError("human evidence and candidate must contain one row")
+    if len(candidate_rows) != 1:
+        raise JdlTaxEvidenceError("candidate must contain one row")
     header = jdl_ibex_cashbook_official_journal_import_spec().column_names
     pos = {name: index for index, name in enumerate(header)}
-    human, expected = human_rows[0], candidate_rows[0]
+    expected = candidate_rows[0]
     other = "貸方" if tax_prefix == "借方" else "借方"
+    human_matches = [
+        row
+        for row in human_rows
+        if row[pos[f"{tax_prefix}課区"]] == expected_scope
+        and row[pos[f"{tax_prefix}税区"]] == expected_category
+    ]
+    if len(human_matches) != 1:
+        raise JdlTaxEvidenceError("human evidence tax row must be unique")
+    human = human_matches[0]
     if (
         expected[pos["//識別フラグ"]] != "1111"
         or expected[pos[f"{tax_prefix}課区"]] != expected_scope
-        or expected[pos[f"{tax_prefix}税区"]] != "10%"
+        or expected[pos[f"{tax_prefix}税区"]] != expected_category
         or expected[pos[f"{tax_prefix}税入力方法"]] != ""
         or expected[pos[f"{tax_prefix}消費税"]] != ""
         or any(expected[pos[f"{other}{name}"]] for name in ("課区", "税区", "税入力方法", "消費税"))

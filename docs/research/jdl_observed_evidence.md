@@ -878,6 +878,39 @@
 
 Human Exportはexact target表現のEvidenceだが、App candidateのImport/re-exportではない。case-specific preflightとround-tripが完了するまでcandidate generation、mapping promotion、production READYを許可しない。既存`EVID-JDL-MF-TAX-PURCHASE-10-ROUNDTRIP-001`だけが限定的な`VERIFIED_BY_REAL_IMPORT`を維持する。
 
+最初の課税仕入・軽減8% candidateは、target借方科目に補助が設定されているため借方補助名称が必要というruntime messageで拒否された。これは`FAILED_PRECONDITION`として記録し、成功Evidenceへ昇格しない。後続Human Exportでは、同じ借方親科目にparent-scoped補助と軽減8%taxが共存するfield placementを確認した。後続candidateはこのexact親子masterと`USER_CONFIRMED` mappingに限定する。Contextに同親補助が存在する場合、補助空欄またはwrong-parent mappingは生成前にBLOCKする。状態は`EVIDENCE_GATED_EXPERIMENTAL`であり、実Import・再Export前なので`HUMAN_OBSERVED`のまま、mapping promotionとproduction利用は禁止する。
+
+## EVID-JDL-SUBACCOUNT-TAX-REDUCED-8-HAND-001
+
+- source: JDL IBEX 出納帳35.5 Human Export、2 records
+- evidence level: `HUMAN_OBSERVED`
+- observed:
+  - debit parent-scoped subaccount + purchase reduced 8% + amount
+  - credit parent-scoped subaccount + sales reduced 8% + amount
+  - both flag `1111`、30 columns、balanced、opposite-side tax blank semantics
+- description policy:
+  - debit recordだけをpurchase probe identityのHuman Evidenceとして使用できる
+  - credit recordの摘要にはHuman入力時の残存文字列があるため、description comparisonやJDL normalization Evidenceには使用しない
+- CSV code representationだけを保持し、画面表示codeとの同一規則へ一般化しない
+
+## EVID-JDL-MF-TAX-PURCHASE-REDUCED-8-SUBACCOUNT-ROUNDTRIP-001
+
+- evidence level: `VERIFIED_BY_REAL_IMPORT`（このexact artifact、target master、会社税設定に限定）
+- product: JDL IBEX 出納帳35.5
+- verified path: app-generated candidate -> real Import -> JDL re-export -> strict semantic comparison
+- verified scope:
+  - 課税・税込、flag `1111`、1D1C、debit-side purchase reduced 8%
+  - exact借方親科目と、その親に属するexact補助科目
+  - 貸方tax blank semantics、部門なし
+  - trade partner / invoice / tag / memoなし
+- strict comparison: date、flag、借貸account identity、debit parent-scoped subaccount、借貸金額、debit reduced-8 tax fields、opposite-side tax semantics、description identity、balanceが一致
+- JDL付与表現: candidate空欄だったaccount master identityとtax amount representationは、0843 Human Exportと一致する場合だけ正規化カテゴリとして記録
+- exclusions:
+  - 補助なしcaseはruntime拒否のままBLOCK
+  - 別親科目、別補助、他税率、売上側、税抜、複数行/複数件へ一般化しない
+  - mapping promotionとproduction利用は自動許可しない
+  - 0843 credit recordのHuman摘要残存文字列はnormalization Evidenceに使用しない
+
 課税売上10%にはcredit-side専用のcase-specific preflightを追加した。補助なしcandidateはtarget masterの補助要件により拒否され、成功Evidenceへは昇格していない。親科目付き補助を明示した後続candidateだけは、下記の限定round-trip Evidenceを持つ。他の4税ケースはcandidate generation BLOCKを維持する。
 
 最初の補助なし課税売上10% candidateは実機で拒否され、target貸方科目に補助が設定されているため貸方補助名称が必要というruntime messageを得た。これは`FAILED_PRECONDITION`として記録し、Import成功Evidenceへ昇格しない。target Contextに親付き補助が存在する場合、同親の補助が空欄ならpreflightでBLOCKする。後続candidateは`EVID-JDL-SUBACCOUNT-TAX-CREDIT-HAND-001`の親科目・補助・sales tax共存表現と、明示的な`USER_CONFIRMED` mappingに限定する。

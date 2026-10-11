@@ -219,6 +219,32 @@ class JDLOutputAdapterV0Tests(unittest.TestCase):
         errors = JDLOutputAdapter(self.tax_context(included=True)).preflight((entry,), self.profile)
         self.assertTrue({"JDL-OUT-TAX-LITERAL", "JDL-OUT-TAX-RATE"} & {item.rule_id for item in errors})
 
+    def test_purchase_reduced_8_profile_allows_exact_debit_side_only(self) -> None:
+        entry = self.tax_entry(
+            JdlEvidenceProfile.TAX_PURCHASE_REDUCED_8_INCLUDED_1111,
+            included=True,
+        )
+        entry.lines[0].tax_info = TaxInfo(
+            category="軽減8%",
+            rate=Decimal("8"),
+            reduced_rate=True,
+            metadata={"jdl_tax_scope": "仕　入"},
+        )
+        rows, result = self.roundtrip((entry,), self.tax_context(included=True))
+        self.assertTrue(result.success)
+        self.assertEqual(rows[1][8:10], ["仕　入", "軽減8%"])
+
+        entry.lines[1].tax_info = TaxInfo(
+            category="軽減8%",
+            rate=Decimal("8"),
+            reduced_rate=True,
+            metadata={"jdl_tax_scope": "売一種"},
+        )
+        errors = JDLOutputAdapter(self.tax_context(included=True)).preflight(
+            (entry,), self.profile
+        )
+        self.assertIn("JDL-OUT-OPPOSITE-TAX", {item.rule_id for item in errors})
+
     def test_department_plus_tax_combination_blocks(self) -> None:
         entry = self.tax_entry(JdlEvidenceProfile.DEPARTMENT_1111, included=True)
         entry.lines[0].department = "部門A"

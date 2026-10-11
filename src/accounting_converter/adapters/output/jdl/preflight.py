@@ -28,6 +28,7 @@ from .models import (
 TAX_SCOPE_PURCHASE = "仕　入"
 TAX_SCOPE_SALES = "売一種"
 TAX_CATEGORY_TEN_PERCENT = "10%"
+TAX_CATEGORY_REDUCED_EIGHT_PERCENT = "軽減8%"
 TAX_INPUT_METHOD_INTERNAL = "内税"
 EVIDENCE_IDS = {
     JdlEvidenceProfile.BASIC_1111: "EVID-JDL-GENERATOR-1111-001",
@@ -40,6 +41,9 @@ EVIDENCE_IDS = {
     ),
     JdlEvidenceProfile.TAX_INCLUDED_1111: (
         "EVID-JDL-GENERATOR-1111-TAX-INCLUSIVE-001"
+    ),
+    JdlEvidenceProfile.TAX_PURCHASE_REDUCED_8_INCLUDED_1111: (
+        "EVID-JDL-MF-TAX-PURCHASE-REDUCED-8-SUBACCOUNT-ROUNDTRIP-001"
     ),
     JdlEvidenceProfile.TAX_SALES_10_INCLUDED_1111: (
         "EVID-JDL-TAX-SALES-10-INCLUSIVE-HAND-001"
@@ -306,6 +310,17 @@ class JdlOutputPreflight:
             self._validate_department(debit, credit, entry, errors)
         elif evidence is JdlEvidenceProfile.TAX_INCLUDED_1111:
             self._validate_tax(debit, credit, entry, included=True, errors=errors)
+        elif evidence is JdlEvidenceProfile.TAX_PURCHASE_REDUCED_8_INCLUDED_1111:
+            self._validate_tax(
+                debit,
+                credit,
+                entry,
+                included=True,
+                errors=errors,
+                expected_category=TAX_CATEGORY_REDUCED_EIGHT_PERCENT,
+                expected_reduced_rate=True,
+                allow_tax_side_subaccount=True,
+            )
         elif evidence is JdlEvidenceProfile.TAX_SALES_10_INCLUDED_1111:
             self._validate_tax(
                 debit,
@@ -392,6 +407,8 @@ class JdlOutputPreflight:
         errors: list[ValidationResult],
         tax_side: Side = Side.DEBIT,
         expected_scope: str = TAX_SCOPE_PURCHASE,
+        expected_category: str = TAX_CATEGORY_TEN_PERCENT,
+        expected_reduced_rate: bool = False,
         allow_tax_side_subaccount: bool = False,
     ) -> None:
         expected_mode = (
@@ -438,11 +455,17 @@ class JdlOutputPreflight:
                 )
             )
         info = tax_line.tax_info
-        if info is None or info.category != TAX_CATEGORY_TEN_PERCENT or info.metadata.get("jdl_tax_scope") != expected_scope:
+        if info is None or info.category != expected_category or info.metadata.get("jdl_tax_scope") != expected_scope:
             errors.append(self._error("JDL-OUT-TAX-LITERAL", "検証済み課区・税区のexact literalが必要です。", "tax", entry))
             return
-        if info.reduced_rate is True or info.rate not in {None, Decimal("10")}:
-            errors.append(self._error("JDL-OUT-TAX-RATE", "v0は検証済み10%通常税率だけ対応します。", "tax", entry))
+        expected_rate = Decimal("8") if expected_reduced_rate else Decimal("10")
+        reduced_rate_mismatch = (
+            info.reduced_rate not in {None, True}
+            if expected_reduced_rate
+            else info.reduced_rate is True
+        )
+        if reduced_rate_mismatch or info.rate not in {None, expected_rate}:
+            errors.append(self._error("JDL-OUT-TAX-RATE", "Evidence profileと一致する税率指定が必要です。", "tax", entry))
         if self._nonempty_tax(opposite_line.tax_info):
             errors.append(self._error("JDL-OUT-OPPOSITE-TAX", "Evidence対象外sideの課税値は使用できません。", "tax", entry))
         if info.metadata.get("jdl_transaction_account"):

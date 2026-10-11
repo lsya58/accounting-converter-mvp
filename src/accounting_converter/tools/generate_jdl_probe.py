@@ -78,7 +78,8 @@ PROBE_DEFINITIONS = (
     ProbeDefinition("tax_sales_10_with_subaccount", 1, JdlEvidenceProfile.TAX_SALES_10_SUBACCOUNT_INCLUDED_1111, "VERIFIED_BY_REAL_IMPORT_EXPERIMENTAL", "売上10%と貸方補助の共存確認"),
     ProbeDefinition("tax_purchase_10", 1, JdlEvidenceProfile.TAX_INCLUDED_1111, "VERIFIED_BY_REAL_IMPORT_EXPERIMENTAL", "仕入10%税表現の確認"),
     ProbeDefinition("tax_sales_reduced_8", 1, None, "BLOCKED_MISSING_JDL_TAX_EVIDENCE", "軽減売上8%税表現の確認"),
-    ProbeDefinition("tax_purchase_reduced_8", 1, None, "BLOCKED_MISSING_JDL_TAX_EVIDENCE", "軽減仕入8%税表現の確認"),
+    ProbeDefinition("tax_purchase_reduced_8", 1, JdlEvidenceProfile.TAX_PURCHASE_REDUCED_8_INCLUDED_1111, "BLOCKED_FAILED_PRECONDITION_TARGET_SUBACCOUNT", "軽減仕入8%税表現の確認"),
+    ProbeDefinition("tax_purchase_reduced_8_with_subaccount", 1, JdlEvidenceProfile.TAX_PURCHASE_REDUCED_8_INCLUDED_1111, "VERIFIED_BY_REAL_IMPORT_EXPERIMENTAL", "軽減仕入8%と借方補助の共存確認"),
     ProbeDefinition("tax_non_taxable_purchase", 1, None, "BLOCKED_MISSING_JDL_TAX_EVIDENCE", "非課税仕入税表現の確認"),
     ProbeDefinition("tax_out_of_scope", 1, None, "BLOCKED_MISSING_JDL_TAX_EVIDENCE", "対象外税表現の確認"),
 )
@@ -108,6 +109,7 @@ class JdlProbeGenerator:
         output_path: Path,
         profile_path: Path,
         context_path: Path,
+        journal_date: str | None = None,
     ) -> ProbeGenerationResult:
         definition = self._definition(case_name)
         if definition.evidence_profile is None:
@@ -121,7 +123,9 @@ class JdlProbeGenerator:
         profile = self._load_profile(profile_path)
         context = JdlTargetContextLoader().load(context_path)
         self._validate_identities(profile)
-        rows, assignments = self._case_rows(definition, profile, context)
+        rows, assignments = self._case_rows(
+            definition, profile, context, journal_date=journal_date
+        )
         self.private_root.mkdir(parents=True, exist_ok=True)
         source_path: Path | None = None
         try:
@@ -216,6 +220,8 @@ class JdlProbeGenerator:
         definition: ProbeDefinition,
         profile: ConversionProfile,
         context: JdlTargetContext,
+        *,
+        journal_date: str | None = None,
     ) -> tuple[list[tuple[str, ...]], dict[str, JdlEvidenceProfile]]:
         if definition.name == "simple_no_tax":
             rows = [self._row("1", "現金", "普通預金", "700", "JDL-PROBE-A")]
@@ -243,6 +249,38 @@ class JdlProbeGenerator:
                     "JDL-TAX-PROBE-P10",
                     debit_tax="課税仕入 10%",
                     journal_date="2026/10/21",
+                )
+            ]
+        elif definition.name in {
+            "tax_purchase_reduced_8",
+            "tax_purchase_reduced_8_with_subaccount",
+        }:
+            if definition.name == "tax_purchase_reduced_8":
+                raise JdlProbeError(
+                    "PROBE_BLOCKED_TARGET_SUBACCOUNT_REQUIRED",
+                    "実機で対象借方科目の補助必須が確認されたため、補助なしcaseは生成できません。",
+                )
+            debit_sub = self._required_subaccount_for_parent(
+                profile, context, "消耗品費"
+            )
+            if (
+                definition.name == "tax_purchase_reduced_8_with_subaccount"
+                and debit_sub is None
+            ):
+                raise JdlProbeError(
+                    "PROBE_BLOCKED_MISSING_SUBACCOUNT_EVIDENCE",
+                    "軽減仕入8%と借方補助のHuman Evidenceに一致するmappingが必要です。",
+                )
+            rows = [
+                self._row(
+                    "1",
+                    "消耗品費",
+                    "現金",
+                    "1080",
+                    "JDL-TAX-PROBE-PR8",
+                    debit_sub=debit_sub.source_value if debit_sub else "",
+                    debit_tax="課税仕入 (軽)8%",
+                    journal_date=self._probe_date(journal_date, "2026/10/31"),
                 )
             ]
         elif definition.name == "tax_sales_10":
@@ -283,6 +321,54 @@ class JdlProbeGenerator:
             number: definition.evidence_profile for number in transaction_numbers
         }
         return rows, assignments  # type: ignore[return-value]
+
+    @staticmethod
+    def _required_subaccount_for_parent(
+        profile: ConversionProfile,
+        context: JdlTargetContext,
+        source_parent: str,
+    ) -> MappingKey | None:
+        account_mapping = profile.account_mappings.get(source_parent)
+        if account_mapping is None or not account_mapping.is_resolved:
+            raise JdlProbeError(
+                "PROBE_BLOCKED_MISSING_ACCOUNT_EVIDENCE",
+                "対象科目の確認済みmappingがありません。",
+            )
+        target_parent = account_mapping.target_value
+        configured = tuple(
+            item for item in context.subaccounts if item.parent_account == target_parent
+        )
+        if not configured:
+            return None
+        candidates = [
+            key
+            for key, value in profile.subaccount_context_mappings.items()
+            if key.mapping_type is MappingType.SUBACCOUNT
+            and key.parent_account == source_parent
+            and value.is_resolved
+            and any(
+                item.parent_account == target_parent
+                and item.mapping_value == value.target_value
+                for item in configured
+            )
+        ]
+        if len(candidates) != 1:
+            raise JdlProbeError(
+                "PROBE_BLOCKED_MISSING_SUBACCOUNT_EVIDENCE",
+                "対象科目の確認済み親科目付き補助mappingが一意に選べません。",
+            )
+        return candidates[0]
+
+    @staticmethod
+    def _probe_date(value: str | None, default: str) -> str:
+        candidate = value or default
+        try:
+            datetime.strptime(candidate, "%Y/%m/%d")
+        except ValueError as exc:
+            raise JdlProbeError(
+                "PROBE_DATE_INVALID", "probe日付は有効なYYYY/MM/DDで指定してください。"
+            ) from exc
+        return candidate
 
     @staticmethod
     def _confirmed_credit_subaccount(
@@ -327,9 +413,9 @@ class JdlProbeGenerator:
         return service.convert(ConversionRequest(source, output, source_profile, jdl_ibex_35_5_output_profile(), conversion_profile=profile, target_runtime_context=context))
 
     @staticmethod
-    def _row(transaction: str, debit: str, credit: str, debit_amount: str, description: str, *, credit_amount: str | None = None, credit_sub: str = "", debit_tax: str = "", credit_tax: str = "", journal_date: str = "2026/10/20") -> tuple[str, ...]:
+    def _row(transaction: str, debit: str, credit: str, debit_amount: str, description: str, *, credit_amount: str | None = None, debit_sub: str = "", credit_sub: str = "", debit_tax: str = "", credit_tax: str = "", journal_date: str = "2026/10/20") -> tuple[str, ...]:
         return (
-            transaction, journal_date, debit, "", "", "", debit_tax, "", debit_amount,
+            transaction, journal_date, debit, debit_sub, "", "", debit_tax, "", debit_amount,
             credit, credit_sub, "", "", credit_tax, "", credit_amount if credit_amount is not None else debit_amount,
             description, "", "",
         )
@@ -395,6 +481,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--context", type=Path)
     parser.add_argument("--private-root", type=Path, default=Path("data/private"))
     parser.add_argument("--result-template", type=Path)
+    parser.add_argument("--journal-date", help="probe日付 (YYYY/MM/DD)")
     return parser
 
 
@@ -428,6 +515,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             output_path=args.output,
             profile_path=args.profile,
             context_path=args.context,
+            journal_date=args.journal_date,
         )
     except (JdlProbeError, OSError, ValueError) as exc:
         code = exc.code if isinstance(exc, JdlProbeError) else "PROBE_INPUT_ERROR"

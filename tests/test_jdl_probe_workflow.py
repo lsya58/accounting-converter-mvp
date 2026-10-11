@@ -30,13 +30,17 @@ from accounting_converter.tools.jdl_tax_evidence import (
     EVIDENCE_ID_JDL_PURCHASE_10_INCLUSIVE_HAND,
     EVIDENCE_ID_MF_JDL_PURCHASE_10_ROUNDTRIP,
     EVIDENCE_ID_MF_JDL_SALES_10_SUBACCOUNT_ROUNDTRIP,
+    EVIDENCE_ID_MF_JDL_PURCHASE_REDUCED_8_SUBACCOUNT_ROUNDTRIP,
     JdlTaxEvidenceError,
     HUMAN_TAX_CASES,
     analyze_scoped_tax_human_evidence,
+    analyze_reduced_8_subaccount_human_evidence,
     analyze_purchase_10_inclusive_evidence,
     compare_sales_10_roundtrip,
     compare_sales_10_subaccount_roundtrip,
     compare_purchase_10_roundtrip,
+    compare_purchase_reduced_8_roundtrip,
+    compare_purchase_reduced_8_subaccount_roundtrip,
 )
 from accounting_converter.profiles.jdl_official import (
     jdl_ibex_cashbook_official_journal_import_spec,
@@ -69,9 +73,12 @@ class JdlProbeWorkflowTests(unittest.TestCase):
                 "compound_1d3c",
                 "tax_sales_10",
                 "tax_sales_10_with_subaccount",
+                "tax_purchase_reduced_8",
+                "tax_purchase_reduced_8_with_subaccount",
                 "tax_purchase_10",
                 "tax_sales_reduced_8",
                 "tax_purchase_reduced_8",
+                "tax_purchase_reduced_8_with_subaccount",
                 "tax_non_taxable_purchase",
                 "tax_out_of_scope",
             },
@@ -90,6 +97,15 @@ class JdlProbeWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(
             sales_sub.availability, "VERIFIED_BY_REAL_IMPORT_EXPERIMENTAL"
+        )
+        reduced_purchase_sub = next(
+            item
+            for item in PROBE_DEFINITIONS
+            if item.name == "tax_purchase_reduced_8_with_subaccount"
+        )
+        self.assertEqual(
+            reduced_purchase_sub.availability,
+            "VERIFIED_BY_REAL_IMPORT_EXPERIMENTAL",
         )
         self.assertEqual(main(["--list"]), 0)
 
@@ -151,6 +167,8 @@ class JdlProbeWorkflowTests(unittest.TestCase):
                 "tax_purchase_10",
                 "tax_sales_10",
                 "tax_sales_10_with_subaccount",
+                "tax_purchase_reduced_8",
+                "tax_purchase_reduced_8_with_subaccount",
             }
         ):
             with self.subTest(case=case_name):
@@ -209,6 +227,172 @@ class JdlProbeWorkflowTests(unittest.TestCase):
 
         self.assertEqual(caught.exception.code, "PROBE_CONVERSION_BLOCKED")
         self.assertFalse((self.private / "blocked.csv").exists())
+
+    def test_tax_purchase_reduced_8_without_subaccount_is_always_blocked(self) -> None:
+        self._write_profile(
+            self.profile_path,
+            account_names=("消耗品費", "現金"),
+            include_purchase_reduced_tax=True,
+        )
+        self._write_context(
+            self.context_path,
+            account_names=("消耗品費", "現金"),
+            taxable_included=True,
+        )
+
+        with self.assertRaises(JdlProbeError) as caught:
+            JdlProbeGenerator(self.private).generate(
+                case_name="tax_purchase_reduced_8",
+                output_path=self.private / "tax-purchase-reduced.csv",
+                profile_path=self.profile_path,
+                context_path=self.context_path,
+                journal_date="2026/11/01",
+            )
+        self.assertEqual(
+            caught.exception.code, "PROBE_BLOCKED_TARGET_SUBACCOUNT_REQUIRED"
+        )
+
+    def test_tax_purchase_reduced_8_blocks_wrong_rate_and_subaccount_master(self) -> None:
+        self._write_profile(
+            self.profile_path,
+            account_names=("消耗品費", "現金"),
+            include_purchase_tax=True,
+        )
+        self._write_context(
+            self.context_path,
+            account_names=("消耗品費", "現金"),
+            taxable_included=True,
+        )
+        with self.assertRaises(JdlProbeError):
+            self._generate(
+                "tax_purchase_reduced_8", self.private / "wrong-rate.csv"
+            )
+
+        self._write_profile(
+            self.profile_path,
+            account_names=("消耗品費", "現金"),
+            include_purchase_reduced_tax=True,
+        )
+        self._write_context(
+            self.context_path,
+            account_names=("消耗品費", "現金"),
+            taxable_included=True,
+            include_subaccount=True,
+            subaccount_parent="消耗品費",
+            subaccount_name="架空仕入補助",
+        )
+        with self.assertRaises(JdlProbeError):
+            self._generate(
+                "tax_purchase_reduced_8", self.private / "blank-required-sub.csv"
+            )
+
+    def test_tax_purchase_reduced_8_allows_only_exact_parent_subaccount(self) -> None:
+        self._write_profile(
+            self.profile_path,
+            account_names=("消耗品費", "現金"),
+            include_purchase_reduced_tax=True,
+            include_subaccount=True,
+            subaccount_parent="消耗品費",
+            subaccount_name="架空仕入補助",
+            subaccount_output_code="1",
+        )
+        self._write_context(
+            self.context_path,
+            account_names=("消耗品費", "現金"),
+            taxable_included=True,
+            include_subaccount=True,
+            subaccount_parent="消耗品費",
+            subaccount_name="架空仕入補助",
+            subaccount_output_code="1",
+        )
+        result = JdlProbeGenerator(self.private).generate(
+            case_name="tax_purchase_reduced_8_with_subaccount",
+            output_path=self.private / "correct-parent.csv",
+            profile_path=self.profile_path,
+            context_path=self.context_path,
+            journal_date="2026/11/01",
+        )
+        rows = list(
+            csv.reader(io.StringIO(result.output_path.read_text(encoding="cp932")))
+        )
+        header, row = rows
+        self.assertEqual(row[header.index("借方補助")], "1")
+        self.assertEqual(row[header.index("借方補助名称")], "架空仕入補助")
+        self.assertEqual(row[header.index("日付")], "20261101")
+
+        wrong_profile = self.private / "wrong-parent-profile.json"
+        self._write_profile(
+            wrong_profile,
+            account_names=("消耗品費", "現金", "普通預金"),
+            include_purchase_reduced_tax=True,
+            include_subaccount=True,
+            subaccount_parent="普通預金",
+            subaccount_name="架空仕入補助",
+        )
+        with self.assertRaises(JdlProbeError):
+            JdlProbeGenerator(self.private).generate(
+                case_name="tax_purchase_reduced_8",
+                output_path=self.private / "wrong-parent.csv",
+                profile_path=wrong_profile,
+                context_path=self.context_path,
+            )
+
+    def test_reduced_8_subaccount_human_evidence_separates_description_policy(self) -> None:
+        header = jdl_ibex_cashbook_official_journal_import_spec().column_names
+        positions = {name: index for index, name in enumerate(header)}
+        debit = self._tax_row("strict debit identity", reexport=True)
+        debit[positions["借方税区"]] = "軽減8%"
+        debit[positions["借方補助"]] = "1"
+        debit[positions["借方補助名称"]] = "架空借方補助"
+        credit = self._tax_row("credit input residue", reexport=True)
+        for name in ("借方課区", "借方税区"):
+            credit[positions[name]] = ""
+        credit[positions["貸方課区"]] = "売一種"
+        credit[positions["貸方税区"]] = "軽減8%"
+        credit[positions["貸方補助"]] = "2"
+        credit[positions["貸方補助名称"]] = "架空貸方補助"
+        evidence = self.private / "reduced-sub-human.csv"
+        self._write_official_rows(evidence, [debit, credit], preamble=True)
+
+        observation = analyze_reduced_8_subaccount_human_evidence(evidence)
+        manifest = observation.privacy_safe_manifest()
+
+        self.assertTrue(manifest["debit_parent_subaccount_reduced_8_valid"])
+        self.assertTrue(manifest["credit_parent_subaccount_reduced_8_valid"])
+        self.assertTrue(manifest["debit_description_comparison_allowed"])
+        self.assertFalse(manifest["credit_description_comparison_allowed"])
+        self.assertNotIn("input residue", json.dumps(manifest, ensure_ascii=False))
+
+        candidate = list(debit)
+        candidate[positions["摘要"]] = "reduced sub probe"
+        for name in (
+            "借方科目",
+            "借方科目正式名称",
+            "貸方科目",
+            "貸方科目正式名称",
+            "借方消費税",
+            "貸方消費税",
+        ):
+            candidate[positions[name]] = ""
+        actual = list(debit)
+        actual[positions["摘要"]] = "reduced sub probe"
+        candidate_path = self.private / "reduced-sub-candidate.csv"
+        reexport_path = self.private / "reduced-sub-reexport.csv"
+        self._write_official_rows(candidate_path, [candidate])
+        self._write_official_rows(reexport_path, [actual], preamble=True)
+        comparison = compare_purchase_reduced_8_subaccount_roundtrip(
+            evidence, candidate_path, reexport_path
+        )
+        self.assertTrue(comparison.passed)
+        self.assertTrue(comparison.parent_scoped_subaccount_match)
+        result = comparison.privacy_safe_result()
+        self.assertEqual(
+            result["evidence_id"],
+            EVIDENCE_ID_MF_JDL_PURCHASE_REDUCED_8_SUBACCOUNT_ROUNDTRIP,
+        )
+        self.assertEqual(result["evidence_level"], "VERIFIED_BY_REAL_IMPORT")
+        self.assertFalse(result["mapping_promotion_allowed"])
+        self.assertFalse(result["production_ready"])
 
     def test_tax_sales_10_uses_credit_side_scoped_evidence(self) -> None:
         self._write_profile(
@@ -403,6 +587,46 @@ class JdlProbeWorkflowTests(unittest.TestCase):
         )
         self.assertFalse(mismatch.passed)
 
+    def test_purchase_reduced_8_roundtrip_comparator_is_case_specific(self) -> None:
+        header = jdl_ibex_cashbook_official_journal_import_spec().column_names
+        positions = {name: index for index, name in enumerate(header)}
+        human_row = self._tax_row("reduced human", reexport=True)
+        human_row[positions["借方税区"]] = "軽減8%"
+        candidate_row = list(human_row)
+        candidate_row[positions["摘要"]] = "reduced probe"
+        for name in (
+            "借方科目",
+            "借方科目正式名称",
+            "貸方科目",
+            "貸方科目正式名称",
+            "借方消費税",
+            "貸方消費税",
+        ):
+            candidate_row[positions[name]] = ""
+        actual_row = list(human_row)
+        actual_row[positions["摘要"]] = "reduced probe"
+        human = self.private / "reduced-human.csv"
+        candidate = self.private / "reduced-candidate.csv"
+        reexport = self.private / "reduced-reexport.csv"
+        self._write_official_rows(human, [human_row], preamble=True)
+        self._write_official_rows(candidate, [candidate_row])
+        self._write_official_rows(reexport, [actual_row], preamble=True)
+
+        comparison = compare_purchase_reduced_8_roundtrip(
+            human, candidate, reexport
+        )
+
+        self.assertTrue(comparison.passed)
+        self.assertEqual(comparison.probe_case, "tax_purchase_reduced_8")
+        candidate_row[positions["借方税区"]] = "10%"
+        self._write_official_rows(
+            self.private / "reduced-wrong-rate.csv", [candidate_row]
+        )
+        with self.assertRaises(JdlTaxEvidenceError):
+            compare_purchase_reduced_8_roundtrip(
+                human, self.private / "reduced-wrong-rate.csv", reexport
+            )
+
     def test_private_tax_evidence_parser_and_manifest_are_privacy_safe(self) -> None:
         evidence = self.private / "evidence.csv"
         self._write_tax_evidence(evidence)
@@ -520,7 +744,7 @@ class JdlProbeWorkflowTests(unittest.TestCase):
             context_path=self.context_path,
         )
 
-    def _write_profile(self, path: Path, account_names=("現金", "普通預金", "当座預金", "小口現金"), include_subaccount=False, include_purchase_tax=False, include_sales_tax=False, subaccount_parent="普通預金", subaccount_name="テスト銀行", subaccount_output_code="0001") -> None:
+    def _write_profile(self, path: Path, account_names=("現金", "普通預金", "当座預金", "小口現金"), include_subaccount=False, include_purchase_tax=False, include_purchase_reduced_tax=False, include_sales_tax=False, subaccount_parent="普通預金", subaccount_name="テスト銀行", subaccount_output_code="0001") -> None:
         codes = {"現金": "1001", "普通預金": "1002", "当座預金": "1003", "小口現金": "1004", "消耗品費": "8001", "売上高": "4001"}
         now = datetime(2026, 10, 8, tzinfo=timezone.utc)
         profile = ConversionProfile(
@@ -560,6 +784,17 @@ class JdlProbeWorkflowTests(unittest.TestCase):
                         },
                     )
                 } if include_purchase_tax else {}),
+                **({
+                    "課税仕入 (軽)8%": MappingValue(
+                        source_value="課税仕入 (軽)8%",
+                        target_value="軽減8%",
+                        status=MappingStatus.USER_CONFIRMED,
+                        metadata={
+                            "jdl_tax_scope": "仕　入",
+                            "jdl_evidence_id": "EVID-JDL-TAX-PURCHASE-REDUCED-8-INCLUSIVE-HAND-001",
+                        },
+                    )
+                } if include_purchase_reduced_tax else {}),
                 **({
                     "課税売上 10%": MappingValue(
                         source_value="課税売上 10%", target_value="10%",
