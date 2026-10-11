@@ -793,6 +793,28 @@
   - draft Contextでは親付き観測として保持するが、output representationは未確認のためproduction利用しない
   - synthetic補助のためreal Money Forward subaccount coverageには加算しない
 
+### Multiple explicit subaccounts and parent transitions
+
+- evidence ID: `EVID-JDL-MASTER-SUBACCOUNT-PRINT-002`
+- source: 同じsynthetic test companyで、2親・3補助へ増やして再取得した5-page科目一覧PDF
+- privacy-safe comparison:
+  - first PDF: explicit subaccounts 0
+  - second PDF: explicit subaccounts 1 / parent count 1
+  - third PDF: explicit subaccounts 3 / parent count 2
+  - third PDF parent distribution: one parent has 1 child, one parent has 2 children
+  - account candidates 125、codeなし除外行120は3 PDFsで不変
+  - subaccount conflict 0
+- observed behavior:
+  - 同じ親markerの直後に複数の4桁補助行が連続できる
+  - 次の親markerでparent scopeが明示的に切り替わる
+  - `0001` は別parentの配下にそれぞれ存在でき、global conflictではない
+  - code `2` のHuman入力がUI/PDFで `0002` と表示された
+- parser boundary:
+  - identityは `(parent account, subaccount code/name)` で扱う
+  - page boundaryを越えてparent stateを引き継がない
+  - parentless child、借貸不一致、4桁でないchild delimiter、同一parent内のduplicateはBLOCK/Conflict
+  - PDFから親付き補助masterを読めるEvidenceであり、production output representationや自動mappingのEvidenceではない
+
 ## EVID-JDL-003
 
 - source: JDL会計 仕訳一覧CSV

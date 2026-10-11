@@ -120,6 +120,81 @@ class JdlAccountListPdfTextParserTests(unittest.TestCase):
         with self.assertRaises(JdlAccountListPdfParseError):
             self._parse(tuple(pages))
 
+    def test_multiple_subaccounts_and_parent_transition_are_parent_scoped(self) -> None:
+        pages = list(self._pages())
+        pages[0] = JdlAccountListTextPage(
+            1,
+            self._page_header(1)
+            + "         1211- 架空親科目A                   借架空親A ○\n"
+            + "             -0001 架空補助A                借\n"
+            + "         1311- 架空親科目B                   借架空親B ○\n"
+            + "             -0001 架空補助B                借\n"
+            + "             -0002 架空補助C                借\n",
+        )
+
+        result = self._parse(tuple(pages))
+        by_parent: dict[str, list[str]] = {}
+        for item in result.subaccounts:
+            by_parent.setdefault(item.parent_account_code, []).append(item.code)
+
+        self.assertEqual(len(result.subaccounts), 3)
+        self.assertEqual(sorted(by_parent["1211"]), ["0001"])
+        self.assertEqual(sorted(by_parent["1311"]), ["0001", "0002"])
+        self.assertFalse(result.conflicts)
+
+    def test_duplicate_under_same_parent_is_conflict_but_same_code_across_parents_is_not(self) -> None:
+        pages = list(self._pages())
+        pages[0] = JdlAccountListTextPage(
+            1,
+            self._page_header(1)
+            + "         1211- 架空親科目A                   借架空親A ○\n"
+            + "             -0001 架空補助A                借\n"
+            + "         1311- 架空親科目B                   借架空親B ○\n"
+            + "             -0001 架空補助B                借\n",
+        )
+        across_parents = self._parse(tuple(pages))
+        self.assertFalse(across_parents.conflicts)
+
+        pages[0] = JdlAccountListTextPage(
+            1,
+            self._page_header(1)
+            + "         1211- 架空親科目A                   借架空親A ○\n"
+            + "             -0001 架空補助A                借\n"
+            + "             -0001 架空補助A                借\n",
+        )
+        duplicate = self._parse(tuple(pages))
+        self.assertIn(
+            "SUBACCOUNT_DUPLICATE",
+            {item.category for item in duplicate.conflicts},
+        )
+        self.assertEqual(duplicate.completeness, JdlMasterCompleteness.PARTIAL_MASTER)
+
+    def test_subaccount_cannot_continue_across_page_boundary(self) -> None:
+        pages = list(self._pages())
+        pages[0] = JdlAccountListTextPage(
+            1,
+            self._page_header(1)
+            + "         1211- 架空親科目A                   借架空親A ○\n",
+        )
+        pages[1] = JdlAccountListTextPage(
+            2,
+            self._page_header(2)
+            + "             -0001 架空補助A                借\n",
+        )
+        with self.assertRaises(JdlAccountListPdfParseError):
+            self._parse(tuple(pages))
+
+    def test_malformed_subaccount_delimiter_is_blocked(self) -> None:
+        pages = list(self._pages())
+        pages[0] = JdlAccountListTextPage(
+            1,
+            self._page_header(1)
+            + "         1211- 架空親科目A                   借架空親A ○\n"
+            + "             -001 架空補助A                 借\n",
+        )
+        with self.assertRaises(JdlAccountListPdfParseError):
+            self._parse(tuple(pages))
+
     def test_malformed_symbol_row_and_missing_page_are_blocked(self) -> None:
         pages = list(self._pages())
         pages[0] = JdlAccountListTextPage(

@@ -37,4 +37,6 @@ source科目名とJDL masterの名称・正式名称が完全一致し、候補�
 
 初回MVPは科目mappingだけを対象とする。補助科目、部門、税区分、取引先、インボイス、タグ、メモが入力に含まれても、種類だけを表示して確認済み科目対応を先に保存できる。未対応項目が残る会社設定は「確認が必要」と表示し、変換実行はBLOCKする。税区分は既存Profileの未解決Mappingとして保持し、自動変換や空欄化をしない。Profile作成後もMoney Forward production Adapter登録とREADY gateは変更しない。
 
+将来の補助科目確認では、既存`MappingKey(SUBACCOUNT, source_value, parent_account)`と`subaccount_context_mappings`を利用する。同名・同codeの補助でも親科目が違えば別identityとし、親科目Mappingが未確認の間は補助Mappingを確定しない。JDL候補も親科目が一致するものだけに絞り、完全一致でも自動確定せず`USER_CONFIRMED`を要求する。
+
 対応設定作成時に検証したJDL設定のfingerprintを確認済み科目mappingへ保持し、会社設定保存時に同じContextであることを再検証する。別Contextへの差し替えはBLOCKし、保存後はCompanySetting配下のvalidated local copyを利用する。

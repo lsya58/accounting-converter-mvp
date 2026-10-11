@@ -22,6 +22,7 @@
 - 科目一覧PDFは全5ページと使用中/未使用行を観測しても、製品内部master全件を証明しないため `FULL_MASTER` へ自動昇格しない。
 - PDFのcode付き行だけをaccount candidateにする。codeなし行、集計見出し、グループ見出しへcodeを推測しない。
 - 補助候補は、末尾delimiter付き親科目行に連続し、明示的な4桁補助code、名称、同じ借貸を持つ行だけを採用する。単なるインデント行やcodeなし予備行は補助にしない。
+- 複数補助は次の親markerまで同じparent scopeに属する。parent stateはpageを越えて引き継がず、同一4桁codeが別parentに存在することは許容する。同一parent内のcode/name重複・競合はBLOCKする。
 - Human入力値 `1` が画面・印刷で `0001` と表示された事実は、この35.5画面/印刷Evidenceに限定する。入力・内部保存・全環境のleading-zero規則へ一般化しない。
 - Exact code/name/formal-name values are preserved. No fuzzy matching, code generation, or normalization is performed.
 - Conflicting code/name identities are excluded from candidate generation and reported by count.
@@ -40,3 +41,4 @@
 
 Development mode may retain direct JSON loading, but ordinary users should not need to understand JSON, fingerprints, or evidence identifiers.
 将来の通常GUIは `JDLから読み込む` で科目一覧PDFを選択し、内部で未確認context draftを生成する。JSON直接選択はdevelopment/debug用途に限定し、このPDFだけでproduction-ready contextにはしない。
+補助Mapping UIは `source parent + source subaccount` と `target parent + target subaccount` の組で候補を表示し、親科目Mappingが未確認、またはtarget parentが一致しない候補を提示しない。exact候補でも保存には`USER_CONFIRMED`を要求する。

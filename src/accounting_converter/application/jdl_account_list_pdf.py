@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -46,6 +47,7 @@ class JdlAccountListPdfTextParser:
         r"(?P<name>.+?)\s{2,}"
         r"(?P<balance>[借貸])\s*$"
     )
+    _SUBACCOUNT_LIKE_ROW = re.compile(r"^\s*-\d")
     _UNCODED_ROW = re.compile(
         r"^\s{12,}(?P<name>[^\s].*?)\s{2,}"
         r"(?P<abbreviation>[借貸][^\s]*)\s*"
@@ -124,6 +126,10 @@ class JdlAccountListPdfTextParser:
                         )
                     )
                     continue
+                if self._SUBACCOUNT_LIKE_ROW.match(line):
+                    raise JdlAccountListPdfParseError(
+                        f"page {page.page_number} に形式不正な補助候補行があります。"
+                    )
                 parent = None
                 coded = self._CODED_ROW.match(line)
                 if coded:
@@ -213,6 +219,14 @@ class JdlAccountListPdfTextParser:
         )
         subaccount_codes: dict[tuple[str, str], set[str]] = {}
         subaccount_names: dict[tuple[str, str], set[str]] = {}
+        subaccount_identity_counts = Counter(
+            (
+                item.parent_account_code,
+                item.code,
+                item.name,
+            )
+            for item in observation.subaccounts
+        )
         for item in observation.subaccounts:
             subaccount_codes.setdefault(
                 (item.parent_account_code, item.code), set()
@@ -229,6 +243,11 @@ class JdlAccountListPdfTextParser:
             JdlMasterConflict("SUBACCOUNT_NAME_CONFLICT")
             for values in subaccount_names.values()
             if len(values) > 1
+        )
+        conflicts.extend(
+            JdlMasterConflict("SUBACCOUNT_DUPLICATE")
+            for count in subaccount_identity_counts.values()
+            if count > 1
         )
         if conflicts:
             return JdlMasterObservation(
