@@ -44,6 +44,9 @@ EVIDENCE_IDS = {
     JdlEvidenceProfile.TAX_SALES_10_INCLUDED_1111: (
         "EVID-JDL-TAX-SALES-10-INCLUSIVE-HAND-001"
     ),
+    JdlEvidenceProfile.TAX_SALES_10_SUBACCOUNT_INCLUDED_1111: (
+        "EVID-JDL-MF-TAX-SALES-10-SUBACCOUNT-ROUNDTRIP-001"
+    ),
     JdlEvidenceProfile.TAX_EXCLUDED_1111: (
         "EVID-JDL-GENERATOR-1111-TAX-EXCLUSIVE-001"
     ),
@@ -313,6 +316,17 @@ class JdlOutputPreflight:
                 tax_side=Side.CREDIT,
                 expected_scope=TAX_SCOPE_SALES,
             )
+        elif evidence is JdlEvidenceProfile.TAX_SALES_10_SUBACCOUNT_INCLUDED_1111:
+            self._validate_tax(
+                debit,
+                credit,
+                entry,
+                included=True,
+                errors=errors,
+                tax_side=Side.CREDIT,
+                expected_scope=TAX_SCOPE_SALES,
+                allow_tax_side_subaccount=True,
+            )
         elif evidence is JdlEvidenceProfile.TAX_EXCLUDED_1111:
             self._validate_tax(debit, credit, entry, included=False, errors=errors)
 
@@ -378,6 +392,7 @@ class JdlOutputPreflight:
         errors: list[ValidationResult],
         tax_side: Side = Side.DEBIT,
         expected_scope: str = TAX_SCOPE_PURCHASE,
+        allow_tax_side_subaccount: bool = False,
     ) -> None:
         expected_mode = (
             JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED
@@ -387,10 +402,41 @@ class JdlOutputPreflight:
         self._require_tax_mode(expected_mode, entry, errors)
         if not self.context.standard_taxation_confirmed or not self.context.individual_credit_method_confirmed:
             errors.append(self._error("JDL-OUT-TAX-COMPANY-PROFILE", "原則課税・個別対応方式の確認が必要です。", "tax_processing", entry))
-        if debit.sub_account or credit.sub_account or debit.department or credit.department:
-            errors.append(self._error("JDL-OUT-TAX-COMBINATION", "検証済み税profileに補助・部門を併用できません。", "evidence_profile", entry))
         tax_line = debit if tax_side is Side.DEBIT else credit
         opposite_line = credit if tax_side is Side.DEBIT else debit
+        if (
+            debit.department
+            or credit.department
+            or opposite_line.sub_account
+            or (tax_line.sub_account and not allow_tax_side_subaccount)
+        ):
+            errors.append(self._error("JDL-OUT-TAX-COMBINATION", "検証済み税profileに補助・部門を併用できません。", "evidence_profile", entry))
+        configured_subaccounts = tuple(
+            item
+            for item in self.context.subaccounts
+            if item.parent_account == tax_line.account
+        )
+        if configured_subaccounts and not tax_line.sub_account:
+            errors.append(
+                self._error(
+                    "JDL-OUT-TARGET-SUBACCOUNT-REQUIRED",
+                    "取込先科目には補助科目が設定されているため、確認済み補助が必要です。",
+                    "sub_account",
+                    entry,
+                )
+            )
+        if tax_line.sub_account and (
+            not allow_tax_side_subaccount
+            or self._subaccount_identity(tax_line) is None
+        ):
+            errors.append(
+                self._error(
+                    "JDL-OUT-TAX-SUBACCOUNT-MASTER",
+                    "税対象sideの補助科目と親科目が確認済みmasterに一致しません。",
+                    "sub_account",
+                    entry,
+                )
+            )
         info = tax_line.tax_info
         if info is None or info.category != TAX_CATEGORY_TEN_PERCENT or info.metadata.get("jdl_tax_scope") != expected_scope:
             errors.append(self._error("JDL-OUT-TAX-LITERAL", "検証済み課区・税区のexact literalが必要です。", "tax", entry))

@@ -17,6 +17,9 @@ EVIDENCE_ID_JDL_PURCHASE_10_INCLUSIVE_HAND = (
 EVIDENCE_ID_MF_JDL_PURCHASE_10_ROUNDTRIP = (
     "EVID-JDL-MF-TAX-PURCHASE-10-ROUNDTRIP-001"
 )
+EVIDENCE_ID_MF_JDL_SALES_10_SUBACCOUNT_ROUNDTRIP = (
+    "EVID-JDL-MF-TAX-SALES-10-SUBACCOUNT-ROUNDTRIP-001"
+)
 
 HUMAN_TAX_CASES = {
     "tax_sales_10": ("CREDIT", "売一種", "10%", "EVID-JDL-TAX-SALES-10-INCLUSIVE-HAND-001"),
@@ -166,6 +169,9 @@ class JdlTaxRoundTripComparison:
     credit_tax_fields_match: bool
     description_preserved: bool
     balance_preserved: bool
+    date_preserved: bool
+    identifier_flag_preserved: bool
+    parent_scoped_subaccount_match: bool
     candidate_blank_fields_normalized_by_jdl: tuple[str, ...]
     probe_case: str = "tax_purchase_10"
     evidence_id: str = EVIDENCE_ID_MF_JDL_PURCHASE_10_ROUNDTRIP
@@ -181,6 +187,9 @@ class JdlTaxRoundTripComparison:
                 self.credit_tax_fields_match,
                 self.description_preserved,
                 self.balance_preserved,
+                self.date_preserved,
+                self.identifier_flag_preserved,
+                self.parent_scoped_subaccount_match,
             )
         )
 
@@ -210,6 +219,9 @@ class JdlTaxRoundTripComparison:
                 "credit_tax_fields": self.credit_tax_fields_match,
                 "description": self.description_preserved,
                 "balance": self.balance_preserved,
+                "date": self.date_preserved,
+                "identifier_flag": self.identifier_flag_preserved,
+                "parent_scoped_subaccount": self.parent_scoped_subaccount_match,
             },
             "jdl_normalized_field_categories": list(
                 self.candidate_blank_fields_normalized_by_jdl
@@ -244,9 +256,26 @@ def compare_sales_10_roundtrip(
     )
 
 
+def compare_sales_10_subaccount_roundtrip(
+    human_evidence: Path, candidate: Path, reexport: Path
+) -> JdlTaxRoundTripComparison:
+    analyze_scoped_tax_human_evidence(human_evidence, "tax_sales_10")
+    return _compare_tax_roundtrip(
+        human_evidence,
+        candidate,
+        reexport,
+        probe_case="tax_sales_10_with_subaccount",
+        evidence_id=EVIDENCE_ID_MF_JDL_SALES_10_SUBACCOUNT_ROUNDTRIP,
+        tax_prefix="貸方",
+        expected_scope="売一種",
+        require_tax_side_subaccount=True,
+    )
+
+
 def _compare_tax_roundtrip(
     human_evidence: Path, candidate: Path, reexport: Path, *,
     probe_case: str, evidence_id: str, tax_prefix: str, expected_scope: str,
+    require_tax_side_subaccount: bool = False,
 ) -> JdlTaxRoundTripComparison:
     human_raw, human_rows = _read_official_rows(human_evidence)
     candidate_raw, candidate_rows = _read_official_rows(candidate)
@@ -264,9 +293,21 @@ def _compare_tax_roundtrip(
         or expected[pos[f"{tax_prefix}税入力方法"]] != ""
         or expected[pos[f"{tax_prefix}消費税"]] != ""
         or any(expected[pos[f"{other}{name}"]] for name in ("課区", "税区", "税入力方法", "消費税"))
-        or any(expected[pos[name]] for name in ("借方補助", "借方補助名称", "貸方補助", "貸方補助名称", "借方部門名称", "貸方部門名称"))
+        or any(expected[pos[name]] for name in ("借方部門名称", "貸方部門名称"))
     ):
         raise JdlTaxEvidenceError("candidate is outside the scoped tax evidence")
+    tax_sub_fields = (f"{tax_prefix}補助", f"{tax_prefix}補助名称")
+    other_sub_fields = (f"{other}補助", f"{other}補助名称")
+    if require_tax_side_subaccount:
+        if not all(expected[pos[name]] for name in tax_sub_fields):
+            raise JdlTaxEvidenceError("parent-scoped tax-side subaccount is required")
+        if any(expected[pos[name]] for name in other_sub_fields):
+            raise JdlTaxEvidenceError("opposite-side subaccount is outside the scope")
+    elif any(
+        expected[pos[name]]
+        for name in (*tax_sub_fields, *other_sub_fields)
+    ):
+        raise JdlTaxEvidenceError("subaccount is outside the scoped tax evidence")
     identity = ("日付", "借方科目名称", "貸方科目名称", "借方金額", "貸方金額", "摘要")
     matches = [row for row in reexport_rows if all(row[pos[name]] == expected[pos[name]] for name in identity)]
     actual = matches[0] if len(matches) == 1 else None
@@ -286,7 +327,7 @@ def _compare_tax_roundtrip(
         probe_case=probe_case, evidence_id=evidence_id,
     )
     if actual is None:
-        return JdlTaxRoundTripComparison(account_identity_match=False, amount_match=False, debit_tax_fields_match=False, credit_tax_fields_match=False, description_preserved=False, balance_preserved=False, **common)
+        return JdlTaxRoundTripComparison(account_identity_match=False, amount_match=False, debit_tax_fields_match=False, credit_tax_fields_match=False, description_preserved=False, balance_preserved=False, date_preserved=False, identifier_flag_preserved=False, parent_scoped_subaccount_match=False, **common)
     debit_tax = ("借方課区", "借方税区", "借方税入力方法", "借方消費税")
     credit_tax = ("貸方課区", "貸方税区", "貸方税入力方法", "貸方消費税")
     return JdlTaxRoundTripComparison(
@@ -296,6 +337,17 @@ def _compare_tax_roundtrip(
         credit_tax_fields_match=_fields_equal(human, actual, pos, credit_tax),
         description_preserved=expected[pos["摘要"]] == actual[pos["摘要"]],
         balance_preserved=actual[pos["借方金額"]] == actual[pos["貸方金額"]],
+        date_preserved=expected[pos["日付"]] == actual[pos["日付"]],
+        identifier_flag_preserved=(
+            expected[pos["//識別フラグ"]]
+            == actual[pos["//識別フラグ"]]
+            == "1111"
+        ),
+        parent_scoped_subaccount_match=(
+            _fields_equal(human, actual, pos, tax_sub_fields)
+            if require_tax_side_subaccount
+            else not any(actual[pos[name]] for name in (*tax_sub_fields, *other_sub_fields))
+        ),
         **common,
     )
 

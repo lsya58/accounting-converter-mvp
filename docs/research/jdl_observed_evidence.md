@@ -878,7 +878,26 @@
 
 Human Exportはexact target表現のEvidenceだが、App candidateのImport/re-exportではない。case-specific preflightとround-tripが完了するまでcandidate generation、mapping promotion、production READYを許可しない。既存`EVID-JDL-MF-TAX-PURCHASE-10-ROUNDTRIP-001`だけが限定的な`VERIFIED_BY_REAL_IMPORT`を維持する。
 
-課税売上10%にはcredit-side専用のcase-specific preflightを追加し、Human Evidenceとexact taxable/inclusive Contextに限定したApp-generated candidateを作成できる。状態は`EVIDENCE_GATED_EXPERIMENTAL`であり、実Import前なのでEvidence levelは`HUMAN_OBSERVED`のまま、mapping promotionとproduction利用は禁止する。他の4税ケースはcandidate generation BLOCKを維持する。
+課税売上10%にはcredit-side専用のcase-specific preflightを追加した。補助なしcandidateはtarget masterの補助要件により拒否され、成功Evidenceへは昇格していない。親科目付き補助を明示した後続candidateだけは、下記の限定round-trip Evidenceを持つ。他の4税ケースはcandidate generation BLOCKを維持する。
+
+最初の補助なし課税売上10% candidateは実機で拒否され、target貸方科目に補助が設定されているため貸方補助名称が必要というruntime messageを得た。これは`FAILED_PRECONDITION`として記録し、Import成功Evidenceへ昇格しない。target Contextに親付き補助が存在する場合、同親の補助が空欄ならpreflightでBLOCKする。後続candidateは`EVID-JDL-SUBACCOUNT-TAX-CREDIT-HAND-001`の親科目・補助・sales tax共存表現と、明示的な`USER_CONFIRMED` mappingに限定する。
+
+## EVID-JDL-MF-TAX-SALES-10-SUBACCOUNT-ROUNDTRIP-001
+
+- evidence level: `VERIFIED_BY_REAL_IMPORT`（このexact artifact、target master、会社税設定に限定）
+- product: JDL IBEX 出納帳35.5
+- verified path: app-generated candidate -> real Import -> JDL re-export -> strict semantic comparison
+- verified scope:
+  - 課税・税込、flag `1111`、1D1C、credit-side sales 10%
+  - exact貸方親科目と、その親に属するexact補助科目
+  - 借方tax blank semantics、部門なし
+  - trade partner / invoice / tag / memoなし
+- strict comparison: date、flag、借貸account identity、parent-scoped subaccount identity、借貸金額、credit tax fields、opposite-side tax semantics、description identity、balanceが一致
+- JDL付与表現: candidate空欄だったaccount master identityとtax amount representationは、Human Exportと一致する場合だけ正規化カテゴリとして記録
+- exclusions:
+  - 補助なしsales 10%、別親科目、別補助、他税率、税抜、複数行/複数件へ一般化しない
+  - mapping promotionとproduction利用は自動許可しない
+  - production RegistryとMoney Forward一般READYは変更しない
 
 ## JDL subaccount export batch
 

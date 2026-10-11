@@ -75,6 +75,7 @@ PROBE_DEFINITIONS = (
     ProbeDefinition("simple_with_subaccount", 1, JdlEvidenceProfile.SUBACCOUNT_1000, "EVIDENCE_GATED", "親科目付き補助科目の受理確認"),
     ProbeDefinition("compound_1d3c", 1, JdlEvidenceProfile.COMPOUND_1D3C, "EVIDENCE_GATED", "観測済み1D3Cの受理確認"),
     ProbeDefinition("tax_sales_10", 1, JdlEvidenceProfile.TAX_SALES_10_INCLUDED_1111, "EVIDENCE_GATED_EXPERIMENTAL", "売上10%税表現の確認"),
+    ProbeDefinition("tax_sales_10_with_subaccount", 1, JdlEvidenceProfile.TAX_SALES_10_SUBACCOUNT_INCLUDED_1111, "VERIFIED_BY_REAL_IMPORT_EXPERIMENTAL", "売上10%と貸方補助の共存確認"),
     ProbeDefinition("tax_purchase_10", 1, JdlEvidenceProfile.TAX_INCLUDED_1111, "VERIFIED_BY_REAL_IMPORT_EXPERIMENTAL", "仕入10%税表現の確認"),
     ProbeDefinition("tax_sales_reduced_8", 1, None, "BLOCKED_MISSING_JDL_TAX_EVIDENCE", "軽減売上8%税表現の確認"),
     ProbeDefinition("tax_purchase_reduced_8", 1, None, "BLOCKED_MISSING_JDL_TAX_EVIDENCE", "軽減仕入8%税表現の確認"),
@@ -180,6 +181,7 @@ class JdlProbeGenerator:
                 "observed_tax_fields_present": None,
                 "notes": "",
                 "mapping_promotion_allowed": False,
+                "production_allowed": False,
                 "NOT_FOR_PRODUCTION": True,
                 "safety_notice": SAFETY_NOTICE,
             },
@@ -252,7 +254,26 @@ class JdlProbeGenerator:
                     "1100",
                     "JDL-TAX-PROBE-S10",
                     credit_tax="課税売上 10%",
-                    journal_date="2026/10/22",
+                    journal_date="2026/10/30",
+                )
+            ]
+        elif definition.name == "tax_sales_10_with_subaccount":
+            sub_key = self._confirmed_credit_subaccount(profile, context)
+            if sub_key.parent_account != "売上高":
+                raise JdlProbeError(
+                    "PROBE_SUBACCOUNT_PARENT_MISMATCH",
+                    "課税売上10% Human Evidenceと同じ貸方親科目の補助が必要です。",
+                )
+            rows = [
+                self._row(
+                    "1",
+                    "現金",
+                    sub_key.parent_account or "",
+                    "1100",
+                    "JDL-TAX-SUB-PROBE-S10",
+                    credit_sub=sub_key.source_value,
+                    credit_tax="課税売上 10%",
+                    journal_date="2026/10/30",
                 )
             ]
         else:

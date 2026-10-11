@@ -29,11 +29,13 @@ from accounting_converter.tools.generate_jdl_probe import (
 from accounting_converter.tools.jdl_tax_evidence import (
     EVIDENCE_ID_JDL_PURCHASE_10_INCLUSIVE_HAND,
     EVIDENCE_ID_MF_JDL_PURCHASE_10_ROUNDTRIP,
+    EVIDENCE_ID_MF_JDL_SALES_10_SUBACCOUNT_ROUNDTRIP,
     JdlTaxEvidenceError,
     HUMAN_TAX_CASES,
     analyze_scoped_tax_human_evidence,
     analyze_purchase_10_inclusive_evidence,
     compare_sales_10_roundtrip,
+    compare_sales_10_subaccount_roundtrip,
     compare_purchase_10_roundtrip,
 )
 from accounting_converter.profiles.jdl_official import (
@@ -66,6 +68,7 @@ class JdlProbeWorkflowTests(unittest.TestCase):
                 "simple_with_subaccount",
                 "compound_1d3c",
                 "tax_sales_10",
+                "tax_sales_10_with_subaccount",
                 "tax_purchase_10",
                 "tax_sales_reduced_8",
                 "tax_purchase_reduced_8",
@@ -79,6 +82,14 @@ class JdlProbeWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(
             purchase.availability, "VERIFIED_BY_REAL_IMPORT_EXPERIMENTAL"
+        )
+        sales_sub = next(
+            item
+            for item in PROBE_DEFINITIONS
+            if item.name == "tax_sales_10_with_subaccount"
+        )
+        self.assertEqual(
+            sales_sub.availability, "VERIFIED_BY_REAL_IMPORT_EXPERIMENTAL"
         )
         self.assertEqual(main(["--list"]), 0)
 
@@ -135,7 +146,12 @@ class JdlProbeWorkflowTests(unittest.TestCase):
 
     def test_unsupported_tax_cases_block_without_guessed_jdl_values(self) -> None:
         for case_name in sorted(
-            TAX_PROBE_CASES - {"tax_purchase_10", "tax_sales_10"}
+            TAX_PROBE_CASES
+            - {
+                "tax_purchase_10",
+                "tax_sales_10",
+                "tax_sales_10_with_subaccount",
+            }
         ):
             with self.subTest(case=case_name):
                 output = self.private / f"{case_name}.csv"
@@ -215,6 +231,7 @@ class JdlProbeWorkflowTests(unittest.TestCase):
         self.assertEqual(row[header.index("貸方税区")], "10%")
         self.assertEqual(row[header.index("借方課区")], "")
         self.assertEqual(row[header.index("借方税区")], "")
+        self.assertEqual(row[header.index("日付")], "20261030")
 
     def test_tax_sales_10_wrong_context_and_missing_mapping_are_blocked(self) -> None:
         self._write_profile(
@@ -236,6 +253,76 @@ class JdlProbeWorkflowTests(unittest.TestCase):
         )
         with self.assertRaises(JdlProbeError):
             self._generate("tax_sales_10", self.private / "missing-map.csv")
+
+    def test_sales_account_with_configured_subaccount_blocks_blank_candidate(self) -> None:
+        self._write_profile(
+            self.profile_path,
+            account_names=("現金", "売上高"),
+            include_sales_tax=True,
+        )
+        self._write_context(
+            self.context_path,
+            account_names=("現金", "売上高"),
+            taxable_included=True,
+            include_subaccount=True,
+            subaccount_parent="売上高",
+            subaccount_name="架空売上補助",
+            subaccount_output_code="1",
+        )
+        with self.assertRaises(JdlProbeError) as caught:
+            self._generate("tax_sales_10", self.private / "blank-sub.csv")
+        self.assertEqual(caught.exception.code, "PROBE_CONVERSION_BLOCKED")
+
+    def test_tax_sales_10_with_parent_scoped_subaccount_generates(self) -> None:
+        self._write_profile(
+            self.profile_path,
+            account_names=("現金", "売上高"),
+            include_sales_tax=True,
+            include_subaccount=True,
+            subaccount_parent="売上高",
+            subaccount_name="架空売上補助",
+            subaccount_output_code="1",
+        )
+        self._write_context(
+            self.context_path,
+            account_names=("現金", "売上高"),
+            taxable_included=True,
+            include_subaccount=True,
+            subaccount_parent="売上高",
+            subaccount_name="架空売上補助",
+            subaccount_output_code="1",
+        )
+        result = self._generate(
+            "tax_sales_10_with_subaccount",
+            self.private / "tax-sales-sub.csv",
+        )
+        rows = list(csv.reader(io.StringIO(result.output_path.read_text(encoding="cp932"), newline="")))
+        header, row = rows
+        self.assertEqual(row[header.index("貸方補助")], "1")
+        self.assertEqual(row[header.index("貸方補助名称")], "架空売上補助")
+        self.assertEqual(row[header.index("貸方課区")], "売一種")
+
+    def test_tax_sales_10_with_wrong_parent_subaccount_is_blocked(self) -> None:
+        self._write_profile(
+            self.profile_path,
+            account_names=("現金", "売上高", "普通預金"),
+            include_sales_tax=True,
+            include_subaccount=True,
+            subaccount_parent="普通預金",
+            subaccount_name="架空売上補助",
+            subaccount_output_code="1",
+        )
+        self._write_context(
+            self.context_path,
+            account_names=("現金", "売上高", "普通預金"),
+            taxable_included=True,
+            include_subaccount=True,
+            subaccount_parent="普通預金",
+            subaccount_name="架空売上補助",
+            subaccount_output_code="1",
+        )
+        with self.assertRaises(JdlProbeError):
+            self._generate("tax_sales_10_with_subaccount", self.private / "wrong-parent.csv")
 
     def test_tax_sales_10_roundtrip_comparison_requires_unique_match(self) -> None:
         header = jdl_ibex_cashbook_official_journal_import_spec().column_names
@@ -259,6 +346,62 @@ class JdlProbeWorkflowTests(unittest.TestCase):
 
         self.assertTrue(comparison.passed)
         self.assertEqual(comparison.probe_case, "tax_sales_10")
+
+    def test_tax_sales_10_subaccount_roundtrip_is_strict_and_scoped(self) -> None:
+        header = jdl_ibex_cashbook_official_journal_import_spec().column_names
+        positions = {name: index for index, name in enumerate(header)}
+        human_row = self._tax_row("sales sub human", reexport=True)
+        for name in ("借方課区", "借方税区"):
+            human_row[positions[name]] = ""
+        human_row[positions["貸方課区"]] = "売一種"
+        human_row[positions["貸方税区"]] = "10%"
+        human_row[positions["貸方補助"]] = "1"
+        human_row[positions["貸方補助名称"]] = "架空売上補助"
+        candidate_row = list(human_row)
+        candidate_row[positions["摘要"]] = "sales sub probe"
+        for name in (
+            "借方科目",
+            "借方科目正式名称",
+            "貸方科目",
+            "貸方科目正式名称",
+            "借方消費税",
+            "貸方消費税",
+        ):
+            candidate_row[positions[name]] = ""
+        actual_row = list(human_row)
+        actual_row[positions["摘要"]] = "sales sub probe"
+        human = self.private / "sales-sub-human.csv"
+        candidate = self.private / "sales-sub-candidate.csv"
+        reexport = self.private / "sales-sub-reexport.csv"
+        self._write_official_rows(human, [human_row], preamble=True)
+        self._write_official_rows(candidate, [candidate_row])
+        self._write_official_rows(reexport, [actual_row], preamble=True)
+
+        comparison = compare_sales_10_subaccount_roundtrip(
+            human, candidate, reexport
+        )
+        result = comparison.privacy_safe_result()
+
+        self.assertTrue(comparison.passed)
+        self.assertTrue(comparison.parent_scoped_subaccount_match)
+        self.assertTrue(comparison.date_preserved)
+        self.assertTrue(comparison.identifier_flag_preserved)
+        self.assertEqual(
+            result["evidence_id"],
+            EVIDENCE_ID_MF_JDL_SALES_10_SUBACCOUNT_ROUNDTRIP,
+        )
+        self.assertEqual(result["evidence_level"], "VERIFIED_BY_REAL_IMPORT")
+        self.assertFalse(result["mapping_promotion_allowed"])
+        self.assertFalse(result["production_ready"])
+
+        actual_row[positions["貸方補助名称"]] = "別の架空補助"
+        self._write_official_rows(
+            self.private / "sales-sub-wrong-reexport.csv", [actual_row], preamble=True
+        )
+        mismatch = compare_sales_10_subaccount_roundtrip(
+            human, candidate, self.private / "sales-sub-wrong-reexport.csv"
+        )
+        self.assertFalse(mismatch.passed)
 
     def test_private_tax_evidence_parser_and_manifest_are_privacy_safe(self) -> None:
         evidence = self.private / "evidence.csv"
@@ -377,7 +520,7 @@ class JdlProbeWorkflowTests(unittest.TestCase):
             context_path=self.context_path,
         )
 
-    def _write_profile(self, path: Path, account_names=("現金", "普通預金", "当座預金", "小口現金"), include_subaccount=False, include_purchase_tax=False, include_sales_tax=False) -> None:
+    def _write_profile(self, path: Path, account_names=("現金", "普通預金", "当座預金", "小口現金"), include_subaccount=False, include_purchase_tax=False, include_sales_tax=False, subaccount_parent="普通預金", subaccount_name="テスト銀行", subaccount_output_code="0001") -> None:
         codes = {"現金": "1001", "普通預金": "1002", "当座預金": "1003", "小口現金": "1004", "消耗品費": "8001", "売上高": "4001"}
         now = datetime(2026, 10, 8, tzinfo=timezone.utc)
         profile = ConversionProfile(
@@ -396,11 +539,11 @@ class JdlProbeWorkflowTests(unittest.TestCase):
             },
             subaccount_context_mappings=(
                 {
-                    MappingKey(MappingType.SUBACCOUNT, "テスト銀行", "普通預金"): MappingValue(
-                        source_value="テスト銀行", target_value="テスト銀行",
+                    MappingKey(MappingType.SUBACCOUNT, subaccount_name, subaccount_parent): MappingValue(
+                        source_value=subaccount_name, target_value=subaccount_name,
                         status=MappingStatus.USER_CONFIRMED,
-                        parent_account="普通預金",
-                        metadata={"target_code": "1", "output_code": "0001", "output_name": "テスト銀行"},
+                        parent_account=subaccount_parent,
+                        metadata={"target_code": "1", "output_code": subaccount_output_code, "output_name": subaccount_name},
                     )
                 }
                 if include_subaccount else {}
@@ -430,7 +573,7 @@ class JdlProbeWorkflowTests(unittest.TestCase):
         )
         path.write_text(ConversionProfileStore(self.private / "unused").to_json_text(profile), encoding="utf-8")
 
-    def _write_context(self, path: Path, include_subaccount=False, account_names=("現金", "普通預金", "当座預金", "小口現金"), taxable_included=False) -> None:
+    def _write_context(self, path: Path, include_subaccount=False, account_names=("現金", "普通預金", "当座預金", "小口現金"), taxable_included=False, subaccount_parent="普通預金", subaccount_name="テスト銀行", subaccount_output_code="0001") -> None:
         codes = {"現金": "1001", "普通預金": "1002", "当座預金": "1003", "小口現金": "1004", "消耗品費": "8001", "売上高": "4001"}
         payload = {
             "schema_version": "1", "product": "JDL IBEX 出納帳", "version": "35.5",
@@ -439,10 +582,10 @@ class JdlProbeWorkflowTests(unittest.TestCase):
                 for name, code in codes.items() if name in account_names
             ],
             "subaccounts": ([{
-                "parent_account": "普通預金", "mapping_value": "テスト銀行",
-                "target_master_code": "1", "output_code": "0001",
-                "output_name": "テスト銀行", "output_representation_confirmed": True,
-                "parent_account_code": "1002", "target_name": "テスト銀行",
+                "parent_account": subaccount_parent, "mapping_value": subaccount_name,
+                "target_master_code": "1", "output_code": subaccount_output_code,
+                "output_name": subaccount_name, "output_representation_confirmed": True,
+                "parent_account_code": codes[subaccount_parent], "target_name": subaccount_name,
             }] if include_subaccount else []),
             "departments": [], "tax_processing_mode": "TAXABLE_TAX_INCLUDED" if taxable_included else "EXEMPT",
             "department_processing_enabled": False, "standard_taxation_confirmed": taxable_included,
