@@ -26,6 +26,7 @@ from .models import (
 
 
 TAX_SCOPE_PURCHASE = "仕　入"
+TAX_SCOPE_SALES = "売一種"
 TAX_CATEGORY_TEN_PERCENT = "10%"
 TAX_INPUT_METHOD_INTERNAL = "内税"
 EVIDENCE_IDS = {
@@ -39,6 +40,9 @@ EVIDENCE_IDS = {
     ),
     JdlEvidenceProfile.TAX_INCLUDED_1111: (
         "EVID-JDL-GENERATOR-1111-TAX-INCLUSIVE-001"
+    ),
+    JdlEvidenceProfile.TAX_SALES_10_INCLUDED_1111: (
+        "EVID-JDL-TAX-SALES-10-INCLUSIVE-HAND-001"
     ),
     JdlEvidenceProfile.TAX_EXCLUDED_1111: (
         "EVID-JDL-GENERATOR-1111-TAX-EXCLUSIVE-001"
@@ -299,6 +303,16 @@ class JdlOutputPreflight:
             self._validate_department(debit, credit, entry, errors)
         elif evidence is JdlEvidenceProfile.TAX_INCLUDED_1111:
             self._validate_tax(debit, credit, entry, included=True, errors=errors)
+        elif evidence is JdlEvidenceProfile.TAX_SALES_10_INCLUDED_1111:
+            self._validate_tax(
+                debit,
+                credit,
+                entry,
+                included=True,
+                errors=errors,
+                tax_side=Side.CREDIT,
+                expected_scope=TAX_SCOPE_SALES,
+            )
         elif evidence is JdlEvidenceProfile.TAX_EXCLUDED_1111:
             self._validate_tax(debit, credit, entry, included=False, errors=errors)
 
@@ -362,6 +376,8 @@ class JdlOutputPreflight:
         *,
         included: bool,
         errors: list[ValidationResult],
+        tax_side: Side = Side.DEBIT,
+        expected_scope: str = TAX_SCOPE_PURCHASE,
     ) -> None:
         expected_mode = (
             JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED
@@ -373,14 +389,16 @@ class JdlOutputPreflight:
             errors.append(self._error("JDL-OUT-TAX-COMPANY-PROFILE", "原則課税・個別対応方式の確認が必要です。", "tax_processing", entry))
         if debit.sub_account or credit.sub_account or debit.department or credit.department:
             errors.append(self._error("JDL-OUT-TAX-COMBINATION", "検証済み税profileに補助・部門を併用できません。", "evidence_profile", entry))
-        info = debit.tax_info
-        if info is None or info.category != TAX_CATEGORY_TEN_PERCENT or info.metadata.get("jdl_tax_scope") != TAX_SCOPE_PURCHASE:
+        tax_line = debit if tax_side is Side.DEBIT else credit
+        opposite_line = credit if tax_side is Side.DEBIT else debit
+        info = tax_line.tax_info
+        if info is None or info.category != TAX_CATEGORY_TEN_PERCENT or info.metadata.get("jdl_tax_scope") != expected_scope:
             errors.append(self._error("JDL-OUT-TAX-LITERAL", "検証済み課区・税区のexact literalが必要です。", "tax", entry))
             return
         if info.reduced_rate is True or info.rate not in {None, Decimal("10")}:
             errors.append(self._error("JDL-OUT-TAX-RATE", "v0は検証済み10%通常税率だけ対応します。", "tax", entry))
-        if self._nonempty_tax(credit.tax_info):
-            errors.append(self._error("JDL-OUT-CREDIT-TAX", "貸方側課税は未検証です。", "tax", entry))
+        if self._nonempty_tax(opposite_line.tax_info):
+            errors.append(self._error("JDL-OUT-OPPOSITE-TAX", "Evidence対象外sideの課税値は使用できません。", "tax", entry))
         if info.metadata.get("jdl_transaction_account"):
             errors.append(self._error("JDL-OUT-TRANSACTION-ACCOUNT", "取引科目を必要とするcaseは未対応です。", "tax", entry))
         method = info.metadata.get("jdl_tax_input_method")
@@ -392,7 +410,7 @@ class JdlOutputPreflight:
         elif info.tax_amount < 0 or info.tax_amount != info.tax_amount.to_integral_value():
             errors.append(self._error("JDL-OUT-TAX-AMOUNT", "消費税額は0以上の整数円で指定してください。", "tax", entry))
         else:
-            observed_tax_amount = (debit.amount * Decimal("10") / Decimal("110")).quantize(
+            observed_tax_amount = (tax_line.amount * Decimal("10") / Decimal("110")).quantize(
                 Decimal("1"),
                 rounding=ROUND_DOWN,
             )

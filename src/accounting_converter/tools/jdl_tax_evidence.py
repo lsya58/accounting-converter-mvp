@@ -167,6 +167,8 @@ class JdlTaxRoundTripComparison:
     description_preserved: bool
     balance_preserved: bool
     candidate_blank_fields_normalized_by_jdl: tuple[str, ...]
+    probe_case: str = "tax_purchase_10"
+    evidence_id: str = EVIDENCE_ID_MF_JDL_PURCHASE_10_ROUNDTRIP
 
     @property
     def passed(self) -> bool:
@@ -185,12 +187,12 @@ class JdlTaxRoundTripComparison:
     def privacy_safe_result(self) -> dict[str, object]:
         return {
             "schema_version": "1",
-            "probe_case": "tax_purchase_10",
+            "probe_case": self.probe_case,
             "result_status": "PASS" if self.passed else "MISMATCH",
             "imported": True,
             "reexport_present": True,
             "comparison_pass": self.passed,
-            "evidence_id": EVIDENCE_ID_MF_JDL_PURCHASE_10_ROUNDTRIP,
+            "evidence_id": self.evidence_id,
             "evidence_level": (
                 "VERIFIED_BY_REAL_IMPORT" if self.passed else "OBSERVED"
             ),
@@ -219,120 +221,83 @@ class JdlTaxRoundTripComparison:
 
 
 def compare_purchase_10_roundtrip(
-    human_evidence: Path,
-    candidate: Path,
-    reexport: Path,
+    human_evidence: Path, candidate: Path, reexport: Path
 ) -> JdlTaxRoundTripComparison:
     analyze_purchase_10_inclusive_evidence(human_evidence)
+    return _compare_tax_roundtrip(
+        human_evidence, candidate, reexport,
+        probe_case="tax_purchase_10",
+        evidence_id=EVIDENCE_ID_MF_JDL_PURCHASE_10_ROUNDTRIP,
+        tax_prefix="借方", expected_scope="仕　入",
+    )
+
+
+def compare_sales_10_roundtrip(
+    human_evidence: Path, candidate: Path, reexport: Path
+) -> JdlTaxRoundTripComparison:
+    analyze_scoped_tax_human_evidence(human_evidence, "tax_sales_10")
+    return _compare_tax_roundtrip(
+        human_evidence, candidate, reexport,
+        probe_case="tax_sales_10",
+        evidence_id="EVID-JDL-MF-TAX-SALES-10-ROUNDTRIP-001",
+        tax_prefix="貸方", expected_scope="売一種",
+    )
+
+
+def _compare_tax_roundtrip(
+    human_evidence: Path, candidate: Path, reexport: Path, *,
+    probe_case: str, evidence_id: str, tax_prefix: str, expected_scope: str,
+) -> JdlTaxRoundTripComparison:
     human_raw, human_rows = _read_official_rows(human_evidence)
     candidate_raw, candidate_rows = _read_official_rows(candidate)
     reexport_raw, reexport_rows = _read_official_rows(reexport)
     if len(human_rows) != 1 or len(candidate_rows) != 1:
         raise JdlTaxEvidenceError("human evidence and candidate must contain one row")
-
     header = jdl_ibex_cashbook_official_journal_import_spec().column_names
-    positions = {name: index for index, name in enumerate(header)}
-    human = human_rows[0]
-    expected = candidate_rows[0]
+    pos = {name: index for index, name in enumerate(header)}
+    human, expected = human_rows[0], candidate_rows[0]
+    other = "貸方" if tax_prefix == "借方" else "借方"
     if (
-        expected[positions["//識別フラグ"]] != "1111"
-        or expected[positions["借方課区"]] != "仕　入"
-        or expected[positions["借方税区"]] != "10%"
-        or expected[positions["借方税入力方法"]] != ""
-        or expected[positions["借方消費税"]] != ""
-        or any(
-            expected[positions[name]]
-            for name in (
-                "借方補助",
-                "借方補助名称",
-                "貸方補助",
-                "貸方補助名称",
-                "借方部門コード",
-                "借方部門名称",
-                "貸方部門コード",
-                "貸方部門名称",
-            )
-        )
+        expected[pos["//識別フラグ"]] != "1111"
+        or expected[pos[f"{tax_prefix}課区"]] != expected_scope
+        or expected[pos[f"{tax_prefix}税区"]] != "10%"
+        or expected[pos[f"{tax_prefix}税入力方法"]] != ""
+        or expected[pos[f"{tax_prefix}消費税"]] != ""
+        or any(expected[pos[f"{other}{name}"]] for name in ("課区", "税区", "税入力方法", "消費税"))
+        or any(expected[pos[name]] for name in ("借方補助", "借方補助名称", "貸方補助", "貸方補助名称", "借方部門名称", "貸方部門名称"))
     ):
-        raise JdlTaxEvidenceError("candidate is outside the verified probe scope")
-    identity_fields = (
-        "日付",
-        "借方科目名称",
-        "貸方科目名称",
-        "借方金額",
-        "貸方金額",
-        "摘要",
-    )
-    matches = [
-        row
-        for row in reexport_rows
-        if all(row[positions[name]] == expected[positions[name]] for name in identity_fields)
-    ]
+        raise JdlTaxEvidenceError("candidate is outside the scoped tax evidence")
+    identity = ("日付", "借方科目名称", "貸方科目名称", "借方金額", "貸方金額", "摘要")
+    matches = [row for row in reexport_rows if all(row[pos[name]] == expected[pos[name]] for name in identity)]
     actual = matches[0] if len(matches) == 1 else None
-    if actual is None:
-        return JdlTaxRoundTripComparison(
-            _sha256(human_raw),
-            _sha256(candidate_raw),
-            _sha256(reexport_raw),
-            len(reexport_rows),
-            len(matches),
-            False,
-            False,
-            False,
-            False,
-            False,
-            False,
-            (),
-        )
-
-    account_fields = (
-        "借方科目",
-        "借方科目名称",
-        "借方科目正式名称",
-        "貸方科目",
-        "貸方科目名称",
-        "貸方科目正式名称",
-    )
-    amount_fields = ("借方金額", "貸方金額")
-    debit_tax_fields = ("借方課区", "借方税区", "借方税入力方法", "借方消費税")
-    credit_tax_fields = ("貸方課区", "貸方税区", "貸方税入力方法", "貸方消費税")
-    normalized = tuple(
+    account_fields = ("借方科目", "借方科目名称", "借方科目正式名称", "貸方科目", "貸方科目名称", "貸方科目正式名称")
+    normalized = () if actual is None else tuple(
         category
         for category, fields in (
             ("account_master_identity", account_fields),
             ("tax_amount_reexport_representation", ("借方消費税", "貸方消費税")),
         )
-        if any(
-            expected[positions[name]] == "" and actual[positions[name]] != ""
-            for name in fields
-        )
+        if any(expected[pos[name]] == "" and actual[pos[name]] != "" for name in fields)
     )
+    common = dict(
+        human_sha256=_sha256(human_raw), candidate_sha256=_sha256(candidate_raw),
+        reexport_sha256=_sha256(reexport_raw), reexport_journal_count=len(reexport_rows),
+        candidate_match_count=len(matches), candidate_blank_fields_normalized_by_jdl=normalized,
+        probe_case=probe_case, evidence_id=evidence_id,
+    )
+    if actual is None:
+        return JdlTaxRoundTripComparison(account_identity_match=False, amount_match=False, debit_tax_fields_match=False, credit_tax_fields_match=False, description_preserved=False, balance_preserved=False, **common)
+    debit_tax = ("借方課区", "借方税区", "借方税入力方法", "借方消費税")
+    credit_tax = ("貸方課区", "貸方税区", "貸方税入力方法", "貸方消費税")
     return JdlTaxRoundTripComparison(
-        human_sha256=_sha256(human_raw),
-        candidate_sha256=_sha256(candidate_raw),
-        reexport_sha256=_sha256(reexport_raw),
-        reexport_journal_count=len(reexport_rows),
-        candidate_match_count=1,
-        account_identity_match=_fields_equal(human, actual, positions, account_fields),
-        amount_match=(
-            _fields_equal(human, actual, positions, amount_fields)
-            and _fields_equal(expected, actual, positions, amount_fields)
-        ),
-        debit_tax_fields_match=_fields_equal(
-            human, actual, positions, debit_tax_fields
-        ),
-        credit_tax_fields_match=_fields_equal(
-            human, actual, positions, credit_tax_fields
-        ),
-        description_preserved=(
-            expected[positions["摘要"]] == actual[positions["摘要"]]
-        ),
-        balance_preserved=(
-            actual[positions["借方金額"]] == actual[positions["貸方金額"]]
-        ),
-        candidate_blank_fields_normalized_by_jdl=normalized,
+        account_identity_match=_fields_equal(human, actual, pos, account_fields),
+        amount_match=_fields_equal(expected, actual, pos, ("借方金額", "貸方金額")),
+        debit_tax_fields_match=_fields_equal(human, actual, pos, debit_tax),
+        credit_tax_fields_match=_fields_equal(human, actual, pos, credit_tax),
+        description_preserved=expected[pos["摘要"]] == actual[pos["摘要"]],
+        balance_preserved=actual[pos["借方金額"]] == actual[pos["貸方金額"]],
+        **common,
     )
-
 
 def _read_official_rows(path: Path) -> tuple[bytes, list[list[str]]]:
     raw = path.read_bytes()

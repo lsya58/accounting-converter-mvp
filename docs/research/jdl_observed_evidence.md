@@ -878,6 +878,8 @@
 
 Human Exportはexact target表現のEvidenceだが、App candidateのImport/re-exportではない。case-specific preflightとround-tripが完了するまでcandidate generation、mapping promotion、production READYを許可しない。既存`EVID-JDL-MF-TAX-PURCHASE-10-ROUNDTRIP-001`だけが限定的な`VERIFIED_BY_REAL_IMPORT`を維持する。
 
+課税売上10%にはcredit-side専用のcase-specific preflightを追加し、Human Evidenceとexact taxable/inclusive Contextに限定したApp-generated candidateを作成できる。状態は`EVIDENCE_GATED_EXPERIMENTAL`であり、実Import前なのでEvidence levelは`HUMAN_OBSERVED`のまま、mapping promotionとproduction利用は禁止する。他の4税ケースはcandidate generation BLOCKを維持する。
+
 ## JDL subaccount export batch
 
 - `EVID-JDL-SUBACCOUNT-BOTH-SIDES-HAND-001`: 30列Exportで借方・貸方双方のparent-scoped subaccount表現を観測。PDFの4桁表示と異なりCSV codeは1桁表現だった。表示とCSV表現を同一規則へ一般化しない。
