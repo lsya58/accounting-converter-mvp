@@ -11,6 +11,7 @@
 | JDL IBEX 出納帳35.5 科目一覧PDF（科目印刷、補助表示ON、使用中のみ=No） | Code付き科目のcode/name、略名称、借貸、使用状態、および明示的な親marker直下の4桁補助code/nameを観測できるmaster candidate | `OBSERVED_PRINTED_MASTER`。通常のcodeなし行は科目・補助として昇格しない。正式名称と30列CSVの短縮/正式名称の対応、部門、会社税設定は別Evidenceが必要 |
 | Explicit JDL master export | Candidate for `FULL_MASTER` after format and runtime verification | 機械可読な正式master exportは未確認 |
 | JDL IBEX journal CSV, observed 30-column form | Used account code, name, and formal name; used subaccount parent relation; used department code/name | `OBSERVED_USED_MASTER` only; unused master entries are absent |
+| JDL IBEX 出納帳35.5 部門情報一覧PDF（部門登録から印刷） | 対象会社の部門code/name/略名称と印刷されたoptional設定欄 | `OBSERVED_PRINTED_MASTER`。1部門・1ページのみ観測。output representation、完全性、略名称生成規則は未確認 |
 | JDL Accounting journal-list CSV, observed 21-column form | Read-only journal verification evidence | Different structure; not an IBEX import/master source |
 | Total trial balance CSV | Account-like code/name population is observable | The observed header does not establish all identity fields required by `JdlAccountIdentity` |
 | Existing human-confirmed target context | Exact local snapshot for its bound company/profile | Must not be silently substituted or reused across companies |
@@ -30,6 +31,7 @@
 - Observed subaccounts and departments remain observations. They are not promoted to confirmed output master identities without the missing runtime evidence.
 - 科目一覧PDFでは借方属性・貸方属性の親の双方で同じexplicit parent/child構造を観測した。補助identityは親科目を必須contextとし、同一parent内だけでduplicate/conflictを判定する。
 - 30列仕訳CSVから得られる部門は使用済み値だけの `OBSERVED_USED_MASTER` であり、未使用部門を含む一覧や `FULL_MASTER` ではない。
+- 部門情報一覧PDF由来のdraftは部門identityを保持するが、output codeを未確認として空にし、`production_usable=False`を維持する。
 - Tax processing is never inferred from journal rows.
 - An observed context draft is `UNCONFIRMED`, fails production validation by design, and cannot make a conversion route READY.
 

@@ -2,23 +2,25 @@
 
 ## Current conclusion
 
-JDL IBEX 出納帳35.5の部門について、追跡可能なEvidenceから確認できるのは、30列仕訳CSVに現れた使用済みcode/nameと、限定的なUI/runtime実験だけである。全件を取得できる正式exportまたは部門一覧PDFは未確認である。
+JDL IBEX 出納帳35.5の部門について、30列仕訳CSVに現れた使用済みcode/name、限定的なUI/runtime実験、および部門登録から印刷した部門情報一覧PDFを確認した。PDFは対象synthetic companyのprinted master candidateとして扱うが、1部門・1ページだけのEvidenceなので `FULL_MASTER` とはしない。
 
 | Source candidate | Current state | Completeness |
 |---|---|---|
 | 正式な部門master export | 未確認 | `UNKNOWN` |
-| 部門一覧の印刷/PDF | 未確認 | `UNKNOWN` |
+| 部門登録から印刷した部門情報一覧PDF | 1ページ・1部門を観測 | `OBSERVED_PRINTED_MASTER` |
 | JDL 30列仕訳CSV | code/nameを観測可能 | `OBSERVED_USED_MASTER` |
 | 保存済みJDL Target Context | local contextは存在するが、監査対象contextに部門masterなし | context-specific only |
 | JDL画面・限定Import実験 | 部門処理有効化と限定値のruntime挙動を観測 | UI/runtime evidence only |
 
-30列仕訳CSVの観測値を全masterへ昇格しない。異なる会社・取得元を無条件にmergeせず、code/name conflictは明示的に保持する。観測部門はprovenance付きのread-only candidateとして扱い、正式Contextへの採用には対象会社での明示確認が必要である。
+部門PDFではcode、名称、略名称、集計部門、配賦元、配賦基準、推定利益率の表示欄を観測した。codeはPDF上のexact表現を保持し、補助科目の4桁表現を適用しない。略名称の自動生成規則、長さ、truncate規則は推測しない。
+
+30列仕訳CSVの観測値を全masterへ昇格しない。異なる会社・取得元を無条件にmergeせず、code/name conflictは明示的に保持する。今回のPDF identityは既存journal observationsと一致せず、同一codeの別名称が存在したが、複数事業所由来なのでPDFの誤りやglobal conflictとは判定しない。観測部門はprovenance付きのread-only candidateとして扱い、正式Contextへの採用には対象会社での明示確認が必要である。
 
 ## Existing architecture
 
 既存の `JournalLine.department`、`MappingType.DEPARTMENT`、`MappingRequirementExtractor`、`ConversionProfile.department_mappings`、`JdlDepartmentIdentity`、`JdlTargetContext.departments` を再利用できる。Context validationとJDL output preflightは部門処理有効、exact code/name、確認済みoutput identityを検査するため、parallel modelは不要である。
 
-会社設定GUIは現在、部門要件を未解決として保持できるが、部門masterを取り込んで確認する製品UIは未実装である。将来はJSON pathを見せず、科目一覧PDF、補助、部門、税処理の取得状態をapplication serviceから表示する。
+会社設定GUIは現在、部門要件を未解決として保持できるが、部門PDFを取り込んで確認する製品UIは未実装である。将来はJSON pathを見せず、科目一覧PDF、補助、部門、税処理の取得状態をapplication serviceから表示する。PDF由来draftは部門code/name/略名称を保持するが、output representation未確認としてproduction利用をBLOCKする。
 
 ## Money Forward impact
 
@@ -26,4 +28,4 @@ private実業務仕訳帳で解析できた範囲では、部門が設定され�
 
 ## Next human evidence
 
-JDL実機の既知の部門登録一覧画面を開き、画面内または関連HELPに「印刷」「一覧」「CSV出力」の導線があるかだけ確認する。取り込みや自動操作は行わない。導線があれば、完全架空テスト事業所で未使用部門を含められるかを確認してからEvidenceを取得する。導線がなければ、一覧画面全体とHELPの取得可能項目を記録し、正式exportが存在すると推測しない。
+同じsynthetic test companyへ完全架空の2件目の部門を追加し、再度「部門登録 -> 印刷」を実行する。目的は1部門1行、複数行の境界、code/name/略名称の重複検査、および登録済み部門が一覧へ追加されることの再現確認である。配賦・集計設定はまだ変更せず、変更変数を部門件数だけに限定する。

@@ -12,6 +12,7 @@ from accounting_converter.adapters.output.jdl import (
     JdlAccountIdentity,
     JdlContextConfirmationState,
     JdlContextProvenance,
+    JdlDepartmentIdentity,
     JdlTargetContext,
     JdlTargetContextValidator,
     JdlSubaccountIdentity,
@@ -53,6 +54,17 @@ class JdlObservedDepartment:
 
 
 @dataclass(frozen=True)
+class JdlPrintedDepartment:
+    code: str
+    name: str
+    abbreviation: str
+    aggregation_department: str = ""
+    allocation_source: str = ""
+    allocation_basis: str = ""
+    estimated_profit_rate: str = ""
+
+
+@dataclass(frozen=True)
 class JdlPrintedAccount:
     code: str
     name: str
@@ -86,6 +98,7 @@ class JdlMasterObservation:
     conflicts: tuple[JdlMasterConflict, ...] = ()
     completeness: JdlMasterCompleteness = JdlMasterCompleteness.OBSERVED_USED_MASTER
     printed_accounts: tuple[JdlPrintedAccount, ...] = ()
+    printed_departments: tuple[JdlPrintedDepartment, ...] = ()
     excluded_uncoded_printed_row_count: int = 0
 
     def privacy_safe_summary(self) -> dict[str, int | str]:
@@ -96,6 +109,7 @@ class JdlMasterObservation:
             "subaccount_identity_count": len(self.subaccounts),
             "department_identity_count": len(self.departments),
             "printed_account_count": len(self.printed_accounts),
+            "printed_department_count": len(self.printed_departments),
             "printed_enabled_count": sum(
                 item.enabled for item in self.printed_accounts
             ),
@@ -231,6 +245,9 @@ class JdlMasterObservationService:
         printed_accounts = {
             item for observation in items for item in observation.printed_accounts
         }
+        printed_departments = {
+            item for observation in items for item in observation.printed_departments
+        }
         conflicts: list[JdlMasterConflict] = [
             conflict for observation in items for conflict in observation.conflicts
         ]
@@ -365,6 +382,9 @@ class JdlMasterObservationService:
             printed_accounts=tuple(
                 sorted(printed_accounts, key=lambda item: (item.code, item.name))
             ),
+            printed_departments=tuple(
+                sorted(printed_departments, key=lambda item: (item.code, item.name))
+            ),
             excluded_uncoded_printed_row_count=sum(
                 item.excluded_uncoded_printed_row_count for item in items
             ),
@@ -399,6 +419,17 @@ class JdlMasterObservationService:
                 for item in observation.subaccounts
                 if item.evidence_scope == "PRINTED_EXPLICIT_PARENT"
             ),
+            departments=tuple(
+                JdlDepartmentIdentity(
+                    mapping_value=item.name,
+                    target_master_code=item.code,
+                    output_code="",
+                    output_name=item.abbreviation,
+                    target_formal_name=item.name,
+                )
+                for item in observation.printed_departments
+            ),
+            department_processing_enabled=False,
             confirmation_state=JdlContextConfirmationState.UNCONFIRMED,
             provenance=JdlContextProvenance.UNCONFIRMED,
             no_fuzzy_matching=True,

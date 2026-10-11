@@ -834,6 +834,28 @@
   - pageを跨いだparent継続、未使用補助、実取込先会社の完全な補助masterは未確認
   - read-only printed master Evidenceであり、production output semantics、Registry、READY範囲は変更しない
 
+## EVID-JDL-MASTER-DEPARTMENT-PRINT-001
+
+- source: JDL IBEX 出納帳35.5のsynthetic test companyで、部門処理を有効化し、部門登録から印刷した部門情報一覧PDF
+- evidence level: `OBSERVED_PRINTED_MASTER`
+- privacy-safe structure:
+  - 1 page / 1 explicit department row
+  - department code、name、abbreviationを観測
+  - aggregation department、allocation source、allocation basis、estimated profit rateの表示欄を観測
+  - malformed/duplicate/conflict 0
+- observations:
+  - PDF上のcodeは1桁表現であり、そのexact representationを保持する
+  - Human入力後にJDLが略名称を自動入力したが、生成規則は未確認
+  - 今回の行ではaggregation departmentとallocation sourceは空欄、数値表示欄は非空
+- source separation:
+  - department PDFは対象synthetic companyのprinted master candidate
+  - 30-column journal CSVは複数事業所由来のused/runtime observation
+  - 同一codeで別名称のjournal observationをglobal conflictとしてmergeしない
+- limits:
+  - 1部門だけなので `FULL_MASTER`、複数行安定性、未使用部門範囲を断定しない
+  - code生成、略名称生成、配賦/集計設定、production output representationを推測しない
+  - unconfirmed Context draftへ保持できるが、production Registry / READY scopeは変更しない
+
 ## EVID-JDL-003
 
 - source: JDL会計 仕訳一覧CSV
