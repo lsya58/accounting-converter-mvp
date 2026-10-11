@@ -18,9 +18,92 @@ EVIDENCE_ID_MF_JDL_PURCHASE_10_ROUNDTRIP = (
     "EVID-JDL-MF-TAX-PURCHASE-10-ROUNDTRIP-001"
 )
 
+HUMAN_TAX_CASES = {
+    "tax_sales_10": ("CREDIT", "売一種", "10%", "EVID-JDL-TAX-SALES-10-INCLUSIVE-HAND-001"),
+    "tax_purchase_reduced_8": ("DEBIT", "仕　入", "軽減8%", "EVID-JDL-TAX-PURCHASE-REDUCED-8-INCLUSIVE-HAND-001"),
+    "tax_sales_reduced_8": ("CREDIT", "売一種", "軽減8%", "EVID-JDL-TAX-SALES-REDUCED-8-INCLUSIVE-HAND-001"),
+    "tax_non_taxable_purchase": ("DEBIT", "非仕入", "", "EVID-JDL-TAX-NONTAXABLE-PURCHASE-HAND-001"),
+    "tax_out_of_scope": ("DEBIT", "", "", "EVID-JDL-TAX-OUT-OF-SCOPE-HAND-001"),
+}
+
 
 class JdlTaxEvidenceError(ValueError):
     pass
+
+
+@dataclass(frozen=True)
+class JdlScopedTaxHumanObservation:
+    case_name: str
+    evidence_id: str
+    sha256: str
+    byte_size: int
+    side: str
+    tax_scope_present: bool
+    tax_category_present: bool
+    balanced: bool
+
+    def privacy_safe_manifest(self) -> dict[str, object]:
+        return {
+            "case_name": self.case_name,
+            "evidence_id": self.evidence_id,
+            "sha256": self.sha256,
+            "byte_size": self.byte_size,
+            "evidence_level": "HUMAN_OBSERVED",
+            "candidate_readiness": "BLOCKED_UNTIL_CASE_SPECIFIC_PREFLIGHT",
+            "side": self.side,
+            "tax_scope_present": self.tax_scope_present,
+            "tax_category_present": self.tax_category_present,
+            "balanced": self.balanced,
+            "mapping_promotion_allowed": False,
+            "NOT_FOR_PRODUCTION": True,
+        }
+
+
+def analyze_scoped_tax_human_evidence(
+    path: Path, case_name: str
+) -> JdlScopedTaxHumanObservation:
+    try:
+        side, expected_scope, expected_category, evidence_id = HUMAN_TAX_CASES[
+            case_name
+        ]
+    except KeyError as exc:
+        raise JdlTaxEvidenceError("unknown scoped tax evidence case") from exc
+    raw, rows = _read_official_rows(path)
+    if len(rows) != 1:
+        raise JdlTaxEvidenceError("human tax evidence must contain exactly one row")
+    header = jdl_ibex_cashbook_official_journal_import_spec().column_names
+    positions = {name: index for index, name in enumerate(header)}
+    row = rows[0]
+    prefix = "借方" if side == "DEBIT" else "貸方"
+    other = "貸方" if side == "DEBIT" else "借方"
+    if row[positions["//識別フラグ"]] != "1111":
+        raise JdlTaxEvidenceError("scoped tax evidence must use observed flag 1111")
+    if (
+        row[positions[f"{prefix}課区"]] != expected_scope
+        or row[positions[f"{prefix}税区"]] != expected_category
+        or row[positions[f"{prefix}税入力方法"]] != ""
+        or row[positions[f"{prefix}消費税"]] != "0"
+    ):
+        raise JdlTaxEvidenceError("tax fields do not match the scoped human evidence")
+    if any(
+        row[positions[f"{other}{name}"]] not in {"", "0"}
+        for name in ("課区", "税区", "税入力方法", "消費税")
+    ):
+        raise JdlTaxEvidenceError("unexpected tax fields exist on the opposite side")
+    debit = row[positions["借方金額"]]
+    credit = row[positions["貸方金額"]]
+    if not debit.isdigit() or debit != credit:
+        raise JdlTaxEvidenceError("human tax evidence must be balanced integer yen")
+    return JdlScopedTaxHumanObservation(
+        case_name=case_name,
+        evidence_id=evidence_id,
+        sha256=hashlib.sha256(raw).hexdigest(),
+        byte_size=len(raw),
+        side=side,
+        tax_scope_present=bool(expected_scope),
+        tax_category_present=bool(expected_category),
+        balanced=True,
+    )
 
 
 @dataclass(frozen=True)

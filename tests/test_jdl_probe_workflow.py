@@ -30,6 +30,8 @@ from accounting_converter.tools.jdl_tax_evidence import (
     EVIDENCE_ID_JDL_PURCHASE_10_INCLUSIVE_HAND,
     EVIDENCE_ID_MF_JDL_PURCHASE_10_ROUNDTRIP,
     JdlTaxEvidenceError,
+    HUMAN_TAX_CASES,
+    analyze_scoped_tax_human_evidence,
     analyze_purchase_10_inclusive_evidence,
     compare_purchase_10_roundtrip,
 )
@@ -375,6 +377,39 @@ class JdlProbeWorkflowTests(unittest.TestCase):
             "no_automatic_replacement": True,
         }
         path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    def test_scoped_human_tax_evidence_cases_are_observed_not_promoted(self) -> None:
+        header = jdl_ibex_cashbook_official_journal_import_spec().column_names
+        positions = {name: index for index, name in enumerate(header)}
+        for case_name, (side, scope, category, evidence_id) in HUMAN_TAX_CASES.items():
+            with self.subTest(case_name=case_name):
+                row = self._tax_row("架空証拠摘要", reexport=True)
+                for prefix in ("借方", "貸方"):
+                    row[positions[f"{prefix}課区"]] = ""
+                    row[positions[f"{prefix}税区"]] = ""
+                prefix = "借方" if side == "DEBIT" else "貸方"
+                row[positions[f"{prefix}課区"]] = scope
+                row[positions[f"{prefix}税区"]] = category
+                path = self.private / f"{case_name}.csv"
+                self._write_official_rows(path, [row], preamble=True)
+
+                observed = analyze_scoped_tax_human_evidence(path, case_name)
+
+                self.assertEqual(observed.evidence_id, evidence_id)
+                self.assertEqual(
+                    observed.privacy_safe_manifest()["evidence_level"],
+                    "HUMAN_OBSERVED",
+                )
+                self.assertFalse(
+                    observed.privacy_safe_manifest()["mapping_promotion_allowed"]
+                )
+
+    def test_scoped_human_tax_evidence_does_not_guess_other_side(self) -> None:
+        row = self._tax_row("架空証拠摘要", reexport=True)
+        path = self.private / "wrong-side.csv"
+        self._write_official_rows(path, [row], preamble=True)
+        with self.assertRaises(JdlTaxEvidenceError):
+            analyze_scoped_tax_human_evidence(path, "tax_sales_10")
 
     @staticmethod
     def _write_tax_evidence(path: Path) -> None:

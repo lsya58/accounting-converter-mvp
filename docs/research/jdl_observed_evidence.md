@@ -856,6 +856,35 @@
   - code生成、略名称生成、配賦/集計設定、production output representationを推測しない
   - unconfirmed Context draftへ保持できるが、production Registry / READY scopeは変更しない
 
+## EVID-JDL-MASTER-DEPARTMENT-PRINT-002
+
+- source: 同じsynthetic companyへ2件目の完全架空部門を追加して再印刷した部門情報一覧PDF
+- evidence level: `OBSERVED_PRINTED_MASTER`
+- result: 1 page / 2 consecutive department rows / malformed 0 / conflict 0
+- PDF1の1件からPDF2の2件へ増え、各行のcode/name/略名称とoptional表示欄を独立して解析できた
+- exact code表現を保持し、略名称生成、全master完全性、allocation semantics、output representationは一般化しない
+
+## JDL tax human-export batch
+
+次の5ケースをJDL IBEX 出納帳35.5、課税・税込、1D1CのHuman Exportとしてraw確認した。すべてCP932、BOMなし、CRLF、official 30 columns、flag `1111`、貸借一致である。
+
+| Evidence ID | Case | Observed side | Level |
+|---|---|---|---|
+| `EVID-JDL-TAX-SALES-10-INCLUSIVE-HAND-001` | sales 10% | credit | `HUMAN_OBSERVED` |
+| `EVID-JDL-TAX-PURCHASE-REDUCED-8-INCLUSIVE-HAND-001` | reduced purchase 8% | debit | `HUMAN_OBSERVED` |
+| `EVID-JDL-TAX-SALES-REDUCED-8-INCLUSIVE-HAND-001` | reduced sales 8% | credit | `HUMAN_OBSERVED` |
+| `EVID-JDL-TAX-NONTAXABLE-PURCHASE-HAND-001` | non-taxable purchase | debit | `HUMAN_OBSERVED` |
+| `EVID-JDL-TAX-OUT-OF-SCOPE-HAND-001` | out of scope | debit selection; export tax labels blank | `HUMAN_OBSERVED` |
+
+Human Exportはexact target表現のEvidenceだが、App candidateのImport/re-exportではない。case-specific preflightとround-tripが完了するまでcandidate generation、mapping promotion、production READYを許可しない。既存`EVID-JDL-MF-TAX-PURCHASE-10-ROUNDTRIP-001`だけが限定的な`VERIFIED_BY_REAL_IMPORT`を維持する。
+
+## JDL subaccount export batch
+
+- `EVID-JDL-SUBACCOUNT-BOTH-SIDES-HAND-001`: 30列Exportで借方・貸方双方のparent-scoped subaccount表現を観測。PDFの4桁表示と異なりCSV codeは1桁表現だった。表示とCSV表現を同一規則へ一般化しない。
+- `EVID-JDL-SUBACCOUNT-TAX-DEBIT-HAND-001`: debit sideでparent account + subaccount + purchase tax fieldsの共存を観測。
+- `EVID-JDL-SUBACCOUNT-TAX-CREDIT-HAND-001`: credit sideでparent account + subaccount + sales tax fieldsの共存を観測。
+- いずれもHuman Export Evidenceであり、App-generated Import round-trip、production output、automatic mappingは未確認。
+
 ## EVID-JDL-003
 
 - source: JDL会計 仕訳一覧CSV

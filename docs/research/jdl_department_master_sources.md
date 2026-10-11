@@ -4,6 +4,8 @@
 
 JDL IBEX 出納帳35.5の部門について、30列仕訳CSVに現れた使用済みcode/name、限定的なUI/runtime実験、および部門登録から印刷した部門情報一覧PDFを確認した。PDFは対象synthetic companyのprinted master candidateとして扱うが、1部門・1ページだけのEvidenceなので `FULL_MASTER` とはしない。
 
+後続PDFでは同じ1ページに2部門が1行ずつ連続表示され、code/name/略名称、optional表示欄、malformed 0、conflict 0を再観測した。Evidence IDは `EVID-JDL-MASTER-DEPARTMENT-PRINT-002`。複数行構造は確認できたが、引き続き `OBSERVED_PRINTED_MASTER` であり `FULL_MASTER` ではない。
+
 | Source candidate | Current state | Completeness |
 |---|---|---|
 | 正式な部門master export | 未確認 | `UNKNOWN` |

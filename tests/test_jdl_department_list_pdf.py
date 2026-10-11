@@ -60,6 +60,20 @@ class JdlDepartmentListPdfTextParserTests(unittest.TestCase):
         self.assertEqual(item.allocation_basis, "0.00")
         self.assertEqual(item.estimated_profit_rate, "0.00")
 
+    def test_two_departments_are_parsed_as_two_consecutive_rows(self) -> None:
+        result = self._parse(
+            self._page(
+                "1  架空部門A  架空A  0.00  0.00\n"
+                "2  架空部門B  架空B  0.00  0.00"
+            )
+        )
+        draft = JdlMasterObservationService().build_unconfirmed_context_draft(result)
+
+        self.assertEqual([item.code for item in result.printed_departments], ["1", "2"])
+        self.assertEqual(len(draft.context.departments), 2)
+        self.assertFalse(result.conflicts)
+        self.assertFalse(draft.production_usable)
+
     def test_malformed_row_is_blocked(self) -> None:
         with self.assertRaises(JdlDepartmentListPdfParseError):
             self._parse(self._page("1  架空部門"))
