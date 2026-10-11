@@ -31,6 +31,8 @@ class JdlMasterObservationError(ValueError):
 
 class JdlMasterCompleteness(str, Enum):
     OBSERVED_USED_MASTER = "OBSERVED_USED_MASTER"
+    OBSERVED_PRINTED_MASTER = "OBSERVED_PRINTED_MASTER"
+    PARTIAL_MASTER = "PARTIAL_MASTER"
     FULL_MASTER = "FULL_MASTER"
 
 
@@ -49,10 +51,23 @@ class JdlObservedDepartment:
 
 
 @dataclass(frozen=True)
+class JdlPrintedAccount:
+    code: str
+    name: str
+    abbreviation: str
+    normal_balance: str
+    enabled: bool
+    has_observed_setting_values: bool = False
+
+
+@dataclass(frozen=True)
 class JdlMasterSourceEvidence:
     sha256: str
     source_kind: str
     data_record_count: int
+    page_count: int | None = None
+    acquisition_method: str | None = None
+    human_observed: bool = False
 
 
 @dataclass(frozen=True)
@@ -68,6 +83,8 @@ class JdlMasterObservation:
     sources: tuple[JdlMasterSourceEvidence, ...]
     conflicts: tuple[JdlMasterConflict, ...] = ()
     completeness: JdlMasterCompleteness = JdlMasterCompleteness.OBSERVED_USED_MASTER
+    printed_accounts: tuple[JdlPrintedAccount, ...] = ()
+    excluded_uncoded_printed_row_count: int = 0
 
     def privacy_safe_summary(self) -> dict[str, int | str]:
         return {
@@ -76,6 +93,16 @@ class JdlMasterObservation:
             "account_identity_count": len(self.accounts),
             "subaccount_identity_count": len(self.subaccounts),
             "department_identity_count": len(self.departments),
+            "printed_account_count": len(self.printed_accounts),
+            "printed_enabled_count": sum(
+                item.enabled for item in self.printed_accounts
+            ),
+            "printed_disabled_count": sum(
+                not item.enabled for item in self.printed_accounts
+            ),
+            "excluded_uncoded_printed_row_count": (
+                self.excluded_uncoded_printed_row_count
+            ),
             "conflict_count": len(self.conflicts),
         }
 
@@ -104,6 +131,20 @@ class JdlAccountCoverage:
             "exact_single_candidate_count": self.exact_single_count,
             "missing_candidate_count": self.missing_count,
             "ambiguous_candidate_count": self.ambiguous_count,
+        }
+
+
+@dataclass(frozen=True)
+class JdlMasterSourceComparison:
+    corroborated_count: int
+    conflict_count: int
+    runtime_only_count: int
+
+    def privacy_safe_summary(self) -> dict[str, int]:
+        return {
+            "corroborated_count": self.corroborated_count,
+            "conflict_count": self.conflict_count,
+            "runtime_only_not_promoted_count": self.runtime_only_count,
         }
 
 
@@ -185,6 +226,9 @@ class JdlMasterObservationService:
         departments = {
             item for observation in items for item in observation.departments
         }
+        printed_accounts = {
+            item for observation in items for item in observation.printed_accounts
+        }
         conflicts: list[JdlMasterConflict] = [
             conflict for observation in items for conflict in observation.conflicts
         ]
@@ -264,6 +308,38 @@ class JdlMasterObservationService:
             if item.code not in bad_department_codes
             and item.name not in bad_department_names
         }
+
+        printed_by_code: dict[str, set[tuple[str, str, str, bool]]] = {}
+        printed_by_name: dict[str, set[str]] = {}
+        for account in printed_accounts:
+            printed_by_code.setdefault(account.code, set()).add(
+                (
+                    account.name,
+                    account.abbreviation,
+                    account.normal_balance,
+                    account.enabled,
+                )
+            )
+            printed_by_name.setdefault(account.name, set()).add(account.code)
+        bad_printed_codes = {
+            key for key, values in printed_by_code.items() if len(values) > 1
+        }
+        bad_printed_names = {
+            key for key, values in printed_by_name.items() if len(values) > 1
+        }
+        conflicts.extend(
+            JdlMasterConflict("PRINTED_ACCOUNT_CODE_CONFLICT")
+            for _ in bad_printed_codes
+        )
+        conflicts.extend(
+            JdlMasterConflict("PRINTED_ACCOUNT_NAME_CONFLICT")
+            for _ in bad_printed_names
+        )
+        printed_accounts = {
+            item
+            for item in printed_accounts
+            if item.code not in bad_printed_codes and item.name not in bad_printed_names
+        }
         sources_by_hash = {
             source.sha256: source for item in items for source in item.sources
         }
@@ -283,6 +359,13 @@ class JdlMasterObservationService:
             ),
             sources=tuple(sources_by_hash[key] for key in sorted(sources_by_hash)),
             conflicts=tuple(conflicts),
+            completeness=self._merged_completeness(items),
+            printed_accounts=tuple(
+                sorted(printed_accounts, key=lambda item: (item.code, item.name))
+            ),
+            excluded_uncoded_printed_row_count=sum(
+                item.excluded_uncoded_printed_row_count for item in items
+            ),
         )
 
     def build_unconfirmed_context_draft(
@@ -291,7 +374,10 @@ class JdlMasterObservationService:
         context = JdlTargetContext(
             product="JDL IBEX 出納帳",
             version="35.5",
-            accounts=frozenset(item.mapping_value for item in observation.accounts),
+            accounts=frozenset(
+                [item.mapping_value for item in observation.accounts]
+                + [item.name for item in observation.printed_accounts]
+            ),
             tax_processing_mode=JdlTaxProcessingMode.UNCONFIRMED,
             target_format_identity=(
                 jdl_ibex_cashbook_official_journal_import_schema_definition().identity
@@ -321,6 +407,8 @@ class JdlMasterObservationService:
                 account.target_formal_name,
             }:
                 exact.setdefault(value, set()).add(account.target_master_code)
+        for account in observation.printed_accounts:
+            exact.setdefault(account.name, set()).add(account.code)
         counts = [len(exact.get(value, ())) for value in required]
         return JdlAccountCoverage(
             required_count=len(required),
@@ -328,6 +416,48 @@ class JdlMasterObservationService:
             missing_count=sum(count == 0 for count in counts),
             ambiguous_count=sum(count > 1 for count in counts),
         )
+
+    @staticmethod
+    def compare_printed_master_with_runtime(
+        printed: JdlMasterObservation,
+        runtime: JdlMasterObservation,
+    ) -> JdlMasterSourceComparison:
+        printed_by_code = {item.code: item for item in printed.printed_accounts}
+        printed_by_name = {item.name: item for item in printed.printed_accounts}
+        corroborated = 0
+        conflicts = 0
+        runtime_only = 0
+        for account in runtime.accounts:
+            names = {
+                account.mapping_value,
+                account.target_name,
+                account.target_formal_name,
+            }
+            by_code = printed_by_code.get(account.target_master_code)
+            if by_code is not None:
+                if by_code.name in names or by_code.abbreviation in names:
+                    corroborated += 1
+                else:
+                    conflicts += 1
+                continue
+            if any(name in printed_by_name for name in names):
+                conflicts += 1
+            else:
+                runtime_only += 1
+        return JdlMasterSourceComparison(corroborated, conflicts, runtime_only)
+
+    @staticmethod
+    def _merged_completeness(
+        observations: tuple[JdlMasterObservation, ...]
+    ) -> JdlMasterCompleteness:
+        levels = {item.completeness for item in observations}
+        if JdlMasterCompleteness.FULL_MASTER in levels:
+            return JdlMasterCompleteness.FULL_MASTER
+        if JdlMasterCompleteness.OBSERVED_PRINTED_MASTER in levels:
+            return JdlMasterCompleteness.OBSERVED_PRINTED_MASTER
+        if JdlMasterCompleteness.PARTIAL_MASTER in levels:
+            return JdlMasterCompleteness.PARTIAL_MASTER
+        return JdlMasterCompleteness.OBSERVED_USED_MASTER
 
     @staticmethod
     def _observe_side(

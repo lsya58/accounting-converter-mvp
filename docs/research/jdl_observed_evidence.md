@@ -745,21 +745,33 @@
 
 ## EVID-JDL-MASTER-001
 
-- source: JDL account master report
-- scope: customer-specific target master evidence
-- evidence level: `OBSERVED_PENDING_TEXT_REVIEW`
-- current status:
-  - a private PDF report exists as candidate master evidence
-  - this development environment has no PDF text extraction utility/library available
-  - report contents were not transcribed into tracked files
-- review targets:
-  - whether account code/name list exists
-  - whether subaccounts appear under accounts
-  - whether subaccount display-code format differs from CSV field representation
+- source: JDL IBEX 出納帳35.5 `科目設定・残高入力` の `科目印刷`
+- acquisition: `使用するに設定されている科目のみ印刷しますか` でNoを選択し、Microsoft Print to PDFで出力
+- scope: synthetic test-company target master evidence
+- evidence level: `OBSERVED_PRINTED_MASTER`
+- observed structure:
+  - 5 consecutive pages
+  - searchable PDF text layer; OCR is not required
+  - account-list header repeats on every page
+  - code付き行とcodeなし行が混在する
+  - account code/name、略名称、借貸、使用欄、および課区・税区・入力・固変・比率・説明のheaderを観測
+- privacy-safe result:
+  - 125 code-bearing account candidates
+  - 125 enabled code-bearing rows / 0 disabled code-bearing rows
+  - 120 disabled code-less rows were observed and excluded from account candidates
+  - no duplicate code/name conflict within this PDF
+  - exact-name coverage for the observed real Money Forward requirement set improved from 8/28 (journal-CSV union) to 20/28
+- source role:
+  - PDF is an account-master candidate
+  - 30-column journal CSV remains runtime usage evidence
+  - journal-only identities are not promoted into the PDF master
 - limits:
-  - customer-specific account/subaccount values are not format rules
-  - no normalization rule such as display-code to CSV-code conversion is established
-  - this supports the need for future master-aware Mapping Review, not automatic mapping
+  - this is not `FULL_MASTER`; print scope does not prove every internal/built-in master entry
+  - code-less rows are not classified as accounts or subaccounts
+  - abbreviation and 30-column CSV account-name/formal-name semantics are not treated as interchangeable without correlation Evidence
+  - tax-related columns are observed settings only and do not establish MF-to-JDL tax mapping
+  - subaccount, department, and company tax-processing snapshots still require separate Evidence
+  - customer-specific values are not copied into tracked files or generalized as format rules
 
 ## EVID-JDL-003
 
