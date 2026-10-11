@@ -815,6 +815,25 @@
   - parentless child、借貸不一致、4桁でないchild delimiter、同一parent内のduplicateはBLOCK/Conflict
   - PDFから親付き補助masterを読めるEvidenceであり、production output representationや自動mappingのEvidenceではない
 
+### Credit-normal parent with an explicit subaccount
+
+- evidence ID: `EVID-JDL-MASTER-SUBACCOUNT-PRINT-003`
+- source: 同じsynthetic test companyで、貸方属性の親科目にも完全架空の補助を追加して再取得した5-page科目一覧PDF
+- privacy-safe comparison across four PDFs:
+  - explicit subaccounts: 0 -> 1 -> 3 -> 4
+  - parent count: 0 -> 1 -> 2 -> 3
+  - fourth PDF: debit-normal children 3 / credit-normal children 1
+  - account candidates 125、codeなし除外行120、conflict 0は不変
+- observed behavior:
+  - 借方属性・貸方属性の親科目は、どちらも同じexplicit parent row / 4桁child row構造を使う
+  - childの借貸表示は親のnormal balanceと一致した
+  - parent transitionでscopeが切り替わり、同じ4桁child codeは別parentで競合しない
+  - duplicate/conflict判定はparent scope内で行う
+- limits:
+  - Human入力表現とPDFの4桁表示を、Import時の一般的なcode変換規則へ昇格しない
+  - pageを跨いだparent継続、未使用補助、実取込先会社の完全な補助masterは未確認
+  - read-only printed master Evidenceであり、production output semantics、Registry、READY範囲は変更しない
+
 ## EVID-JDL-003
 
 - source: JDL会計 仕訳一覧CSV

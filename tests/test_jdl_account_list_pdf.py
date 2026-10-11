@@ -120,6 +120,26 @@ class JdlAccountListPdfTextParserTests(unittest.TestCase):
         with self.assertRaises(JdlAccountListPdfParseError):
             self._parse(tuple(pages))
 
+    def test_credit_parent_uses_the_same_explicit_subaccount_structure(self) -> None:
+        pages = list(self._pages())
+        pages[2] = JdlAccountListTextPage(
+            3,
+            self._page_header(3)
+            + "         3991- 架空貸方親科目                貸架空貸方親 ○\n"
+            + "             -0001 架空貸方補助              貸\n",
+        )
+
+        result = self._parse(tuple(pages))
+        child = result.subaccounts[0]
+        parent = next(
+            item for item in result.printed_accounts if item.code == "3991"
+        )
+
+        self.assertEqual(parent.normal_balance, "CREDIT")
+        self.assertEqual(child.parent_account_code, parent.code)
+        self.assertEqual(child.code, "0001")
+        self.assertFalse(result.conflicts)
+
     def test_multiple_subaccounts_and_parent_transition_are_parent_scoped(self) -> None:
         pages = list(self._pages())
         pages[0] = JdlAccountListTextPage(

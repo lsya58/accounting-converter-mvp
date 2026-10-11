@@ -28,6 +28,8 @@
 - Conflicting code/name identities are excluded from candidate generation and reported by count.
 - PDFと30列journal CSVは役割を分離する。PDFはmaster candidate、journal CSVはruntime usage evidenceであり、CSV-only identityをmasterへ自動追加しない。code/name競合時はBLOCKする。
 - Observed subaccounts and departments remain observations. They are not promoted to confirmed output master identities without the missing runtime evidence.
+- 科目一覧PDFでは借方属性・貸方属性の親の双方で同じexplicit parent/child構造を観測した。補助identityは親科目を必須contextとし、同一parent内だけでduplicate/conflictを判定する。
+- 30列仕訳CSVから得られる部門は使用済み値だけの `OBSERVED_USED_MASTER` であり、未使用部門を含む一覧や `FULL_MASTER` ではない。
 - Tax processing is never inferred from journal rows.
 - An observed context draft is `UNCONFIRMED`, fails production validation by design, and cannot make a conversion route READY.
 
