@@ -28,6 +28,10 @@ from accounting_converter.infrastructure.jdl_target_context_loader import (
     JdlTargetContextLoadError,
     JdlTargetContextLoader,
 )
+from accounting_converter.infrastructure.jdl_account_pdf_draft import (
+    JdlAccountPdfDraftError,
+    JdlAccountPdfDraftStore,
+)
 
 
 class CompanySettingStoreError(ValueError):
@@ -54,6 +58,7 @@ class CompanySettingStore:
         self.root_dir = root_dir
         self.profile_store = profile_store
         self.context_loader = JdlTargetContextLoader()
+        self.account_pdf_drafts = JdlAccountPdfDraftStore()
 
     def create(
         self,
@@ -81,12 +86,16 @@ class CompanySettingStore:
             raise CompanySettingStoreError(
                 "profile was confirmed against a different JDL setting"
             )
-        context = self.context_loader.load(context_source)
-        runtime = JdlOutputRuntimeFactory().resolve(
-            jdl_ibex_35_5_output_profile(), profile, context
-        )
-        if not runtime.resolved:
-            raise CompanySettingStoreError("profile and JDL setting are incompatible")
+        context_is_draft = self.account_pdf_drafts.is_draft(context_source)
+        if context_is_draft:
+            self.account_pdf_drafts.load(context_source)
+        else:
+            context = self.context_loader.load(context_source)
+            runtime = JdlOutputRuntimeFactory().resolve(
+                jdl_ibex_35_5_output_profile(), profile, context
+            )
+            if not runtime.resolved:
+                raise CompanySettingStoreError("profile and JDL setting are incompatible")
         now = datetime.now(timezone.utc)
         setting = CompanySetting(
             company_setting_id=company_setting_id,
@@ -187,8 +196,46 @@ class CompanySettingStore:
             return self._resolved_failure(setting, CompanySettingStatus.STALE, "CONTEXT_MISSING")
         try:
             context_bytes = context_path.read_bytes()
+            if self.account_pdf_drafts.is_draft(context_path):
+                self.account_pdf_drafts.load(context_path)
+                stale = []
+                if self._profile_fingerprint(profile) != setting.profile_fingerprint:
+                    stale.append("PROFILE_CHANGED")
+                if self._hash(context_bytes) != setting.context_fingerprint:
+                    stale.append("CONTEXT_CHANGED")
+                if stale:
+                    return ResolvedCompanySetting(
+                        setting,
+                        CompanySettingStatus.STALE,
+                        user_message=(
+                            "会社設定を確認してください。保存後にJDL設定または"
+                            "対応設定が変更されています。"
+                        ),
+                        reason_codes=tuple(stale),
+                    )
+                if (
+                    profile.source_format_identity.stable_key
+                    != setting.expected_source_format_key
+                    or profile.target_format_identity.stable_key
+                    != setting.expected_target_format_key
+                ):
+                    return self._resolved_failure(
+                        setting,
+                        CompanySettingStatus.INCOMPATIBLE,
+                        "FORMAT_IDENTITY_MISMATCH",
+                    )
+                return ResolvedCompanySetting(
+                    setting,
+                    CompanySettingStatus.REQUIRES_CONFIRMATION,
+                    profile=profile,
+                    user_message=(
+                        "JDL設定の確認が必要です。科目対応は保存されていますが、"
+                        "確認が完了するまで変換できません。"
+                    ),
+                    reason_codes=("JDL_CONTEXT_DRAFT_UNCONFIRMED",),
+                )
             context = self.context_loader.load(context_path)
-        except (OSError, JdlTargetContextLoadError):
+        except (OSError, JdlTargetContextLoadError, JdlAccountPdfDraftError):
             return self._resolved_failure(setting, CompanySettingStatus.MALFORMED, "CONTEXT_INVALID")
         stale = []
         if self._profile_fingerprint(profile) != setting.profile_fingerprint:

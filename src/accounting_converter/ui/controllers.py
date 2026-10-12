@@ -46,6 +46,9 @@ from accounting_converter.infrastructure.jdl_target_context_loader import (
     JdlTargetContextLoadError,
     JdlTargetContextLoader,
 )
+from accounting_converter.infrastructure.jdl_account_pdf_draft import (
+    JdlAccountPdfDraftStore,
+)
 from accounting_converter.infrastructure.company_setting_store import (
     CompanySettingStore,
     CompanySettingStoreError,
@@ -112,6 +115,7 @@ class AccountingConverterController:
         context_loader: JdlTargetContextLoader | None = None,
         company_store: CompanySettingStore | None = None,
         preferences_store: ApplicationPreferencesStore | None = None,
+        account_pdf_draft_store: JdlAccountPdfDraftStore | None = None,
     ) -> None:
         self.profile_store = profile_store or ConversionProfileStore(
             default_profile_store_dir()
@@ -128,6 +132,9 @@ class AccountingConverterController:
         self.company_setting_service = CompanySettingService(self.company_store)
         self.moneyforward_profile_setup_service = MoneyForwardProfileSetupService(
             self.profile_store
+        )
+        self.account_pdf_draft_store = (
+            account_pdf_draft_store or JdlAccountPdfDraftStore()
         )
         self.preferences_store = preferences_store or ApplicationPreferencesStore(
             default_preferences_path()
@@ -292,6 +299,22 @@ class AccountingConverterController:
         self, source_path: Path, context_path: Path
     ) -> MoneyForwardProfileSetupAnalysis:
         return self.moneyforward_profile_setup_service.analyze(source_path, context_path)
+
+    def import_jdl_account_pdf(self, source_path: Path) -> Path:
+        import hashlib
+
+        source_hash = hashlib.sha256(source_path.read_bytes()).hexdigest()
+        destination = (
+            self.profile_store.root_dir.parent
+            / "jdl-account-drafts"
+            / f"{source_hash}.json"
+        )
+        store = self.account_pdf_draft_store
+        if destination.exists():
+            store.load(destination)
+            return destination
+        store.import_pdf(source_path, destination)
+        return destination
 
     def create_moneyforward_profile(
         self,

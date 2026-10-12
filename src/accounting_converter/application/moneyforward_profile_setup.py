@@ -18,6 +18,10 @@ from accounting_converter.application.mapping_review import (
     MappingConfirmationService,
     MappingRequirementExtractor,
 )
+from accounting_converter.application.jdl_master_observation import (
+    JdlMasterObservationService,
+    JdlPrintedAccount,
+)
 from accounting_converter.domain.conversion_profile import ConversionProfile
 from accounting_converter.domain.mapping import (
     MappingKey,
@@ -28,6 +32,9 @@ from accounting_converter.domain.mapping import (
 from accounting_converter.domain.profile import FormatProfile
 from accounting_converter.infrastructure.conversion_profile_store import ConversionProfileStore
 from accounting_converter.infrastructure.jdl_target_context_loader import JdlTargetContextLoader
+from accounting_converter.infrastructure.jdl_account_pdf_draft import (
+    JdlAccountPdfDraftStore,
+)
 from accounting_converter.profiles.known_formats import (
     jdl_ibex_cashbook_official_journal_import_schema_definition,
     moneyforward_cloud_journal_export_observed_schema,
@@ -82,6 +89,8 @@ class MoneyForwardProfileSetupAnalysis:
     tax_items: tuple[TaxMappingSetupItem, ...] = ()
     tax_context_compatible: bool = False
     tax_context_message: str = ""
+    observed_account_targets: tuple[JdlPrintedAccount, ...] = ()
+    context_is_draft: bool = False
 
     @property
     def can_configure_accounts(self) -> bool:
@@ -104,15 +113,28 @@ class MoneyForwardProfileSetupService:
         "tag": "タグ",
         "memo": "メモ",
         "description": "摘要",
+        "jdl_context_confirmation": "JDL設定の確認",
     }
 
     def __init__(self, profile_store: ConversionProfileStore) -> None:
         self.profile_store = profile_store
         self.context_loader = JdlTargetContextLoader()
+        self.account_pdf_drafts = JdlAccountPdfDraftStore()
 
     def analyze(self, source_path: Path, context_path: Path) -> MoneyForwardProfileSetupAnalysis:
         before = self._hash(source_path)
-        context = self.context_loader.load(context_path)
+        context_is_draft = self.account_pdf_drafts.is_draft(context_path)
+        observed_targets: tuple[JdlPrintedAccount, ...] = ()
+        if context_is_draft:
+            pdf_draft = self.account_pdf_drafts.load(context_path)
+            context = JdlMasterObservationService().build_unconfirmed_context_draft(
+                pdf_draft.observation
+            ).context
+            observed_targets = tuple(
+                item for item in pdf_draft.observation.printed_accounts if item.enabled
+            )
+        else:
+            context = self.context_loader.load(context_path)
         adapter = MoneyForwardInputAdapter()
         schema = moneyforward_cloud_journal_export_observed_schema()
         source_profile = FormatProfile(
@@ -139,6 +161,8 @@ class MoneyForwardProfileSetupService:
             unsupported.add("department")
         if requirements.tax_categories:
             unsupported.add("tax")
+        if context_is_draft:
+            unsupported.add("jdl_context_confirmation")
         for entry in entries:
             if entry.metadata.get("moneyforward_tags"):
                 unsupported.add("tag")
@@ -157,13 +181,23 @@ class MoneyForwardProfileSetupService:
                 if line.tax_info and line.tax_info.invoice_classification:
                     unsupported.add("invoice")
 
-        targets = tuple(item.mapping_value for item in context.account_master)
+        targets = (
+            tuple(item.name for item in observed_targets)
+            if context_is_draft
+            else tuple(item.mapping_value for item in context.account_master)
+        )
         items = tuple(
             AccountMappingSetupItem(
                 source_value=requirement.source_value,
                 available_targets=targets,
-                exact_candidate=self._exact_candidate(
-                    requirement.source_value, context.account_master
+                exact_candidate=(
+                    self._exact_printed_candidate(
+                        requirement.source_value, observed_targets
+                    )
+                    if context_is_draft
+                    else self._exact_candidate(
+                        requirement.source_value, context.account_master
+                    )
                 ),
             )
             for requirement in requirements.accounts
@@ -181,15 +215,25 @@ class MoneyForwardProfileSetupService:
                 item.source_value for item in requirements.tax_categories
             ),
             pending_field_keys=tuple(sorted(unsupported)),
-            tax_items=self._tax_items(
+            tax_items=() if context_is_draft else self._tax_items(
                 tuple(item.source_value for item in requirements.tax_categories),
                 context,
             ),
-            tax_context_compatible=self._tax_context_compatible(context),
-            tax_context_message=self._tax_context_message(
-                tuple(item.source_value for item in requirements.tax_categories),
-                context,
+            tax_context_compatible=(
+                False if context_is_draft else self._tax_context_compatible(context)
             ),
+            tax_context_message=(
+                "JDLの税設定を確認するまで税区分は設定できません"
+                if context_is_draft and requirements.tax_categories
+                else self._tax_context_message(
+                    tuple(
+                        item.source_value for item in requirements.tax_categories
+                    ),
+                    context,
+                )
+            ),
+            observed_account_targets=observed_targets,
+            context_is_draft=context_is_draft,
         )
 
     def save_confirmed_profile(
@@ -206,7 +250,11 @@ class MoneyForwardProfileSetupService:
         required = {item.source_value for item in analysis.account_items}
         if set(selections) != required or explicitly_confirmed != required:
             raise MoneyForwardProfileSetupError("すべての科目対応を明示確認してください。")
-        by_target = {item.mapping_value: item for item in analysis.context.account_master}
+        by_target = (
+            {item.name: item for item in analysis.observed_account_targets}
+            if analysis.context_is_draft
+            else {item.mapping_value: item for item in analysis.context.account_master}
+        )
         if any(target not in by_target for target in selections.values()):
             raise MoneyForwardProfileSetupError("JDL設定に存在しない科目が選択されています。")
         confirmed_tax = explicitly_confirmed_tax or set()
@@ -251,13 +299,32 @@ class MoneyForwardProfileSetupService:
                 pending_keys.discard("tax")
             for source_value in sorted(required):
                 target = by_target[selections[source_value]]
+                target_value = (
+                    target.name if analysis.context_is_draft else target.mapping_value
+                )
+                target_code = (
+                    target.code
+                    if analysis.context_is_draft
+                    else target.target_master_code
+                )
+                target_metadata = (
+                    {
+                        "target_code": target_code,
+                        "target_printed_name": target.name,
+                        "target_abbreviation": target.abbreviation,
+                    }
+                    if analysis.context_is_draft
+                    else {
+                        "target_code": target_code,
+                        "target_formal_name": target.target_formal_name,
+                    }
+                )
                 confirmation.confirm_mapping(
                     profile_id,
                     MappingKey(MappingType.ACCOUNT, source_value),
-                    target.mapping_value,
+                    target_value,
                     metadata={
-                        "target_code": target.target_master_code,
-                        "target_formal_name": target.target_formal_name,
+                        **target_metadata,
                         "setup_context_sha256": context_sha256,
                         PENDING_SETUP_METADATA_KEY: ",".join(
                             sorted(pending_keys)
@@ -277,10 +344,14 @@ class MoneyForwardProfileSetupService:
                     metadata=self._tax_mapping_metadata(item, context_sha256),
                 )
             saved = self.profile_store.get(profile_id)
-            runtime = JdlOutputRuntimeFactory().resolve(
-                jdl_ibex_35_5_output_profile(), saved, analysis.context
+            runtime = (
+                None
+                if analysis.context_is_draft
+                else JdlOutputRuntimeFactory().resolve(
+                    jdl_ibex_35_5_output_profile(), saved, analysis.context
+                )
             )
-            if not runtime.resolved:
+            if runtime is not None and not runtime.resolved:
                 raise MoneyForwardProfileSetupError(
                     "対応設定とJDL設定の整合を確認できませんでした。"
                 )
@@ -433,6 +504,14 @@ class MoneyForwardProfileSetupService:
                 item.target_formal_name,
             }
         }
+        return next(iter(matches)) if len(matches) == 1 else None
+
+    @staticmethod
+    def _exact_printed_candidate(
+        source_value: str,
+        targets: tuple[JdlPrintedAccount, ...],
+    ) -> str | None:
+        matches = {item.name for item in targets if item.name == source_value}
         return next(iter(matches)) if len(matches) == 1 else None
 
     @staticmethod

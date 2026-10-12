@@ -29,6 +29,7 @@ class CompanySetting:
 
 class CompanySettingStatus(str, Enum):
     AVAILABLE = "AVAILABLE"
+    REQUIRES_CONFIRMATION = "REQUIRES_CONFIRMATION"
     STALE = "STALE"
     INCOMPATIBLE = "INCOMPATIBLE"
     MALFORMED = "MALFORMED"

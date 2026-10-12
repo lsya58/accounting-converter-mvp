@@ -593,11 +593,11 @@ class CompanyAddDialog(QDialog):
         self.create_profile_button.clicked.connect(self._create_moneyforward_profile)
         self.create_profile_button.hide()
         layout.addWidget(self.create_profile_button, alignment=Qt.AlignmentFlag.AlignLeft)
-        layout.addWidget(QLabel("JDL設定"))
+        layout.addWidget(QLabel("JDLの科目設定"))
         context_row = QHBoxLayout()
         self.context_label = QLabel("ファイルはまだ選択されていません")
         self.context_label.setObjectName("muted")
-        self.context_button = QPushButton("ファイルを選択")
+        self.context_button = QPushButton("JDLから読み込む")
         self.context_button.clicked.connect(self._choose_context)
         context_row.addWidget(self.context_label, 1)
         context_row.addWidget(self.context_button)
@@ -618,12 +618,24 @@ class CompanyAddDialog(QDialog):
 
     def _choose_context(self) -> None:
         filename, _ = QFileDialog.getOpenFileName(
-            self, "JDL設定を選択", "", "JSON files (*.json)"
+            self, "JDLの科目一覧PDFを選択", "", "PDF files (*.pdf)"
         )
         if filename:
-            self.context_path = Path(filename)
-            self.context_label.setText(self.context_path.name)
-            self.error_label.clear()
+            try:
+                self.context_path = self.controller.import_jdl_account_pdf(
+                    Path(filename)
+                )
+            except Exception:
+                self.context_path = None
+                self.context_label.setText("読み込めませんでした")
+                self.error_label.setText(
+                    "JDLの科目一覧PDFを確認してください。"
+                )
+                return
+            self.context_label.setText("科目一覧を読み込みました")
+            self.error_label.setText(
+                "科目対応を保存できます。JDL設定の確認が完了するまで変換はできません。"
+            )
 
     def _back(self) -> None:
         if self.pages.currentIndex() > 0:
@@ -665,7 +677,7 @@ class CompanyAddDialog(QDialog):
                 self.error_label.setText("対応設定を選択してください。")
                 return
             if self.context_path is None:
-                self.error_label.setText("JDL設定ファイルを選択してください。")
+                self.error_label.setText("JDLの科目一覧を読み込んでください。")
                 return
             self._render_confirmation()
         if index == 3:
@@ -779,10 +791,10 @@ class MoneyForwardProfileSetupDialog(QDialog):
         layout.addLayout(source_row)
 
         context_row = QHBoxLayout()
-        context_row.addWidget(QLabel("JDL設定"))
+        context_row.addWidget(QLabel("JDLの科目設定"))
         self.context_label = QLabel("未選択")
         self.context_label.setObjectName("muted")
-        context_button = QPushButton("JDL設定を選択")
+        context_button = QPushButton("JDLから読み込む")
         context_button.clicked.connect(self._choose_context)
         context_row.addWidget(self.context_label, 1)
         context_row.addWidget(context_button)
@@ -895,11 +907,21 @@ class MoneyForwardProfileSetupDialog(QDialog):
 
     def _choose_context(self) -> None:
         filename, _ = QFileDialog.getOpenFileName(
-            self, "JDL設定を選択", "", "JSON files (*.json)"
+            self, "JDLの科目一覧PDFを選択", "", "PDF files (*.pdf)"
         )
         if filename:
-            self.context_path = Path(filename)
-            self.context_label.setText(self.context_path.name)
+            try:
+                self.context_path = self.controller.import_jdl_account_pdf(
+                    Path(filename)
+                )
+            except Exception:
+                self.context_path = None
+                self.context_label.setText("読み込めませんでした")
+                self.message_label.setText(
+                    "JDLの科目一覧PDFを確認してください。"
+                )
+                return
+            self.context_label.setText("科目一覧を読み込みました")
             self._clear_analysis()
 
     def _clear_analysis(self) -> None:
@@ -917,7 +939,7 @@ class MoneyForwardProfileSetupDialog(QDialog):
             self.message_label.setText("Money Forwardの仕訳CSVを選択してください。")
             return
         if self.context_path is None:
-            self.message_label.setText("JDL設定を選択してください。")
+            self.message_label.setText("JDLの科目一覧を読み込んでください。")
             return
         try:
             analysis = self.controller.analyze_moneyforward_profile_setup(

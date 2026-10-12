@@ -15,6 +15,7 @@ class QtGuiContractTests(unittest.TestCase):
     def test_runtime_dependency_and_dual_build_entries_are_declared(self) -> None:
         project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
         self.assertIn("PySide6>=6.8,<7", project["project"]["dependencies"])
+        self.assertIn("pypdf>=5,<7", project["project"]["dependencies"])
         script = Path("scripts/build_windows.ps1").read_text(encoding="utf-8")
         self.assertIn("ui_qt\\app.py", script)
         self.assertIn("ui\\app.py", script)
@@ -117,6 +118,21 @@ class QtGuiContractTests(unittest.TestCase):
             "fingerprint", "Evidence ID",
         ):
             self.assertNotIn(f'"{internal}"', source)
+
+    def test_jdl_account_pdf_is_selected_without_exposing_internal_json(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
+            encoding="utf-8"
+        )
+        for text in (
+            "JDLから読み込む",
+            "JDLの科目一覧PDFを選択",
+            "PDF files (*.pdf)",
+            "科目一覧を読み込みました",
+        ):
+            self.assertIn(text, source)
+        company_flow = source.split("class CompanyAddDialog", maxsplit=1)[1]
+        self.assertNotIn("JSON files (*.json)", company_flow)
+        self.assertNotIn("JDL設定JSON", company_flow)
 
     def test_created_moneyforward_profile_replaces_parent_selection(self) -> None:
         source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(

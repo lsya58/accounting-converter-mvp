@@ -46,3 +46,17 @@
 Development mode may retain direct JSON loading, but ordinary users should not need to understand JSON, fingerprints, or evidence identifiers.
 将来の通常GUIは `JDLから読み込む` で科目一覧PDFを選択し、内部で未確認context draftを生成する。JSON直接選択はdevelopment/debug用途に限定し、このPDFだけでproduction-ready contextにはしない。
 補助Mapping UIは `source parent + source subaccount` と `target parent + target subaccount` の組で候補を表示し、親科目Mappingが未確認、またはtarget parentが一致しない候補を提示しない。exact候補でも保存には`USER_CONFIRMED`を要求する。
+
+## Account PDF company-setting draft
+
+通常GUIの会社追加では、利用者は `JDLから読み込む` から科目一覧PDFを選択する。アプリはPDFのtext layerを検証し、ローカル保存領域へ改変検知用hashを持つ内部draftをatomic保存する。利用者にJSON、hash、Evidence分類は表示しない。
+
+- selectorにはPDFでcode付き・使用中として観測された科目だけを表示する。
+- source科目名との完全一致は初期候補にできるが、自動確認しない。
+- 候補がない科目は空欄から利用者が選択する。類似名候補、fuzzy matching、hidden fallbackは行わない。
+- 全科目の選択と明示checkboxが揃った場合だけ、account mappingを`USER_CONFIRMED`として保存する。
+- 保存されるtarget metadataはprinted code/name/abbreviationであり、未確認の30列CSV正式名称を推測しない。
+- PDF draftを束ねた会社設定は `確認が必要` で保存できるが、正式JDL設定への確認・昇格が済むまで変換には利用できない。
+- PDFまたは対応設定が保存後に変わった場合はstaleとしてBLOCKする。
+
+この導線は会社固有の確認作業を再利用可能にするためのものであり、PDFを`FULL_MASTER`、正式`JdlTargetContext`、production READYへ昇格するものではない。subaccount PDFとdepartment PDFは将来同じ観測service boundaryへ追加できるが、今回の通常GUI対象はaccount PDFのみとする。
