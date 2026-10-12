@@ -1057,7 +1057,11 @@ Human Exportはexact target表現のEvidenceだが、App candidateのImport/re-e
 
 これはJDL実機Import Evidenceではない。対象外はsource semantic identity、明示tax mapping、専用Evidence profileの3点を必須とし、空tax fieldsだけから推定しない。誤親補助を1件含めるnegative testではbatch全体を停止し、正式出力も部分出力も生成しない。production Registry、Money Forward一般READY、`production_allowed`は変更しない。
 
-実機用6件candidateは未生成である。現在のprivate Contextでは、課税仕入10%の確認済みscopeが補助なしである一方、他の仕入caseの同一target科目には補助必須Evidenceがあり、単一Contextとして両立しない。別科目へ推測で振り替えず、exact target masterと追加round-trip Evidenceが得られるまでBLOCKする。
+課税仕入10%のparent-scoped補助付きround-trip確認後、6 caseのexact account/subaccount master Evidenceを競合なく統合できることをprivate領域で確認した。統合Contextと全mappingが`USER_CONFIRMED`のprivate Profileを用い、2026-11-08から2026-11-13までの6 logical journals / 6 rowsを正式`ConversionService`経路で生成した。candidateは30列、CP932、CRLF、BOMなし、貸借一致、Output Validation成功で、manifest/profile/context hashとcase semantic identityを保持する。
+
+`EVID-JDL-MF-SIX-TAX-BATCH-ROUNDTRIP-001`では、このprivate batch candidateをJDL IBEX出納帳35.5へ実Importし、exactly 6 journalsとして受理された。再Exportとのstrict semantic comparisonは6/6一致し、missing / duplicate / extra / ambiguous / mismatchはいずれも0だった。日付、flag、account identity、parent-scoped subaccount、金額、6つのtax semantic case、摘要identity、貸借、batch totals、およびcandidate/profile/context hashを確認した。対象外は空tax fieldだけではなく、manifestと明示Profile mappingのsemantic identityを必須とした。
+
+Evidence levelは、このexact synthetic batch、exact target Context、JDL IBEX出納帳35.5、課税・税込、flag `1111` / 1D1C 6件に限り`VERIFIED_BY_REAL_IMPORT`とする。各single-case Evidenceとは別に保持し、別科目・別補助・別Context・任意件数・実顧客batchへ一般化しない。`NOT_FOR_PRODUCTION`、`production_allowed=false`、production Registry、Money Forward一般READY、mapping promotionは変更しない。
 
 ## EVID-JDL-TAX-PURCHASE-10-SUBACCOUNT-HAND-001
 

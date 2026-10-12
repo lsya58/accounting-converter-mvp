@@ -8,7 +8,7 @@ import json
 import os
 import tempfile
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Sequence
@@ -19,12 +19,14 @@ from accounting_converter.adapters.input.moneyforward import (
     MoneyForwardStructuralValidator,
 )
 from accounting_converter.adapters.output.jdl import (
+    EVIDENCE_IDS,
     ExplicitJdlEvidenceRoutePolicy,
     JdlEvidenceProfile,
     JdlOutputRuntimeFactory,
     JdlTargetContext,
     jdl_ibex_35_5_output_profile,
 )
+from accounting_converter.tools.jdl_six_tax_batch import SIX_TAX_CASE_IDENTITIES
 from accounting_converter.application.conversion import (
     ConversionRequest,
     ConversionResult,
@@ -86,6 +88,7 @@ PROBE_DEFINITIONS = (
     ProbeDefinition("tax_non_taxable_purchase_with_subaccount", 1, JdlEvidenceProfile.TAX_NON_TAXABLE_PURCHASE_SUBACCOUNT_INCLUDED_1111, "VERIFIED_BY_REAL_IMPORT_EXPERIMENTAL", "非課税仕入と借方補助の共存確認"),
     ProbeDefinition("tax_out_of_scope", 1, JdlEvidenceProfile.TAX_OUT_OF_SCOPE_SUBACCOUNT_INCLUDED_1111, "BLOCKED_FAILED_PRECONDITION_TARGET_SUBACCOUNT", "補助なし対象外の前提条件確認"),
     ProbeDefinition("tax_out_of_scope_with_subaccount", 1, JdlEvidenceProfile.TAX_OUT_OF_SCOPE_SUBACCOUNT_INCLUDED_1111, "VERIFIED_BY_REAL_IMPORT_EXPERIMENTAL", "対象外semantic identityと借方補助の共存確認"),
+    ProbeDefinition("mf_six_tax_cases_batch", 6, JdlEvidenceProfile.TAX_PURCHASE_10_SUBACCOUNT_INCLUDED_1111, "VERIFIED_BY_REAL_IMPORT_EXPERIMENTAL", "6税区分の一括受理確認"),
 )
 
 TAX_PROBE_CASES = frozenset(
@@ -149,7 +152,10 @@ class JdlProbeGenerator:
                     "PROBE_CONVERSION_BLOCKED",
                     f"変換は安全判定により停止しました: {result.status}; rules={','.join(rule_ids)}",
                 )
-            manifest = self._manifest(definition, result, output_path, profile_path, context)
+            manifest = self._manifest(
+                definition, result, output_path, profile_path, context_path, context,
+                rows, assignments, source_hash,
+            )
             self._atomic_json_write(manifest_path, manifest)
             return ProbeGenerationResult(output_path, manifest_path, result)
         except Exception:
@@ -163,7 +169,7 @@ class JdlProbeGenerator:
     def write_tax_result_template(
         self, *, case_name: str, destination: Path
     ) -> Path:
-        if case_name not in TAX_PROBE_CASES:
+        if case_name not in TAX_PROBE_CASES and case_name != "mf_six_tax_cases_batch":
             raise JdlProbeError(
                 "PROBE_RESULT_CASE_NOT_TAX", "税区分probe caseを指定してください。"
             )
@@ -192,6 +198,15 @@ class JdlProbeGenerator:
                 "production_allowed": False,
                 "NOT_FOR_PRODUCTION": True,
                 "safety_notice": SAFETY_NOTICE,
+                **(
+                    {
+                        "expected_journals": 6,
+                        "imported_journals": None,
+                        "comparison_pass": None,
+                    }
+                    if case_name == "mf_six_tax_cases_batch"
+                    else {}
+                ),
             },
         )
         return destination
@@ -416,6 +431,41 @@ class JdlProbeGenerator:
                     journal_date=self._probe_date(journal_date, "2026/11/04"),
                 )
             ]
+        elif definition.name == "mf_six_tax_cases_batch":
+            purchase_sub = self._required_subaccount_for_parent(
+                profile, context, "消耗品費"
+            )
+            sales_sub = self._required_subaccount_for_parent(
+                profile, context, "売上高"
+            )
+            if purchase_sub is None or sales_sub is None:
+                raise JdlProbeError(
+                    "PROBE_BLOCKED_MISSING_SUBACCOUNT_EVIDENCE",
+                    "6税区分batchには借方・貸方双方の確認済み親科目付き補助mappingが必要です。",
+                )
+            start = datetime.strptime(
+                self._probe_date(journal_date, "2026/11/08"), "%Y/%m/%d"
+            )
+            dates = tuple(
+                (start + timedelta(days=offset)).strftime("%Y/%m/%d")
+                for offset in range(6)
+            )
+            rows = [
+                self._row("1", "消耗品費", "現金", "1100", SIX_TAX_CASE_IDENTITIES[0], debit_sub=purchase_sub.source_value, debit_tax="課税仕入 10%", journal_date=dates[0]),
+                self._row("2", "現金", "売上高", "1100", SIX_TAX_CASE_IDENTITIES[1], credit_sub=sales_sub.source_value, credit_tax="課税売上 10%", journal_date=dates[1]),
+                self._row("3", "消耗品費", "現金", "1080", SIX_TAX_CASE_IDENTITIES[2], debit_sub=purchase_sub.source_value, debit_tax="課税仕入 (軽)8%", journal_date=dates[2]),
+                self._row("4", "現金", "売上高", "1080", SIX_TAX_CASE_IDENTITIES[3], credit_sub=sales_sub.source_value, credit_tax="課税売上 (軽)8%", journal_date=dates[3]),
+                self._row("5", "消耗品費", "現金", "1000", SIX_TAX_CASE_IDENTITIES[4], debit_sub=purchase_sub.source_value, debit_tax="非課税仕入", journal_date=dates[4]),
+                self._row("6", "消耗品費", "現金", "1000", SIX_TAX_CASE_IDENTITIES[5], debit_sub=purchase_sub.source_value, debit_tax="対象外", journal_date=dates[5]),
+            ]
+            return rows, {
+                "1": JdlEvidenceProfile.TAX_PURCHASE_10_SUBACCOUNT_INCLUDED_1111,
+                "2": JdlEvidenceProfile.TAX_SALES_10_SUBACCOUNT_INCLUDED_1111,
+                "3": JdlEvidenceProfile.TAX_PURCHASE_REDUCED_8_INCLUDED_1111,
+                "4": JdlEvidenceProfile.TAX_SALES_REDUCED_8_SUBACCOUNT_INCLUDED_1111,
+                "5": JdlEvidenceProfile.TAX_NON_TAXABLE_PURCHASE_SUBACCOUNT_INCLUDED_1111,
+                "6": JdlEvidenceProfile.TAX_OUT_OF_SCOPE_SUBACCOUNT_INCLUDED_1111,
+            }
         else:
             raise JdlProbeError("PROBE_CASE_UNSUPPORTED", "未対応のprobe caseです。")
         transaction_numbers = tuple(dict.fromkeys(row[0] for row in rows))
@@ -530,8 +580,21 @@ class JdlProbeGenerator:
         writer.writerows(rows)
         return text.getvalue().encode("cp932")
 
-    def _manifest(self, definition: ProbeDefinition, result: ConversionResult, output: Path, profile_path: Path, context: JdlTargetContext) -> dict[str, object]:
+    def _manifest(
+        self,
+        definition: ProbeDefinition,
+        result: ConversionResult,
+        output: Path,
+        profile_path: Path,
+        context_path: Path,
+        context: JdlTargetContext,
+        rows: Sequence[Sequence[str]],
+        assignments: dict[str, JdlEvidenceProfile],
+        source_hash: str,
+    ) -> dict[str, object]:
         context_summary = json.dumps(context.privacy_safe_summary(), sort_keys=True, ensure_ascii=False).encode("utf-8")
+        transaction_numbers = tuple(dict.fromkeys(row[0] for row in rows))
+        evidence_profiles = tuple(assignments[number] for number in transaction_numbers)
         return {
             "schema_version": "1",
             "probe_case": definition.name,
@@ -544,10 +607,25 @@ class JdlProbeGenerator:
             "totals_match": result.debit_total == result.credit_total,
             "output_validation": "PASS" if result.output_validation_result and result.output_validation_result.success else "FAIL",
             "jdl_context_hash": hashlib.sha256(context_summary).hexdigest(),
+            "jdl_context_sha256": self._sha256(context_path),
             "conversion_profile_sha256": self._sha256(profile_path),
+            "source_sha256": source_hash,
             "expected_import_goal": definition.expected_import_goal,
-            "evidence_scope": [definition.evidence_profile.value] if definition.evidence_profile else [],
+            "evidence_scope": [profile.value for profile in evidence_profiles],
+            **(
+                {
+                    "batch_semantic_identity": "MF_SIX_TAX_CASES_BATCH_V0",
+                    "per_case_evidence_ids": [EVIDENCE_IDS[profile] for profile in evidence_profiles],
+                    "case_identities": [row[16] for row in rows],
+                    "journal_dates": [row[1].replace("/", "") for row in rows],
+                    "expected_journal_count": 6,
+                    "expected_row_count": 6,
+                }
+                if definition.name == "mf_six_tax_cases_batch"
+                else {}
+            ),
             "NOT_FOR_PRODUCTION": True,
+            "production_allowed": False,
             "safety_notice": SAFETY_NOTICE,
         }
 

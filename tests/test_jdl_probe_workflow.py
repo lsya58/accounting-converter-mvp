@@ -95,6 +95,7 @@ class JdlProbeWorkflowTests(unittest.TestCase):
                 "tax_non_taxable_purchase_with_subaccount",
                 "tax_out_of_scope",
                 "tax_out_of_scope_with_subaccount",
+                "mf_six_tax_cases_batch",
             },
         )
         self.assertNotIn("compound_3d1c", names)
