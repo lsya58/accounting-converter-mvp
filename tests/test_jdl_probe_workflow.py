@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 import tempfile
@@ -33,6 +34,7 @@ from accounting_converter.tools.jdl_tax_evidence import (
     EVIDENCE_ID_MF_JDL_PURCHASE_REDUCED_8_SUBACCOUNT_ROUNDTRIP,
     EVIDENCE_ID_MF_JDL_SALES_REDUCED_8_SUBACCOUNT_ROUNDTRIP,
     EVIDENCE_ID_MF_JDL_NON_TAXABLE_PURCHASE_SUBACCOUNT_ROUNDTRIP,
+    EVIDENCE_ID_MF_JDL_OUT_OF_SCOPE_SUBACCOUNT_ROUNDTRIP,
     JdlTaxEvidenceError,
     HUMAN_TAX_CASES,
     analyze_scoped_tax_human_evidence,
@@ -45,6 +47,7 @@ from accounting_converter.tools.jdl_tax_evidence import (
     compare_purchase_reduced_8_subaccount_roundtrip,
     compare_sales_reduced_8_subaccount_roundtrip,
     compare_non_taxable_purchase_subaccount_roundtrip,
+    compare_out_of_scope_subaccount_roundtrip,
 )
 from accounting_converter.profiles.jdl_official import (
     jdl_ibex_cashbook_official_journal_import_spec,
@@ -87,6 +90,7 @@ class JdlProbeWorkflowTests(unittest.TestCase):
                 "tax_non_taxable_purchase",
                 "tax_non_taxable_purchase_with_subaccount",
                 "tax_out_of_scope",
+                "tax_out_of_scope_with_subaccount",
             },
         )
         self.assertNotIn("compound_3d1c", names)
@@ -129,6 +133,15 @@ class JdlProbeWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(
             non_taxable_sub.availability,
+            "VERIFIED_BY_REAL_IMPORT_EXPERIMENTAL",
+        )
+        out_of_scope_sub = next(
+            item
+            for item in PROBE_DEFINITIONS
+            if item.name == "tax_out_of_scope_with_subaccount"
+        )
+        self.assertEqual(
+            out_of_scope_sub.availability,
             "VERIFIED_BY_REAL_IMPORT_EXPERIMENTAL",
         )
         self.assertEqual(main(["--list"]), 0)
@@ -196,6 +209,8 @@ class JdlProbeWorkflowTests(unittest.TestCase):
                 "tax_sales_reduced_8_with_subaccount",
                 "tax_non_taxable_purchase_with_subaccount",
                 "tax_non_taxable_purchase",
+                "tax_out_of_scope",
+                "tax_out_of_scope_with_subaccount",
             }
         ):
             with self.subTest(case=case_name):
@@ -528,6 +543,146 @@ class JdlProbeWorkflowTests(unittest.TestCase):
                         profile_path=profile,
                         context_path=self.context_path,
                     )
+
+    def test_out_of_scope_requires_explicit_profile_and_parent_subaccount(self) -> None:
+        self._write_context(
+            self.context_path,
+            account_names=("消耗品費", "現金"),
+            taxable_included=True,
+            include_subaccount=True,
+            subaccount_parent="消耗品費",
+            subaccount_name="架空仕入補助",
+            subaccount_output_code="1",
+        )
+        self._write_profile(
+            self.profile_path,
+            account_names=("消耗品費", "現金"),
+            include_out_of_scope=True,
+        )
+        with self.assertRaises(JdlProbeError) as blank:
+            self._generate(
+                "tax_out_of_scope", self.private / "out-of-scope-blank.csv"
+            )
+        self.assertEqual(
+            blank.exception.code, "PROBE_BLOCKED_TARGET_SUBACCOUNT_REQUIRED"
+        )
+        with self.assertRaises(JdlProbeError):
+            self._generate(
+                "tax_out_of_scope_with_subaccount",
+                self.private / "out-of-scope-missing-map.csv",
+            )
+
+        self._write_profile(
+            self.profile_path,
+            account_names=("消耗品費", "現金"),
+            include_out_of_scope=True,
+            include_subaccount=True,
+            subaccount_parent="消耗品費",
+            subaccount_name="架空仕入補助",
+            subaccount_output_code="1",
+        )
+        generated = JdlProbeGenerator(self.private).generate(
+            case_name="tax_out_of_scope_with_subaccount",
+            output_path=self.private / "out-of-scope-sub.csv",
+            profile_path=self.profile_path,
+            context_path=self.context_path,
+            journal_date="2026/11/06",
+        )
+        rows = list(csv.reader(io.StringIO(generated.output_path.read_text(encoding="cp932"))))
+        header, row = rows
+        self.assertEqual(row[header.index("日付")], "20261106")
+        self.assertEqual(row[header.index("借方補助")], "1")
+        self.assertEqual(row[header.index("借方課区")], "")
+        self.assertEqual(row[header.index("借方税区")], "")
+        self.assertTrue(generated.conversion_result.output_validation_result.success)
+
+        wrong_profile = self.private / "out-of-scope-wrong-parent.json"
+        self._write_profile(
+            wrong_profile,
+            account_names=("消耗品費", "現金", "普通預金"),
+            include_out_of_scope=True,
+            include_subaccount=True,
+            subaccount_parent="普通預金",
+            subaccount_name="架空仕入補助",
+        )
+        with self.assertRaises(JdlProbeError):
+            JdlProbeGenerator(self.private).generate(
+                case_name="tax_out_of_scope_with_subaccount",
+                output_path=self.private / "out-of-scope-wrong-parent.csv",
+                profile_path=wrong_profile,
+                context_path=self.context_path,
+            )
+
+    def test_out_of_scope_roundtrip_requires_manifest_semantic_identity(self) -> None:
+        header = jdl_ibex_cashbook_official_journal_import_spec().column_names
+        positions = {name: index for index, name in enumerate(header)}
+        human_row = self._tax_row("out-of-scope human", reexport=True)
+        for name in (
+            "借方課区", "借方税区", "借方税入力方法",
+            "貸方課区", "貸方税区", "貸方税入力方法",
+        ):
+            human_row[positions[name]] = ""
+        human = self.private / "out-of-scope-human.csv"
+        self._write_official_rows(human, [human_row], preamble=True)
+        observed = analyze_scoped_tax_human_evidence(human, "tax_out_of_scope")
+        self.assertFalse(observed.tax_scope_present)
+        self.assertFalse(observed.tax_category_present)
+
+        candidate_row = list(human_row)
+        candidate_row[positions["摘要"]] = "out-of-scope probe"
+        candidate_row[positions["借方補助"]] = "1"
+        candidate_row[positions["借方補助名称"]] = "架空仕入補助"
+        for name in (
+            "借方科目", "借方科目正式名称", "貸方科目",
+            "貸方科目正式名称", "借方消費税", "貸方消費税",
+        ):
+            candidate_row[positions[name]] = ""
+        actual_row = list(human_row)
+        actual_row[positions["摘要"]] = "out-of-scope probe"
+        actual_row[positions["借方補助"]] = "1"
+        actual_row[positions["借方補助名称"]] = "架空仕入補助"
+        candidate = self.private / "out-of-scope-candidate.csv"
+        reexport = self.private / "out-of-scope-reexport.csv"
+        manifest = self.private / "out-of-scope.manifest.json"
+        self._write_official_rows(candidate, [candidate_row])
+        self._write_official_rows(reexport, [actual_row], preamble=True)
+
+        manifest.write_text(json.dumps({
+            "probe_case": "simple_no_tax",
+            "evidence_scope": [],
+            "NOT_FOR_PRODUCTION": True,
+        }), encoding="utf-8")
+        with self.assertRaises(JdlTaxEvidenceError):
+            compare_out_of_scope_subaccount_roundtrip(
+                human, candidate, manifest, self.profile_path, reexport
+            )
+
+        self._write_profile(
+            self.profile_path,
+            account_names=("消耗品費", "現金"),
+            include_out_of_scope=True,
+        )
+        profile_hash = hashlib.sha256(self.profile_path.read_bytes()).hexdigest()
+        manifest.write_text(json.dumps({
+            "probe_case": "tax_out_of_scope_with_subaccount",
+            "evidence_scope": [
+                "SUPPORTED_1111_TAX_OUT_OF_SCOPE_SUBACCOUNT_INCLUDED"
+            ],
+            "NOT_FOR_PRODUCTION": True,
+            "conversion_profile_sha256": profile_hash,
+        }), encoding="utf-8")
+        comparison = compare_out_of_scope_subaccount_roundtrip(
+            human, candidate, manifest, self.profile_path, reexport
+        )
+        self.assertTrue(comparison.passed)
+        result = comparison.privacy_safe_result()
+        self.assertEqual(
+            result["evidence_id"],
+            EVIDENCE_ID_MF_JDL_OUT_OF_SCOPE_SUBACCOUNT_ROUNDTRIP,
+        )
+        self.assertEqual(result["evidence_level"], "VERIFIED_BY_REAL_IMPORT")
+        self.assertFalse(result["mapping_promotion_allowed"])
+        self.assertFalse(result["production_ready"])
 
     def test_reduced_8_subaccount_human_evidence_separates_description_policy(self) -> None:
         header = jdl_ibex_cashbook_official_journal_import_spec().column_names
@@ -1032,7 +1187,7 @@ class JdlProbeWorkflowTests(unittest.TestCase):
             context_path=self.context_path,
         )
 
-    def _write_profile(self, path: Path, account_names=("現金", "普通預金", "当座預金", "小口現金"), include_subaccount=False, include_purchase_tax=False, include_purchase_reduced_tax=False, include_sales_tax=False, include_sales_reduced_tax=False, include_non_taxable_purchase=False, non_taxable_target="", non_taxable_scope="非仕入", subaccount_parent="普通預金", subaccount_name="テスト銀行", subaccount_output_code="0001") -> None:
+    def _write_profile(self, path: Path, account_names=("現金", "普通預金", "当座預金", "小口現金"), include_subaccount=False, include_purchase_tax=False, include_purchase_reduced_tax=False, include_sales_tax=False, include_sales_reduced_tax=False, include_non_taxable_purchase=False, include_out_of_scope=False, non_taxable_target="", non_taxable_scope="非仕入", subaccount_parent="普通預金", subaccount_name="テスト銀行", subaccount_output_code="0001") -> None:
         codes = {"現金": "1001", "普通預金": "1002", "当座預金": "1003", "小口現金": "1004", "消耗品費": "8001", "売上高": "4001"}
         now = datetime(2026, 10, 8, tzinfo=timezone.utc)
         profile = ConversionProfile(
@@ -1112,6 +1267,17 @@ class JdlProbeWorkflowTests(unittest.TestCase):
                         },
                     )
                 } if include_non_taxable_purchase else {}),
+                **({
+                    "対象外": MappingValue(
+                        source_value="対象外",
+                        target_value="",
+                        status=MappingStatus.USER_CONFIRMED,
+                        metadata={
+                            "jdl_tax_scope": "",
+                            "jdl_evidence_id": "EVID-JDL-TAX-OUT-OF-SCOPE-HAND-001",
+                        },
+                    )
+                } if include_out_of_scope else {}),
             },
             created_at=now,
             updated_at=now,

@@ -25,6 +25,8 @@ JDL側の課区、税区、税入力方法、消費税についてcase別Evidenc
 
 `tax_non_taxable_purchase_with_subaccount`は`EVID-JDL-MF-TAX-NONTAXABLE-PURCHASE-SUBACCOUNT-ROUNDTRIP-001`を持つ。適用範囲は課税税込Context、1111/1D1C、借方非課税仕入、exact親科目/補助、税率blank、貸方tax blank、部門等なしに限定する。課区あり・税区blankの非課税仕入を、課区もblankの対象外とは別caseとして扱う。補助なし・別master・production利用はBLOCKする。
 
+`tax_out_of_scope_with_subaccount`は`EVID-JDL-MF-TAX-OUT-OF-SCOPE-SUBACCOUNT-ROUNDTRIP-001`を持つ。operator-selected対象外とblank Export表現、MF source literal「対象外」のUSER_CONFIRMED mapping、専用Evidence profile、manifest identityをすべて要求する。適用範囲は課税税込Context、1111/1D1C、exact借方親科目/補助、tax fields blank、部門等なしに限定する。CSV単体から対象外を推測せず、通常tax未指定・非課税仕入・別master・production利用へ拡張しない。
+
 ## Evidence取得手順
 
 1. JDL IBEX出納帳35.5の完全架空テスト事業所をバックアップする。

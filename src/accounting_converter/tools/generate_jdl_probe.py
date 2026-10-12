@@ -83,7 +83,8 @@ PROBE_DEFINITIONS = (
     ProbeDefinition("tax_purchase_reduced_8_with_subaccount", 1, JdlEvidenceProfile.TAX_PURCHASE_REDUCED_8_INCLUDED_1111, "VERIFIED_BY_REAL_IMPORT_EXPERIMENTAL", "軽減仕入8%と借方補助の共存確認"),
     ProbeDefinition("tax_non_taxable_purchase", 1, JdlEvidenceProfile.TAX_NON_TAXABLE_PURCHASE_SUBACCOUNT_INCLUDED_1111, "BLOCKED_FAILED_PRECONDITION_TARGET_SUBACCOUNT", "補助なし非課税仕入の前提条件確認"),
     ProbeDefinition("tax_non_taxable_purchase_with_subaccount", 1, JdlEvidenceProfile.TAX_NON_TAXABLE_PURCHASE_SUBACCOUNT_INCLUDED_1111, "VERIFIED_BY_REAL_IMPORT_EXPERIMENTAL", "非課税仕入と借方補助の共存確認"),
-    ProbeDefinition("tax_out_of_scope", 1, None, "BLOCKED_MISSING_JDL_TAX_EVIDENCE", "対象外税表現の確認"),
+    ProbeDefinition("tax_out_of_scope", 1, JdlEvidenceProfile.TAX_OUT_OF_SCOPE_SUBACCOUNT_INCLUDED_1111, "BLOCKED_FAILED_PRECONDITION_TARGET_SUBACCOUNT", "補助なし対象外の前提条件確認"),
+    ProbeDefinition("tax_out_of_scope_with_subaccount", 1, JdlEvidenceProfile.TAX_OUT_OF_SCOPE_SUBACCOUNT_INCLUDED_1111, "VERIFIED_BY_REAL_IMPORT_EXPERIMENTAL", "対象外semantic identityと借方補助の共存確認"),
 )
 
 TAX_PROBE_CASES = frozenset(
@@ -283,6 +284,35 @@ class JdlProbeGenerator:
                     debit_sub=debit_sub.source_value if debit_sub else "",
                     debit_tax="課税仕入 (軽)8%",
                     journal_date=self._probe_date(journal_date, "2026/10/31"),
+                )
+            ]
+        elif definition.name in {
+            "tax_out_of_scope",
+            "tax_out_of_scope_with_subaccount",
+        }:
+            if definition.name == "tax_out_of_scope":
+                raise JdlProbeError(
+                    "PROBE_BLOCKED_TARGET_SUBACCOUNT_REQUIRED",
+                    "現在の取込先借方科目には補助が設定されているため、補助なしcaseは生成できません。",
+                )
+            debit_sub = self._required_subaccount_for_parent(
+                profile, context, "消耗品費"
+            )
+            if debit_sub is None:
+                raise JdlProbeError(
+                    "PROBE_BLOCKED_MISSING_SUBACCOUNT_EVIDENCE",
+                    "対象外の対象科目に対する確認済み親科目付き補助mappingが必要です。",
+                )
+            rows = [
+                self._row(
+                    "1",
+                    "消耗品費",
+                    "現金",
+                    "1000",
+                    "JDL-TAX-PROBE-OOS",
+                    debit_sub=debit_sub.source_value,
+                    debit_tax="対象外",
+                    journal_date=self._probe_date(journal_date, "2026/11/05"),
                 )
             ]
         elif definition.name == "tax_sales_10":

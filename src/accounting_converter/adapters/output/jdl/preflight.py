@@ -58,6 +58,9 @@ EVIDENCE_IDS = {
     JdlEvidenceProfile.TAX_NON_TAXABLE_PURCHASE_SUBACCOUNT_INCLUDED_1111: (
         "EVID-JDL-MF-TAX-NONTAXABLE-PURCHASE-SUBACCOUNT-ROUNDTRIP-001"
     ),
+    JdlEvidenceProfile.TAX_OUT_OF_SCOPE_SUBACCOUNT_INCLUDED_1111: (
+        "EVID-JDL-MF-TAX-OUT-OF-SCOPE-SUBACCOUNT-ROUNDTRIP-001"
+    ),
     JdlEvidenceProfile.TAX_EXCLUDED_1111: (
         "EVID-JDL-GENERATOR-1111-TAX-EXCLUSIVE-001"
     ),
@@ -373,6 +376,18 @@ class JdlOutputPreflight:
                 expected_category="",
                 allow_tax_side_subaccount=True,
             )
+        elif evidence is JdlEvidenceProfile.TAX_OUT_OF_SCOPE_SUBACCOUNT_INCLUDED_1111:
+            self._validate_tax(
+                debit,
+                credit,
+                entry,
+                included=True,
+                errors=errors,
+                expected_scope="",
+                expected_category="",
+                allow_tax_side_subaccount=True,
+                expected_mapping_evidence_id="EVID-JDL-TAX-OUT-OF-SCOPE-HAND-001",
+            )
         elif evidence is JdlEvidenceProfile.TAX_EXCLUDED_1111:
             self._validate_tax(debit, credit, entry, included=False, errors=errors)
 
@@ -441,6 +456,7 @@ class JdlOutputPreflight:
         expected_category: str = TAX_CATEGORY_TEN_PERCENT,
         expected_reduced_rate: bool = False,
         allow_tax_side_subaccount: bool = False,
+        expected_mapping_evidence_id: str | None = None,
     ) -> None:
         expected_mode = (
             JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED
@@ -489,6 +505,18 @@ class JdlOutputPreflight:
         if info is None or info.category != expected_category or info.metadata.get("jdl_tax_scope") != expected_scope:
             errors.append(self._error("JDL-OUT-TAX-LITERAL", "検証済み課区・税区のexact literalが必要です。", "tax", entry))
             return
+        if (
+            expected_mapping_evidence_id is not None
+            and info.metadata.get("jdl_evidence_id") != expected_mapping_evidence_id
+        ):
+            errors.append(
+                self._error(
+                    "JDL-OUT-TAX-SEMANTIC-IDENTITY",
+                    "対象外は専用Evidenceで明示確認されたmappingだけ使用できます。",
+                    "tax",
+                    entry,
+                )
+            )
         expected_rate = Decimal("8") if expected_reduced_rate else Decimal("10")
         reduced_rate_mismatch = (
             info.reduced_rate not in {None, True}

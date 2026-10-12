@@ -897,6 +897,29 @@ Human Exportはexact target表現のEvidenceだが、App candidateのImport/re-e
   - 補助なし、別親科目、別補助、他税区分、税抜、複数行/複数件へ一般化しない
   - mapping promotionとproduction利用は自動許可しない
 
+対象外Human Exportでは、operatorが画面上で対象外を明示選択した一方、CSVの課区・税区・税入力方法はblankであることを確認した。raw CSVのblankだけでは通常tax未指定journalと区別できないため、Human selection EvidenceとExport structureを別々に保持する。
+
+## EVID-JDL-MF-TAX-OUT-OF-SCOPE-SUBACCOUNT-ROUNDTRIP-001
+
+- evidence level: `VERIFIED_BY_REAL_IMPORT`（このexact artifact、target master、会社税設定に限定）
+- product: JDL IBEX 出納帳35.5
+- verified path: app-generated candidate -> real Import -> JDL re-export -> strict semantic comparison
+- semantic identity requirements:
+  - MF source literal「対象外」のUSER_CONFIRMED mapping
+  - dedicated OUT_OF_SCOPE Evidence profile
+  - candidate manifestのprofile hashとcase identity
+- verified scope:
+  - 観測済み課税・税込Context、flag `1111`、1D1C
+  - exact借方親科目と、その親に属するexact補助科目
+  - 借方・貸方tax fields blank、部門なし
+  - trade partner / invoice / tag / memoなし
+- strict comparison: date、flag、借貸account identity、debit parent-scoped subaccount、借貸金額、blank tax fields、description identity、balanceが一致
+- JDL付与表現: candidate空欄だったaccount master identityとtax amount representationは、Human Exportと一致する場合だけ正規化カテゴリとして記録
+- exclusions:
+  - blank CSV単体、通常tax未指定、課区ありの非課税仕入とは同値扱いしない
+  - 補助なし、別親科目、別補助、別Context、複数行/複数件へ一般化しない
+  - mapping promotionとproduction利用は自動許可しない
+
 最初の課税仕入・軽減8% candidateは、target借方科目に補助が設定されているため借方補助名称が必要というruntime messageで拒否された。これは`FAILED_PRECONDITION`として記録し、成功Evidenceへ昇格しない。後続Human Exportでは、同じ借方親科目にparent-scoped補助と軽減8%taxが共存するfield placementを確認した。後続candidateはこのexact親子masterと`USER_CONFIRMED` mappingに限定する。Contextに同親補助が存在する場合、補助空欄またはwrong-parent mappingは生成前にBLOCKする。状態は`EVIDENCE_GATED_EXPERIMENTAL`であり、実Import・再Export前なので`HUMAN_OBSERVED`のまま、mapping promotionとproduction利用は禁止する。
 
 ## EVID-JDL-SUBACCOUNT-TAX-REDUCED-8-HAND-001

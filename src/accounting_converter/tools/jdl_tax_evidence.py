@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import io
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,6 +32,9 @@ EVIDENCE_ID_MF_JDL_SALES_REDUCED_8_SUBACCOUNT_ROUNDTRIP = (
 )
 EVIDENCE_ID_MF_JDL_NON_TAXABLE_PURCHASE_SUBACCOUNT_ROUNDTRIP = (
     "EVID-JDL-MF-TAX-NONTAXABLE-PURCHASE-SUBACCOUNT-ROUNDTRIP-001"
+)
+EVIDENCE_ID_MF_JDL_OUT_OF_SCOPE_SUBACCOUNT_ROUNDTRIP = (
+    "EVID-JDL-MF-TAX-OUT-OF-SCOPE-SUBACCOUNT-ROUNDTRIP-001"
 )
 
 HUMAN_TAX_CASES = {
@@ -422,6 +426,62 @@ def compare_non_taxable_purchase_subaccount_roundtrip(
         evidence_id=EVIDENCE_ID_MF_JDL_NON_TAXABLE_PURCHASE_SUBACCOUNT_ROUNDTRIP,
         tax_prefix="借方",
         expected_scope="非仕入",
+        expected_category="",
+        require_tax_side_subaccount=True,
+        subaccount_reference_candidate=True,
+    )
+
+
+def compare_out_of_scope_subaccount_roundtrip(
+    human_evidence: Path,
+    candidate: Path,
+    candidate_manifest: Path,
+    candidate_profile: Path,
+    reexport: Path,
+) -> JdlTaxRoundTripComparison:
+    analyze_scoped_tax_human_evidence(human_evidence, "tax_out_of_scope")
+    try:
+        manifest = json.loads(candidate_manifest.read_text(encoding="utf-8"))
+        profile_raw = candidate_profile.read_bytes()
+        profile = json.loads(profile_raw.decode("utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise JdlTaxEvidenceError("out-of-scope candidate manifest is invalid") from exc
+    expected_profile = (
+        "SUPPORTED_1111_TAX_OUT_OF_SCOPE_SUBACCOUNT_INCLUDED"
+    )
+    if (
+        manifest.get("probe_case") != "tax_out_of_scope_with_subaccount"
+        or manifest.get("evidence_scope") != [expected_profile]
+        or manifest.get("NOT_FOR_PRODUCTION") is not True
+        or manifest.get("conversion_profile_sha256")
+        != hashlib.sha256(profile_raw).hexdigest()
+    ):
+        raise JdlTaxEvidenceError(
+            "blank tax fields require dedicated OUT_OF_SCOPE semantic identity"
+        )
+    mappings = profile.get("tax_mappings")
+    if not isinstance(mappings, list) or not any(
+        isinstance(item, dict)
+        and item.get("source_value") == "対象外"
+        and item.get("target_value") == ""
+        and item.get("status") == "USER_CONFIRMED"
+        and isinstance(item.get("metadata"), dict)
+        and item["metadata"].get("jdl_tax_scope") == ""
+        and item["metadata"].get("jdl_evidence_id")
+        == "EVID-JDL-TAX-OUT-OF-SCOPE-HAND-001"
+        for item in mappings
+    ):
+        raise JdlTaxEvidenceError(
+            "MF out-of-scope source semantic mapping is not explicitly confirmed"
+        )
+    return _compare_tax_roundtrip(
+        human_evidence,
+        candidate,
+        reexport,
+        probe_case="tax_out_of_scope_with_subaccount",
+        evidence_id=EVIDENCE_ID_MF_JDL_OUT_OF_SCOPE_SUBACCOUNT_ROUNDTRIP,
+        tax_prefix="借方",
+        expected_scope="",
         expected_category="",
         require_tax_side_subaccount=True,
         subaccount_reference_candidate=True,
