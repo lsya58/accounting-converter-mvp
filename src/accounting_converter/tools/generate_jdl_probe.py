@@ -78,6 +78,7 @@ PROBE_DEFINITIONS = (
     ProbeDefinition("tax_sales_10_with_subaccount", 1, JdlEvidenceProfile.TAX_SALES_10_SUBACCOUNT_INCLUDED_1111, "VERIFIED_BY_REAL_IMPORT_EXPERIMENTAL", "売上10%と貸方補助の共存確認"),
     ProbeDefinition("tax_purchase_10", 1, JdlEvidenceProfile.TAX_INCLUDED_1111, "VERIFIED_BY_REAL_IMPORT_EXPERIMENTAL", "仕入10%税表現の確認"),
     ProbeDefinition("tax_sales_reduced_8", 1, None, "BLOCKED_MISSING_JDL_TAX_EVIDENCE", "軽減売上8%税表現の確認"),
+    ProbeDefinition("tax_sales_reduced_8_with_subaccount", 1, JdlEvidenceProfile.TAX_SALES_REDUCED_8_SUBACCOUNT_INCLUDED_1111, "VERIFIED_BY_REAL_IMPORT_EXPERIMENTAL", "軽減売上8%と貸方補助の共存確認"),
     ProbeDefinition("tax_purchase_reduced_8", 1, JdlEvidenceProfile.TAX_PURCHASE_REDUCED_8_INCLUDED_1111, "BLOCKED_FAILED_PRECONDITION_TARGET_SUBACCOUNT", "軽減仕入8%税表現の確認"),
     ProbeDefinition("tax_purchase_reduced_8_with_subaccount", 1, JdlEvidenceProfile.TAX_PURCHASE_REDUCED_8_INCLUDED_1111, "VERIFIED_BY_REAL_IMPORT_EXPERIMENTAL", "軽減仕入8%と借方補助の共存確認"),
     ProbeDefinition("tax_non_taxable_purchase", 1, None, "BLOCKED_MISSING_JDL_TAX_EVIDENCE", "非課税仕入税表現の確認"),
@@ -312,6 +313,25 @@ class JdlProbeGenerator:
                     credit_sub=sub_key.source_value,
                     credit_tax="課税売上 10%",
                     journal_date="2026/10/30",
+                )
+            ]
+        elif definition.name == "tax_sales_reduced_8_with_subaccount":
+            sub_key = self._confirmed_credit_subaccount(profile, context)
+            if sub_key.parent_account != "売上高":
+                raise JdlProbeError(
+                    "PROBE_SUBACCOUNT_PARENT_MISMATCH",
+                    "軽減売上8% Human Evidenceと同じ貸方親科目の補助が必要です。",
+                )
+            rows = [
+                self._row(
+                    "1",
+                    "現金",
+                    sub_key.parent_account or "",
+                    "1080",
+                    "JDL-TAX-PROBE-SR8",
+                    credit_sub=sub_key.source_value,
+                    credit_tax="課税売上 (軽)8%",
+                    journal_date=self._probe_date(journal_date, "2026/11/03"),
                 )
             ]
         else:

@@ -51,6 +51,9 @@ EVIDENCE_IDS = {
     JdlEvidenceProfile.TAX_SALES_10_SUBACCOUNT_INCLUDED_1111: (
         "EVID-JDL-MF-TAX-SALES-10-SUBACCOUNT-ROUNDTRIP-001"
     ),
+    JdlEvidenceProfile.TAX_SALES_REDUCED_8_SUBACCOUNT_INCLUDED_1111: (
+        "EVID-JDL-MF-TAX-SALES-REDUCED-8-SUBACCOUNT-ROUNDTRIP-001"
+    ),
     JdlEvidenceProfile.TAX_EXCLUDED_1111: (
         "EVID-JDL-GENERATOR-1111-TAX-EXCLUSIVE-001"
     ),
@@ -340,6 +343,19 @@ class JdlOutputPreflight:
                 errors=errors,
                 tax_side=Side.CREDIT,
                 expected_scope=TAX_SCOPE_SALES,
+                allow_tax_side_subaccount=True,
+            )
+        elif evidence is JdlEvidenceProfile.TAX_SALES_REDUCED_8_SUBACCOUNT_INCLUDED_1111:
+            self._validate_tax(
+                debit,
+                credit,
+                entry,
+                included=True,
+                errors=errors,
+                tax_side=Side.CREDIT,
+                expected_scope=TAX_SCOPE_SALES,
+                expected_category=TAX_CATEGORY_REDUCED_EIGHT_PERCENT,
+                expected_reduced_rate=True,
                 allow_tax_side_subaccount=True,
             )
         elif evidence is JdlEvidenceProfile.TAX_EXCLUDED_1111:

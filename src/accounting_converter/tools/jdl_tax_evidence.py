@@ -26,6 +26,9 @@ EVIDENCE_ID_JDL_PURCHASE_REDUCED_8_INCLUSIVE_HAND = (
 EVIDENCE_ID_MF_JDL_PURCHASE_REDUCED_8_SUBACCOUNT_ROUNDTRIP = (
     "EVID-JDL-MF-TAX-PURCHASE-REDUCED-8-SUBACCOUNT-ROUNDTRIP-001"
 )
+EVIDENCE_ID_MF_JDL_SALES_REDUCED_8_SUBACCOUNT_ROUNDTRIP = (
+    "EVID-JDL-MF-TAX-SALES-REDUCED-8-SUBACCOUNT-ROUNDTRIP-001"
+)
 
 HUMAN_TAX_CASES = {
     "tax_sales_10": ("CREDIT", "売一種", "10%", "EVID-JDL-TAX-SALES-10-INCLUSIVE-HAND-001"),
@@ -383,6 +386,25 @@ def compare_purchase_reduced_8_subaccount_roundtrip(
         expected_category="軽減8%",
         require_tax_side_subaccount=True,
     )
+
+
+def compare_sales_reduced_8_subaccount_roundtrip(
+    human_evidence: Path, candidate: Path, reexport: Path
+) -> JdlTaxRoundTripComparison:
+    analyze_reduced_8_subaccount_human_evidence(human_evidence)
+    return _compare_tax_roundtrip(
+        human_evidence,
+        candidate,
+        reexport,
+        probe_case="tax_sales_reduced_8_with_subaccount",
+        evidence_id=EVIDENCE_ID_MF_JDL_SALES_REDUCED_8_SUBACCOUNT_ROUNDTRIP,
+        tax_prefix="貸方",
+        expected_scope="売一種",
+        expected_category="軽減8%",
+        require_tax_side_subaccount=True,
+    )
+
+
 def _compare_tax_roundtrip(
     human_evidence: Path, candidate: Path, reexport: Path, *,
     probe_case: str, evidence_id: str, tax_prefix: str, expected_scope: str,
