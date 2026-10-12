@@ -71,6 +71,7 @@ EVIDENCE_IDS = {
 MULTIGROUP_EVIDENCE_ID = "EVID-JDL-GENERATOR-MULTIGROUP-SIMPLE-COMPOUND-001"
 SIMPLE_PLUS_SIMPLE_EVIDENCE_ID = "EVID-JDL-SIMPLE-PLUS-SIMPLE-RUNTIME-001"
 MIXED_BATCH_EVIDENCE_ID = "EVID-JDL-MIXED-BATCH-RUNTIME-001"
+SIX_TAX_BATCH_EVIDENCE_ID = "EVID-JDL-MF-SIX-TAX-BATCH-FORMAL-E2E-001"
 MIXED_BATCH_PROFILE_SEQUENCE = (
     JdlEvidenceProfile.BASIC_1111,
     JdlEvidenceProfile.BASIC_1111,
@@ -84,6 +85,14 @@ MIXED_BATCH_PROFILE_SEQUENCE = (
     JdlEvidenceProfile.BASIC_1111,
     JdlEvidenceProfile.COMPOUND_1D3C,
     JdlEvidenceProfile.BASIC_1111,
+)
+SIX_TAX_BATCH_PROFILE_SEQUENCE = (
+    JdlEvidenceProfile.TAX_INCLUDED_1111,
+    JdlEvidenceProfile.TAX_SALES_10_SUBACCOUNT_INCLUDED_1111,
+    JdlEvidenceProfile.TAX_PURCHASE_REDUCED_8_INCLUDED_1111,
+    JdlEvidenceProfile.TAX_SALES_REDUCED_8_SUBACCOUNT_INCLUDED_1111,
+    JdlEvidenceProfile.TAX_NON_TAXABLE_PURCHASE_SUBACCOUNT_INCLUDED_1111,
+    JdlEvidenceProfile.TAX_OUT_OF_SCOPE_SUBACCOUNT_INCLUDED_1111,
 )
 
 
@@ -564,6 +573,13 @@ class JdlOutputPreflight:
             and len({entry.date for entry in entries}) == 1
         )
         if verified_mixed_batch:
+            return
+        experimental_six_tax_batch = (
+            profiles == SIX_TAX_BATCH_PROFILE_SEQUENCE
+            and len(entries) == len(SIX_TAX_BATCH_PROFILE_SEQUENCE)
+            and len({entry.date for entry in entries}) == len(entries)
+        )
+        if experimental_six_tax_batch:
             return
         if len(profiles) == 1:
             return

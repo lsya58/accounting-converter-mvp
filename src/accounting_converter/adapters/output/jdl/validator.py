@@ -22,6 +22,8 @@ from .preflight import (
     EVIDENCE_IDS,
     MIXED_BATCH_EVIDENCE_ID,
     MIXED_BATCH_PROFILE_SEQUENCE,
+    SIX_TAX_BATCH_EVIDENCE_ID,
+    SIX_TAX_BATCH_PROFILE_SEQUENCE,
     MULTIGROUP_EVIDENCE_ID,
     SIMPLE_PLUS_SIMPLE_EVIDENCE_ID,
     JdlOutputPreflight,
@@ -88,6 +90,8 @@ class JDLOutputValidator:
         evidence_profiles = tuple(EVIDENCE_IDS[item] for item in preflight.plan.evidence_profiles)
         if preflight.plan.evidence_profiles == MIXED_BATCH_PROFILE_SEQUENCE:
             evidence_profiles = (*evidence_profiles, MIXED_BATCH_EVIDENCE_ID)
+        elif preflight.plan.evidence_profiles == SIX_TAX_BATCH_PROFILE_SEQUENCE:
+            evidence_profiles = (*evidence_profiles, SIX_TAX_BATCH_EVIDENCE_ID)
         elif len(preflight.plan.evidence_profiles) == 2:
             combination_id = (
                 SIMPLE_PLUS_SIMPLE_EVIDENCE_ID

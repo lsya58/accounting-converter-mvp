@@ -22,6 +22,8 @@ from .preflight import (
     MIXED_BATCH_PROFILE_SEQUENCE,
     MULTIGROUP_EVIDENCE_ID,
     SIMPLE_PLUS_SIMPLE_EVIDENCE_ID,
+    SIX_TAX_BATCH_EVIDENCE_ID,
+    SIX_TAX_BATCH_PROFILE_SEQUENCE,
     JdlOutputBlockedError,
     JdlOutputPreflight,
     jdl_ibex_35_5_output_profile,
@@ -53,5 +55,7 @@ __all__ = [
     "MIXED_BATCH_EVIDENCE_ID",
     "MIXED_BATCH_PROFILE_SEQUENCE",
     "SIMPLE_PLUS_SIMPLE_EVIDENCE_ID",
+    "SIX_TAX_BATCH_EVIDENCE_ID",
+    "SIX_TAX_BATCH_PROFILE_SEQUENCE",
     "jdl_ibex_35_5_output_profile",
 ]

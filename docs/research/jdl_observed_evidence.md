@@ -1051,6 +1051,14 @@ Human Exportはexact target表現のEvidenceだが、App candidateのImport/re-e
 
 ## Next Verification Gate
 
+## MF six-tax formal batch E2E
+
+`EVID-JDL-MF-SIX-TAX-BATCH-FORMAL-E2E-001` は、完全syntheticなMoney Forward 19列CSVを正式`ConversionService`経路へ投入し、6つの限定税caseを1つのJDL CSVへ出力できることを確認するtest-only Evidenceである。課税仕入10%、親科目付き補助を伴う課税売上10%、仕入/売上軽減8%、非課税仕入、対象外を各1件含み、6 logical journals / 6 output rows、貸借合計一致、30列、CP932、CRLF、BOMなし、Output Validation成功を確認した。
+
+これはJDL実機Import Evidenceではない。対象外はsource semantic identity、明示tax mapping、専用Evidence profileの3点を必須とし、空tax fieldsだけから推定しない。誤親補助を1件含めるnegative testではbatch全体を停止し、正式出力も部分出力も生成しない。production Registry、Money Forward一般READY、`production_allowed`は変更しない。
+
+実機用6件candidateは未生成である。現在のprivate Contextでは、課税仕入10%の確認済みscopeが補助なしである一方、他の仕入caseの同一target科目には補助必須Evidenceがあり、単一Contextとして両立しない。別科目へ推測で振り替えず、exact target masterと追加round-trip Evidenceが得られるまでBLOCKする。
+
 単一simple、単一compound、限定master/tax条件、同日simple+compound、同日simple+simple、正式YayoiInputAdapter起点artifact、context-aware registry/factory経路、固定12-journal mixed batch、Windows packaged GUIの実機Import・UI確認・self re-export比較まで完了した。さらにscroll/resizeと未対応target versionの安全停止もWindows実機で確認した。
 
 1. JDL IBEX出納帳35.5のexact identityに限りproduction Registryを`AVAILABLE`とする。別version/製品は`UNAVAILABLE`のままとする。
