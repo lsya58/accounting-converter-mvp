@@ -81,6 +81,8 @@ PYTHONPATH=src python3 -m accounting_converter.tools.generate_jdl_probe \
 
 `tax_purchase_10`はapp-generated candidateのJDL Import、再Export、Human手入力Evidenceとのsemantic comparisonまで成功した。ただし、これは1 category・1会社設定・1D1Cのexperimental scopeであり、production routeには未接続である。他の5 tax casesと`simple_with_tax`は引き続きBLOCKする。production RegistryとMF READYは変更しない。
 
+`tax_purchase_10_with_subaccount`は、parent-scoped補助と課税仕入10%が共存するdevelopment probeである。補助なしprofileとは別に扱い、exact親子mapping、課税・税込Context、借方tax、貸方tax blankを必須とする。app-generated candidateの実機Importと再Export strict comparisonが成功し、限定scopeだけ`VERIFIED_BY_REAL_IMPORT`へ昇格した。production routeや別Contextへは一般化しない。
+
 会社設定Tax UIでは、このEvidenceに限り、Money Forward exact observed identityとJDL IBEX出納帳35.5の課税・税込Contextが一致した場合だけ候補を表示する。候補表示だけでは確定せず、ユーザーの「確認しました」操作後にのみ`USER_CONFIRMED`として保存する。他categoryとContext不一致は未解決のまま変換を停止する。これはproduction Registryやroute READYの拡張ではない。
 
 再Export比較では、JDLがcandidateで空欄だったaccount master identityと消費税欄を再Export表現へ補完した。これは比較上の観測分類であり、generator defaultや一般的な正規化規則にはしない。

@@ -18,6 +18,12 @@ EVIDENCE_ID_JDL_PURCHASE_10_INCLUSIVE_HAND = (
 EVIDENCE_ID_MF_JDL_PURCHASE_10_ROUNDTRIP = (
     "EVID-JDL-MF-TAX-PURCHASE-10-ROUNDTRIP-001"
 )
+EVIDENCE_ID_JDL_PURCHASE_10_SUBACCOUNT_HAND = (
+    "EVID-JDL-TAX-PURCHASE-10-SUBACCOUNT-HAND-001"
+)
+EVIDENCE_ID_MF_JDL_PURCHASE_10_SUBACCOUNT_ROUNDTRIP = (
+    "EVID-JDL-MF-TAX-PURCHASE-10-SUBACCOUNT-ROUNDTRIP-001"
+)
 EVIDENCE_ID_MF_JDL_SALES_10_SUBACCOUNT_ROUNDTRIP = (
     "EVID-JDL-MF-TAX-SALES-10-SUBACCOUNT-ROUNDTRIP-001"
 )
@@ -197,6 +203,47 @@ def analyze_scoped_tax_human_evidence(
     )
 
 
+def analyze_purchase_10_subaccount_human_evidence(
+    path: Path,
+) -> JdlScopedTaxHumanObservation:
+    raw, rows = _read_official_rows(path)
+    if len(rows) != 1:
+        raise JdlTaxEvidenceError("purchase 10 subaccount evidence must contain one row")
+    header = jdl_ibex_cashbook_official_journal_import_spec().column_names
+    pos = {name: index for index, name in enumerate(header)}
+    row = rows[0]
+    if (
+        row[pos["//識別フラグ"]] != "1111"
+        or not row[pos["借方科目"]]
+        or not row[pos["借方科目名称"]]
+        or not row[pos["貸方科目"]]
+        or not row[pos["貸方科目名称"]]
+        or not row[pos["借方補助"]]
+        or not row[pos["借方補助名称"]]
+        or row[pos["借方課区"]] != "仕　入"
+        or row[pos["借方税区"]] != "10%"
+        or row[pos["借方税入力方法"]] != ""
+        or row[pos["借方消費税"]] != "0"
+        or any(row[pos[f"貸方{name}"]] not in {"", "0"} for name in ("課区", "税区", "税入力方法", "消費税"))
+        or row[pos["摘要"]] != "SUBACCOUNT-TAX-P10-PROBE"
+        or any(row[pos[name]] for name in ("借方部門名称", "貸方部門名称"))
+        or any(row[pos[name]] not in {"", "0"} for name in ("借方部門コード", "貸方部門コード"))
+        or not row[pos["借方金額"]].isdigit()
+        or row[pos["借方金額"]] != row[pos["貸方金額"]]
+    ):
+        raise JdlTaxEvidenceError("purchase 10 subaccount evidence is outside strict scope")
+    return JdlScopedTaxHumanObservation(
+        case_name="tax_purchase_10_with_subaccount",
+        evidence_id=EVIDENCE_ID_JDL_PURCHASE_10_SUBACCOUNT_HAND,
+        sha256=_sha256(raw),
+        byte_size=len(raw),
+        side="DEBIT",
+        tax_scope_present=True,
+        tax_category_present=True,
+        balanced=True,
+    )
+
+
 @dataclass(frozen=True)
 class JdlTaxEvidenceObservation:
     path: Path
@@ -329,6 +376,22 @@ def compare_purchase_10_roundtrip(
         probe_case="tax_purchase_10",
         evidence_id=EVIDENCE_ID_MF_JDL_PURCHASE_10_ROUNDTRIP,
         tax_prefix="借方", expected_scope="仕　入",
+    )
+
+
+def compare_purchase_10_subaccount_roundtrip(
+    human_evidence: Path, candidate: Path, reexport: Path
+) -> JdlTaxRoundTripComparison:
+    analyze_purchase_10_subaccount_human_evidence(human_evidence)
+    return _compare_tax_roundtrip(
+        human_evidence,
+        candidate,
+        reexport,
+        probe_case="tax_purchase_10_with_subaccount",
+        evidence_id=EVIDENCE_ID_MF_JDL_PURCHASE_10_SUBACCOUNT_ROUNDTRIP,
+        tax_prefix="借方",
+        expected_scope="仕　入",
+        require_tax_side_subaccount=True,
     )
 
 

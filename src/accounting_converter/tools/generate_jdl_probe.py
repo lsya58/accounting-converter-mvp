@@ -77,6 +77,7 @@ PROBE_DEFINITIONS = (
     ProbeDefinition("tax_sales_10", 1, JdlEvidenceProfile.TAX_SALES_10_INCLUDED_1111, "EVIDENCE_GATED_EXPERIMENTAL", "売上10%税表現の確認"),
     ProbeDefinition("tax_sales_10_with_subaccount", 1, JdlEvidenceProfile.TAX_SALES_10_SUBACCOUNT_INCLUDED_1111, "VERIFIED_BY_REAL_IMPORT_EXPERIMENTAL", "売上10%と貸方補助の共存確認"),
     ProbeDefinition("tax_purchase_10", 1, JdlEvidenceProfile.TAX_INCLUDED_1111, "VERIFIED_BY_REAL_IMPORT_EXPERIMENTAL", "仕入10%税表現の確認"),
+    ProbeDefinition("tax_purchase_10_with_subaccount", 1, JdlEvidenceProfile.TAX_PURCHASE_10_SUBACCOUNT_INCLUDED_1111, "VERIFIED_BY_REAL_IMPORT_EXPERIMENTAL", "仕入10%と借方補助の共存確認"),
     ProbeDefinition("tax_sales_reduced_8", 1, None, "BLOCKED_MISSING_JDL_TAX_EVIDENCE", "軽減売上8%税表現の確認"),
     ProbeDefinition("tax_sales_reduced_8_with_subaccount", 1, JdlEvidenceProfile.TAX_SALES_REDUCED_8_SUBACCOUNT_INCLUDED_1111, "VERIFIED_BY_REAL_IMPORT_EXPERIMENTAL", "軽減売上8%と貸方補助の共存確認"),
     ProbeDefinition("tax_purchase_reduced_8", 1, JdlEvidenceProfile.TAX_PURCHASE_REDUCED_8_INCLUDED_1111, "BLOCKED_FAILED_PRECONDITION_TARGET_SUBACCOUNT", "軽減仕入8%税表現の確認"),
@@ -252,6 +253,27 @@ class JdlProbeGenerator:
                     "JDL-TAX-PROBE-P10",
                     debit_tax="課税仕入 10%",
                     journal_date="2026/10/21",
+                )
+            ]
+        elif definition.name == "tax_purchase_10_with_subaccount":
+            debit_sub = self._required_subaccount_for_parent(
+                profile, context, "消耗品費"
+            )
+            if debit_sub is None:
+                raise JdlProbeError(
+                    "PROBE_BLOCKED_MISSING_SUBACCOUNT_EVIDENCE",
+                    "課税仕入10%の対象科目に対する確認済み親科目付き補助mappingが必要です。",
+                )
+            rows = [
+                self._row(
+                    "1",
+                    "消耗品費",
+                    "現金",
+                    "1100",
+                    "JDL-TAX-PROBE-P10-SUB",
+                    debit_sub=debit_sub.source_value,
+                    debit_tax="課税仕入 10%",
+                    journal_date=self._probe_date(journal_date, "2026/11/07"),
                 )
             ]
         elif definition.name in {

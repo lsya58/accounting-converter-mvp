@@ -1059,6 +1059,31 @@ Human Exportはexact target表現のEvidenceだが、App candidateのImport/re-e
 
 実機用6件candidateは未生成である。現在のprivate Contextでは、課税仕入10%の確認済みscopeが補助なしである一方、他の仕入caseの同一target科目には補助必須Evidenceがあり、単一Contextとして両立しない。別科目へ推測で振り替えず、exact target masterと追加round-trip Evidenceが得られるまでBLOCKする。
 
+## EVID-JDL-TAX-PURCHASE-10-SUBACCOUNT-HAND-001
+
+- evidence level: `HUMAN_OBSERVED`
+- product: JDL IBEX 出納帳35.5
+- observed scope: 課税・税込、flag `1111`、1D1C、debit-side purchase 10%、exact借方親科目とparent-scoped補助、貸方tax blank、部門なし
+- structure: CP932、BOMなし、CRLF、official 30 columns、balanced integer yen
+- separation: 補助なしpurchase 10% round-trip Evidenceとは別scopeであり、まだ`VERIFIED_BY_REAL_IMPORT`ではない
+- next gate: app-generated `tax_purchase_10_with_subaccount` candidateの実機Importと再Export strict comparison
+- production Registry、Money Forward一般READY、mapping promotionは変更しない
+
+## EVID-JDL-MF-TAX-PURCHASE-10-SUBACCOUNT-ROUNDTRIP-001
+
+- evidence level: `VERIFIED_BY_REAL_IMPORT`（このexact artifact、target master、会社税設定に限定）
+- verified path: app-generated candidate -> real Import -> JDL re-export -> strict semantic comparison
+- verified scope:
+  - JDL IBEX出納帳35.5、課税・税込、flag `1111`、1D1C
+  - debit-side purchase 10%
+  - exact借方親科目と、その親に属するexact補助科目
+  - 貸方tax blank semantics、部門なし
+  - trade partner / invoice / tag / memoなし
+- strict comparison: date、flag、借貸account identity、debit parent-scoped subaccount、借貸金額、purchase 10% tax fields、opposite-side tax、description identity、balanceが一致
+- JDL付与表現: account master identityとtax amount再Export表現は既存Human Evidenceで確認済みのnormalizationだけ許可
+- separation: 補助なしpurchase 10% Evidenceとは別scope。別親科目、別補助、別Contextへ一般化しない
+- production Registry、Money Forward一般READY、mapping promotion、`production_allowed`は変更しない
+
 単一simple、単一compound、限定master/tax条件、同日simple+compound、同日simple+simple、正式YayoiInputAdapter起点artifact、context-aware registry/factory経路、固定12-journal mixed batch、Windows packaged GUIの実機Import・UI確認・self re-export比較まで完了した。さらにscroll/resizeと未対応target versionの安全停止もWindows実機で確認した。
 
 1. JDL IBEX出納帳35.5のexact identityに限りproduction Registryを`AVAILABLE`とする。別version/製品は`UNAVAILABLE`のままとする。

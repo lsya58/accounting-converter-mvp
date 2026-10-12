@@ -29,6 +29,7 @@ from accounting_converter.tools.generate_jdl_probe import (
 )
 from accounting_converter.tools.jdl_tax_evidence import (
     EVIDENCE_ID_JDL_PURCHASE_10_INCLUSIVE_HAND,
+    EVIDENCE_ID_JDL_PURCHASE_10_SUBACCOUNT_HAND,
     EVIDENCE_ID_MF_JDL_PURCHASE_10_ROUNDTRIP,
     EVIDENCE_ID_MF_JDL_SALES_10_SUBACCOUNT_ROUNDTRIP,
     EVIDENCE_ID_MF_JDL_PURCHASE_REDUCED_8_SUBACCOUNT_ROUNDTRIP,
@@ -40,9 +41,11 @@ from accounting_converter.tools.jdl_tax_evidence import (
     analyze_scoped_tax_human_evidence,
     analyze_reduced_8_subaccount_human_evidence,
     analyze_purchase_10_inclusive_evidence,
+    analyze_purchase_10_subaccount_human_evidence,
     compare_sales_10_roundtrip,
     compare_sales_10_subaccount_roundtrip,
     compare_purchase_10_roundtrip,
+    compare_purchase_10_subaccount_roundtrip,
     compare_purchase_reduced_8_roundtrip,
     compare_purchase_reduced_8_subaccount_roundtrip,
     compare_sales_reduced_8_subaccount_roundtrip,
@@ -83,6 +86,7 @@ class JdlProbeWorkflowTests(unittest.TestCase):
                 "tax_purchase_reduced_8",
                 "tax_purchase_reduced_8_with_subaccount",
                 "tax_purchase_10",
+                "tax_purchase_10_with_subaccount",
                 "tax_sales_reduced_8",
                 "tax_sales_reduced_8_with_subaccount",
                 "tax_purchase_reduced_8",
@@ -202,6 +206,7 @@ class JdlProbeWorkflowTests(unittest.TestCase):
             TAX_PROBE_CASES
             - {
                 "tax_purchase_10",
+                "tax_purchase_10_with_subaccount",
                 "tax_sales_10",
                 "tax_sales_10_with_subaccount",
                 "tax_purchase_reduced_8",
@@ -269,6 +274,120 @@ class JdlProbeWorkflowTests(unittest.TestCase):
 
         self.assertEqual(caught.exception.code, "PROBE_CONVERSION_BLOCKED")
         self.assertFalse((self.private / "blocked.csv").exists())
+
+    def test_purchase_10_subaccount_human_evidence_and_candidate_are_strict(self) -> None:
+        human = self.private / "human.csv"
+        row = self._tax_row("SUBACCOUNT-TAX-P10-PROBE", reexport=True)
+        header = jdl_ibex_cashbook_official_journal_import_spec().column_names
+        pos = {name: index for index, name in enumerate(header)}
+        row[pos["借方科目"]] = "8001"
+        row[pos["借方補助"]] = "1"
+        row[pos["借方補助名称"]] = "テスト補助"
+        self._write_official_rows(human, [row], preamble=True)
+        observed = analyze_purchase_10_subaccount_human_evidence(human)
+        self.assertEqual(observed.evidence_id, EVIDENCE_ID_JDL_PURCHASE_10_SUBACCOUNT_HAND)
+        self.assertEqual(observed.privacy_safe_manifest()["evidence_level"], "HUMAN_OBSERVED")
+
+        self._write_profile(
+            self.profile_path,
+            account_names=("消耗品費", "現金"),
+            include_subaccount=True,
+            include_purchase_tax=True,
+            subaccount_parent="消耗品費",
+            subaccount_name="テスト補助",
+            subaccount_output_code="1",
+        )
+        self._write_context(
+            self.context_path,
+            include_subaccount=True,
+            account_names=("消耗品費", "現金"),
+            taxable_included=True,
+            subaccount_parent="消耗品費",
+            subaccount_name="テスト補助",
+            subaccount_output_code="1",
+        )
+        result = self._generate(
+            "tax_purchase_10_with_subaccount",
+            self.private / "purchase10-sub.csv",
+        )
+        rows = list(csv.reader(io.StringIO(result.output_path.read_text(encoding="cp932"), newline="")))
+        output = rows[1]
+        self.assertEqual(output[pos["借方補助名称"]], "テスト補助")
+        self.assertEqual(output[pos["借方課区"]], "仕　入")
+        self.assertEqual(output[pos["借方税区"]], "10%")
+        self.assertEqual(output[pos["貸方課区"]], "")
+        self.assertTrue(result.conversion_result.output_validation_result.success)
+        self.assertIn(
+            "EVID-JDL-MF-TAX-PURCHASE-10-SUBACCOUNT-ROUNDTRIP-001",
+            result.conversion_result.output_validation_result.evidence_profiles,
+        )
+
+    def test_purchase_10_subaccount_human_evidence_rejects_wrong_tax_side(self) -> None:
+        header = jdl_ibex_cashbook_official_journal_import_spec().column_names
+        pos = {name: index for index, name in enumerate(header)}
+        for field, value in (("借方税区", "軽減8%"), ("貸方課区", "売一種")):
+            with self.subTest(field=field):
+                row = self._tax_row("SUBACCOUNT-TAX-P10-PROBE", reexport=True)
+                row[pos["借方科目"]] = "8001"
+                row[pos["借方補助"]] = "1"
+                row[pos["借方補助名称"]] = "テスト補助"
+                row[pos[field]] = value
+                path = self.private / f"invalid-{field}.csv"
+                self._write_official_rows(path, [row], preamble=True)
+                with self.assertRaises(JdlTaxEvidenceError):
+                    analyze_purchase_10_subaccount_human_evidence(path)
+
+    def test_purchase_10_subaccount_blocks_missing_and_wrong_parent_mapping(self) -> None:
+        for include_subaccount, mapping_parent in ((False, "消耗品費"), (True, "普通預金")):
+            with self.subTest(include_subaccount=include_subaccount, parent=mapping_parent):
+                self._write_profile(
+                    self.profile_path,
+                    account_names=("消耗品費", "現金", "普通預金"),
+                    include_subaccount=include_subaccount,
+                    include_purchase_tax=True,
+                    subaccount_parent=mapping_parent,
+                    subaccount_name="テスト補助",
+                    subaccount_output_code="1",
+                )
+                self._write_context(
+                    self.context_path,
+                    include_subaccount=True,
+                    account_names=("消耗品費", "現金", "普通預金"),
+                    taxable_included=True,
+                    subaccount_parent="消耗品費",
+                    subaccount_name="テスト補助",
+                    subaccount_output_code="1",
+                )
+                with self.assertRaises(JdlProbeError):
+                    self._generate(
+                        "tax_purchase_10_with_subaccount",
+                        self.private / f"blocked-{include_subaccount}.csv",
+                    )
+
+    def test_purchase_10_subaccount_roundtrip_comparator_requires_exact_subaccount(self) -> None:
+        human = self.private / "human.csv"
+        candidate = self.private / "candidate.csv"
+        reexport = self.private / "reexport.csv"
+        header = jdl_ibex_cashbook_official_journal_import_spec().column_names
+        pos = {name: index for index, name in enumerate(header)}
+        base = self._tax_row("SUBACCOUNT-TAX-P10-PROBE", reexport=True)
+        base[pos["借方科目"]] = "8001"
+        base[pos["借方補助"]] = "1"
+        base[pos["借方補助名称"]] = "テスト補助"
+        self._write_official_rows(human, [base], preamble=True)
+        candidate_row = list(base)
+        candidate_row[pos["摘要"]] = "JDL-TAX-PROBE-P10-SUB"
+        candidate_row[pos["借方科目"]] = ""
+        candidate_row[pos["貸方科目"]] = ""
+        candidate_row[pos["借方消費税"]] = ""
+        candidate_row[pos["貸方消費税"]] = ""
+        self._write_official_rows(candidate, [candidate_row], preamble=False)
+        reexport_row = list(base)
+        reexport_row[pos["摘要"]] = "JDL-TAX-PROBE-P10-SUB"
+        self._write_official_rows(reexport, [reexport_row], preamble=True)
+        comparison = compare_purchase_10_subaccount_roundtrip(human, candidate, reexport)
+        self.assertTrue(comparison.passed)
+        self.assertTrue(comparison.parent_scoped_subaccount_match)
 
     def test_tax_purchase_reduced_8_without_subaccount_is_always_blocked(self) -> None:
         self._write_profile(

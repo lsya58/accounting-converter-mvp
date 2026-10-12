@@ -43,6 +43,9 @@ EVIDENCE_IDS = {
     JdlEvidenceProfile.TAX_INCLUDED_1111: (
         "EVID-JDL-GENERATOR-1111-TAX-INCLUSIVE-001"
     ),
+    JdlEvidenceProfile.TAX_PURCHASE_10_SUBACCOUNT_INCLUDED_1111: (
+        "EVID-JDL-MF-TAX-PURCHASE-10-SUBACCOUNT-ROUNDTRIP-001"
+    ),
     JdlEvidenceProfile.TAX_PURCHASE_REDUCED_8_INCLUDED_1111: (
         "EVID-JDL-MF-TAX-PURCHASE-REDUCED-8-SUBACCOUNT-ROUNDTRIP-001"
     ),
@@ -329,6 +332,15 @@ class JdlOutputPreflight:
             self._validate_department(debit, credit, entry, errors)
         elif evidence is JdlEvidenceProfile.TAX_INCLUDED_1111:
             self._validate_tax(debit, credit, entry, included=True, errors=errors)
+        elif evidence is JdlEvidenceProfile.TAX_PURCHASE_10_SUBACCOUNT_INCLUDED_1111:
+            self._validate_tax(
+                debit,
+                credit,
+                entry,
+                included=True,
+                errors=errors,
+                allow_tax_side_subaccount=True,
+            )
         elif evidence is JdlEvidenceProfile.TAX_PURCHASE_REDUCED_8_INCLUDED_1111:
             self._validate_tax(
                 debit,
