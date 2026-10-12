@@ -29,6 +29,7 @@ TAX_SCOPE_PURCHASE = "仕　入"
 TAX_SCOPE_SALES = "売一種"
 TAX_CATEGORY_TEN_PERCENT = "10%"
 TAX_CATEGORY_REDUCED_EIGHT_PERCENT = "軽減8%"
+TAX_SCOPE_NON_TAXABLE_PURCHASE = "非仕入"
 TAX_INPUT_METHOD_INTERNAL = "内税"
 EVIDENCE_IDS = {
     JdlEvidenceProfile.BASIC_1111: "EVID-JDL-GENERATOR-1111-001",
@@ -53,6 +54,9 @@ EVIDENCE_IDS = {
     ),
     JdlEvidenceProfile.TAX_SALES_REDUCED_8_SUBACCOUNT_INCLUDED_1111: (
         "EVID-JDL-MF-TAX-SALES-REDUCED-8-SUBACCOUNT-ROUNDTRIP-001"
+    ),
+    JdlEvidenceProfile.TAX_NON_TAXABLE_PURCHASE_SUBACCOUNT_INCLUDED_1111: (
+        "EVID-JDL-MF-TAX-NONTAXABLE-PURCHASE-SUBACCOUNT-ROUNDTRIP-001"
     ),
     JdlEvidenceProfile.TAX_EXCLUDED_1111: (
         "EVID-JDL-GENERATOR-1111-TAX-EXCLUSIVE-001"
@@ -356,6 +360,17 @@ class JdlOutputPreflight:
                 expected_scope=TAX_SCOPE_SALES,
                 expected_category=TAX_CATEGORY_REDUCED_EIGHT_PERCENT,
                 expected_reduced_rate=True,
+                allow_tax_side_subaccount=True,
+            )
+        elif evidence is JdlEvidenceProfile.TAX_NON_TAXABLE_PURCHASE_SUBACCOUNT_INCLUDED_1111:
+            self._validate_tax(
+                debit,
+                credit,
+                entry,
+                included=True,
+                errors=errors,
+                expected_scope=TAX_SCOPE_NON_TAXABLE_PURCHASE,
+                expected_category="",
                 allow_tax_side_subaccount=True,
             )
         elif evidence is JdlEvidenceProfile.TAX_EXCLUDED_1111:

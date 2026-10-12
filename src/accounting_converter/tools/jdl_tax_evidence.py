@@ -29,6 +29,9 @@ EVIDENCE_ID_MF_JDL_PURCHASE_REDUCED_8_SUBACCOUNT_ROUNDTRIP = (
 EVIDENCE_ID_MF_JDL_SALES_REDUCED_8_SUBACCOUNT_ROUNDTRIP = (
     "EVID-JDL-MF-TAX-SALES-REDUCED-8-SUBACCOUNT-ROUNDTRIP-001"
 )
+EVIDENCE_ID_MF_JDL_NON_TAXABLE_PURCHASE_SUBACCOUNT_ROUNDTRIP = (
+    "EVID-JDL-MF-TAX-NONTAXABLE-PURCHASE-SUBACCOUNT-ROUNDTRIP-001"
+)
 
 HUMAN_TAX_CASES = {
     "tax_sales_10": ("CREDIT", "売一種", "10%", "EVID-JDL-TAX-SALES-10-INCLUSIVE-HAND-001"),
@@ -405,11 +408,32 @@ def compare_sales_reduced_8_subaccount_roundtrip(
     )
 
 
+def compare_non_taxable_purchase_subaccount_roundtrip(
+    human_evidence: Path, candidate: Path, reexport: Path
+) -> JdlTaxRoundTripComparison:
+    analyze_scoped_tax_human_evidence(
+        human_evidence, "tax_non_taxable_purchase"
+    )
+    return _compare_tax_roundtrip(
+        human_evidence,
+        candidate,
+        reexport,
+        probe_case="tax_non_taxable_purchase_with_subaccount",
+        evidence_id=EVIDENCE_ID_MF_JDL_NON_TAXABLE_PURCHASE_SUBACCOUNT_ROUNDTRIP,
+        tax_prefix="借方",
+        expected_scope="非仕入",
+        expected_category="",
+        require_tax_side_subaccount=True,
+        subaccount_reference_candidate=True,
+    )
+
+
 def _compare_tax_roundtrip(
     human_evidence: Path, candidate: Path, reexport: Path, *,
     probe_case: str, evidence_id: str, tax_prefix: str, expected_scope: str,
     expected_category: str = "10%",
     require_tax_side_subaccount: bool = False,
+    subaccount_reference_candidate: bool = False,
 ) -> JdlTaxRoundTripComparison:
     human_raw, human_rows = _read_official_rows(human_evidence)
     candidate_raw, candidate_rows = _read_official_rows(candidate)
@@ -487,7 +511,12 @@ def _compare_tax_roundtrip(
             == "1111"
         ),
         parent_scoped_subaccount_match=(
-            _fields_equal(human, actual, pos, tax_sub_fields)
+            _fields_equal(
+                expected if subaccount_reference_candidate else human,
+                actual,
+                pos,
+                tax_sub_fields,
+            )
             if require_tax_side_subaccount
             else not any(actual[pos[name]] for name in (*tax_sub_fields, *other_sub_fields))
         ),
