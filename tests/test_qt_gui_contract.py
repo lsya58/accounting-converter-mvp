@@ -20,6 +20,8 @@ class QtGuiContractTests(unittest.TestCase):
         self.assertIn("ui_qt\\app.py", script)
         self.assertIn("ui\\app.py", script)
         self.assertIn("--collect-all", script)
+        self.assertIn('"--collect-all", "pypdf"', script)
+        self.assertIn("from pypdf import PdfReader", script)
         self.assertIn("TkFallback", script)
 
     def test_single_csv_drop_is_accepted_without_modification(self) -> None:
@@ -133,6 +135,7 @@ class QtGuiContractTests(unittest.TestCase):
         company_flow = source.split("class CompanyAddDialog", maxsplit=1)[1]
         self.assertNotIn("JSON files (*.json)", company_flow)
         self.assertNotIn("JDL設定JSON", company_flow)
+        self.assertEqual(source.count('log_local_exception("jdl_account_pdf_import", exc)'), 2)
 
     def test_created_moneyforward_profile_replaces_parent_selection(self) -> None:
         source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(

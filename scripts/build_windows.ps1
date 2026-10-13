@@ -30,8 +30,9 @@ py -3.12 -m venv $BuildVenv
 & ".\$BuildVenv\Scripts\Activate.ps1"
 python -m pip install --upgrade pip
 python -m pip install -e ".[build]"
+python -c "from pypdf import PdfReader; import pypdf; print('pypdf dependency check:', pypdf.__version__)"
 $EntryPoint = "src\accounting_converter\ui_qt\app.py"
-$QtArguments = @("--collect-all", "PySide6")
+$QtArguments = @("--collect-all", "PySide6", "--collect-all", "pypdf")
 if ($TkFallback) {
   $EntryPoint = "src\accounting_converter\ui\app.py"
   $QtArguments = @()

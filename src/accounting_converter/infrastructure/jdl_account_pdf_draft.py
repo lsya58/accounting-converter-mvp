@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -35,11 +36,74 @@ class PypdfTextExtractor:
             from pypdf import PdfReader
 
             reader = PdfReader(path)
-            return tuple(page.extract_text() or "" for page in reader.pages)
+            return tuple(
+                self._normalize_observed_page(page.extract_text() or "", index)
+                for index, page in enumerate(reader.pages, 1)
+            )
         except Exception as exc:
             raise JdlAccountPdfDraftError(
                 "JDL科目一覧PDFの文字情報を読み取れませんでした。"
             ) from exc
+
+    @classmethod
+    def _normalize_observed_page(cls, text: str, expected_page: int) -> str:
+        """Restore row boundaries lost by pypdf for the observed JDL print layout."""
+        normalized: list[str] = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            heading = re.fullmatch(r"科\s*目\s*一\s*覧\s*(\d+)", stripped)
+            if heading:
+                if int(heading.group(1)) != expected_page:
+                    normalized.append(line)
+                    continue
+                normalized.extend(("科 目 一 覧", str(expected_page)))
+                continue
+
+            subaccount = re.fullmatch(
+                r"-(?P<code>\d{4})\s+(?P<name>.+?)\s+(?P<balance>[借貸])",
+                stripped,
+            )
+            if subaccount:
+                normalized.append(
+                    f"  -{subaccount.group('code')} {subaccount.group('name')}  "
+                    f"{subaccount.group('balance')}"
+                )
+                continue
+            if re.fullmatch(r"-\d{4}\s+[借貸]", stripped):
+                # A code without a printed name cannot become a subaccount identity.
+                continue
+
+            account = re.fullmatch(
+                r"(?P<code>\d{3,4})(?P<parent>-)?\s+"
+                r"(?P<name>.+?)\s+(?P<balance>[借貸])\s+"
+                r"(?P<abbreviation>.+?)\s+(?P<use>[○×])(?P<tail>.*)",
+                stripped,
+            )
+            if account:
+                delimiter = "- " if account.group("parent") else "  "
+                abbreviation = re.sub(r"\s+", "", account.group("abbreviation"))
+                normalized.append(
+                    f"  {account.group('code')}{delimiter}{account.group('name')}  "
+                    f"{account.group('balance')}{abbreviation} "
+                    f"{account.group('use')}{account.group('tail')}"
+                )
+                continue
+
+            uncoded = re.fullmatch(
+                r"(?P<name>.+?)\s+(?P<balance>[借貸])\s+"
+                r"(?P<abbreviation>.+?)\s+(?P<use>[○×])(?P<tail>.*)",
+                stripped,
+            )
+            if uncoded:
+                abbreviation = re.sub(r"\s+", "", uncoded.group("abbreviation"))
+                normalized.append(
+                    f"            {uncoded.group('name')}  "
+                    f"{uncoded.group('balance')}{abbreviation} "
+                    f"{uncoded.group('use')}{uncoded.group('tail')}"
+                )
+                continue
+            normalized.append(line)
+        return "\n".join(normalized)
 
 
 @dataclass(frozen=True)

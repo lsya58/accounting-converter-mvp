@@ -29,6 +29,9 @@ from PySide6.QtWidgets import (
 
 from accounting_converter.ui.controllers import AccountingConverterController
 from accounting_converter.ui.view_models import AppState, present_main_screen
+from accounting_converter.infrastructure.local_diagnostic_log import (
+    log_local_exception,
+)
 
 from .theme import status_visual
 from .widgets import CsvDropZone
@@ -625,7 +628,8 @@ class CompanyAddDialog(QDialog):
                 self.context_path = self.controller.import_jdl_account_pdf(
                     Path(filename)
                 )
-            except Exception:
+            except Exception as exc:
+                log_local_exception("jdl_account_pdf_import", exc)
                 self.context_path = None
                 self.context_label.setText("読み込めませんでした")
                 self.error_label.setText(
@@ -914,7 +918,8 @@ class MoneyForwardProfileSetupDialog(QDialog):
                 self.context_path = self.controller.import_jdl_account_pdf(
                     Path(filename)
                 )
-            except Exception:
+            except Exception as exc:
+                log_local_exception("jdl_account_pdf_import", exc)
                 self.context_path = None
                 self.context_label.setText("読み込めませんでした")
                 self.message_label.setText(

@@ -19,6 +19,11 @@ from accounting_converter.infrastructure.conversion_profile_store import Convers
 from accounting_converter.infrastructure.jdl_account_pdf_draft import (
     JdlAccountPdfDraftError,
     JdlAccountPdfDraftStore,
+    PypdfTextExtractor,
+)
+from accounting_converter.application.jdl_account_list_pdf import (
+    JdlAccountListPdfTextParser,
+    JdlAccountListTextPage,
 )
 
 
@@ -53,6 +58,38 @@ class JdlAccountPdfDraftTests(unittest.TestCase):
         self.assertFalse(payload["formal_conversion_allowed"])
         self.assertEqual(payload["document_type"], "JDL_ACCOUNT_PDF_CONTEXT_DRAFT")
         self.assertEqual(self.store.load(self.draft_path), draft)
+
+    def test_pypdf_compact_layout_is_normalized_without_guessing_blank_subaccount(self) -> None:
+        pages = []
+        for page_number in range(1, 6):
+            compact = (
+                f"科 目 一 覧 {page_number}\n"
+                "令和 8年12月31日決算\n"
+                "勘 定 科 目 略 名 称 使用 課 区 税 区 入力 固変 比 率 説 明\n"
+                f"{1100 + page_number} 架空科目{page_number} 借 架空 略称 ○ 説明\n"
+                "架空予備 借 架空 予備 ×\n"
+            )
+            if page_number == 2:
+                compact += "-0001 貸\n"
+            pages.append(
+                JdlAccountListTextPage(
+                    page_number,
+                    PypdfTextExtractor._normalize_observed_page(
+                        compact, page_number
+                    ),
+                )
+            )
+
+        result = JdlAccountListPdfTextParser().parse_pages(
+            pages,
+            source_sha256="a" * 64,
+            acquisition_method="synthetic pypdf layout",
+            human_observed=True,
+        )
+
+        self.assertEqual(len(result.printed_accounts), 5)
+        self.assertFalse(result.subaccounts)
+        self.assertEqual(result.completeness.value, "OBSERVED_PRINTED_MASTER")
 
     def test_import_never_overwrites_and_conflicts_are_blocked(self) -> None:
         self.store.import_pdf(self.pdf, self.draft_path)
