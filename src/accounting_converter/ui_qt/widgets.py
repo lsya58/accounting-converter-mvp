@@ -3,10 +3,17 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDropEvent
-from PySide6.QtWidgets import QFrame, QLabel, QPushButton, QVBoxLayout
+from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDropEvent, QWheelEvent
+from PySide6.QtWidgets import QComboBox, QFrame, QLabel, QPushButton, QVBoxLayout
 
 from .drop_policy import evaluate_csv_drop
+
+
+class WheelSafeComboBox(QComboBox):
+    """Do not change a mapping selection while the table is wheel-scrolled."""
+
+    def wheelEvent(self, event: QWheelEvent) -> None:
+        event.ignore()
 
 
 class CsvDropZone(QFrame):

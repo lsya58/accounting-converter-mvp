@@ -34,7 +34,7 @@ from accounting_converter.infrastructure.local_diagnostic_log import (
 )
 
 from .theme import status_visual
-from .widgets import CsvDropZone
+from .widgets import CsvDropZone, WheelSafeComboBox
 
 
 class AccountingConverterMainWindow(QMainWindow):
@@ -965,20 +965,29 @@ class MoneyForwardProfileSetupDialog(QDialog):
             source_item = QTableWidgetItem(item.source_value)
             source_item.setToolTip(item.source_value)
             self.table.setItem(row_index, 0, source_item)
-            target = QComboBox()
+            target = WheelSafeComboBox()
             target.setSizePolicy(
                 QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
             )
             target.setMinimumHeight(34)
-            target.addItems(item.available_targets)
+            target.addItem("未選択", None)
+            for available_target in item.available_targets:
+                target.addItem(available_target, available_target)
             if item.exact_candidate in item.available_targets:
-                target.setCurrentIndex(item.available_targets.index(item.exact_candidate))
+                target.setCurrentIndex(
+                    item.available_targets.index(item.exact_candidate) + 1
+                )
             else:
-                target.setCurrentIndex(-1)
+                target.setCurrentIndex(0)
             confirmed = QCheckBox("確認しました")
             confirmed.setMinimumHeight(34)
             confirmed.stateChanged.connect(self._update_confirmation_progress)
-            target.currentIndexChanged.connect(self._update_confirmation_progress)
+            confirmed.setEnabled(target.currentData() is not None)
+            target.currentIndexChanged.connect(
+                lambda _index, combo=target, checkbox=confirmed: (
+                    self._mapping_target_changed(combo, checkbox)
+                )
+            )
             self.table.setCellWidget(row_index, 1, target)
             confirmation_cell = QWidget()
             confirmation_layout = QHBoxLayout(confirmation_cell)
@@ -1009,10 +1018,19 @@ class MoneyForwardProfileSetupDialog(QDialog):
         )
         self._update_confirmation_progress()
 
+    def _mapping_target_changed(
+        self, target: QComboBox, checkbox: QCheckBox
+    ) -> None:
+        selected = target.currentData() is not None
+        if not selected:
+            checkbox.setChecked(False)
+        checkbox.setEnabled(selected)
+        self._update_confirmation_progress()
+
     def _update_confirmation_progress(self, *_args) -> None:
         total = len(self.row_controls)
         confirmed = sum(
-            checkbox.isChecked() and target.currentIndex() >= 0
+            checkbox.isChecked() and target.currentData() is not None
             for _, target, checkbox in self.row_controls
         )
         self.progress_label.setText(f"{confirmed} / {total} 件確認済み")
@@ -1024,9 +1042,10 @@ class MoneyForwardProfileSetupDialog(QDialog):
         selections: dict[str, str] = {}
         confirmed: set[str] = set()
         for source_value, target, checkbox in self.row_controls:
-            if target.currentIndex() >= 0:
-                selections[source_value] = target.currentText()
-            if checkbox.isChecked():
+            selected_target = target.currentData()
+            if selected_target is not None:
+                selections[source_value] = str(selected_target)
+            if checkbox.isChecked() and selected_target is not None:
                 confirmed.add(source_value)
         try:
             profile = self.controller.create_moneyforward_profile(

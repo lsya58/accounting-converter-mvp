@@ -167,6 +167,11 @@ class QtGuiContractTests(unittest.TestCase):
             "confirmation_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)",
             "self.table.setCellWidget(row_index, 1, target)",
             "self.table.setCellWidget(row_index, 2, confirmation_cell)",
+            'target.addItem("未選択", None)',
+            "confirmed.setEnabled(target.currentData() is not None)",
+            "checkbox.setChecked(False)",
+            "checkbox.setEnabled(selected)",
+            "target.currentData() is not None",
             "Money Forwardの科目",
             "JDLの科目",
             "0 / 0 件確認済み",
@@ -180,6 +185,19 @@ class QtGuiContractTests(unittest.TestCase):
             "QCheckBox::indicator",
         ):
             self.assertIn(selector, APP_STYLE_SHEET)
+
+    def test_mapping_selector_ignores_wheel_so_table_can_scroll(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
+            encoding="utf-8"
+        )
+        widgets = Path("src/accounting_converter/ui_qt/widgets.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("QAbstractItemView.ScrollMode.ScrollPerPixel", source)
+        self.assertIn("WheelSafeComboBox()", source)
+        self.assertIn("class WheelSafeComboBox(QComboBox)", widgets)
+        self.assertIn("def wheelEvent(self, event: QWheelEvent)", widgets)
+        self.assertIn("event.ignore()", widgets)
 
     def test_verified_tax_confirmation_ui_is_explicit_and_scoped(self) -> None:
         source = "\n".join(
