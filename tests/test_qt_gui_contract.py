@@ -215,6 +215,14 @@ class QtGuiContractTests(unittest.TestCase):
         self.assertIn("plan_company_master_refresh", controller)
         self.assertIn("apply_company_master_refresh", controller)
 
+    def test_existing_company_can_review_only_new_accounts_and_subaccounts(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(encoding="utf-8")
+        self.assertIn('QPushButton("新しい科目を確認")', source)
+        self.assertIn("class CompanyMappingUpdateDialog", source)
+        self.assertIn("追加確認が必要な科目はありません", source)
+        self.assertIn("WheelSafeComboBox()", source)
+        self.assertIn('target.addItem("未選択", None)', source)
+
     def test_mapping_selector_ignores_wheel_so_table_can_scroll(self) -> None:
         source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
             encoding="utf-8"

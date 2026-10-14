@@ -346,10 +346,13 @@ class SettingsDialog(QDialog):
         confirm_tax.clicked.connect(self._confirm_tax)
         refresh_master = QPushButton("JDL科目一覧を更新")
         refresh_master.clicked.connect(self._refresh_master)
+        review_new_accounts = QPushButton("新しい科目を確認")
+        review_new_accounts.clicked.connect(self._review_new_accounts)
         company_actions.addWidget(add_company)
         company_actions.addWidget(rename_company)
         company_actions.addWidget(confirm_tax)
         company_actions.addWidget(refresh_master)
+        company_actions.addWidget(review_new_accounts)
         company_actions.addWidget(delete_company)
         company_actions.addStretch(1)
         layout.addLayout(company_actions)
@@ -479,6 +482,31 @@ class SettingsDialog(QDialog):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._reload_companies(self.controller.state)
 
+    def _review_new_accounts(self) -> None:
+        company_id = self.company_combo.currentData()
+        if not company_id:
+            self.message_label.setText("会社設定を選択してください。")
+            return
+        filename, _ = QFileDialog.getOpenFileName(
+            self, "Money Forwardの仕訳CSVを選択", "", "CSV files (*.csv)"
+        )
+        if not filename:
+            return
+        try:
+            review = self.controller.review_company_mapping_updates(
+                company_id, Path(filename)
+            )
+        except Exception as exc:
+            log_local_exception("company_mapping_update_review", exc)
+            self.message_label.setText("CSVと現在の会社設定を確認できませんでした。")
+            return
+        if not review.items:
+            self.message_label.setText("追加確認が必要な科目はありません。")
+            return
+        dialog = CompanyMappingUpdateDialog(self.controller, review, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._reload_companies(self.controller.state)
+
     def _reload_companies(self, state: AppState) -> None:
         self.profile_ids = [item.profile_id for item in state.profiles]
         self.profile_combo.blockSignals(True)
@@ -602,6 +630,77 @@ class CompanyMasterRefreshDialog(QDialog):
         except Exception as exc:
             log_local_exception("jdl_account_master_refresh_apply", exc)
             self.status_label.setText("更新を保存できませんでした。")
+            return
+        self.accept()
+
+
+class CompanyMappingUpdateDialog(QDialog):
+    def __init__(self, controller, review, parent=None) -> None:
+        super().__init__(parent)
+        self.controller = controller
+        self.review = review
+        self.controls: list[tuple[str, QComboBox, QCheckBox]] = []
+        self.setWindowTitle("新しい科目を確認")
+        self.resize(980, 680)
+        self.setMinimumSize(760, 520)
+        layout = QVBoxLayout(self)
+        note = QLabel(
+            "保存済みの対応は再利用し、新規または再確認が必要な項目だけ表示しています。"
+        )
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        table = QTableWidget(len(review.items), 5)
+        table.setHorizontalHeaderLabels(("種類", "親科目", "入力元", "JDLの科目", "確認"))
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        for row, item in enumerate(review.items):
+            table.setItem(row, 0, QTableWidgetItem("補助科目" if item.mapping_type == "SUBACCOUNT" else "科目"))
+            table.setItem(row, 1, QTableWidgetItem(item.parent_account or ""))
+            table.setItem(row, 2, QTableWidgetItem(item.source_value))
+            target = WheelSafeComboBox()
+            target.addItem("未選択", None)
+            for value in item.available_targets:
+                target.addItem(value, value)
+            if item.exact_candidate in item.available_targets:
+                target.setCurrentIndex(item.available_targets.index(item.exact_candidate) + 1)
+            confirmed = QCheckBox("確認しました")
+            confirmed.setEnabled(target.currentData() is not None)
+            target.currentIndexChanged.connect(
+                lambda _index, combo=target, checkbox=confirmed: (
+                    checkbox.setChecked(False), checkbox.setEnabled(combo.currentData() is not None), self._update_action()
+                )
+            )
+            confirmed.stateChanged.connect(self._update_action)
+            table.setCellWidget(row, 3, target)
+            table.setCellWidget(row, 4, confirmed)
+            self.controls.append((item.key, target, confirmed))
+        layout.addWidget(table, 1)
+        actions = QHBoxLayout()
+        cancel = QPushButton("キャンセル")
+        cancel.clicked.connect(self.reject)
+        self.save_button = QPushButton("追加対応を保存")
+        self.save_button.setObjectName("primaryButton")
+        self.save_button.clicked.connect(self._save)
+        actions.addStretch(1)
+        actions.addWidget(cancel)
+        actions.addWidget(self.save_button)
+        layout.addLayout(actions)
+        self._update_action()
+
+    def _update_action(self, *_args) -> None:
+        self.save_button.setEnabled(all(combo.currentData() is not None and check.isChecked() for _, combo, check in self.controls))
+
+    def _save(self) -> None:
+        selections = {key: str(combo.currentData()) for key, combo, _ in self.controls if combo.currentData() is not None}
+        confirmed = {key for key, _, check in self.controls if check.isChecked()}
+        try:
+            self.controller.apply_company_mapping_updates(self.review, selections, confirmed)
+        except Exception as exc:
+            log_local_exception("company_mapping_update_apply", exc)
             return
         self.accept()
 

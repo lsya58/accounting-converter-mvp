@@ -14,6 +14,10 @@ from accounting_converter.application.company_master_refresh import (
     AccountMasterRefreshPlan,
     CompanyMasterRefreshService,
 )
+from accounting_converter.application.company_mapping_update import (
+    CompanyMappingUpdateReview,
+    CompanyMappingUpdateService,
+)
 from accounting_converter.application.moneyforward_profile_setup import (
     MoneyForwardProfileSetupAnalysis,
     MoneyForwardProfileSetupService,
@@ -135,6 +139,9 @@ class AccountingConverterController:
         )
         self.company_setting_service = CompanySettingService(self.company_store)
         self.company_master_refresh_service = CompanyMasterRefreshService(
+            self.company_store, self.profile_store
+        )
+        self.company_mapping_update_service = CompanyMappingUpdateService(
             self.company_store, self.profile_store
         )
         self.moneyforward_profile_setup_service = MoneyForwardProfileSetupService(
@@ -349,6 +356,28 @@ class AccountingConverterController:
                 f"JDL科目一覧を更新しました。{count}件の科目対応を再確認しました。"
             ),
         )
+        return self.state
+
+    def review_company_mapping_updates(
+        self, company_setting_id: str, source_path: Path
+    ) -> CompanyMappingUpdateReview:
+        return self.company_mapping_update_service.review(
+            company_setting_id, source_path
+        )
+
+    def apply_company_mapping_updates(
+        self,
+        review: CompanyMappingUpdateReview,
+        selections: dict[str, str],
+        explicitly_confirmed: set[str],
+    ) -> AppState:
+        self.company_mapping_update_service.apply(
+            review, selections, explicitly_confirmed
+        )
+        self.load_profiles()
+        self.load_company_settings()
+        state = self.select_company_setting(review.company_setting_id)
+        self.state = replace(state, user_message="追加の科目対応を保存しました。")
         return self.state
 
     def create_moneyforward_profile(
