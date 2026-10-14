@@ -227,6 +227,37 @@ class JdlAccountPdfDraftTests(unittest.TestCase):
                 explicitly_confirmed={"架空科目001", "架空科目002"},
             )
 
+    def test_company_specific_drafts_do_not_share_account_candidates(self) -> None:
+        first_path = self.root / "first-draft.json"
+        second_path = self.root / "second-draft.json"
+        self.store.import_pdf(self.pdf, first_path)
+
+        second_pages = tuple(
+            page.replace("架空科目001", "別会社専用科目") for page in self.pages
+        )
+        second_pdf = self.root / "second-synthetic.pdf"
+        second_pdf.write_bytes(b"second-synthetic-pdf-placeholder")
+        JdlAccountPdfDraftStore(_SyntheticPdfExtractor(second_pages)).import_pdf(
+            second_pdf, second_path
+        )
+
+        source = self.root / "mf-isolation.csv"
+        self._write_moneyforward(source, ("架空科目001", "架空科目002"))
+        service = MoneyForwardProfileSetupService(
+            ConversionProfileStore(self.root / "isolation-profiles")
+        )
+
+        first = service.analyze(source, first_path)
+        second = service.analyze(source, second_path)
+
+        self.assertEqual(
+            sum(item.exact_candidate is not None for item in first.account_items), 2
+        )
+        self.assertEqual(
+            sum(item.exact_candidate is not None for item in second.account_items), 1
+        )
+        self.assertNotEqual(first.context_sha256, second.context_sha256)
+
     @staticmethod
     def _pages(account_count: int) -> tuple[str, ...]:
         pages: list[str] = []
