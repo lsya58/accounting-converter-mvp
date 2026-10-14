@@ -767,12 +767,12 @@ class MoneyForwardProfileSetupDialog(QDialog):
         self.context_display = "未選択"
         self.row_controls: list[tuple[str, QComboBox, QCheckBox]] = []
         self.setWindowTitle("Money Forwardの対応設定を作成")
-        self.resize(1120, 780)
-        self.setMinimumSize(920, 680)
+        self.resize(1080, 700)
+        self.setMinimumSize(820, 560)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(30, 26, 30, 24)
-        layout.setSpacing(14)
+        layout.setContentsMargins(24, 18, 24, 18)
+        layout.setSpacing(10)
         title = QLabel("Money Forwardの対応設定を作成")
         title.setObjectName("sectionTitle")
         description = QLabel(
@@ -822,7 +822,7 @@ class MoneyForwardProfileSetupDialog(QDialog):
         self.table.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
-        self.table.setMinimumHeight(360)
+        self.table.setMinimumHeight(260)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)

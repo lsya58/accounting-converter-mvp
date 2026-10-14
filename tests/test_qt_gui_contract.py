@@ -154,9 +154,11 @@ class QtGuiContractTests(unittest.TestCase):
             encoding="utf-8"
         )
         expected = (
-            "self.resize(1120, 780)",
-            "self.setMinimumSize(920, 680)",
-            "self.table.setMinimumHeight(360)",
+            "self.resize(1080, 700)",
+            "self.setMinimumSize(820, 560)",
+            "layout.setContentsMargins(24, 18, 24, 18)",
+            "layout.setSpacing(10)",
+            "self.table.setMinimumHeight(260)",
             "self.table.setSizePolicy(",
             "layout.addLayout(mapping_area, 1)",
             "layout.setStretchFactor(mapping_area, 1)",
@@ -185,6 +187,19 @@ class QtGuiContractTests(unittest.TestCase):
             "QCheckBox::indicator",
         ):
             self.assertIn(selector, APP_STYLE_SHEET)
+
+    def test_moneyforward_mapping_actions_remain_below_only_stretching_area(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
+            encoding="utf-8"
+        )
+        dialog = source.split(
+            "class MoneyForwardProfileSetupDialog", maxsplit=1
+        )[1].split("class TaxMappingConfirmationDialog", maxsplit=1)[0]
+
+        mapping_position = dialog.index("layout.addLayout(mapping_area, 1)")
+        actions_position = dialog.index("layout.addLayout(actions)")
+        self.assertLess(mapping_position, actions_position)
+        self.assertNotIn("layout.addLayout(actions, 1)", dialog)
 
     def test_mapping_selector_ignores_wheel_so_table_can_scroll(self) -> None:
         source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
