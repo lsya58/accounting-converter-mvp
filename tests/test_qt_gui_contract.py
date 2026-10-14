@@ -201,6 +201,20 @@ class QtGuiContractTests(unittest.TestCase):
         self.assertLess(mapping_position, actions_position)
         self.assertNotIn("layout.addLayout(actions, 1)", dialog)
 
+    def test_existing_company_can_refresh_jdl_account_master_with_diff_review(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
+            encoding="utf-8"
+        )
+        controller = Path("src/accounting_converter/ui/controllers.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('QPushButton("JDL科目一覧を更新")', source)
+        self.assertIn("class CompanyMasterRefreshDialog", source)
+        self.assertIn("同じコードと名称の科目対応は保持", source)
+        self.assertIn('target.addItem("未選択", None)', source)
+        self.assertIn("plan_company_master_refresh", controller)
+        self.assertIn("apply_company_master_refresh", controller)
+
     def test_mapping_selector_ignores_wheel_so_table_can_scroll(self) -> None:
         source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
             encoding="utf-8"

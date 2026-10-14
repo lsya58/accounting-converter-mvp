@@ -175,6 +175,58 @@ class CompanySettingStore:
         )
         return updated
 
+    def replace_context(
+        self,
+        company_setting_id: str,
+        context_source: Path,
+        *,
+        conversion_profile_id: str | None = None,
+    ) -> CompanySetting:
+        current = self.get(company_setting_id)
+        profile = self.profile_store.get(
+            conversion_profile_id or current.conversion_profile_id
+        )
+        context_bytes = context_source.read_bytes()
+        if not self.account_pdf_drafts.is_draft(context_source):
+            raise CompanySettingStoreError("JDL account-list draft is required")
+        self.account_pdf_drafts.load(context_source)
+        context_hash = self._hash(context_bytes)
+        expected_hashes = {
+            mapping.metadata.get("setup_context_sha256")
+            for mapping in profile.account_mappings.values()
+            if mapping.status.value == "USER_CONFIRMED"
+        }
+        if expected_hashes and expected_hashes != {context_hash}:
+            raise CompanySettingStoreError(
+                "profile mappings were not confirmed against the new JDL setting"
+            )
+        updated = replace(
+            current,
+            conversion_profile_id=profile.profile_id,
+            expected_source_format_key=profile.source_format_identity.stable_key,
+            expected_target_format_key=profile.target_format_identity.stable_key,
+            profile_fingerprint=self._profile_fingerprint(profile),
+            context_fingerprint=context_hash,
+            updated_at=datetime.now(timezone.utc),
+        )
+        destination = self.context_path(current)
+        context_temp = destination.with_name(f".{destination.name}.refresh.tmp")
+        company_path = self.root_dir / company_setting_id / self.COMPANY_FILE
+        company_temp = company_path.with_name(f".{self.COMPANY_FILE}.refresh.tmp")
+        try:
+            self._exclusive_write(context_temp, context_bytes)
+            self.account_pdf_drafts.load(context_temp)
+            self._write_json(company_temp, self._to_dict(updated), exclusive=True)
+            self._from_json(company_temp)
+            os.replace(context_temp, destination)
+            os.replace(company_temp, company_path)
+        finally:
+            if context_temp.exists():
+                context_temp.unlink()
+            if company_temp.exists():
+                company_temp.unlink()
+        return updated
+
     def delete(self, company_setting_id: str) -> None:
         self._validate_id(company_setting_id)
         directory = self.root_dir / company_setting_id

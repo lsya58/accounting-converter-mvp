@@ -10,6 +10,10 @@ from accounting_converter.application.first_release_workflow import (
     conversion_result_message,
 )
 from accounting_converter.application.company_settings import CompanySettingService
+from accounting_converter.application.company_master_refresh import (
+    AccountMasterRefreshPlan,
+    CompanyMasterRefreshService,
+)
 from accounting_converter.application.moneyforward_profile_setup import (
     MoneyForwardProfileSetupAnalysis,
     MoneyForwardProfileSetupService,
@@ -130,6 +134,9 @@ class AccountingConverterController:
             default_company_store_dir(), self.profile_store
         )
         self.company_setting_service = CompanySettingService(self.company_store)
+        self.company_master_refresh_service = CompanyMasterRefreshService(
+            self.company_store, self.profile_store
+        )
         self.moneyforward_profile_setup_service = MoneyForwardProfileSetupService(
             self.profile_store
         )
@@ -315,6 +322,34 @@ class AccountingConverterController:
             return destination
         store.import_pdf(source_path, destination)
         return destination
+
+    def plan_company_master_refresh(
+        self, company_setting_id: str, source_pdf: Path
+    ) -> AccountMasterRefreshPlan:
+        draft_path = self.import_jdl_account_pdf(source_pdf)
+        return self.company_master_refresh_service.plan(
+            company_setting_id, draft_path
+        )
+
+    def apply_company_master_refresh(
+        self,
+        plan: AccountMasterRefreshPlan,
+        selections: dict[str, str],
+        explicitly_confirmed: set[str],
+    ) -> AppState:
+        count = self.company_master_refresh_service.apply(
+            plan, selections, explicitly_confirmed
+        )
+        self.load_profiles()
+        self.load_company_settings()
+        state = self.select_company_setting(plan.company_setting_id)
+        self.state = replace(
+            state,
+            user_message=(
+                f"JDL科目一覧を更新しました。{count}件の科目対応を再確認しました。"
+            ),
+        )
+        return self.state
 
     def create_moneyforward_profile(
         self,

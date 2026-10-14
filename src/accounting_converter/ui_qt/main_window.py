@@ -344,9 +344,12 @@ class SettingsDialog(QDialog):
         delete_company.clicked.connect(self._delete_company)
         confirm_tax = QPushButton("税区分を確認")
         confirm_tax.clicked.connect(self._confirm_tax)
+        refresh_master = QPushButton("JDL科目一覧を更新")
+        refresh_master.clicked.connect(self._refresh_master)
         company_actions.addWidget(add_company)
         company_actions.addWidget(rename_company)
         company_actions.addWidget(confirm_tax)
+        company_actions.addWidget(refresh_master)
         company_actions.addWidget(delete_company)
         company_actions.addStretch(1)
         layout.addLayout(company_actions)
@@ -454,6 +457,28 @@ class SettingsDialog(QDialog):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._reload_companies(self.controller.state)
 
+    def _refresh_master(self) -> None:
+        company_id = self.company_combo.currentData()
+        if not company_id:
+            self.message_label.setText("会社設定を選択してください。")
+            return
+        filename, _ = QFileDialog.getOpenFileName(
+            self, "新しいJDL科目一覧PDFを選択", "", "PDF files (*.pdf)"
+        )
+        if not filename:
+            return
+        try:
+            plan = self.controller.plan_company_master_refresh(
+                company_id, Path(filename)
+            )
+        except Exception as exc:
+            log_local_exception("jdl_account_master_refresh_plan", exc)
+            self.message_label.setText("JDL科目一覧を確認できませんでした。")
+            return
+        dialog = CompanyMasterRefreshDialog(self.controller, plan, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._reload_companies(self.controller.state)
+
     def _reload_companies(self, state: AppState) -> None:
         self.profile_ids = [item.profile_id for item in state.profiles]
         self.profile_combo.blockSignals(True)
@@ -490,6 +515,95 @@ class SettingsDialog(QDialog):
             if company_id
             else state.user_message
         )
+
+
+class CompanyMasterRefreshDialog(QDialog):
+    def __init__(self, controller, plan, parent=None) -> None:
+        super().__init__(parent)
+        self.controller = controller
+        self.plan = plan
+        self.controls: list[tuple[str, QComboBox, QCheckBox]] = []
+        self.setWindowTitle("JDL科目一覧を更新")
+        self.resize(860, 620)
+        self.setMinimumSize(720, 500)
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("JDL科目一覧の変更を確認"))
+        note = QLabel(
+            "同じコードと名称の科目対応は保持します。"
+            "変更または削除された対応だけ再確認してください。"
+        )
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        self.table = QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels(("入力元の科目", "JDLの科目", "確認"))
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        stale = tuple(item for item in plan.items if not item.preserved)
+        self.table.setRowCount(len(stale))
+        for row, item in enumerate(stale):
+            self.table.setItem(row, 0, QTableWidgetItem(item.source_value))
+            target = WheelSafeComboBox()
+            target.addItem("未選択", None)
+            for value in item.available_targets:
+                target.addItem(value, value)
+            confirmed = QCheckBox("確認しました")
+            confirmed.setEnabled(False)
+            target.currentIndexChanged.connect(
+                lambda _index, combo=target, checkbox=confirmed: (
+                    checkbox.setChecked(False),
+                    checkbox.setEnabled(combo.currentData() is not None),
+                    self._update_action(),
+                )
+            )
+            confirmed.stateChanged.connect(self._update_action)
+            self.table.setCellWidget(row, 1, target)
+            self.table.setCellWidget(row, 2, confirmed)
+            self.controls.append((item.source_value, target, confirmed))
+        layout.addWidget(self.table, 1)
+        self.status_label = QLabel(
+            f"保持: {len(plan.items) - len(stale)}件 / 再確認: {len(stale)}件"
+        )
+        layout.addWidget(self.status_label)
+        actions = QHBoxLayout()
+        cancel = QPushButton("キャンセル")
+        cancel.clicked.connect(self.reject)
+        self.apply_button = QPushButton("更新を保存")
+        self.apply_button.setObjectName("primaryButton")
+        self.apply_button.clicked.connect(self._apply)
+        actions.addStretch(1)
+        actions.addWidget(cancel)
+        actions.addWidget(self.apply_button)
+        layout.addLayout(actions)
+        self._update_action()
+
+    def _update_action(self, *_args) -> None:
+        self.apply_button.setEnabled(
+            all(
+                combo.currentData() is not None and checkbox.isChecked()
+                for _, combo, checkbox in self.controls
+            )
+        )
+
+    def _apply(self) -> None:
+        selections = {
+            source: str(combo.currentData())
+            for source, combo, _ in self.controls
+            if combo.currentData() is not None
+        }
+        confirmed = {
+            source for source, _, checkbox in self.controls if checkbox.isChecked()
+        }
+        try:
+            self.controller.apply_company_master_refresh(
+                self.plan, selections, confirmed
+            )
+        except Exception as exc:
+            log_local_exception("jdl_account_master_refresh_apply", exc)
+            self.status_label.setText("更新を保存できませんでした。")
+            return
+        self.accept()
 
 
 class CompanyAddDialog(QDialog):
