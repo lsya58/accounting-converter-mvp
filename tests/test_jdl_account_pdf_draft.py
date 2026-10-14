@@ -118,6 +118,30 @@ class JdlAccountPdfDraftTests(unittest.TestCase):
                 self.pdf, self.root / "duplicate-name.json"
             )
 
+    def test_subaccount_conflict_is_preserved_without_blocking_account_review(self) -> None:
+        pages = list(self.pages)
+        pages[0] = (
+            "科        目        一         覧\n"
+            "頁\n1\n令和 8年12月31日決算\n"
+            "勘 定 科 目  略名称 使用 課区 税区 入力 固変 比率 説明\n"
+            "         1311- 架空親科目                    借架空親科目 ○\n"
+            "             -0001 架空補助科目              借\n"
+            "             -0002 架空補助科目              借\n"
+            "               架空予備科目                 借架空予備 ×\n"
+        )
+        store = JdlAccountPdfDraftStore(_SyntheticPdfExtractor(tuple(pages)))
+        path = self.root / "subaccount-conflict.json"
+
+        imported = store.import_pdf(self.pdf, path)
+        loaded = store.load(path)
+
+        self.assertEqual(
+            tuple(item.category for item in imported.observation.conflicts),
+            ("SUBACCOUNT_NAME_CONFLICT",),
+        )
+        self.assertEqual(loaded.observation.conflicts, imported.observation.conflicts)
+        self.assertEqual(len(loaded.observation.printed_accounts), 101)
+
     def test_28_requirements_are_reviewable_and_saved_only_after_confirmation(self) -> None:
         self.store.import_pdf(self.pdf, self.draft_path)
         source = self.root / "mf.csv"

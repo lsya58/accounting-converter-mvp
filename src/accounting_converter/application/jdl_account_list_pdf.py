@@ -53,6 +53,9 @@ class JdlAccountListPdfTextParser:
         r"(?P<abbreviation>[借貸][^\s]*)\s*"
         r"(?P<use>[○×])(?P<tail>.*)$"
     )
+    _CODE_OR_SUBACCOUNT_PREFIX = re.compile(
+        r"^\s*(?:\d{3,4}(?:-|\s)|-\d)"
+    )
     _REQUIRED_HEADER_LABELS = (
         "勘定科目",
         "略名称",
@@ -139,6 +142,13 @@ class JdlAccountListPdfTextParser:
                 if uncoded:
                     uncoded_count += 1
                     continue
+                if (
+                    ("○" in line or "×" in line)
+                    and not self._CODE_OR_SUBACCOUNT_PREFIX.match(line)
+                ):
+                    # Printed rows without an explicit code are observations only.
+                    uncoded_count += 1
+                    continue
                 if "○" in line or "×" in line:
                     raise JdlAccountListPdfParseError(
                         f"page {page.page_number} に解析不能な科目候補行があります。"
@@ -148,7 +158,7 @@ class JdlAccountListPdfTextParser:
             raise JdlAccountListPdfParseError("code付き科目行がありません。")
         completeness = (
             JdlMasterCompleteness.OBSERVED_PRINTED_MASTER
-            if len(page_items) == 5 and uncoded_count > 0
+            if uncoded_count > 0
             else JdlMasterCompleteness.PARTIAL_MASTER
         )
         observation = JdlMasterObservation(

@@ -10,6 +10,7 @@ from accounting_converter.application.account_mapping_review import (
 )
 from accounting_converter.application.jdl_master_observation import (
     JdlMasterCompleteness,
+    JdlMasterConflict,
     JdlMasterObservation,
     JdlMasterSourceEvidence,
     JdlPrintedAccount,
@@ -95,6 +96,27 @@ class AccountMappingReviewServiceTests(unittest.TestCase):
         self.assertEqual(item.classification, AccountCandidateClassification.AMBIGUOUS)
         self.assertIsNone(item.exact_candidate)
         self.assertFalse(item.usable)
+
+    def test_subaccount_conflict_does_not_hide_account_candidates(self) -> None:
+        base = self._master()
+        master = JdlMasterObservation(
+            accounts=base.accounts,
+            subaccounts=base.subaccounts,
+            departments=base.departments,
+            sources=base.sources,
+            conflicts=(JdlMasterConflict("SUBACCOUNT_NAME_CONFLICT"),),
+            completeness=JdlMasterCompleteness.PARTIAL_MASTER,
+            printed_accounts=base.printed_accounts,
+        )
+
+        result = AccountMappingReviewService().build(self._entries(), master)
+
+        self.assertEqual(
+            result.privacy_safe_summary()["exact_candidate_count"], 20
+        )
+        self.assertEqual(
+            result.privacy_safe_summary()["invalid_conflict_count"], 0
+        )
 
     def test_private_report_is_explicitly_private_and_registry_stays_narrow(self) -> None:
         result = AccountMappingReviewService().build(self._entries(), self._master())

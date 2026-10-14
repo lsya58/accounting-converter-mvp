@@ -15,6 +15,7 @@ from accounting_converter.application.jdl_account_list_pdf import (
 )
 from accounting_converter.application.jdl_master_observation import (
     JdlMasterCompleteness,
+    JdlMasterConflict,
     JdlMasterObservation,
     JdlMasterSourceEvidence,
     JdlObservedSubaccount,
@@ -146,9 +147,14 @@ class JdlAccountPdfDraftStore:
             raise JdlAccountPdfDraftError(
                 "JDL科目一覧PDFの構造を安全に確認できませんでした。"
             ) from exc
-        if observation.conflicts:
+        blocking_conflicts = tuple(
+            item
+            for item in observation.conflicts
+            if item.category.startswith("PRINTED_ACCOUNT_")
+        )
+        if blocking_conflicts:
             raise JdlAccountPdfDraftError(
-                "JDL科目一覧に重複または矛盾があるため読み込めません。"
+                "JDL科目一覧の科目に重複または矛盾があるため読み込めません。"
             )
         enabled_names: dict[str, set[str]] = {}
         for item in observation.printed_accounts:
@@ -193,6 +199,10 @@ class JdlAccountPdfDraftStore:
                 ),
                 excluded_uncoded_printed_row_count=int(
                     payload["excluded_uncoded_printed_row_count"]
+                ),
+                conflicts=tuple(
+                    JdlMasterConflict(category=str(item))
+                    for item in payload.get("conflict_categories", [])
                 ),
             )
             return JdlAccountPdfDraft(
@@ -247,6 +257,9 @@ class JdlAccountPdfDraftStore:
             "excluded_uncoded_printed_row_count": (
                 observation.excluded_uncoded_printed_row_count
             ),
+            "conflict_categories": [
+                item.category for item in observation.conflicts
+            ],
             "formal_conversion_allowed": False,
         }
 

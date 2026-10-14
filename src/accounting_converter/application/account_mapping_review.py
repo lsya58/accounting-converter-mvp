@@ -132,10 +132,13 @@ class AccountMappingReviewService:
         )
 
         items: list[AccountMappingReviewItem] = []
-        global_conflict = bool(master.conflicts)
+        account_conflict = any(
+            item.category.startswith("PRINTED_ACCOUNT_")
+            for item in master.conflicts
+        )
         for requirement in requirements.accounts:
             candidates = tuple(by_name.get(requirement.source_value, ()))
-            if global_conflict:
+            if account_conflict:
                 classification = AccountCandidateClassification.INVALID_CONFLICT
                 candidate = None
                 blocker = "MASTER_CONFLICT"
@@ -156,7 +159,7 @@ class AccountMappingReviewService:
             selected_target_exists = any(
                 target.name == requirement.current_target_value for target in targets
             )
-            if confirmed and selected_target_exists and not global_conflict:
+            if confirmed and selected_target_exists and not account_conflict:
                 blocker = None
             elif confirmed and not selected_target_exists:
                 blocker = "CONFIRMED_TARGET_NOT_IN_CONTEXT"

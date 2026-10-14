@@ -226,6 +226,31 @@ class JdlAccountListPdfTextParserTests(unittest.TestCase):
         with self.assertRaises(JdlAccountListPdfParseError):
             self._parse((self._page(2, "1111", "架空現金", "借架空現金", "○"),))
 
+    def test_short_code_less_marked_row_is_excluded_across_seven_pages(self) -> None:
+        pages = tuple(
+            self._page(
+                number,
+                str(1100 + number),
+                f"架空科目{number}",
+                f"借架空{number}",
+                "○",
+            )
+            for number in range(1, 8)
+        )
+        last = pages[-1]
+        pages = pages[:-1] + (
+            JdlAccountListTextPage(
+                last.page_number,
+                last.text + "\n架空短縮行 × 借方",
+            ),
+        )
+
+        result = self._parse(pages)
+
+        self.assertEqual(len(result.printed_accounts), 7)
+        self.assertEqual(result.completeness, JdlMasterCompleteness.OBSERVED_PRINTED_MASTER)
+        self.assertEqual(result.excluded_uncoded_printed_row_count, 8)
+
     def test_duplicate_code_conflict_downgrades_completeness(self) -> None:
         pages = list(self._pages())
         pages[1] = self._page(2, "1111", "別の架空科目", "借別の略称", "○")
