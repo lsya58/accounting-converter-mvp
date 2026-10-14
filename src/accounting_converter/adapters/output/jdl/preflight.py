@@ -9,7 +9,7 @@ from accounting_converter.domain.journal import JournalEntry, JournalLine, Side,
 from accounting_converter.domain.profile import FormatProfile
 from accounting_converter.domain.validation import Severity, ValidationResult
 from accounting_converter.application.moneyforward_jdl_loss import (
-    moneyforward_1d3c_row_descriptions,
+    moneyforward_verified_description_rows,
 )
 from accounting_converter.profiles.jdl_official import (
     JdlTaxProcessingMode,
@@ -33,6 +33,7 @@ TAX_SCOPE_SALES = "売一種"
 TAX_CATEGORY_TEN_PERCENT = "10%"
 TAX_CATEGORY_REDUCED_EIGHT_PERCENT = "軽減8%"
 TAX_SCOPE_NON_TAXABLE_PURCHASE = "非仕入"
+TAX_SCOPE_NON_TAXABLE_SALES = "非売上"
 TAX_INPUT_METHOD_INTERNAL = "内税"
 EVIDENCE_IDS = {
     JdlEvidenceProfile.BASIC_1111: "EVID-JDL-GENERATOR-1111-001",
@@ -64,6 +65,9 @@ EVIDENCE_IDS = {
     JdlEvidenceProfile.TAX_NON_TAXABLE_PURCHASE_SUBACCOUNT_INCLUDED_1111: (
         "EVID-JDL-MF-TAX-NONTAXABLE-PURCHASE-SUBACCOUNT-ROUNDTRIP-001"
     ),
+    JdlEvidenceProfile.TAX_NON_TAXABLE_SALES_SUBACCOUNT_INCLUDED_1111: (
+        "EVID-JDL-MF-TAX-NONTAXABLE-SALES-SUBACCOUNT-ROUNDTRIP-001"
+    ),
     JdlEvidenceProfile.TAX_OUT_OF_SCOPE_SUBACCOUNT_INCLUDED_1111: (
         "EVID-JDL-MF-TAX-OUT-OF-SCOPE-SUBACCOUNT-ROUNDTRIP-001"
     ),
@@ -75,6 +79,24 @@ EVIDENCE_IDS = {
     ),
     JdlEvidenceProfile.COMPOUND_1D3C_LINE_DESCRIPTIONS: (
         "EVID-JDL-COMPOUND-PER-ROW-DESCRIPTION-ROUNDTRIP-001"
+    ),
+    JdlEvidenceProfile.COMPOUND_2D2C_LINE_DESCRIPTIONS: (
+        "EVID-JDL-COMPOUND-2D2C-PER-ROW-DESCRIPTION-001"
+    ),
+    JdlEvidenceProfile.COMPOUND_2D1C_LINE_DESCRIPTIONS: (
+        "EVID-JDL-COMPOUND-2D1C-PER-ROW-DESCRIPTION-001"
+    ),
+    JdlEvidenceProfile.COMPOUND_2D3C_LINE_DESCRIPTIONS: (
+        "EVID-JDL-COMPOUND-2D3C-PER-ROW-DESCRIPTION-001"
+    ),
+    JdlEvidenceProfile.COMPOUND_4D6C_LINE_DESCRIPTIONS: (
+        "EVID-JDL-COMPOUND-4D6C-PER-ROW-DESCRIPTION-ROUNDTRIP-001"
+    ),
+    JdlEvidenceProfile.COMPOUND_5D7C_LINE_DESCRIPTIONS: (
+        "EVID-JDL-COMPOUND-5D7C-PER-ROW-DESCRIPTION-ROUNDTRIP-001"
+    ),
+    JdlEvidenceProfile.COMPOUND_5D8C_LINE_DESCRIPTIONS: (
+        "EVID-JDL-COMPOUND-5D8C-PER-ROW-DESCRIPTION-ROUNDTRIP-001"
     ),
 }
 MULTIGROUP_EVIDENCE_ID = "EVID-JDL-GENERATOR-MULTIGROUP-SIMPLE-COMPOUND-001"
@@ -250,6 +272,12 @@ class JdlOutputPreflight:
         if evidence in {
             JdlEvidenceProfile.COMPOUND_1D3C,
             JdlEvidenceProfile.COMPOUND_1D3C_LINE_DESCRIPTIONS,
+            JdlEvidenceProfile.COMPOUND_2D2C_LINE_DESCRIPTIONS,
+            JdlEvidenceProfile.COMPOUND_2D1C_LINE_DESCRIPTIONS,
+            JdlEvidenceProfile.COMPOUND_2D3C_LINE_DESCRIPTIONS,
+            JdlEvidenceProfile.COMPOUND_4D6C_LINE_DESCRIPTIONS,
+            JdlEvidenceProfile.COMPOUND_5D7C_LINE_DESCRIPTIONS,
+            JdlEvidenceProfile.COMPOUND_5D8C_LINE_DESCRIPTIONS,
         }:
             return self._compound_rows(entry, evidence, errors)
         if not entry.is_balanced():
@@ -289,9 +317,39 @@ class JdlOutputPreflight:
     ) -> list[JdlOutputRow]:
         debit = [line for line in entry.lines if line.side is Side.DEBIT]
         credit = [line for line in entry.lines if line.side is Side.CREDIT]
-        if len(debit) != 1 or len(credit) != 3 or len(entry.lines) != 4:
-            errors.append(self._error("JDL-OUT-COMPOUND-SHAPE", "v0は1借方対3貸方の複合仕訳だけ対応します。", "journal_structure", entry))
-            return []
+        line_description_profiles = {
+            JdlEvidenceProfile.COMPOUND_1D3C_LINE_DESCRIPTIONS,
+            JdlEvidenceProfile.COMPOUND_2D2C_LINE_DESCRIPTIONS,
+            JdlEvidenceProfile.COMPOUND_2D1C_LINE_DESCRIPTIONS,
+            JdlEvidenceProfile.COMPOUND_2D3C_LINE_DESCRIPTIONS,
+            JdlEvidenceProfile.COMPOUND_4D6C_LINE_DESCRIPTIONS,
+            JdlEvidenceProfile.COMPOUND_5D7C_LINE_DESCRIPTIONS,
+            JdlEvidenceProfile.COMPOUND_5D8C_LINE_DESCRIPTIONS,
+        }
+        expected_shapes = {
+            JdlEvidenceProfile.COMPOUND_1D3C_LINE_DESCRIPTIONS: (1, 3, 3),
+            JdlEvidenceProfile.COMPOUND_2D2C_LINE_DESCRIPTIONS: (2, 2, 2),
+            JdlEvidenceProfile.COMPOUND_2D1C_LINE_DESCRIPTIONS: (2, 1, 2),
+            JdlEvidenceProfile.COMPOUND_2D3C_LINE_DESCRIPTIONS: (2, 3, 3),
+            JdlEvidenceProfile.COMPOUND_4D6C_LINE_DESCRIPTIONS: (4, 6, 6),
+            JdlEvidenceProfile.COMPOUND_5D7C_LINE_DESCRIPTIONS: (5, 7, 7),
+            JdlEvidenceProfile.COMPOUND_5D8C_LINE_DESCRIPTIONS: (5, 8, 8),
+        }
+        if evidence is JdlEvidenceProfile.COMPOUND_1D3C:
+            if len(debit) != 1 or len(credit) != 3 or len(entry.lines) != 4:
+                errors.append(self._error("JDL-OUT-COMPOUND-SHAPE", "v0は検証済みの複合仕訳形状だけ対応します。", "journal_structure", entry))
+                return []
+            physical_rows = None
+        else:
+            physical_rows = moneyforward_verified_description_rows(entry)
+            shape = (
+                len(debit),
+                len(credit),
+                len(physical_rows) if physical_rows is not None else 0,
+            )
+            if physical_rows is None or shape != expected_shapes[evidence]:
+                errors.append(self._error("JDL-OUT-COMPOUND-SHAPE", "Evidence profileと複合仕訳形状が一致しません。", "journal_structure", entry))
+                return []
         if not entry.is_balanced():
             errors.append(self._error("JDL-OUT-BALANCE", "複合仕訳がgroup単位で貸借一致しません。", "amount", entry))
             return []
@@ -306,9 +364,8 @@ class JdlOutputPreflight:
             self._validate_amount(line.amount, entry, errors)
         if errors:
             return []
-        if evidence is JdlEvidenceProfile.COMPOUND_1D3C_LINE_DESCRIPTIONS:
-            descriptions = moneyforward_1d3c_row_descriptions(entry)
-            if descriptions is None:
+        if evidence in line_description_profiles:
+            if physical_rows is None:
                 errors.append(self._error(
                     "JDL-OUT-COMPOUND-DESCRIPTION",
                     "検証済み物理行に対応する摘要を一意に保持できません。",
@@ -316,6 +373,7 @@ class JdlOutputPreflight:
                     entry,
                 ))
                 return []
+            descriptions = tuple(row.description for row in physical_rows)
             for description in descriptions:
                 try:
                     description.encode("cp932")
@@ -337,14 +395,25 @@ class JdlOutputPreflight:
                     return []
         else:
             descriptions = (entry.description or "", "", "")
-        flags = ("1110", "1100", "1101")
+        flags = (
+            ("1110", "1101")
+            if len(descriptions) == 2
+            else ("1110", *("1100",) * (len(descriptions) - 2), "1101")
+        )
         rows: list[JdlOutputRow] = []
-        for index, credit_line in enumerate(credit):
+        if physical_rows is None:
+            paired_rows = tuple(
+                (debit[0] if index == 0 else None, credit_line)
+                for index, credit_line in enumerate(credit)
+            )
+        else:
+            paired_rows = tuple((row.debit, row.credit) for row in physical_rows)
+        for index, (debit_line, credit_line) in enumerate(paired_rows):
             rows.append(
                 self._row(
                     flags[index],
                     entry,
-                    debit[0] if index == 0 else None,
+                    debit_line,
                     credit_line,
                     descriptions[index],
                 )
@@ -437,6 +506,19 @@ class JdlOutputPreflight:
                 expected_scope=TAX_SCOPE_NON_TAXABLE_PURCHASE,
                 expected_category="",
                 allow_tax_side_subaccount=True,
+            )
+        elif evidence is JdlEvidenceProfile.TAX_NON_TAXABLE_SALES_SUBACCOUNT_INCLUDED_1111:
+            self._validate_tax(
+                debit,
+                credit,
+                entry,
+                included=True,
+                errors=errors,
+                tax_side=Side.CREDIT,
+                expected_scope=TAX_SCOPE_NON_TAXABLE_SALES,
+                expected_category="",
+                allow_tax_side_subaccount=True,
+                expected_mapping_evidence_id="EVID-JDL-TAX-NONTAXABLE-SALES-HAND-001",
             )
         elif evidence is JdlEvidenceProfile.TAX_OUT_OF_SCOPE_SUBACCOUNT_INCLUDED_1111:
             self._validate_tax(
@@ -695,15 +777,15 @@ class JdlOutputPreflight:
         flag: str,
         entry: JournalEntry,
         debit: JournalLine | None,
-        credit: JournalLine,
+        credit: JournalLine | None,
         description: str,
     ) -> JdlOutputRow:
         debit_sub = self._subaccount_identity(debit) if debit else None
         credit_sub = self._subaccount_identity(credit)
         debit_department = self._department_identity(debit.department) if debit and debit.department else None
-        credit_department = self._department_identity(credit.department) if credit.department else None
+        credit_department = self._department_identity(credit.department) if credit and credit.department else None
         debit_tax = debit.tax_info if debit else None
-        credit_tax = credit.tax_info
+        credit_tax = credit.tax_info if credit else None
         return JdlOutputRow(
             identifier_flag=flag,
             voucher_number="",
@@ -719,14 +801,14 @@ class JdlOutputPreflight:
             debit_amount=self._amount(debit.amount) if debit else "0",
             debit_tax_amount=self._optional_amount(debit_tax.tax_amount if debit_tax else None),
             credit_account_code="",
-            credit_account_name=credit.account or "",
+            credit_account_name=credit.account if credit and credit.account else "",
             credit_account_formal_name="",
             credit_subaccount_code=credit_sub.output_code if credit_sub else "",
             credit_subaccount_name=credit_sub.output_name if credit_sub else "",
             credit_tax_scope=self._tax_metadata(credit_tax, "jdl_tax_scope"),
             credit_tax_category=credit_tax.category if credit_tax and credit_tax.category else "",
             credit_tax_input_method=self._tax_metadata(credit_tax, "jdl_tax_input_method"),
-            credit_amount=self._amount(credit.amount),
+            credit_amount=self._amount(credit.amount) if credit else "0",
             credit_tax_amount=self._optional_amount(credit_tax.tax_amount if credit_tax else None),
             description=description,
             debit_transaction_account="",

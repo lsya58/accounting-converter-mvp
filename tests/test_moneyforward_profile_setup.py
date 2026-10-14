@@ -312,7 +312,7 @@ class MoneyForwardProfileSetupTests(unittest.TestCase):
         )
         self.assertFalse(registry.has_conversion_pair(source, target))
 
-    def test_all_six_verified_literals_require_explicit_confirmation(self) -> None:
+    def test_all_seven_verified_literals_require_explicit_confirmation(self) -> None:
         self._write_context(self.context, taxable_included=True)
         context = self.service.context_loader.load(self.context)
         source_values = (
@@ -321,6 +321,7 @@ class MoneyForwardProfileSetupTests(unittest.TestCase):
             "課税仕入 (軽)8%",
             "課税売上 (軽)8%",
             "非課税仕入",
+            "非課税売上",
             "対象外",
         )
 
@@ -330,7 +331,8 @@ class MoneyForwardProfileSetupTests(unittest.TestCase):
         self.assertEqual(
             tuple((item.target_scope, item.target_value) for item in items),
             (("仕　入", "10%"), ("売一種", "10%"), ("仕　入", "軽減8%"),
-             ("売一種", "軽減8%"), ("非仕入", ""), ("", "")),
+             ("売一種", "軽減8%"), ("非仕入", ""), ("非売上", ""),
+             ("", "")),
         )
 
     def test_unknown_tax_and_blank_do_not_infer_out_of_scope(self) -> None:
@@ -344,7 +346,7 @@ class MoneyForwardProfileSetupTests(unittest.TestCase):
             self.service._tax_context_message(("未観測税区分",), context),
         )
 
-    def test_all_six_tax_mappings_are_saved_only_as_user_confirmed(self) -> None:
+    def test_all_seven_tax_mappings_are_saved_only_as_user_confirmed(self) -> None:
         self._write_context(self.context, taxable_included=True)
         analysis = self.service.analyze(self.source, self.context)
         selections = {
@@ -364,6 +366,7 @@ class MoneyForwardProfileSetupTests(unittest.TestCase):
             "課税仕入 (軽)8%",
             "課税売上 (軽)8%",
             "非課税仕入",
+            "非課税売上",
             "対象外",
         )
         for source_value in source_values:
@@ -394,6 +397,10 @@ class MoneyForwardProfileSetupTests(unittest.TestCase):
         self.assertEqual(
             saved.tax_mappings["非課税仕入"].metadata["jdl_tax_scope"],
             "非仕入",
+        )
+        self.assertEqual(
+            saved.tax_mappings["非課税売上"].metadata["jdl_tax_scope"],
+            "非売上",
         )
 
     def test_empty_target_remains_forbidden_outside_evidence_backed_tax(self) -> None:

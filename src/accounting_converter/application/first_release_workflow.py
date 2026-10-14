@@ -20,7 +20,7 @@ from accounting_converter.application.conversion import (
 from accounting_converter.application.mapping_engine import MappingEngine
 from accounting_converter.application.mapping_review import MappingRequirementExtractor
 from accounting_converter.application.moneyforward_jdl_loss import (
-    moneyforward_1d3c_row_descriptions,
+    moneyforward_verified_description_rows,
 )
 from accounting_converter.application.profile_preflight import mapping_rule_set_from_profile
 from accounting_converter.application.validation_pipeline import ValidationPipeline
@@ -277,12 +277,31 @@ class FirstReleaseConversionWorkflow:
             credit = sum(line.side is Side.CREDIT for line in entry.lines)
             if (debit, credit) == (1, 1):
                 assignments[entry.id] = JdlEvidenceProfile.BASIC_1111
-            elif (debit, credit) == (1, 3):
-                assignments[entry.id] = (
-                    JdlEvidenceProfile.COMPOUND_1D3C_LINE_DESCRIPTIONS
-                    if moneyforward_1d3c_row_descriptions(entry) is not None
-                    else JdlEvidenceProfile.COMPOUND_1D3C
-                )
+            elif (debit, credit) in {
+                (1, 3),
+                (2, 2),
+                (2, 1),
+                (2, 3),
+                (4, 6),
+                (5, 7),
+                (5, 8),
+            }:
+                rows = moneyforward_verified_description_rows(entry)
+                profiles = {
+                    (1, 3): JdlEvidenceProfile.COMPOUND_1D3C_LINE_DESCRIPTIONS,
+                    (2, 2): JdlEvidenceProfile.COMPOUND_2D2C_LINE_DESCRIPTIONS,
+                    (2, 1): JdlEvidenceProfile.COMPOUND_2D1C_LINE_DESCRIPTIONS,
+                    (2, 3): JdlEvidenceProfile.COMPOUND_2D3C_LINE_DESCRIPTIONS,
+                    (4, 6): JdlEvidenceProfile.COMPOUND_4D6C_LINE_DESCRIPTIONS,
+                    (5, 7): JdlEvidenceProfile.COMPOUND_5D7C_LINE_DESCRIPTIONS,
+                    (5, 8): JdlEvidenceProfile.COMPOUND_5D8C_LINE_DESCRIPTIONS,
+                }
+                if rows is not None:
+                    assignments[entry.id] = profiles[(debit, credit)]
+                elif (debit, credit) == (1, 3):
+                    assignments[entry.id] = JdlEvidenceProfile.COMPOUND_1D3C
+                else:
+                    reasons.append("行単位摘要を保持できない複合仕訳が含まれています。")
             else:
                 reasons.append("未検証の仕訳構成が含まれています。")
         return assignments, reasons

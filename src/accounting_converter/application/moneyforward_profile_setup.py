@@ -462,6 +462,7 @@ class MoneyForwardProfileSetupService:
             "課税仕入 (軽)8%": ("軽減8%", "仕入 / 軽減8%", "仕　入", "EVID-JDL-MF-TAX-PURCHASE-REDUCED-8-SUBACCOUNT-ROUNDTRIP-001"),
             "課税売上 (軽)8%": ("軽減8%", "売上 / 軽減8%", "売一種", "EVID-JDL-MF-TAX-SALES-REDUCED-8-SUBACCOUNT-ROUNDTRIP-001"),
             "非課税仕入": ("", "非課税仕入", "非仕入", "EVID-JDL-MF-TAX-NONTAXABLE-PURCHASE-SUBACCOUNT-ROUNDTRIP-001"),
+            "非課税売上": ("", "非課税売上", "非売上", "EVID-JDL-MF-TAX-NONTAXABLE-SALES-SUBACCOUNT-ROUNDTRIP-001"),
             "対象外": ("", "対象外", "", "EVID-JDL-MF-TAX-OUT-OF-SCOPE-SUBACCOUNT-ROUNDTRIP-001"),
         }
         return tuple(

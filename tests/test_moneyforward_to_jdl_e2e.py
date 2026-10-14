@@ -212,7 +212,7 @@ class MoneyForwardToJdlSyntheticE2ETests(unittest.TestCase):
         )
         self.assertFalse(output.exists())
 
-    def test_multiple_descriptions_in_other_shape_remain_blocked(self) -> None:
+    def test_multiple_descriptions_with_wrong_evidence_profile_remain_blocked(self) -> None:
         rows = [
             self._row("17", debit_amount="600", credit_amount="700", description="架空A"),
             self._row(
@@ -228,6 +228,133 @@ class MoneyForwardToJdlSyntheticE2ETests(unittest.TestCase):
                 source,
                 output,
                 {"17": JdlEvidenceProfile.COMPOUND_1D3C_LINE_DESCRIPTIONS},
+            )
+
+        self.assertEqual(result.status, ConversionStatus.BLOCKED_BY_OUTPUT_PREFLIGHT)
+        self.assertTrue(any(item.field == "journal_structure" for item in result.validation_results))
+        self.assertFalse(output.exists())
+
+    def test_verified_additional_compound_shapes_preserve_row_descriptions(self) -> None:
+        cases = (
+            (
+                "2D2C",
+                [
+                    self._row("18", debit_amount="600", credit_amount="700", description="架空A"),
+                    self._row("18", debit="当座預金", debit_amount="400", credit="小口現金", credit_amount="300", description="架空B"),
+                ],
+                JdlEvidenceProfile.COMPOUND_2D2C_LINE_DESCRIPTIONS,
+                ["1110", "1101"],
+            ),
+            (
+                "2D1C",
+                [
+                    self._row("19", debit_amount="600", credit_amount="1000", description="架空A"),
+                    self._row("19", debit="当座預金", debit_amount="400", credit="", credit_amount="", description="架空B"),
+                ],
+                JdlEvidenceProfile.COMPOUND_2D1C_LINE_DESCRIPTIONS,
+                ["1110", "1101"],
+            ),
+            (
+                "2D3C",
+                [
+                    self._row("20", debit_amount="600", credit_amount="500", description="架空A"),
+                    self._row("20", debit="当座預金", debit_amount="400", credit="普通預金", credit_amount="300", description="架空B"),
+                    self._row("20", debit="", debit_amount="", credit="小口現金", credit_amount="200", description="架空C"),
+                ],
+                JdlEvidenceProfile.COMPOUND_2D3C_LINE_DESCRIPTIONS,
+                ["1110", "1100", "1101"],
+            ),
+        )
+        large_cases = []
+        for name, debit_count, credit_count, evidence in (
+            (
+                "4D6C",
+                4,
+                6,
+                JdlEvidenceProfile.COMPOUND_4D6C_LINE_DESCRIPTIONS,
+            ),
+            (
+                "5D7C",
+                5,
+                7,
+                JdlEvidenceProfile.COMPOUND_5D7C_LINE_DESCRIPTIONS,
+            ),
+            (
+                "5D8C",
+                5,
+                8,
+                JdlEvidenceProfile.COMPOUND_5D8C_LINE_DESCRIPTIONS,
+            ),
+        ):
+            total = credit_count * 100
+            debit_amount = total // debit_count
+            rows = [
+                self._row(
+                    f"large-{name}",
+                    debit="現金" if index < debit_count else "",
+                    debit_amount=(str(debit_amount) if index < debit_count else ""),
+                    credit="小口現金" if index < credit_count else "",
+                    credit_amount=("100" if index < credit_count else ""),
+                    description=f"架空{name}-{index + 1}",
+                )
+                for index in range(max(debit_count, credit_count))
+            ]
+            large_cases.append(
+                (
+                    name,
+                    rows,
+                    evidence,
+                    ["1110"] + ["1100"] * (len(rows) - 2) + ["1101"],
+                )
+            )
+        cases += tuple(large_cases)
+        for name, rows, evidence, flags in cases:
+            with self.subTest(shape=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source = self._write(root / "mf.csv", rows)
+                output = root / "jdl.csv"
+                result = self._convert(source, output, {rows[0][0]: evidence})
+                output_rows = self._output_rows(output)
+
+                self.assertEqual(result.status, ConversionStatus.SUCCESS)
+                self.assertEqual([row[0] for row in output_rows[1:]], flags)
+                self.assertEqual(
+                    [row[23] for row in output_rows[1:]],
+                    [row[16] for row in rows],
+                )
+
+    def test_compound_description_profile_shape_mismatch_blocks(self) -> None:
+        rows = [
+            self._row("21", debit_amount="600", credit_amount="700", description="架空A"),
+            self._row("21", debit="当座預金", debit_amount="400", credit="小口現金", credit_amount="300", description="架空B"),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = self._write(root / "mf.csv", rows)
+            output = root / "blocked.csv"
+            result = self._convert(
+                source,
+                output,
+                {"21": JdlEvidenceProfile.COMPOUND_2D1C_LINE_DESCRIPTIONS},
+            )
+
+        self.assertEqual(result.status, ConversionStatus.BLOCKED_BY_OUTPUT_PREFLIGHT)
+        self.assertFalse(output.exists())
+
+    def test_unverified_compound_shape_with_multiple_descriptions_blocks_losslessly(self) -> None:
+        rows = [
+            self._row("22", debit_amount="500", credit_amount="1000", description="架空A"),
+            self._row("22", debit="当座預金", debit_amount="300", credit="", credit_amount="", description="架空B"),
+            self._row("22", debit="小口現金", debit_amount="200", credit="", credit_amount="", description="架空C"),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = self._write(root / "mf.csv", rows)
+            output = root / "blocked.csv"
+            result = self._convert(
+                source,
+                output,
+                {"22": JdlEvidenceProfile.COMPOUND_2D3C_LINE_DESCRIPTIONS},
             )
 
         self.assertEqual(result.status, ConversionStatus.BLOCKED_BY_BUSINESS_VALIDATION)
@@ -282,7 +409,7 @@ class MoneyForwardToJdlSyntheticE2ETests(unittest.TestCase):
                 self.assertIsNone(matching[0].input_value)
                 self.assertFalse(output.exists())
 
-    def test_conflicting_descriptions_are_losslessly_parsed_then_blocked(self) -> None:
+    def test_multiple_descriptions_require_matching_compound_evidence_profile(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = self._write(
@@ -297,8 +424,8 @@ class MoneyForwardToJdlSyntheticE2ETests(unittest.TestCase):
                 source, output, {"14": JdlEvidenceProfile.BASIC_1111}
             )
 
-        self.assertEqual(result.status, ConversionStatus.BLOCKED_BY_BUSINESS_VALIDATION)
-        self.assertTrue(any(item.field == "description" for item in result.validation_results))
+        self.assertEqual(result.status, ConversionStatus.BLOCKED_BY_OUTPUT_PREFLIGHT)
+        self.assertTrue(any(item.field == "journal_structure" for item in result.validation_results))
         self.assertFalse(output.exists())
 
     def test_invalid_target_context_blocks_before_output(self) -> None:

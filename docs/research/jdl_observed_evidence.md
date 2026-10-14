@@ -1101,6 +1101,44 @@ Evidence levelは、このexact synthetic batch、exact target Context、JDL IBE
 - private baseline impact: 482 journals中のmultiple-description blocker 41件にはexact 1D3Cが0件だったため、41件すべて未解除
 - production Registry、Money Forward一般READY、`production_allowed`は変更しない
 
+## Compound row-description Human Evidence (2026-10-14)
+
+完全syntheticなHuman入力とJDL direct re-exportから、次のshapeを限定的な`HUMAN_OBSERVED_RUNTIME_REEXPORT`として確認した。いずれもCP932、BOMなし、CRLF、official 30 columns、貸借一致、各physical rowの摘要順保持、missing/duplicate/extra 0である。
+
+- `EVID-JDL-COMPOUND-2D2C-PER-ROW-DESCRIPTION-001`: 2 rows、`1110 -> 1101`、2 debit / 2 credit
+- `EVID-JDL-COMPOUND-2D1C-PER-ROW-DESCRIPTION-001`: 2 rows、`1110 -> 1101`、2 debit / 1 credit
+- `EVID-JDL-COMPOUND-2D3C-PER-ROW-DESCRIPTION-001`: 3 rows、`1110 -> 1100 -> 1101`、2 debit / 3 credit
+
+これらはapp-generated candidateのImport round-tripではない。出力実装はsource physical-row identity、exact shape、row orderがすべて一致する場合だけ利用し、merge、truncate、別shapeへの一般化を禁止する。private 482 journalsでは従来のmultiple-description blocker 41件のうち30件がこの3shapeに一致し、残る11件は4D6C、5D7C、5D8CのためBLOCKを維持する。
+
+## EVID-JDL-TAX-NONTAXABLE-SALES-HAND-001
+
+- evidence level: `HUMAN_OBSERVED_RUNTIME_REEXPORT`
+- product: JDL IBEX 出納帳35.5
+- scope: 完全synthetic 1D1C、credit-side non-taxable sales、exact parent-scoped credit subaccount、debit tax blank
+- raw structure: CP932、BOMなし、CRLF、official 30 columns、flag `1111`、balanced
+- limitation: generator-authored Import round-trip前であり、MF tax mapping、production Registry、一般READYへ昇格しない
+
+## EVID-JDL-MF-TAX-NONTAXABLE-SALES-SUBACCOUNT-ROUNDTRIP-001
+
+- evidence level: `VERIFIED_BY_REAL_IMPORT`（完全syntheticなexact scope限定）
+- product: JDL IBEX 出納帳35.5
+- scope: 課税・税込Context、flag `1111` / 1D1C、credit-side non-taxable sales、exact credit parent account、exact parent-scoped credit subaccount、debit tax blank
+- strict comparison: date、flag、account/subaccount identity、amount、貸方課区・税区、opposite-side blank、description、balance、missing/duplicate/extra 0
+- result: app-generated candidateを実機Importし、同一batch re-export内の対象日付1件とstrict semantic comparison PASS
+- mapping boundary: MF source literal `非課税売上`をUSER_CONFIRMEDした場合だけ候補利用可能。blank tax fieldsから推測しない
+- limitation: 別科目・別補助・別Context・一般non-taxable sales、production Registry、MF一般READYへ一般化しない
+
+## Large compound per-row description round trips (2026-10-15)
+
+完全syntheticなapp-generated candidateを実機Importし、同一JDL re-export内で次のexact shapeをstrict比較した。
+
+- `EVID-JDL-COMPOUND-4D6C-PER-ROW-DESCRIPTION-ROUNDTRIP-001`: 6 physical rows、`1110 -> 1100*4 -> 1101`
+- `EVID-JDL-COMPOUND-5D7C-PER-ROW-DESCRIPTION-ROUNDTRIP-001`: 7 physical rows、`1110 -> 1100*5 -> 1101`
+- `EVID-JDL-COMPOUND-5D8C-PER-ROW-DESCRIPTION-ROUNDTRIP-001`: 8 physical rows、`1110 -> 1100*6 -> 1101`
+
+全3shapeでphysical row count、flag sequence、debit/credit pairing、amount、per-row descriptionと順序、account identity、balanceが一致し、missing/duplicate/extraは0だった。scopeは補助・税・部門・取引先・invoice・tag・memoなし、32文字以内、CP932表現可能な摘要、exact MF physical-row identityに限定する。merge、truncate、並べ替え、shape mismatch、別shapeへの一般化は禁止する。private 482件baselineの残multiple-description 11件はこの3shape（5/1/5件）にexact一致するため、Evidence適用後の当該blockerは0件となる。
+
 単一simple、単一compound、限定master/tax条件、同日simple+compound、同日simple+simple、正式YayoiInputAdapter起点artifact、context-aware registry/factory経路、固定12-journal mixed batch、Windows packaged GUIの実機Import・UI確認・self re-export比較まで完了した。さらにscroll/resizeと未対応target versionの安全停止もWindows実機で確認した。
 
 1. JDL IBEX出納帳35.5のexact identityに限りproduction Registryを`AVAILABLE`とする。別version/製品は`UNAVAILABLE`のままとする。

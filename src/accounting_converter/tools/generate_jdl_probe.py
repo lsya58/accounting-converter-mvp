@@ -86,6 +86,7 @@ PROBE_DEFINITIONS = (
     ProbeDefinition("tax_purchase_reduced_8_with_subaccount", 1, JdlEvidenceProfile.TAX_PURCHASE_REDUCED_8_INCLUDED_1111, "VERIFIED_BY_REAL_IMPORT_EXPERIMENTAL", "軽減仕入8%と借方補助の共存確認"),
     ProbeDefinition("tax_non_taxable_purchase", 1, JdlEvidenceProfile.TAX_NON_TAXABLE_PURCHASE_SUBACCOUNT_INCLUDED_1111, "BLOCKED_FAILED_PRECONDITION_TARGET_SUBACCOUNT", "補助なし非課税仕入の前提条件確認"),
     ProbeDefinition("tax_non_taxable_purchase_with_subaccount", 1, JdlEvidenceProfile.TAX_NON_TAXABLE_PURCHASE_SUBACCOUNT_INCLUDED_1111, "VERIFIED_BY_REAL_IMPORT_EXPERIMENTAL", "非課税仕入と借方補助の共存確認"),
+    ProbeDefinition("tax_non_taxable_sales_with_subaccount", 1, JdlEvidenceProfile.TAX_NON_TAXABLE_SALES_SUBACCOUNT_INCLUDED_1111, "VERIFIED_BY_REAL_IMPORT_EXPERIMENTAL", "非課税売上と貸方補助の限定round-trip確認済み"),
     ProbeDefinition("tax_out_of_scope", 1, JdlEvidenceProfile.TAX_OUT_OF_SCOPE_SUBACCOUNT_INCLUDED_1111, "BLOCKED_FAILED_PRECONDITION_TARGET_SUBACCOUNT", "補助なし対象外の前提条件確認"),
     ProbeDefinition("tax_out_of_scope_with_subaccount", 1, JdlEvidenceProfile.TAX_OUT_OF_SCOPE_SUBACCOUNT_INCLUDED_1111, "VERIFIED_BY_REAL_IMPORT_EXPERIMENTAL", "対象外semantic identityと借方補助の共存確認"),
     ProbeDefinition("mf_six_tax_cases_batch", 6, JdlEvidenceProfile.TAX_PURCHASE_10_SUBACCOUNT_INCLUDED_1111, "VERIFIED_BY_REAL_IMPORT_EXPERIMENTAL", "6税区分の一括受理確認"),
@@ -429,6 +430,27 @@ class JdlProbeGenerator:
                     debit_sub=debit_sub.source_value,
                     debit_tax="非課税仕入",
                     journal_date=self._probe_date(journal_date, "2026/11/04"),
+                )
+            ]
+        elif definition.name == "tax_non_taxable_sales_with_subaccount":
+            credit_sub = self._required_subaccount_for_parent(
+                profile, context, "売上高"
+            )
+            if credit_sub is None:
+                raise JdlProbeError(
+                    "PROBE_BLOCKED_MISSING_SUBACCOUNT_EVIDENCE",
+                    "非課税売上の対象科目に対する確認済み親科目付き補助mappingが必要です。",
+                )
+            rows = [
+                self._row(
+                    "1",
+                    "現金",
+                    "売上高",
+                    "1000",
+                    "JDL-TAX-PROBE-NTS",
+                    credit_sub=credit_sub.source_value,
+                    credit_tax="非課税売上",
+                    journal_date=self._probe_date(journal_date, "2026/11/21"),
                 )
             ]
         elif definition.name == "mf_six_tax_cases_batch":

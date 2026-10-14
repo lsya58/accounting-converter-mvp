@@ -51,6 +51,22 @@ DESCRIPTION_PROBE_ACCOUNT_CODES = {
     "現金": "1111",
     "小口現金": "1121",
 }
+LARGE_DESCRIPTION_CASES = {
+    "description_4d6c": (4, 6, "20261122"),
+    "description_5d7c": (5, 7, "20261123"),
+    "description_5d8c": (5, 8, "20261124"),
+}
+LARGE_DESCRIPTION_EVIDENCE_IDS = {
+    "description_4d6c": (
+        "EVID-JDL-COMPOUND-4D6C-PER-ROW-DESCRIPTION-ROUNDTRIP-001"
+    ),
+    "description_5d7c": (
+        "EVID-JDL-COMPOUND-5D7C-PER-ROW-DESCRIPTION-ROUNDTRIP-001"
+    ),
+    "description_5d8c": (
+        "EVID-JDL-COMPOUND-5D8C-PER-ROW-DESCRIPTION-ROUNDTRIP-001"
+    ),
+}
 
 
 class JdlMvpBlockerProbeError(ValueError):
@@ -357,6 +373,151 @@ def compare_description_roundtrip(
     }
 
 
+def generate_large_description_candidates(
+    output_dir: Path, private_root: Path
+) -> tuple[Path, ...]:
+    _require_private(output_dir, private_root)
+    header = tuple(jdl_ibex_cashbook_official_journal_import_spec().column_names)
+    positions = {name: index for index, name in enumerate(header)}
+    generated: list[Path] = []
+    for case_name, (debit_count, credit_count, date) in LARGE_DESCRIPTION_CASES.items():
+        destination = output_dir / f"{case_name}.csv"
+        manifest_path = destination.with_suffix(".manifest.json")
+        result_path = output_dir / f"{case_name}_result.json"
+        for path in (destination, manifest_path, result_path):
+            if path.exists():
+                raise JdlMvpBlockerProbeError(f"output exists: {path.name}")
+        row_count = max(debit_count, credit_count)
+        debit_amounts = _balanced_amounts(500, debit_count)
+        credit_amounts = _balanced_amounts(500, credit_count)
+        rows: list[list[str]] = []
+        for index in range(row_count):
+            row = [""] * 30
+            row[positions["//識別フラグ"]] = (
+                "1110" if index == 0 else "1101" if index == row_count - 1 else "1100"
+            )
+            row[positions["日付"]] = date
+            if index < debit_count:
+                row[positions["借方科目名称"]] = "現金"
+                row[positions["借方金額"]] = str(debit_amounts[index])
+            else:
+                row[positions["借方金額"]] = "0"
+            if index < credit_count:
+                row[positions["貸方科目名称"]] = "小口現金"
+                row[positions["貸方金額"]] = str(credit_amounts[index])
+            else:
+                row[positions["貸方金額"]] = "0"
+            row[positions["摘要"]] = f"JDL-LDESC-{case_name[-4:].upper()}-{index + 1:02d}"
+            rows.append(row)
+        _write_jdl(destination, header, rows)
+        _write_new_json(
+            manifest_path,
+            {
+                "schema_version": "1",
+                "probe_case": case_name,
+                "output_sha256": _file_hash(destination),
+                "expected_date": date,
+                "expected_shape": {"debit_lines": debit_count, "credit_lines": credit_count},
+                "expected_row_count": row_count,
+                "expected_flag_sequence": [row[0] for row in rows],
+                "description_policy": "EXACT_PER_ROW_IN_ORDER",
+                "account_pattern": "REPEATED_RUNTIME_CONFIRMED_NO_SUBACCOUNT_ACCOUNTS",
+                "subaccount_fields_blank": True,
+                "tax_fields_blank": True,
+                "department_fields_blank": True,
+                "production_allowed": False,
+                "NOT_FOR_PRODUCTION": True,
+                "safety_notice": SAFETY_NOTICE,
+            },
+        )
+        _write_new_json(
+            result_path,
+            {
+                "schema_version": "1",
+                "probe_case": case_name,
+                "result_status": "UNTESTED",
+                "comparison_pass": None,
+                "mapping_promotion_allowed": False,
+                "production_allowed": False,
+                "NOT_FOR_PRODUCTION": True,
+            },
+        )
+        generated.append(destination)
+    return tuple(generated)
+
+
+def compare_large_description_roundtrip(
+    candidate: Path, manifest_path: Path, reexport: Path
+) -> dict[str, object]:
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if (
+        manifest.get("probe_case") not in LARGE_DESCRIPTION_CASES
+        or manifest.get("NOT_FOR_PRODUCTION") is not True
+        or manifest.get("output_sha256") != _file_hash(candidate)
+    ):
+        raise JdlMvpBlockerProbeError("large description candidate manifest mismatch")
+    header, expected = _read_jdl(candidate, require_first_header=True)
+    actual_header, all_actual = _read_jdl(reexport)
+    if header != actual_header:
+        raise JdlMvpBlockerProbeError("re-export header mismatch")
+    positions = {name: index for index, name in enumerate(header)}
+    actual = [row for row in all_actual if row[positions["日付"]] == manifest["expected_date"]]
+    fields = (
+        "//識別フラグ", "日付", "借方科目名称", "借方金額",
+        "貸方科目名称", "貸方金額", "摘要",
+    )
+    mismatches = sorted({
+        name
+        for left, right in zip(expected, actual, strict=False)
+        for name in fields
+        if left[positions[name]] != right[positions[name]]
+    })
+    count_match = len(expected) == len(actual) == manifest["expected_row_count"]
+    account_match = count_match and all(
+        _description_probe_account_identity_matches(left, right, positions)
+        for left, right in zip(expected, actual, strict=True)
+    )
+    missing = max(len(expected) - len(actual), 0)
+    extra = max(len(actual) - len(expected), 0)
+    duplicate = len(actual) - len({tuple(row) for row in actual})
+    expected_debit = sum(int(row[positions["借方金額"]] or "0") for row in expected)
+    expected_credit = sum(int(row[positions["貸方金額"]] or "0") for row in expected)
+    actual_debit = sum(int(row[positions["借方金額"]] or "0") for row in actual)
+    actual_credit = sum(int(row[positions["貸方金額"]] or "0") for row in actual)
+    balance_match = expected_debit == expected_credit == actual_debit == actual_credit
+    passed = count_match and account_match and not mismatches and not any((missing, extra, duplicate)) and balance_match
+    return {
+        "schema_version": "1",
+        "probe_case": manifest["probe_case"],
+        "candidate_sha256": _file_hash(candidate),
+        "reexport_sha256": _file_hash(reexport),
+        "expected_rows": len(expected),
+        "actual_rows": len(actual),
+        "missing_rows": missing,
+        "duplicate_rows": duplicate,
+        "extra_rows": extra,
+        "flag_sequence_match": count_match and [r[0] for r in expected] == [r[0] for r in actual],
+        "description_sequence_preserved": count_match and [r[positions["摘要"]] for r in expected] == [r[positions["摘要"]] for r in actual],
+        "account_identity_match": account_match,
+        "balance_match": balance_match,
+        "mismatch_field_categories": mismatches,
+        "comparison_pass": passed,
+        "evidence_id": LARGE_DESCRIPTION_EVIDENCE_IDS[manifest["probe_case"]],
+        "evidence_level": "VERIFIED_BY_REAL_IMPORT" if passed else "UNTESTED",
+        "evidence_scope": (
+            "SYNTHETIC_EXACT_SHAPE_PER_ROW_DESCRIPTION_NO_OPTIONAL_FIELDS"
+        ),
+        "mapping_promotion_allowed": False,
+        "production_allowed": False,
+        "NOT_FOR_PRODUCTION": True,
+    }
+
+
+def _balanced_amounts(total: int, count: int) -> tuple[int, ...]:
+    base, remainder = divmod(total, count)
+    return tuple(base + (1 if index < remainder else 0) for index in range(count))
+
+
 def _description_probe_account_identity_matches(
     expected: list[str], actual: list[str], positions: dict[str, int]
 ) -> bool:
@@ -465,6 +626,13 @@ def main() -> int:
     compare.add_argument("--manifest", type=Path, required=True)
     compare.add_argument("--reexport", type=Path, required=True)
     compare.add_argument("--result", type=Path, required=True)
+    generate_large = sub.add_parser("generate-large-descriptions")
+    generate_large.add_argument("--output-dir", type=Path, required=True)
+    compare_large = sub.add_parser("compare-large-description")
+    compare_large.add_argument("--candidate", type=Path, required=True)
+    compare_large.add_argument("--manifest", type=Path, required=True)
+    compare_large.add_argument("--reexport", type=Path, required=True)
+    compare_large.add_argument("--result", type=Path, required=True)
     args = parser.parse_args()
     if args.command == "plan":
         write_private_plan(args.mf_input, args.output, args.private_root)
@@ -476,11 +644,23 @@ def main() -> int:
             args.private_root,
             first_date=args.first_date,
         )
-    else:
+    elif args.command == "compare-description":
         _require_private(args.result, args.private_root)
         _write_new_json(
             args.result,
             compare_description_roundtrip(
+                args.candidate, args.manifest, args.reexport
+            ),
+        )
+    elif args.command == "generate-large-descriptions":
+        generate_large_description_candidates(
+            args.output_dir, args.private_root
+        )
+    else:
+        _require_private(args.result, args.private_root)
+        _write_new_json(
+            args.result,
+            compare_large_description_roundtrip(
                 args.candidate, args.manifest, args.reexport
             ),
         )

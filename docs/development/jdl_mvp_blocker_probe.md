@@ -76,3 +76,35 @@ shapes, CP932-incompatible values, and descriptions over 32 characters remain
 blocked; values are never truncated. In the current private 482-journal audit,
 none of the 41 multiple-description journals has this exact 1D3C shape, so all
 41 remain blocked pending shape-specific Evidence.
+
+## Remaining large compound shapes
+
+The current private baseline has 11 remaining multiple-description blockers:
+five `4D6C`, one `5D7C`, and five `5D8C`. Development-only candidates for
+these exact shapes use only synthetic values and runtime-observed accounts that
+did not require subaccounts. Tax, subaccount, department, trade-partner,
+invoice, tag, and memo fields remain blank. Every physical row has a distinct
+description, and only an exact ordered round trip may pass.
+
+```bash
+PYTHONPATH=src python3 -m accounting_converter.tools.jdl_mvp_blocker_probe \
+  --private-root data/private generate-large-descriptions \
+  --output-dir data/private/jdl_mvp_blocker_probes/large_compound_descriptions
+```
+
+The generated cases dated `20261122`, `20261123`, and `20261124` passed strict
+real-runtime Import/re-export comparison. Their Evidence remains limited to the
+exact `4D6C`, `5D7C`, and `5D8C` shapes with no optional fields. Merging,
+reordering, missing rows, duplicate rows, changed account identity, changed
+amounts, shape mismatch, descriptions over 32 characters, and CP932-incompatible
+descriptions remain blocked. Registry and general readiness are unchanged.
+
+## Non-taxable sales probe
+
+`tax_non_taxable_sales_with_subaccount` is an Evidence-gated synthetic `1111`
+probe for the exact observed JDL IBEX 35.5 taxable/tax-included Context. It
+requires a USER_CONFIRMED credit parent/subaccount mapping and emits the
+Human-observed credit-side non-taxable-sales representation. The app-generated
+candidate passed strict real-runtime Import/re-export comparison. The mapping is
+still USER_CONFIRMED-only and exact-Context scoped; this does not promote
+Registry or general production capability.

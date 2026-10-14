@@ -1,6 +1,29 @@
 from __future__ import annotations
 
-from accounting_converter.domain.journal import JournalEntry, Side
+from dataclasses import dataclass
+
+from accounting_converter.domain.journal import JournalEntry, JournalLine, Side
+
+
+VERIFIED_DESCRIPTION_SHAPES = frozenset(
+    {
+        (1, 3, 3),
+        (2, 2, 2),
+        (2, 1, 2),
+        (2, 3, 3),
+        (4, 6, 6),
+        (5, 7, 7),
+        (5, 8, 8),
+    }
+)
+
+
+@dataclass(frozen=True)
+class MoneyForwardPhysicalRow:
+    row_number: int
+    debit: JournalLine | None
+    credit: JournalLine | None
+    description: str
 from accounting_converter.domain.validation import Severity, ValidationResult
 
 
@@ -20,7 +43,7 @@ class MoneyForwardToJdlLossRule:
             for item in entry.metadata.get("moneyforward_descriptions", ())
             if item.get("value")
         }
-        if len(descriptions) > 1 and moneyforward_1d3c_row_descriptions(entry) is None:
+        if len(descriptions) > 1 and moneyforward_verified_description_rows(entry) is None:
             fields.add("description")
 
         for line in entry.lines:
@@ -52,32 +75,58 @@ def moneyforward_1d3c_row_descriptions(
 ) -> tuple[str, str, str] | None:
     """Return source-row descriptions only for the verified MF 1D3C shape."""
 
-    debit = [line for line in entry.lines if line.side is Side.DEBIT]
-    credit = [line for line in entry.lines if line.side is Side.CREDIT]
-    if len(debit) != 1 or len(credit) != 3 or len(entry.lines) != 4:
+    rows = moneyforward_verified_description_rows(entry)
+    if rows is None or len(rows) != 3:
         return None
+    if (sum(row.debit is not None for row in rows), sum(row.credit is not None for row in rows)) != (1, 3):
+        return None
+    return rows[0].description, rows[1].description, rows[2].description
 
-    row_numbers: list[int] = []
-    descriptions: list[str] = []
-    for line in credit:
+
+def moneyforward_verified_description_rows(
+    entry: JournalEntry,
+) -> tuple[MoneyForwardPhysicalRow, ...] | None:
+    grouped: dict[int, dict[Side, JournalLine]] = {}
+    descriptions: dict[int, str] = {}
+    for line in entry.lines:
         row_number = line.metadata.get("moneyforward_source_row_number")
         description = line.metadata.get("moneyforward_description")
         if not isinstance(row_number, int) or not isinstance(description, str):
             return None
-        row_numbers.append(row_number)
-        descriptions.append(description)
-    if row_numbers != sorted(row_numbers) or len(set(row_numbers)) != 3:
+        if row_number in descriptions and descriptions[row_number] != description:
+            return None
+        descriptions[row_number] = description
+        sides = grouped.setdefault(row_number, {})
+        if line.side in sides:
+            return None
+        sides[line.side] = line
+    row_numbers = sorted(grouped)
+    if tuple(row_numbers) != tuple(entry.metadata.get("physical_row_numbers", ())):
         return None
-
     observed = tuple(
         (item.get("row_number"), item.get("value"))
         for item in entry.metadata.get("moneyforward_descriptions", ())
     )
     expected = tuple(
-        (row_number, description)
-        for row_number, description in zip(row_numbers, descriptions, strict=True)
-        if description
+        (row_number, descriptions[row_number])
+        for row_number in row_numbers
+        if descriptions[row_number]
     )
     if observed != expected:
         return None
-    return descriptions[0], descriptions[1], descriptions[2]
+    shape = (
+        sum(Side.DEBIT in grouped[number] for number in row_numbers),
+        sum(Side.CREDIT in grouped[number] for number in row_numbers),
+        len(row_numbers),
+    )
+    if shape not in VERIFIED_DESCRIPTION_SHAPES:
+        return None
+    return tuple(
+        MoneyForwardPhysicalRow(
+            row_number=number,
+            debit=grouped[number].get(Side.DEBIT),
+            credit=grouped[number].get(Side.CREDIT),
+            description=descriptions[number],
+        )
+        for number in row_numbers
+    )

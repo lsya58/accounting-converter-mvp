@@ -14,10 +14,13 @@ from accounting_converter.profiles.jdl_official import (
 )
 from accounting_converter.tools.jdl_mvp_blocker_probe import (
     DESCRIPTION_CASES,
+    LARGE_DESCRIPTION_EVIDENCE_IDS,
     JdlMvpBlockerProbeError,
     build_private_plan,
     compare_description_roundtrip,
+    compare_large_description_roundtrip,
     generate_description_candidates,
+    generate_large_description_candidates,
     write_private_plan,
 )
 
@@ -185,6 +188,46 @@ class JdlMvpBlockerProbeTests(unittest.TestCase):
             generate_description_candidates(
                 base, manifest, self.private / "descriptions", self.private
             )
+
+    def test_large_description_candidates_are_balanced_and_strict(self) -> None:
+        candidates = generate_large_description_candidates(
+            self.private / "large", self.private
+        )
+
+        self.assertEqual(len(candidates), 3)
+        for candidate in candidates:
+            rows = list(
+                csv.reader(
+                    io.StringIO(candidate.read_text(encoding="cp932"), newline="")
+                )
+            )
+            header = rows[0]
+            pos = {name: index for index, name in enumerate(header)}
+            self.assertEqual(len(header), 30)
+            self.assertEqual(
+                sum(int(row[pos["借方金額"]] or "0") for row in rows[1:]),
+                sum(int(row[pos["貸方金額"]] or "0") for row in rows[1:]),
+            )
+            for row in rows[1:]:
+                if row[pos["借方科目名称"]] == "現金":
+                    row[pos["借方科目"]] = "1111"
+                if row[pos["貸方科目名称"]] == "小口現金":
+                    row[pos["貸方科目"]] = "1121"
+            reexport = candidate.with_name(candidate.stem + "-reexport.csv")
+            self._write_csv(reexport, rows)
+            result = compare_large_description_roundtrip(
+                candidate, candidate.with_suffix(".manifest.json"), reexport
+            )
+            self.assertTrue(result["comparison_pass"])
+            self.assertTrue(result["description_sequence_preserved"])
+            self.assertEqual(
+                result["evidence_id"],
+                LARGE_DESCRIPTION_EVIDENCE_IDS[candidate.stem],
+            )
+            self.assertTrue(result["balance_match"])
+
+        with self.assertRaisesRegex(JdlMvpBlockerProbeError, "output exists"):
+            generate_large_description_candidates(self.private / "large", self.private)
 
     @staticmethod
     def _write_mf(path: Path, literals: tuple[str, str]) -> None:
