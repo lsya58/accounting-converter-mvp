@@ -1088,6 +1088,19 @@ Evidence levelは、このexact synthetic batch、exact target Context、JDL IBE
 - separation: 補助なしpurchase 10% Evidenceとは別scope。別親科目、別補助、別Contextへ一般化しない
 - production Registry、Money Forward一般READY、mapping promotion、`production_allowed`は変更しない
 
+## EVID-JDL-COMPOUND-PER-ROW-DESCRIPTION-ROUNDTRIP-001
+
+- evidence level: `VERIFIED_BY_REAL_IMPORT`（完全syntheticなexact 3-case scope限定）
+- product: JDL IBEX 出納帳35.5
+- structure: CP932、BOMなし、CRLF、official 30 columns、`1110 -> 1100 -> 1101`、1 debit : 3 credit
+- verified cases: 全3行同一摘要、2種類摘要、3種類摘要
+- strict comparison: logical journal/3-row構造、flag順、account identity、amount、各rowの摘要と順序、missing/duplicate/extra 0
+- observed result: JDL画面と再Exportの双方で、各physical rowの摘要がcandidate順に個別保持された
+- implementation scope: MF physical-row descriptionをline metadataにlossless保持し、この専用Evidence profileだけJDL各rowへ出力する
+- safety boundary: silent merge、truncation、並べ替えは禁止。1D3C以外、32文字超過、CP932非対応、optional feature併用は引き続きBLOCK
+- private baseline impact: 482 journals中のmultiple-description blocker 41件にはexact 1D3Cが0件だったため、41件すべて未解除
+- production Registry、Money Forward一般READY、`production_allowed`は変更しない
+
 単一simple、単一compound、限定master/tax条件、同日simple+compound、同日simple+simple、正式YayoiInputAdapter起点artifact、context-aware registry/factory経路、固定12-journal mixed batch、Windows packaged GUIの実機Import・UI確認・self re-export比較まで完了した。さらにscroll/resizeと未対応target versionの安全停止もWindows実機で確認した。
 
 1. JDL IBEX出納帳35.5のexact identityに限りproduction Registryを`AVAILABLE`とする。別version/製品は`UNAVAILABLE`のままとする。

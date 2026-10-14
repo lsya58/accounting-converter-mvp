@@ -21,6 +21,9 @@ from accounting_converter.profiles.known_formats import (
 
 
 SAFETY_NOTICE = "DEVELOPMENT TEST ONLY / NOT FOR PRODUCTION"
+DESCRIPTION_ROUNDTRIP_EVIDENCE_ID = (
+    "EVID-JDL-COMPOUND-PER-ROW-DESCRIPTION-ROUNDTRIP-001"
+)
 KNOWN_TAX_LITERALS = frozenset(
     {
         "課税仕入 10%",
@@ -43,6 +46,10 @@ DESCRIPTION_CASES = {
         "JDL-DESC-TWO",
         "JDL-DESC-THREE",
     ),
+}
+DESCRIPTION_PROBE_ACCOUNT_CODES = {
+    "現金": "1111",
+    "小口現金": "1121",
 }
 
 
@@ -157,7 +164,7 @@ def generate_description_candidates(
         raise JdlMvpBlockerProbeError(
             "verified synthetic compound base candidate and manifest are required"
         )
-    header, rows = _read_jdl(base_candidate)
+    header, rows = _read_jdl(base_candidate, require_first_header=True)
     positions = {name: index for index, name in enumerate(header)}
     if len(rows) != 3 or tuple(row[positions["//識別フラグ"]] for row in rows) != (
         "1110",
@@ -165,6 +172,14 @@ def generate_description_candidates(
         "1101",
     ):
         raise JdlMvpBlockerProbeError("base candidate must be the observed 1D3C shape")
+    safe_credit_identity = tuple(
+        rows[2][positions[name]]
+        for name in ("貸方科目", "貸方科目名称", "貸方科目正式名称")
+    )
+    if not safe_credit_identity[1]:
+        raise JdlMvpBlockerProbeError(
+            "base candidate must contain an observed safe credit account name"
+        )
     generated = []
     for offset, (case_name, descriptions) in enumerate(DESCRIPTION_CASES.items()):
         destination = output_dir / f"{case_name}.csv"
@@ -178,6 +193,33 @@ def generate_description_candidates(
         for row, description in zip(case_rows, descriptions, strict=True):
             row[positions["日付"]] = date
             row[positions["摘要"]] = description
+            for name, value in zip(
+                ("貸方科目", "貸方科目名称", "貸方科目正式名称"),
+                safe_credit_identity,
+                strict=True,
+            ):
+                row[positions[name]] = value
+            for name in (
+                "借方補助",
+                "借方補助名称",
+                "貸方補助",
+                "貸方補助名称",
+                "借方課区",
+                "借方税区",
+                "借方税入力方法",
+                "借方消費税",
+                "貸方課区",
+                "貸方税区",
+                "貸方税入力方法",
+                "貸方消費税",
+                "借方取引科目",
+                "貸方取引科目",
+                "借方部門コード",
+                "借方部門名称",
+                "貸方部門コード",
+                "貸方部門名称",
+            ):
+                row[positions[name]] = ""
         _write_jdl(destination, header, case_rows)
         _write_new_json(
             candidate_manifest,
@@ -191,6 +233,11 @@ def generate_description_candidates(
                 "expected_flag_sequence": ["1110", "1100", "1101"],
                 "expected_date": date,
                 "description_pattern": case_name,
+                "account_pattern": "ONE_DEBIT_TO_REPEATED_SAFE_CREDIT",
+                "safe_credit_identity_source": "BASE_FINAL_ROW_RUNTIME_NO_SUBACCOUNT_ERROR",
+                "subaccount_fields_blank": True,
+                "tax_fields_blank": True,
+                "department_fields_blank": True,
                 "strict_comparison_required": True,
                 "production_allowed": False,
                 "NOT_FOR_PRODUCTION": True,
@@ -224,7 +271,7 @@ def compare_description_roundtrip(
         or manifest.get("output_sha256") != _file_hash(candidate)
     ):
         raise JdlMvpBlockerProbeError("candidate manifest mismatch")
-    header, expected = _read_jdl(candidate)
+    header, expected = _read_jdl(candidate, require_first_header=True)
     actual_header, actual_rows = _read_jdl(reexport)
     if header != actual_header:
         raise JdlMvpBlockerProbeError("re-export header mismatch")
@@ -234,10 +281,8 @@ def compare_description_roundtrip(
     compared_fields = (
         "//識別フラグ",
         "日付",
-        "借方科目",
         "借方科目名称",
         "借方金額",
-        "貸方科目",
         "貸方科目名称",
         "貸方金額",
         "摘要",
@@ -251,6 +296,31 @@ def compare_description_roundtrip(
         }
     )
     counts_match = len(expected) == len(actual) == 3
+    missing = max(len(expected) - len(actual), 0)
+    extra = max(len(actual) - len(expected), 0)
+    duplicate = len(actual) - len({tuple(row) for row in actual})
+    expected_debit = sum(int(row[positions["借方金額"]] or "0") for row in expected)
+    expected_credit = sum(int(row[positions["貸方金額"]] or "0") for row in expected)
+    actual_debit = sum(int(row[positions["借方金額"]] or "0") for row in actual)
+    actual_credit = sum(int(row[positions["貸方金額"]] or "0") for row in actual)
+    balance_match = (
+        expected_debit == expected_credit == actual_debit == actual_credit
+    )
+    account_identity_match = counts_match and all(
+        _description_probe_account_identity_matches(left, right, positions)
+        for left, right in zip(expected, actual, strict=True)
+    )
+    if not account_identity_match:
+        mismatch_fields.append("account_identity")
+        mismatch_fields = sorted(set(mismatch_fields))
+    comparison_pass = (
+        counts_match
+        and missing == 0
+        and duplicate == 0
+        and extra == 0
+        and balance_match
+        and not mismatch_fields
+    )
     return {
         "schema_version": "1",
         "probe_case": manifest["probe_case"],
@@ -258,6 +328,9 @@ def compare_description_roundtrip(
         "reexport_sha256": _file_hash(reexport),
         "expected_rows": len(expected),
         "actual_matching_date_rows": len(actual),
+        "missing_rows": missing,
+        "duplicate_rows": duplicate,
+        "extra_rows": extra,
         "flag_sequence_match": counts_match
         and [row[positions["//識別フラグ"]] for row in expected]
         == [row[positions["//識別フラグ"]] for row in actual],
@@ -265,10 +338,42 @@ def compare_description_roundtrip(
         and [row[positions["摘要"]] for row in expected]
         == [row[positions["摘要"]] for row in actual],
         "mismatch_field_categories": mismatch_fields,
-        "comparison_pass": counts_match and not mismatch_fields,
+        "balance_match": balance_match,
+        "account_identity_match": account_identity_match,
+        "account_code_population_classification": (
+            "KNOWN_EXACT_RUNTIME_REEXPORT_NORMALIZATION"
+            if account_identity_match
+            else "MISMATCH"
+        ),
+        "comparison_pass": comparison_pass,
+        "evidence_id": DESCRIPTION_ROUNDTRIP_EVIDENCE_ID,
+        "evidence_level": (
+            "VERIFIED_BY_REAL_IMPORT" if comparison_pass else "HUMAN_OBSERVED"
+        ),
+        "evidence_scope": "SYNTHETIC_1110_1100_1101_1D3C_PER_ROW_DESCRIPTION",
+        "mapping_promotion_allowed": False,
         "production_allowed": False,
         "NOT_FOR_PRODUCTION": True,
     }
+
+
+def _description_probe_account_identity_matches(
+    expected: list[str], actual: list[str], positions: dict[str, int]
+) -> bool:
+    for prefix in ("借方", "貸方"):
+        name = expected[positions[f"{prefix}科目名称"]]
+        actual_name = actual[positions[f"{prefix}科目名称"]]
+        actual_code = actual[positions[f"{prefix}科目"]]
+        if not name:
+            if actual_name or actual_code:
+                return False
+            continue
+        if (
+            actual_name != name
+            or DESCRIPTION_PROBE_ACCOUNT_CODES.get(name) != actual_code
+        ):
+            return False
+    return True
 
 
 def _semantic_class(literal: str) -> str:
@@ -279,7 +384,9 @@ def _semantic_class(literal: str) -> str:
     return "UNKNOWN_NEW_EVIDENCE_REQUIRED"
 
 
-def _read_jdl(path: Path) -> tuple[tuple[str, ...], list[list[str]]]:
+def _read_jdl(
+    path: Path, *, require_first_header: bool = False
+) -> tuple[tuple[str, ...], list[list[str]]]:
     raw = path.read_bytes()
     if raw.startswith((b"\xef\xbb\xbf", b"\xff\xfe", b"\xfe\xff")):
         raise JdlMvpBlockerProbeError("BOM is not allowed")
@@ -291,9 +398,16 @@ def _read_jdl(path: Path) -> tuple[tuple[str, ...], list[list[str]]]:
         raise JdlMvpBlockerProbeError("CP932 decode failed") from exc
     rows = list(csv.reader(io.StringIO(text, newline="")))
     header = tuple(jdl_ibex_cashbook_official_journal_import_spec().column_names)
-    if not rows or tuple(rows[0]) != header or any(len(row) != 30 for row in rows):
+    header_indexes = [index for index, row in enumerate(rows) if tuple(row) == header]
+    if (
+        len(header_indexes) != 1
+        or (require_first_header and header_indexes[0] != 0)
+    ):
         raise JdlMvpBlockerProbeError("official 30-column structure is required")
-    return header, rows[1:]
+    data_rows = rows[header_indexes[0] + 1 :]
+    if any(len(row) != 30 for row in data_rows):
+        raise JdlMvpBlockerProbeError("official 30-column structure is required")
+    return header, data_rows
 
 
 def _write_jdl(path: Path, header: tuple[str, ...], rows: list[list[str]]) -> None:
@@ -306,7 +420,7 @@ def _write_jdl(path: Path, header: tuple[str, ...], rows: list[list[str]]) -> No
     temp = path.with_name(f".{path.name}.tmp")
     temp.write_bytes(raw)
     os.replace(temp, path)
-    _read_jdl(path)
+    _read_jdl(path, require_first_header=True)
 
 
 def _write_new_json(path: Path, payload: dict[str, object]) -> None:

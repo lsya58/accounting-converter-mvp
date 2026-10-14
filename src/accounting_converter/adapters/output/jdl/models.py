@@ -38,6 +38,9 @@ class JdlEvidenceProfile(str, Enum):
     )
     TAX_EXCLUDED_1111 = "SUPPORTED_1111_TAX_EXCLUDED"
     COMPOUND_1D3C = "SUPPORTED_COMPOUND_1D3C"
+    COMPOUND_1D3C_LINE_DESCRIPTIONS = (
+        "SUPPORTED_COMPOUND_1D3C_LINE_DESCRIPTIONS"
+    )
 
 
 class JdlContextConfirmationState(str, Enum):

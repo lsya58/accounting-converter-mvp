@@ -91,12 +91,42 @@ class JdlMvpBlockerProbeTests(unittest.TestCase):
             raw = candidate.read_bytes()
             self.assertFalse(raw.startswith(b"\xef\xbb\xbf"))
             self.assertIn(b"\r\n", raw)
+            parsed = list(
+                csv.reader(io.StringIO(raw.decode("cp932"), newline=""))
+            )
+            header = parsed[0]
+            pos = {name: index for index, name in enumerate(header)}
+            for row in parsed[1:]:
+                if row[pos["借方科目名称"]] == "現金":
+                    row[pos["借方科目"]] = "1111"
+                if row[pos["貸方科目名称"]] == "小口現金":
+                    row[pos["貸方科目"]] = "1121"
+            reexport = candidate.with_name(f"{candidate.stem}-reexport.csv")
+            self._write_csv(reexport, parsed)
             result = compare_description_roundtrip(
-                candidate, candidate.with_suffix(".manifest.json"), candidate
+                candidate, candidate.with_suffix(".manifest.json"), reexport
             )
             self.assertTrue(result["comparison_pass"])
             self.assertTrue(result["description_sequence_preserved"])
+            self.assertTrue(result["account_identity_match"])
+            self.assertEqual(result["evidence_level"], "VERIFIED_BY_REAL_IMPORT")
+            self.assertEqual(result["missing_rows"], 0)
+            self.assertEqual(result["duplicate_rows"], 0)
+            self.assertEqual(result["extra_rows"], 0)
+            self.assertTrue(result["balance_match"])
             self.assertFalse(result["production_allowed"])
+            rows = parsed
+            self.assertEqual(
+                {row[pos["貸方科目名称"]] for row in rows[1:]},
+                {"小口現金"},
+            )
+            for row in rows[1:]:
+                self.assertEqual(row[pos["借方補助名称"]], "")
+                self.assertEqual(row[pos["貸方補助名称"]], "")
+                self.assertEqual(row[pos["借方課区"]], "")
+                self.assertEqual(row[pos["貸方課区"]], "")
+                self.assertEqual(row[pos["借方部門名称"]], "")
+                self.assertEqual(row[pos["貸方部門名称"]], "")
 
         changed = self.private / "changed.csv"
         changed.write_bytes(candidates[1].read_bytes().replace(b"JDL-DESC-LATER", b"JDL-DESC-OTHER", 1))
@@ -105,6 +135,37 @@ class JdlMvpBlockerProbeTests(unittest.TestCase):
         )
         self.assertFalse(mismatch["comparison_pass"])
         self.assertIn("摘要", mismatch["mismatch_field_categories"])
+
+        wrong_account = self.private / "wrong-account.csv"
+        wrong_account.write_bytes(
+            candidates[0].read_bytes().replace(
+                "小口現金".encode("cp932"), "現金".encode("cp932"), 1
+            )
+        )
+        account_mismatch = compare_description_roundtrip(
+            candidates[0], candidates[0].with_suffix(".manifest.json"), wrong_account
+        )
+        self.assertFalse(account_mismatch["comparison_pass"])
+        self.assertIn(
+            "account_identity", account_mismatch["mismatch_field_categories"]
+        )
+
+        duplicate = self.private / "duplicate.csv"
+        duplicate_rows = list(
+            csv.reader(
+                io.StringIO(candidates[0].read_text(encoding="cp932"), newline="")
+            )
+        )
+        duplicate_rows.append(duplicate_rows[-1])
+        self._write_csv(duplicate, duplicate_rows)
+        duplicate_result = compare_description_roundtrip(
+            candidates[0], candidates[0].with_suffix(".manifest.json"), duplicate
+        )
+        self.assertFalse(duplicate_result["comparison_pass"])
+        self.assertGreater(duplicate_result["duplicate_rows"], 0)
+        self.assertNotEqual(
+            duplicate_result["evidence_level"], "VERIFIED_BY_REAL_IMPORT"
+        )
 
     def test_description_candidate_requires_verified_base_manifest(self) -> None:
         base = self.private / "base.csv"
@@ -140,9 +201,9 @@ class JdlMvpBlockerProbeTests(unittest.TestCase):
         pos = {name: index for index, name in enumerate(header)}
         rows = []
         for flag, debit, debit_amount, credit, credit_amount in (
-            ("1110", "架空借方", "1000", "架空貸方A", "500"),
-            ("1100", "", "", "架空貸方B", "300"),
-            ("1101", "", "", "架空貸方C", "200"),
+            ("1110", "現金", "1000", "普通預金", "500"),
+            ("1100", "", "", "当座預金", "300"),
+            ("1101", "", "", "小口現金", "200"),
         ):
             row = [""] * 30
             row[pos["//識別フラグ"]] = flag
@@ -156,6 +217,13 @@ class JdlMvpBlockerProbeTests(unittest.TestCase):
         stream = io.StringIO(newline="")
         writer = csv.writer(stream, lineterminator="\r\n")
         writer.writerow(header)
+        writer.writerows(rows)
+        path.write_bytes(stream.getvalue().encode("cp932"))
+
+    @staticmethod
+    def _write_csv(path: Path, rows: list[list[str]]) -> None:
+        stream = io.StringIO(newline="")
+        writer = csv.writer(stream, lineterminator="\r\n")
         writer.writerows(rows)
         path.write_bytes(stream.getvalue().encode("cp932"))
 

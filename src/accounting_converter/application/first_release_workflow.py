@@ -19,6 +19,9 @@ from accounting_converter.application.conversion import (
 )
 from accounting_converter.application.mapping_engine import MappingEngine
 from accounting_converter.application.mapping_review import MappingRequirementExtractor
+from accounting_converter.application.moneyforward_jdl_loss import (
+    moneyforward_1d3c_row_descriptions,
+)
 from accounting_converter.application.profile_preflight import mapping_rule_set_from_profile
 from accounting_converter.application.validation_pipeline import ValidationPipeline
 from accounting_converter.domain.conversion_profile import ConversionProfile
@@ -275,7 +278,11 @@ class FirstReleaseConversionWorkflow:
             if (debit, credit) == (1, 1):
                 assignments[entry.id] = JdlEvidenceProfile.BASIC_1111
             elif (debit, credit) == (1, 3):
-                assignments[entry.id] = JdlEvidenceProfile.COMPOUND_1D3C
+                assignments[entry.id] = (
+                    JdlEvidenceProfile.COMPOUND_1D3C_LINE_DESCRIPTIONS
+                    if moneyforward_1d3c_row_descriptions(entry) is not None
+                    else JdlEvidenceProfile.COMPOUND_1D3C
+                )
             else:
                 reasons.append("未検証の仕訳構成が含まれています。")
         return assignments, reasons

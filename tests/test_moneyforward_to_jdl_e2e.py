@@ -150,6 +150,90 @@ class MoneyForwardToJdlSyntheticE2ETests(unittest.TestCase):
                 self.assertEqual(result.status, ConversionStatus.BLOCKED_BY_OUTPUT_PREFLIGHT)
                 self.assertFalse(output.exists())
 
+    def test_verified_1d3c_preserves_each_source_row_description_in_order(self) -> None:
+        descriptions = ("架空摘要A", "架空摘要B", "架空摘要C")
+        rows = [
+            self._row("15", debit_amount="1000", credit_amount="500", description=descriptions[0]),
+            self._row(
+                "15", debit="", debit_amount="", credit="当座預金",
+                credit_amount="300", description=descriptions[1],
+            ),
+            self._row(
+                "15", debit="", debit_amount="", credit="小口現金",
+                credit_amount="200", description=descriptions[2],
+            ),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = self._write(root / "mf.csv", rows)
+            parsed = MoneyForwardInputAdapter().read(source, self.mf_profile)
+            credit = [line for line in parsed[0].lines if line.side.value == "CREDIT"]
+            self.assertEqual(
+                tuple(line.metadata["moneyforward_description"] for line in credit),
+                descriptions,
+            )
+            output = root / "jdl.csv"
+            result = self._convert(
+                source,
+                output,
+                {"15": JdlEvidenceProfile.COMPOUND_1D3C_LINE_DESCRIPTIONS},
+            )
+            output_rows = self._output_rows(output)
+
+        self.assertEqual(result.status, ConversionStatus.SUCCESS)
+        self.assertEqual([row[0] for row in output_rows[1:]], ["1110", "1100", "1101"])
+        self.assertEqual([row[23] for row in output_rows[1:]], list(descriptions))
+
+    def test_verified_1d3c_description_is_not_silently_truncated(self) -> None:
+        rows = [
+            self._row("16", debit_amount="1000", credit_amount="500", description="A" * 33),
+            self._row(
+                "16", debit="", debit_amount="", credit="当座預金",
+                credit_amount="300", description="架空B",
+            ),
+            self._row(
+                "16", debit="", debit_amount="", credit="小口現金",
+                credit_amount="200", description="架空C",
+            ),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = self._write(root / "mf.csv", rows)
+            output = root / "blocked.csv"
+            result = self._convert(
+                source,
+                output,
+                {"16": JdlEvidenceProfile.COMPOUND_1D3C_LINE_DESCRIPTIONS},
+            )
+
+        self.assertEqual(result.status, ConversionStatus.BLOCKED_BY_OUTPUT_PREFLIGHT)
+        self.assertTrue(
+            any(item.rule_id == "JDL-OUT-DESCRIPTION-LENGTH" for item in result.validation_results)
+        )
+        self.assertFalse(output.exists())
+
+    def test_multiple_descriptions_in_other_shape_remain_blocked(self) -> None:
+        rows = [
+            self._row("17", debit_amount="600", credit_amount="700", description="架空A"),
+            self._row(
+                "17", debit="当座預金", debit_amount="400", credit="小口現金",
+                credit_amount="300", description="架空B",
+            ),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = self._write(root / "mf.csv", rows)
+            output = root / "blocked.csv"
+            result = self._convert(
+                source,
+                output,
+                {"17": JdlEvidenceProfile.COMPOUND_1D3C_LINE_DESCRIPTIONS},
+            )
+
+        self.assertEqual(result.status, ConversionStatus.BLOCKED_BY_BUSINESS_VALIDATION)
+        self.assertTrue(any(item.field == "description" for item in result.validation_results))
+        self.assertFalse(output.exists())
+
     def test_unknown_mapping_and_tax_mapping_block(self) -> None:
         cases = (
             (self._row("7", debit="未確認科目"), "account"),

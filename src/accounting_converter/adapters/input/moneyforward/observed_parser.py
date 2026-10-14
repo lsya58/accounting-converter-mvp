@@ -211,7 +211,11 @@ class MoneyForwardObservedParser:
             sub_account=sub_account or None,
             department=department or None,
             tax_info=tax_info,
-            metadata=({"moneyforward_trade_partner": partner} if partner else {}),
+            metadata={
+                **({"moneyforward_trade_partner": partner} if partner else {}),
+                "moneyforward_description": row.values[16],
+                "moneyforward_source_row_number": row.row_number,
+            },
         )
 
     @staticmethod

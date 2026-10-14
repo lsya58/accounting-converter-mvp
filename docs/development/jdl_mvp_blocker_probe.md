@@ -26,7 +26,7 @@ PYTHONPATH=src python3 -m accounting_converter.tools.jdl_mvp_blocker_probe \
 
 ## Multiple descriptions
 
-既存の実Import検証済みcompound candidateをbaseにし、account・amount・flag sequenceを維持して摘要列だけを変えた3候補を作る。
+既存の実Import検証済みcompound candidateをbaseにし、借方は同じruntimeで補助エラーがなかった科目、貸方3行はbase最終行で補助エラーがなく過去のImport/re-exportでもidentityが保持された科目1つへ統一する。普通預金・当座預金は現在のテスト事業所で補助必須とruntime確認されたため使用しない。補助・税・部門・取引科目fieldは明示的に空欄化し、amount・flag sequenceを維持して摘要列だけを変えた3候補を作る。
 
 - `description_same`: 全physical rowで同じ摘要
 - `description_two_values`: 先頭rowと後続rowで異なる摘要
@@ -59,3 +59,20 @@ PYTHONPATH=src python3 -m accounting_converter.tools.jdl_mvp_blocker_probe \
 - CP932、BOMなし、CRLF、official 30列を検証する。
 - comparatorは曖昧なrow matchingや推測による正規化を行わない。
 - Evidence取得だけではproduction Registry、MF READY、`production_allowed`を変更しない。
+
+## Verified multiple-description result
+
+`EVID-JDL-COMPOUND-PER-ROW-DESCRIPTION-ROUNDTRIP-001` records the successful
+real-runtime round trip of the three synthetic description cases. Its scope is
+limited to exact 1-debit/3-credit journals represented by
+`1110 -> 1100 -> 1101`, with no subaccount, tax, department, trade partner,
+tag, memo, or invoice fields. Each physical-row description was preserved in
+order; the comparator does not accept merging, omission, duplication, or
+reordering.
+
+The MF parser retains each source-row description in line metadata. The JDL
+output path uses it only under the dedicated Evidence profile. Other compound
+shapes, CP932-incompatible values, and descriptions over 32 characters remain
+blocked; values are never truncated. In the current private 482-journal audit,
+none of the 41 multiple-description journals has this exact 1D3C shape, so all
+41 remain blocked pending shape-specific Evidence.

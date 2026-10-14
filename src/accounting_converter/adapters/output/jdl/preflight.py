@@ -8,6 +8,9 @@ from typing import Sequence
 from accounting_converter.domain.journal import JournalEntry, JournalLine, Side, TaxInfo
 from accounting_converter.domain.profile import FormatProfile
 from accounting_converter.domain.validation import Severity, ValidationResult
+from accounting_converter.application.moneyforward_jdl_loss import (
+    moneyforward_1d3c_row_descriptions,
+)
 from accounting_converter.profiles.jdl_official import (
     JdlTaxProcessingMode,
     jdl_ibex_cashbook_official_journal_import_spec,
@@ -69,6 +72,9 @@ EVIDENCE_IDS = {
     ),
     JdlEvidenceProfile.COMPOUND_1D3C: (
         "EVID-JDL-GENERATOR-COMPOUND-1110-1100-1101-001"
+    ),
+    JdlEvidenceProfile.COMPOUND_1D3C_LINE_DESCRIPTIONS: (
+        "EVID-JDL-COMPOUND-PER-ROW-DESCRIPTION-ROUNDTRIP-001"
     ),
 }
 MULTIGROUP_EVIDENCE_ID = "EVID-JDL-GENERATOR-MULTIGROUP-SIMPLE-COMPOUND-001"
@@ -241,8 +247,11 @@ class JdlOutputPreflight:
         evidence: JdlEvidenceProfile,
         errors: list[ValidationResult],
     ) -> list[JdlOutputRow]:
-        if evidence is JdlEvidenceProfile.COMPOUND_1D3C:
-            return self._compound_rows(entry, errors)
+        if evidence in {
+            JdlEvidenceProfile.COMPOUND_1D3C,
+            JdlEvidenceProfile.COMPOUND_1D3C_LINE_DESCRIPTIONS,
+        }:
+            return self._compound_rows(entry, evidence, errors)
         if not entry.is_balanced():
             errors.append(self._error("JDL-OUT-BALANCE", "仕訳が貸借一致しません。", "amount", entry))
             return []
@@ -275,6 +284,7 @@ class JdlOutputPreflight:
     def _compound_rows(
         self,
         entry: JournalEntry,
+        evidence: JdlEvidenceProfile,
         errors: list[ValidationResult],
     ) -> list[JdlOutputRow]:
         debit = [line for line in entry.lines if line.side is Side.DEBIT]
@@ -296,6 +306,37 @@ class JdlOutputPreflight:
             self._validate_amount(line.amount, entry, errors)
         if errors:
             return []
+        if evidence is JdlEvidenceProfile.COMPOUND_1D3C_LINE_DESCRIPTIONS:
+            descriptions = moneyforward_1d3c_row_descriptions(entry)
+            if descriptions is None:
+                errors.append(self._error(
+                    "JDL-OUT-COMPOUND-DESCRIPTION",
+                    "検証済み物理行に対応する摘要を一意に保持できません。",
+                    "description",
+                    entry,
+                ))
+                return []
+            for description in descriptions:
+                try:
+                    description.encode("cp932")
+                except UnicodeEncodeError:
+                    errors.append(self._error(
+                        "JDL-OUT-DESCRIPTION-ENCODING",
+                        "摘要をCP932で表現できません。",
+                        "description",
+                        entry,
+                    ))
+                    return []
+                if len(description) > 32:
+                    errors.append(self._error(
+                        "JDL-OUT-DESCRIPTION-LENGTH",
+                        "摘要が32文字を超えています。",
+                        "description",
+                        entry,
+                    ))
+                    return []
+        else:
+            descriptions = (entry.description or "", "", "")
         flags = ("1110", "1100", "1101")
         rows: list[JdlOutputRow] = []
         for index, credit_line in enumerate(credit):
@@ -305,7 +346,7 @@ class JdlOutputPreflight:
                     entry,
                     debit[0] if index == 0 else None,
                     credit_line,
-                    (entry.description or "") if index == 0 else "",
+                    descriptions[index],
                 )
             )
         return rows
