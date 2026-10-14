@@ -260,8 +260,15 @@ class MappingConfirmationService:
         key: MappingKey,
         target_value: str,
         metadata: dict[str, str] | None = None,
+        *,
+        allow_empty_tax_target: bool = False,
     ) -> ConversionProfile:
-        if not target_value.strip():
+        empty_tax_target_allowed = (
+            allow_empty_tax_target
+            and key.mapping_type is MappingType.TAX_CATEGORY
+            and bool((metadata or {}).get("jdl_evidence_id"))
+        )
+        if not target_value.strip() and not empty_tax_target_allowed:
             raise ValueError("target_value is required")
         profile = self.store.get(profile_id)
         updated = self._with_mapping(

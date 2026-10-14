@@ -25,7 +25,7 @@ from accounting_converter.application.mapping_review import (
     MappingRequirementExtractor,
     mapping_requirements_to_observed_preflight,
 )
-from accounting_converter.domain.mapping import MappingStatus
+from accounting_converter.domain.mapping import MappingStatus, MappingValue
 from accounting_converter.domain.profile import FormatProfile
 from accounting_converter.infrastructure.company_setting_store import CompanySettingStore
 from accounting_converter.infrastructure.company_setting_store import CompanySettingStoreError
@@ -210,7 +210,7 @@ class MoneyForwardProfileSetupTests(unittest.TestCase):
         review = self.service.tax_mapping_review(profile, analysis.context)
 
         self.assertFalse(review.items)
-        self.assertEqual(review.user_message, "「課税仕入 10%」は確認済みです。")
+        self.assertEqual(review.user_message, "税区分はすべて確認済みです。")
 
     def test_tax_is_saved_only_after_explicit_confirmation(self) -> None:
         self._write_source(self.source, debit_tax="課税仕入 10%")
@@ -295,12 +295,13 @@ class MoneyForwardProfileSetupTests(unittest.TestCase):
         )
         self.assertTrue(company_store.resolve(setting.company_setting_id).available)
 
-    def test_other_tax_categories_remain_unresolved_and_unavailable(self) -> None:
+    def test_other_verified_tax_category_is_offered_but_registry_stays_unavailable(self) -> None:
         self._write_source(self.source, debit_tax="課税売上 10%")
         self._write_context(self.context, taxable_included=True)
         analysis = self.service.analyze(self.source, self.context)
 
-        self.assertFalse(analysis.tax_items)
+        self.assertEqual(len(analysis.tax_items), 1)
+        self.assertEqual(analysis.tax_items[0].target_display, "売上 / 10%")
         self.assertIn("課税売上 10%", analysis.unresolved_tax_categories)
         registry = production_adapter_registry()
         source = moneyforward_cloud_journal_export_observed_schema().identity
@@ -310,6 +311,125 @@ class MoneyForwardProfileSetupTests(unittest.TestCase):
             AdapterAvailabilityStatus.UNAVAILABLE,
         )
         self.assertFalse(registry.has_conversion_pair(source, target))
+
+    def test_all_six_verified_literals_require_explicit_confirmation(self) -> None:
+        self._write_context(self.context, taxable_included=True)
+        context = self.service.context_loader.load(self.context)
+        source_values = (
+            "課税仕入 10%",
+            "課税売上 10%",
+            "課税仕入 (軽)8%",
+            "課税売上 (軽)8%",
+            "非課税仕入",
+            "対象外",
+        )
+
+        items = self.service._tax_items(source_values, context)
+
+        self.assertEqual(tuple(item.source_value for item in items), source_values)
+        self.assertEqual(
+            tuple((item.target_scope, item.target_value) for item in items),
+            (("仕　入", "10%"), ("売一種", "10%"), ("仕　入", "軽減8%"),
+             ("売一種", "軽減8%"), ("非仕入", ""), ("", "")),
+        )
+
+    def test_unknown_tax_and_blank_do_not_infer_out_of_scope(self) -> None:
+        self._write_context(self.context, taxable_included=True)
+        context = self.service.context_loader.load(self.context)
+
+        self.assertEqual(self.service._tax_items(("",), context), ())
+        self.assertEqual(self.service._tax_items(("未観測税区分",), context), ())
+        self.assertIn(
+            "確認できない税区分",
+            self.service._tax_context_message(("未観測税区分",), context),
+        )
+
+    def test_all_six_tax_mappings_are_saved_only_as_user_confirmed(self) -> None:
+        self._write_context(self.context, taxable_included=True)
+        analysis = self.service.analyze(self.source, self.context)
+        selections = {
+            item.source_value: item.exact_candidate
+            for item in analysis.account_items
+            if item.exact_candidate
+        }
+        profile = self.service.save_confirmed_profile(
+            company_display_name="架空会社",
+            analysis=analysis,
+            selections=selections,
+            explicitly_confirmed=set(selections),
+        )
+        source_values = (
+            "課税仕入 10%",
+            "課税売上 10%",
+            "課税仕入 (軽)8%",
+            "課税売上 (軽)8%",
+            "非課税仕入",
+            "対象外",
+        )
+        for source_value in source_values:
+            profile.tax_mappings[source_value] = MappingValue(
+                source_value=source_value,
+                target_value=None,
+                status=MappingStatus.UNRESOLVED,
+            )
+        self.profile_store.update(profile)
+        context = self.service.context_loader.load(self.context)
+
+        for source_value in source_values:
+            self.service.confirm_evidence_backed_tax_mapping(
+                profile_id=profile.profile_id,
+                context=context,
+                source_value=source_value,
+            )
+
+        saved = self.profile_store.get(profile.profile_id)
+        self.assertTrue(
+            all(
+                saved.tax_mappings[value].status is MappingStatus.USER_CONFIRMED
+                for value in source_values
+            )
+        )
+        self.assertEqual(saved.tax_mappings["対象外"].target_value, "")
+        self.assertEqual(saved.tax_mappings["対象外"].metadata["jdl_tax_scope"], "")
+        self.assertEqual(
+            saved.tax_mappings["非課税仕入"].metadata["jdl_tax_scope"],
+            "非仕入",
+        )
+
+    def test_empty_target_remains_forbidden_outside_evidence_backed_tax(self) -> None:
+        from accounting_converter.application.mapping_review import (
+            MappingConfirmationService,
+        )
+        from accounting_converter.domain.mapping import MappingKey, MappingType
+
+        analysis = self.service.analyze(self.source, self.context)
+        selections = {
+            item.source_value: item.exact_candidate
+            for item in analysis.account_items
+            if item.exact_candidate
+        }
+        profile = self.service.save_confirmed_profile(
+            company_display_name="架空会社",
+            analysis=analysis,
+            selections=selections,
+            explicitly_confirmed=set(selections),
+        )
+        confirmation = MappingConfirmationService(self.profile_store)
+
+        with self.assertRaisesRegex(ValueError, "target_value"):
+            confirmation.confirm_mapping(
+                profile.profile_id,
+                MappingKey(MappingType.ACCOUNT, "架空科目"),
+                "",
+                allow_empty_tax_target=True,
+            )
+        with self.assertRaisesRegex(ValueError, "target_value"):
+            confirmation.confirm_mapping(
+                profile.profile_id,
+                MappingKey(MappingType.TAX_CATEGORY, "架空税区分"),
+                "",
+                allow_empty_tax_target=True,
+            )
 
     def test_unresolved_or_unconfirmed_account_cannot_save(self) -> None:
         analysis = self.service.analyze(self.source, self.context)

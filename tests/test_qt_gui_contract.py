@@ -223,6 +223,22 @@ class QtGuiContractTests(unittest.TestCase):
         self.assertIn("WheelSafeComboBox()", source)
         self.assertIn('target.addItem("未選択", None)', source)
 
+    def test_tax_confirmation_dialog_supports_multiple_explicit_confirmations(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
+            encoding="utf-8"
+        )
+        dialog = source.split("class TaxMappingConfirmationDialog", maxsplit=1)[1].split(
+            "class CompanyRenameDialog", maxsplit=1
+        )[0]
+        controller = Path("src/accounting_converter/ui/controllers.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("for item in self.review.items", dialog)
+        self.assertIn('QCheckBox("確認しました")', dialog)
+        self.assertIn("all(item.isChecked()", dialog)
+        self.assertIn("confirm_company_tax_mappings", dialog)
+        self.assertIn("def confirm_company_tax_mappings", controller)
+
     def test_mapping_selector_ignores_wheel_so_table_can_scroll(self) -> None:
         source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
             encoding="utf-8"

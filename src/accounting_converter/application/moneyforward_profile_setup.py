@@ -66,6 +66,7 @@ class TaxMappingSetupItem:
     source_value: str
     target_value: str
     target_display: str
+    target_scope: str
     evidence_id: str
 
 
@@ -372,25 +373,24 @@ class MoneyForwardProfileSetupService:
             return TaxMappingSetupReview(
                 user_message="現在のJDL設定ではこの税区分を確認できません"
             )
-        purchase_mapping = profile.tax_mappings.get(MF_PURCHASE_TAX_10)
-        if purchase_mapping is None:
+        if not profile.tax_mappings:
             return TaxMappingSetupReview(
                 context_compatible=self._tax_context_compatible(context),
                 user_message=(
-                    "対応設定に「課税仕入 10%」の未設定要件がありません。"
+                    "対応設定に税区分の未設定要件がありません。"
                     "税区分を含むMoney Forward CSVから対応設定を作成してください。"
                 ),
-            )
-        if purchase_mapping.is_resolved:
-            return TaxMappingSetupReview(
-                context_compatible=self._tax_context_compatible(context),
-                user_message="「課税仕入 10%」は確認済みです。",
             )
         unresolved = tuple(
             source_value
             for source_value, mapping in profile.tax_mappings.items()
             if not mapping.is_resolved
         )
+        if not unresolved:
+            return TaxMappingSetupReview(
+                context_compatible=self._tax_context_compatible(context),
+                user_message="税区分はすべて確認済みです。",
+            )
         items = self._tax_items(unresolved, context)
         compatible = self._tax_context_compatible(context)
         return TaxMappingSetupReview(
@@ -421,6 +421,7 @@ class MoneyForwardProfileSetupService:
             MappingKey(MappingType.TAX_CATEGORY, source_value),
             item.target_value,
             metadata=self._tax_mapping_metadata(item),
+            allow_empty_tax_target=True,
         )
 
     @staticmethod
@@ -453,15 +454,21 @@ class MoneyForwardProfileSetupService:
         source_values: tuple[str, ...],
         context: JdlTargetContext,
     ) -> tuple[TaxMappingSetupItem, ...]:
-        if not cls._tax_context_compatible(context) or MF_PURCHASE_TAX_10 not in source_values:
+        if not cls._tax_context_compatible(context):
             return ()
-        return (
-            TaxMappingSetupItem(
-                source_value=MF_PURCHASE_TAX_10,
-                target_value=JDL_PURCHASE_TAX_10,
-                target_display="仕入 / 10%",
-                evidence_id=EVIDENCE_ID_MF_JDL_PURCHASE_10_ROUNDTRIP,
-            ),
+        specs = {
+            MF_PURCHASE_TAX_10: ("10%", "仕入 / 10%", "仕　入", EVIDENCE_ID_MF_JDL_PURCHASE_10_ROUNDTRIP),
+            "課税売上 10%": ("10%", "売上 / 10%", "売一種", "EVID-JDL-MF-TAX-SALES-10-SUBACCOUNT-ROUNDTRIP-001"),
+            "課税仕入 (軽)8%": ("軽減8%", "仕入 / 軽減8%", "仕　入", "EVID-JDL-MF-TAX-PURCHASE-REDUCED-8-SUBACCOUNT-ROUNDTRIP-001"),
+            "課税売上 (軽)8%": ("軽減8%", "売上 / 軽減8%", "売一種", "EVID-JDL-MF-TAX-SALES-REDUCED-8-SUBACCOUNT-ROUNDTRIP-001"),
+            "非課税仕入": ("", "非課税仕入", "非仕入", "EVID-JDL-MF-TAX-NONTAXABLE-PURCHASE-SUBACCOUNT-ROUNDTRIP-001"),
+            "対象外": ("", "対象外", "", "EVID-JDL-MF-TAX-OUT-OF-SCOPE-SUBACCOUNT-ROUNDTRIP-001"),
+        }
+        return tuple(
+            TaxMappingSetupItem(source, target, display, scope, evidence)
+            for source in source_values
+            if source in specs
+            for target, display, scope, evidence in (specs[source],)
         )
 
     @classmethod
@@ -470,8 +477,11 @@ class MoneyForwardProfileSetupService:
         source_values: tuple[str, ...],
         context: JdlTargetContext,
     ) -> str:
-        if MF_PURCHASE_TAX_10 in source_values and not cls._tax_context_compatible(context):
+        if source_values and not cls._tax_context_compatible(context):
             return "現在のJDL設定ではこの税区分を確認できません"
+        known = {item.source_value for item in cls._tax_items(source_values, context)}
+        if set(source_values) - known:
+            return "確認できない税区分があります。未確認の税区分は変換できません。"
         return ""
 
     @staticmethod
@@ -480,7 +490,7 @@ class MoneyForwardProfileSetupService:
         context_sha256: str | None = None,
     ) -> dict[str, str]:
         return {
-            "jdl_tax_scope": JDL_PURCHASE_TAX_SCOPE,
+            "jdl_tax_scope": item.target_scope,
             "jdl_evidence_id": item.evidence_id,
             "jdl_tax_processing_mode": "TAXABLE_TAX_INCLUDED",
             **(

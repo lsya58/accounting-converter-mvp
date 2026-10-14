@@ -1302,13 +1302,28 @@ class TaxMappingConfirmationDialog(QDialog):
         title = QLabel("税区分を確認")
         title.setObjectName("sectionTitle")
         layout.addWidget(title)
-        self.confirmed = QCheckBox("確認しました")
+        self.confirmations: dict[str, QCheckBox] = {}
         if self.review.items:
-            item = self.review.items[0]
-            layout.addWidget(QLabel(f"Money Forward: {item.source_value}"))
-            layout.addWidget(QLabel(f"JDL: {item.target_display}"))
-            layout.addWidget(QLabel("状態: 確認してください"))
-            layout.addWidget(self.confirmed)
+            guidance = QLabel("内容を確認し、各税区分の「確認しました」を選択してください。")
+            guidance.setObjectName("muted")
+            guidance.setWordWrap(True)
+            layout.addWidget(guidance)
+            for item in self.review.items:
+                card = QFrame()
+                card.setObjectName("card")
+                card_layout = QVBoxLayout(card)
+                card_layout.addWidget(QLabel(f"Money Forward: {item.source_value}"))
+                card_layout.addWidget(QLabel(f"JDL: {item.target_display}"))
+                confirmed = QCheckBox("確認しました")
+                confirmed.stateChanged.connect(self._update_save_enabled)
+                card_layout.addWidget(confirmed)
+                self.confirmations[item.source_value] = confirmed
+                layout.addWidget(card)
+            if self.review.user_message:
+                warning = QLabel(self.review.user_message)
+                warning.setObjectName("warningCard")
+                warning.setWordWrap(True)
+                layout.addWidget(warning)
         else:
             message = QLabel(
                 self.review.user_message
@@ -1324,19 +1339,24 @@ class TaxMappingConfirmationDialog(QDialog):
         self.save_button.setObjectName("primaryButton")
         self.save_button.setEnabled(False)
         self.save_button.clicked.connect(self._save)
-        self.confirmed.stateChanged.connect(
-            lambda: self.save_button.setEnabled(self.confirmed.isChecked())
-        )
         actions.addStretch(1)
         actions.addWidget(cancel)
         actions.addWidget(self.save_button)
         layout.addLayout(actions)
 
+    def _update_save_enabled(self) -> None:
+        self.save_button.setEnabled(
+            bool(self.confirmations)
+            and all(item.isChecked() for item in self.confirmations.values())
+        )
+
     def _save(self) -> None:
-        if not self.review.items or not self.confirmed.isChecked():
+        if not self.confirmations or not all(
+            item.isChecked() for item in self.confirmations.values()
+        ):
             return
-        state = self.controller.confirm_company_tax_mapping(
-            self.company_setting_id, self.review.items[0].source_value
+        state = self.controller.confirm_company_tax_mappings(
+            self.company_setting_id, tuple(self.confirmations)
         )
         if state.user_message == "税区分の確認を保存しました。":
             self.accept()

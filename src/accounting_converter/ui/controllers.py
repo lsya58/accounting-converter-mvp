@@ -414,6 +414,11 @@ class AccountingConverterController:
     def confirm_company_tax_mapping(
         self, company_setting_id: str, source_value: str
     ) -> AppState:
+        return self.confirm_company_tax_mappings(company_setting_id, (source_value,))
+
+    def confirm_company_tax_mappings(
+        self, company_setting_id: str, source_values: tuple[str, ...]
+    ) -> AppState:
         resolved = self.company_setting_service.resolve_for_source(company_setting_id)
         if not resolved.available or resolved.profile is None or resolved.context is None:
             return self._fail_state(
@@ -421,11 +426,12 @@ class AccountingConverterController:
                 CompanySettingStoreError("company setting is unavailable"),
             )
         try:
-            self.moneyforward_profile_setup_service.confirm_evidence_backed_tax_mapping(
-                profile_id=resolved.profile.profile_id,
-                context=resolved.context,
-                source_value=source_value,
-            )
+            for source_value in source_values:
+                self.moneyforward_profile_setup_service.confirm_evidence_backed_tax_mapping(
+                    profile_id=resolved.profile.profile_id,
+                    context=resolved.context,
+                    source_value=source_value,
+                )
             try:
                 self.company_store.refresh_profile_fingerprint(company_setting_id)
             except Exception:
