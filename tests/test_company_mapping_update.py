@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import json
 import tempfile
 import unittest
 from dataclasses import replace
@@ -159,6 +160,83 @@ class CompanyMappingUpdateTests(unittest.TestCase):
         selections = {item.key: item.exact_candidate for item in review.items}
         self.service.apply(review, selections, set(selections))
         self.assertEqual(len(self.service.review_saved("company-a").items), 2)
+
+    def test_confirmed_runtime_context_uses_in_flow_review_and_save(self):
+        context = self.root / "confirmed-context.json"
+        payload = {
+            "schema_version": "1",
+            "product": "JDL IBEX 出納帳",
+            "version": "35.5",
+            "account_master": [
+                {
+                    "mapping_value": "科目甲",
+                    "target_master_code": "1001",
+                    "target_name": "科目甲",
+                    "target_formal_name": "科目甲",
+                },
+                {
+                    "mapping_value": "科目乙",
+                    "target_master_code": "2001",
+                    "target_name": "科目乙",
+                    "target_formal_name": "科目乙",
+                },
+            ],
+            "subaccounts": [],
+            "departments": [],
+            "tax_processing_mode": "EXEMPT",
+            "department_processing_enabled": False,
+            "standard_taxation_confirmed": False,
+            "individual_credit_method_confirmed": False,
+            "confirmation_state": "CONFIRMED",
+            "provenance": "USER_CONFIRMED_RUNTIME_SNAPSHOT",
+            "no_fuzzy_matching": True,
+            "no_automatic_replacement": True,
+        }
+        context.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        context_hash = hashlib.sha256(context.read_bytes()).hexdigest()
+        now = datetime(2026, 10, 14, tzinfo=timezone.utc)
+        self.profiles.create(ConversionProfile(
+            "profile-runtime", "架空実行設定",
+            moneyforward_cloud_journal_export_observed_schema().identity,
+            jdl_ibex_cashbook_official_journal_import_schema_definition().identity,
+            account_mappings={
+                "入力科目A": MappingValue(
+                    "入力科目A", "科目甲", MappingStatus.USER_CONFIRMED,
+                    metadata={
+                        "target_code": "1001",
+                        "target_formal_name": "科目甲",
+                        "setup_context_sha256": context_hash,
+                    },
+                )
+            },
+            created_at=now, updated_at=now,
+        ))
+        self.companies.create(
+            company_setting_id="company-runtime",
+            display_name="架空実行会社",
+            conversion_profile_id="profile-runtime",
+            context_source=context,
+        )
+        source = self.root / "runtime.csv"
+        self._write(
+            source,
+            debit_account="入力科目A",
+            debit_sub="",
+            credit_account="新規科目",
+        )
+
+        review = self.service.review("company-runtime", source)
+        item = next(item for item in review.items if item.mapping_type == "ACCOUNT")
+        self.assertEqual(item.available_targets, ("科目甲", "科目乙"))
+        self.service.apply(review, {item.key: "科目乙"}, {item.key})
+
+        self.assertFalse(self.service.review("company-runtime", source).items)
+        setting = self.companies.get("company-runtime")
+        saved = self.profiles.get(setting.conversion_profile_id)
+        self.assertEqual(
+            saved.account_mappings["新規科目"].metadata["target_code"],
+            "2001",
+        )
 
     def test_conflicting_subaccount_identity_is_not_selectable(self):
         import json

@@ -244,10 +244,10 @@ class MoneyForwardConversionWorkflow:
     def _mapping_reasons(requirements) -> tuple[str, ...]:
         reasons: list[str] = []
         groups = (
-            (requirements.accounts, "科目確認が必要です。「新しい科目を確認」から設定してください。"),
-            (requirements.subaccounts, "補助科目確認が必要です。「新しい科目を確認」から設定してください。"),
+            (requirements.accounts, "科目の確認が必要です。"),
+            (requirements.subaccounts, "補助科目の確認が必要です。"),
             (requirements.departments, "部門を含む仕訳は現在の正式変換範囲外です。"),
-            (requirements.tax_categories, "税区分確認が必要です。「税区分を確認」から設定してください。"),
+            (requirements.tax_categories, "税区分の確認が必要です。"),
         )
         for items, message in groups:
             if any(

@@ -540,7 +540,7 @@ class MoneyForwardToJdlSyntheticE2ETests(unittest.TestCase):
             cases.extend(
                 (
                     (normal, self._conversion_profile(), False, "会社設定"),
-                    (normal, unresolved, True, "科目確認"),
+                    (normal, unresolved, True, "科目の確認"),
                     (partner, self._conversion_profile(), True, "取引先情報"),
                 )
             )

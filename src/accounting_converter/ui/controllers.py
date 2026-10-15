@@ -731,6 +731,19 @@ class AccountingConverterController:
         return self.state
 
     def prepare_conversion(self) -> AppState:
+        if (
+            self.state.file_recognition is not None
+            and self.state.file_recognition.format is RecognizedFormat.MONEYFORWARD
+        ):
+            inspected = self.inspect_selected_moneyforward_confirmations()
+            if inspected.developer_error is not None or any(
+                (
+                    inspected.pending_account_confirmations,
+                    inspected.pending_subaccount_confirmations,
+                    inspected.pending_tax_confirmations,
+                )
+            ):
+                return inspected
         try:
             if (
                 self.state.file_recognition is not None

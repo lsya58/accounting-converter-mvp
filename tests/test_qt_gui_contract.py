@@ -232,6 +232,19 @@ class QtGuiContractTests(unittest.TestCase):
         self.assertIn("review_saved_company_mappings", source)
         self.assertIn("税設定の確認が必要です。CSV読込時に確認できます。", source)
 
+    def test_normal_moneyforward_flow_does_not_expose_old_settings_route(self) -> None:
+        window = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
+            encoding="utf-8"
+        )
+        workflow = Path(
+            "src/accounting_converter/application/moneyforward_conversion_workflow.py"
+        ).read_text(encoding="utf-8")
+        main_window = window.split("class SettingsDialog", maxsplit=1)[0]
+        self.assertIn('QPushButton("確認する")', main_window)
+        self.assertIn("CompanyMappingUpdateDialog", main_window)
+        self.assertIn("TaxMappingConfirmationDialog", main_window)
+        self.assertNotIn("新しい科目を確認", workflow)
+
     def test_tax_confirmation_dialog_supports_multiple_explicit_confirmations(self) -> None:
         source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
             encoding="utf-8"
