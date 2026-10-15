@@ -385,6 +385,70 @@ class AccountingConverterController:
             company_setting_id, source_path, include_confirmed=include_confirmed
         )
 
+    def inspect_selected_moneyforward_confirmations(self) -> AppState:
+        state = self.state
+        if (
+            state.file_recognition is None
+            or state.file_recognition.format is not RecognizedFormat.MONEYFORWARD
+            or state.selected_file is None
+            or state.selected_company_setting_id is None
+        ):
+            return state
+        try:
+            review = self.review_company_mapping_updates(
+                state.selected_company_setting_id, state.selected_file
+            )
+        except Exception as error:
+            return self._fail_state(
+                "会社設定とCSVを確認できませんでした。",
+                error,
+            )
+        account_count = sum(item.mapping_type == "ACCOUNT" for item in review.items)
+        subaccount_count = sum(
+            item.mapping_type == "SUBACCOUNT" for item in review.items
+        )
+        tax_count = len(review.tax_categories)
+        if account_count or subaccount_count or tax_count:
+            self._prepared = None
+            self.state = replace(
+                self.state,
+                preflight_status="REQUIRES_CONFIRMATION",
+                conversion_available=False,
+                conversion_summary=None,
+                pending_account_confirmations=account_count,
+                pending_subaccount_confirmations=subaccount_count,
+                pending_tax_confirmations=tax_count,
+                messages=(),
+                user_message="確認が必要な項目があります。",
+                developer_error=None,
+            )
+        else:
+            self.state = replace(
+                self.state,
+                preflight_status="UNKNOWN",
+                conversion_available=False,
+                conversion_summary=None,
+                pending_account_confirmations=0,
+                pending_subaccount_confirmations=0,
+                pending_tax_confirmations=0,
+                messages=(),
+            )
+        return self.state
+
+    def ensure_selected_tax_requirements(
+        self, review: CompanyMappingUpdateReview
+    ) -> AppState:
+        try:
+            self.company_mapping_update_service.ensure_tax_requirements(review)
+        except Exception as error:
+            return self._fail_state(
+                "税区分の確認内容を保存できませんでした。",
+                error,
+            )
+        self.load_profiles()
+        self.load_company_settings()
+        return self.select_company_setting(review.company_setting_id)
+
     def review_saved_company_mappings(
         self, company_setting_id: str
     ) -> CompanyMappingUpdateReview:
@@ -599,6 +663,9 @@ class AccountingConverterController:
                 else "入力ファイルが未選択です。"
             ),
             developer_error=None,
+            pending_account_confirmations=0,
+            pending_subaccount_confirmations=0,
+            pending_tax_confirmations=0,
         )
         self._auto_select_company_for_recognized_file()
         return self.state

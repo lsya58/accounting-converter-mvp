@@ -135,8 +135,8 @@ class AccountingConverterMainWindow(QMainWindow):
         self.status_detail.setObjectName("muted")
         self.status_detail.setWordWrap(True)
         action_row = QHBoxLayout()
-        self.settings_action = QPushButton("設定を確認する")
-        self.settings_action.clicked.connect(self._open_settings)
+        self.settings_action = QPushButton("確認する")
+        self.settings_action.clicked.connect(self._confirm_current_csv)
         self.convert_button = QPushButton("JDL用に変換する")
         self.convert_button.setObjectName("primaryButton")
         self.convert_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -192,34 +192,60 @@ class AccountingConverterMainWindow(QMainWindow):
 
     def _select_input(self, path: Path) -> None:
         self._render(self.controller.select_file(path))
-        self._review_required_mappings(path)
-        self._review_required_tax()
-        self._prepare_if_complete()
+        self._refresh_current_csv_readiness()
 
-    def _review_required_mappings(self, path: Path) -> None:
-        company_id = self.controller.state.selected_company_setting_id
+    def _confirm_current_csv(self) -> None:
+        state = self.controller.state
+        company_id = state.selected_company_setting_id
+        path = state.selected_file
         if not company_id:
+            self._open_settings()
+            return
+        if path is None:
             return
         try:
             review = self.controller.review_company_mapping_updates(company_id, path)
         except Exception:
+            QMessageBox.warning(
+                self,
+                "確認できませんでした",
+                "会社設定とCSVを確認してください。",
+            )
             return
-        if not review.items:
-            return
-        dialog = CompanyMappingUpdateDialog(self.controller, review, self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self._render(self.controller.state)
+        if review.items:
+            dialog = CompanyMappingUpdateDialog(self.controller, review, self)
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                self._refresh_current_csv_readiness()
+                return
+            review = self.controller.review_company_mapping_updates(company_id, path)
+        if review.tax_categories:
+            saved = self.controller.ensure_selected_tax_requirements(review)
+            if saved.developer_error is not None:
+                self._render(saved)
+                return
+            tax_review = self.controller.company_tax_mapping_review(company_id)
+            if tax_review.items:
+                dialog = TaxMappingConfirmationDialog(self.controller, company_id, self)
+                if dialog.exec() != QDialog.DialogCode.Accepted:
+                    self._refresh_current_csv_readiness()
+                    return
+            elif tax_review.user_message:
+                QMessageBox.information(
+                    self,
+                    "税区分の確認",
+                    "税設定の確認が必要です。会社のJDL設定を確認してください。",
+                )
+        self._refresh_current_csv_readiness()
 
-    def _review_required_tax(self) -> None:
-        company_id = self.controller.state.selected_company_setting_id
-        if not company_id:
-            return
-        review = self.controller.company_tax_mapping_review(company_id)
-        if not review.items:
-            return
-        dialog = TaxMappingConfirmationDialog(self.controller, company_id, self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self._render(self.controller.state)
+    def _refresh_current_csv_readiness(self) -> None:
+        state = self.controller.inspect_selected_moneyforward_confirmations()
+        self._render(state)
+        if not (
+            state.pending_account_confirmations
+            or state.pending_subaccount_confirmations
+            or state.pending_tax_confirmations
+        ):
+            self._prepare_if_complete()
 
     def _choose_output(self) -> None:
         filename, _ = QFileDialog.getSaveFileName(
@@ -233,11 +259,22 @@ class AccountingConverterMainWindow(QMainWindow):
             if output.suffix.lower() != ".csv":
                 output = output.with_suffix(".csv")
             self._render(self.controller.select_output_file(output))
-            self._prepare_if_complete()
+            if self.controller.state.selected_file:
+                self._refresh_current_csv_readiness()
+            else:
+                self._prepare_if_complete()
 
     def _prepare_if_complete(self) -> None:
         state = self.controller.state
-        if state.selected_file and state.selected_output_file and state.selected_profile_id and state.selected_context_file:
+        if (
+            state.selected_file
+            and state.selected_output_file
+            and state.selected_profile_id
+            and state.selected_context_file
+            and not state.pending_account_confirmations
+            and not state.pending_subaccount_confirmations
+            and not state.pending_tax_confirmations
+        ):
             self._render(self.controller.prepare_conversion())
 
     def _convert(self) -> None:
@@ -263,7 +300,10 @@ class AccountingConverterMainWindow(QMainWindow):
     def _select_company(self, index: int) -> None:
         company_id = self.company_combo.itemData(index) if index >= 0 else None
         self._render(self.controller.select_company_setting(company_id))
-        self._prepare_if_complete()
+        if self.controller.state.selected_file:
+            self._refresh_current_csv_readiness()
+        else:
+            self._prepare_if_complete()
 
     def _show_drop_error(self, message: str) -> None:
         QMessageBox.warning(self, "ファイルを確認してください", message)

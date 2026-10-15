@@ -148,6 +148,42 @@ class GuiV2PresentationTests(unittest.TestCase):
                     view.status_text + view.guidance + view.recognition_text
                 )
 
+    def test_pending_mapping_counts_are_presented_as_confirmation(self) -> None:
+        state = AppState(
+            selected_file=Path("synthetic.csv"),
+            selected_profile_id="profile",
+            selected_context_file=Path("context.json"),
+            file_recognition=FileRecognition(
+                RecognizedFormat.MONEYFORWARD, "Money Forwardの仕訳帳CSV", 2
+            ),
+            preflight_status="REQUIRES_CONFIRMATION",
+            pending_account_confirmations=3,
+            pending_subaccount_confirmations=2,
+            pending_tax_confirmations=1,
+        )
+
+        view = present_main_screen(state)
+
+        self.assertEqual(view.status, UserFacingStatus.CONFIRM)
+        self.assertTrue(view.settings_action_visible)
+        self.assertIn("科目: 3件", view.guidance)
+        self.assertIn("補助科目: 2件", view.guidance)
+        self.assertIn("税区分: 1件", view.guidance)
+
+    def test_unsupported_block_does_not_offer_confirmation_wizard(self) -> None:
+        state = AppState(
+            selected_file=Path("synthetic.csv"),
+            selected_profile_id="profile",
+            selected_context_file=Path("context.json"),
+            preflight_status="BLOCKED",
+            messages=("現在この仕訳の一部は安全に変換できません。",),
+        )
+
+        view = present_main_screen(state)
+
+        self.assertEqual(view.status, UserFacingStatus.BLOCKED)
+        self.assertFalse(view.settings_action_visible)
+
     @staticmethod
     def _assert_no_internal_terms(text: str) -> None:
         for term in ("ConversionProfile", "Profile ID", "Registry", "Evidence", "BLOCKED_BY"):

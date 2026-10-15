@@ -221,7 +221,10 @@ class QtGuiContractTests(unittest.TestCase):
     def test_existing_company_can_review_only_new_accounts_and_subaccounts(self) -> None:
         source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(encoding="utf-8")
         self.assertIn('QPushButton("対応内容を確認・変更")', source)
-        self.assertIn("self._review_required_mappings(path)", source)
+        self.assertIn('QPushButton("確認する")', source)
+        self.assertIn("self._confirm_current_csv", source)
+        self.assertIn("self._refresh_current_csv_readiness()", source)
+        self.assertNotIn("self._review_required_mappings(path)", source)
         self.assertIn("class CompanyMappingUpdateDialog", source)
         self.assertIn("追加確認が必要な科目はありません", source)
         self.assertIn("WheelSafeComboBox()", source)

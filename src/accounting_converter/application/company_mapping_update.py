@@ -34,6 +34,7 @@ class CompanyMappingUpdateReview:
     context_path: Path
     items: tuple[CompanyMappingUpdateItem, ...]
     logical_journal_count: int
+    tax_categories: tuple[str, ...] = ()
 
 
 class CompanyMappingUpdateService:
@@ -117,7 +118,18 @@ class CompanyMappingUpdateService:
                     ),
                 )
             )
-        return CompanyMappingUpdateReview(company_setting_id, source_path, context_path, tuple(items), len(entries))
+        return CompanyMappingUpdateReview(
+            company_setting_id,
+            source_path,
+            context_path,
+            tuple(items),
+            len(entries),
+            tuple(
+                item.source_value
+                for item in requirements.tax_categories
+                if item.requires_confirmation
+            ),
+        )
 
     def review_saved(self, company_setting_id: str) -> CompanyMappingUpdateReview:
         setting = self.company_store.get(company_setting_id)
@@ -259,6 +271,52 @@ class CompanyMappingUpdateService:
             self.company_store.replace_context(review.company_setting_id, review.context_path, conversion_profile_id=updated.profile_id)
         except Exception:
             self.profile_store.delete(updated.profile_id)
+            raise
+
+    def ensure_tax_requirements(self, review: CompanyMappingUpdateReview) -> None:
+        """Persist observed tax requirements without confirming or mapping them."""
+        if not review.tax_categories:
+            return
+        setting = self.company_store.get(review.company_setting_id)
+        old = self.profile_store.get(setting.conversion_profile_id)
+        tax_mappings = dict(old.tax_mappings)
+        changed = False
+        for source_value in review.tax_categories:
+            if source_value not in tax_mappings:
+                tax_mappings[source_value] = MappingValue(
+                    source_value, None, MappingStatus.UNRESOLVED
+                )
+                changed = True
+        if not changed:
+            return
+        updated = replace(
+            old,
+            tax_mappings=tax_mappings,
+            updated_at=datetime.now(timezone.utc),
+        )
+        if self.drafts.is_draft(review.context_path):
+            updated = replace(
+                updated,
+                profile_id=f"{old.profile_id}-update-{uuid.uuid4().hex}",
+            )
+            self.profile_store.create(updated)
+            try:
+                self.company_store.replace_context(
+                    review.company_setting_id,
+                    review.context_path,
+                    conversion_profile_id=updated.profile_id,
+                )
+            except Exception:
+                self.profile_store.delete(updated.profile_id)
+                raise
+            return
+        self.profile_store.update(updated)
+        try:
+            self.company_store.refresh_profile_fingerprint(
+                review.company_setting_id
+            )
+        except Exception:
+            self.profile_store.update(old)
             raise
 
     @staticmethod

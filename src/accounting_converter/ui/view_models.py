@@ -98,6 +98,9 @@ class AppState:
     result_summary: str | None = None
     result_presentation: ConversionResultPresentation | None = None
     verification_report: str | None = None
+    pending_account_confirmations: int = 0
+    pending_subaccount_confirmations: int = 0
+    pending_tax_confirmations: int = 0
 
 
 @dataclass(frozen=True)
@@ -137,7 +140,7 @@ def present_main_screen(state: AppState) -> MainScreenPresentation:
             _friendly_guidance(state),
             recognition,
             False,
-            True,
+            False,
         )
     if state.conversion_available:
         return MainScreenPresentation(
@@ -199,7 +202,7 @@ def present_main_screen(state: AppState) -> MainScreenPresentation:
             _friendly_guidance(state),
             recognition,
             False,
-            bool(state.selected_file),
+            False,
         )
     if state.selected_file and (
         not state.selected_profile_id or not state.selected_context_file
@@ -238,6 +241,17 @@ def _recognition_text(recognition: FileRecognition | None) -> str:
 def _friendly_guidance(state: AppState) -> str:
     if not state.selected_file:
         return "変換する仕訳CSVを選択してください。"
+    pending = tuple(
+        label
+        for label, count in (
+            (f"科目: {state.pending_account_confirmations}件", state.pending_account_confirmations),
+            (f"補助科目: {state.pending_subaccount_confirmations}件", state.pending_subaccount_confirmations),
+            (f"税区分: {state.pending_tax_confirmations}件", state.pending_tax_confirmations),
+        )
+        if count
+    )
+    if pending:
+        return "確認が必要な項目があります。\n" + "\n".join(pending)
     if not state.selected_profile_id or not state.selected_context_file:
         return "初回のみ、設定画面で会社設定とJDL設定を選択してください。"
     if not state.selected_output_file:

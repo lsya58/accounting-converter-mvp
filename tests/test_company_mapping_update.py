@@ -4,6 +4,7 @@ import csv
 import hashlib
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -108,6 +109,44 @@ class CompanyMappingUpdateTests(unittest.TestCase):
             self.service.apply(review, {item.key: "架空補助B"}, {item.key})
         self.service.apply(review, {item.key: "架空補助A"}, {item.key})
         self.assertFalse(self.service.review("company-a", source).items)
+
+    def test_tax_only_requirement_is_persisted_unresolved_then_reused(self):
+        source = self.root / "tax-only.csv"
+        self._write(
+            source,
+            debit_account="入力科目A",
+            debit_sub="入力補助A",
+            credit_account="入力科目A",
+        )
+
+        review = self.service.review("company-a", source)
+
+        self.assertFalse(review.items)
+        self.assertEqual(review.tax_categories, ("対象外",))
+        self.service.ensure_tax_requirements(review)
+        setting = self.companies.get("company-a")
+        profile = self.profiles.get(setting.conversion_profile_id)
+        self.assertEqual(
+            profile.tax_mappings["対象外"].status,
+            MappingStatus.UNRESOLVED,
+        )
+        self.assertEqual(
+            self.service.review("company-a", source).tax_categories,
+            ("対象外",),
+        )
+        self.profiles.update(
+            replace(
+                profile,
+                tax_mappings={
+                    "対象外": MappingValue(
+                        "対象外", "", MappingStatus.USER_CONFIRMED
+                    )
+                },
+            )
+        )
+        self.assertFalse(
+            self.service.review("company-a", source).tax_categories
+        )
 
     def test_saved_mappings_can_be_reviewed_without_source_csv(self):
         review = self.service.review_saved("company-a")
