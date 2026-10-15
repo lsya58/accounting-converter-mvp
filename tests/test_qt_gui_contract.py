@@ -61,7 +61,10 @@ class QtGuiContractTests(unittest.TestCase):
 
     def test_company_setting_ui_is_visible_without_internal_terminology(self) -> None:
         source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(encoding="utf-8")
-        for label in ("会社設定を選択", "会社を追加", "名前を変更", "入力元", "対応設定"):
+        for label in (
+            "会社設定を選択", "会社を追加", "名前を変更", "入力元",
+            "JDL科目一覧", "対応内容を確認・変更",
+        ):
             self.assertIn(label, source)
         visible_literals = (
             "Conversion Profile", "JdlTargetContext", "Evidence ID", "fingerprint"
@@ -76,8 +79,8 @@ class QtGuiContractTests(unittest.TestCase):
             "この名前はアプリ内で会社を識別するために使います。",
             "入力元を選択",
             "この会社で使用している会計ソフトを選択してください。",
-            "変換設定を選択",
-            "この会社で使用する対応設定とJDL設定を選択してください。",
+            "JDL科目一覧を設定",
+            "この会社のJDLから印刷した科目一覧PDFを読み込んでください。",
             "会社設定を確認",
             "内容を確認して保存してください。",
             'QPushButton("戻る")',
@@ -217,7 +220,8 @@ class QtGuiContractTests(unittest.TestCase):
 
     def test_existing_company_can_review_only_new_accounts_and_subaccounts(self) -> None:
         source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(encoding="utf-8")
-        self.assertIn('QPushButton("新しい科目を確認")', source)
+        self.assertIn('QPushButton("対応内容を確認・変更")', source)
+        self.assertIn("self._review_required_mappings(path)", source)
         self.assertIn("class CompanyMappingUpdateDialog", source)
         self.assertIn("追加確認が必要な科目はありません", source)
         self.assertIn("WheelSafeComboBox()", source)

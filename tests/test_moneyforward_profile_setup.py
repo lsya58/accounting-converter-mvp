@@ -67,6 +67,31 @@ class MoneyForwardProfileSetupTests(unittest.TestCase):
         self.assertEqual(self.profile_store.list(), ())
         self.assertEqual(self.source.read_bytes(), before)
 
+    def test_company_draft_profile_requires_only_observed_master(self) -> None:
+        draft = self.root / "jdl-account-draft.json"
+        from accounting_converter.infrastructure.jdl_account_pdf_draft import (
+            JdlAccountPdfDraftStore,
+        )
+
+        class Extractor:
+            def extract_pages(self, _path):
+                return (
+                    "科 目 一 覧\n1\n"
+                    "勘定科目 略名称 使用 課区 税区 入力 固変 比率 説明\n"
+                    "  1001  架空科目  借架空 ○\n",
+                )
+
+        pdf = self.root / "master.pdf"
+        pdf.write_bytes(b"synthetic")
+        JdlAccountPdfDraftStore(Extractor()).import_pdf(pdf, draft)
+
+        profile = self.service.create_company_draft_profile("架空会社", draft)
+
+        self.assertEqual(profile.account_mappings, {})
+        self.assertEqual(profile.subaccount_context_mappings, {})
+        self.assertEqual(profile.tax_mappings, {})
+        self.assertEqual(self.profile_store.get(profile.profile_id), profile)
+
     def test_invalid_non_moneyforward_csv_is_blocked(self) -> None:
         self.source.write_bytes(b"not,moneyforward\n")
         with self.assertRaisesRegex(MoneyForwardProfileSetupError, "確認できません"):

@@ -59,6 +59,45 @@ class CompanyMappingUpdateTests(unittest.TestCase):
         self.service.apply(review,{item.key:"架空科目B"},{item.key})
         self.assertFalse(self.service.review("company-a",source).items)
 
+        editable = self.service.review(
+            "company-a", source, include_confirmed=True
+        )
+        self.assertEqual(len(editable.items), 3)
+        self.assertTrue(
+            all(item.exact_candidate for item in editable.items)
+        )
+
+    def test_empty_company_profile_reviews_first_csv_then_reuses_confirmations(self):
+        now = datetime(2026, 10, 14, tzinfo=timezone.utc)
+        self.profiles.create(ConversionProfile(
+            "profile-empty", "架空初期設定",
+            moneyforward_cloud_journal_export_observed_schema().identity,
+            jdl_ibex_cashbook_official_journal_import_schema_definition().identity,
+            created_at=now, updated_at=now,
+        ))
+        self.companies.create(
+            company_setting_id="company-empty", display_name="架空初期会社",
+            conversion_profile_id="profile-empty", context_source=self.draft,
+        )
+        source = self.root / "first.csv"
+        self._write(
+            source, debit_account="入力科目A", debit_sub="",
+            credit_account="入力科目A",
+        )
+
+        review = self.service.review("company-empty", source)
+        self.assertEqual(len(review.items), 1)
+        item = review.items[0]
+        self.service.apply(review, {item.key: "架空科目A"}, {item.key})
+
+        self.assertFalse(self.service.review("company-empty", source).items)
+        setting = self.companies.get("company-empty")
+        updated = self.profiles.get(setting.conversion_profile_id)
+        self.assertEqual(
+            updated.tax_mappings["対象外"].status,
+            MappingStatus.UNRESOLVED,
+        )
+
     def test_subaccount_candidates_are_limited_to_confirmed_parent(self):
         source=self.root/"sub.csv"; self._write(source,debit_account="入力科目A",debit_sub="新規補助",credit_account="入力科目A")
         review=self.service.review("company-a",source)

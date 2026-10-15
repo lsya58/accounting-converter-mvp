@@ -192,7 +192,34 @@ class AccountingConverterMainWindow(QMainWindow):
 
     def _select_input(self, path: Path) -> None:
         self._render(self.controller.select_file(path))
+        self._review_required_mappings(path)
+        self._review_required_tax()
         self._prepare_if_complete()
+
+    def _review_required_mappings(self, path: Path) -> None:
+        company_id = self.controller.state.selected_company_setting_id
+        if not company_id:
+            return
+        try:
+            review = self.controller.review_company_mapping_updates(company_id, path)
+        except Exception:
+            return
+        if not review.items:
+            return
+        dialog = CompanyMappingUpdateDialog(self.controller, review, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._render(self.controller.state)
+
+    def _review_required_tax(self) -> None:
+        company_id = self.controller.state.selected_company_setting_id
+        if not company_id:
+            return
+        review = self.controller.company_tax_mapping_review(company_id)
+        if not review.items:
+            return
+        dialog = TaxMappingConfirmationDialog(self.controller, company_id, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._render(self.controller.state)
 
     def _choose_output(self) -> None:
         filename, _ = QFileDialog.getSaveFileName(
@@ -342,24 +369,24 @@ class SettingsDialog(QDialog):
         rename_company.clicked.connect(self._rename_company)
         delete_company = QPushButton("削除")
         delete_company.clicked.connect(self._delete_company)
-        confirm_tax = QPushButton("税区分を確認")
-        confirm_tax.clicked.connect(self._confirm_tax)
+        confirm_tax = QPushButton("対応内容を確認・変更")
+        confirm_tax.clicked.connect(self._review_settings)
         refresh_master = QPushButton("JDL科目一覧を更新")
         refresh_master.clicked.connect(self._refresh_master)
-        review_new_accounts = QPushButton("新しい科目を確認")
-        review_new_accounts.clicked.connect(self._review_new_accounts)
         company_actions.addWidget(add_company)
         company_actions.addWidget(rename_company)
         company_actions.addWidget(confirm_tax)
         company_actions.addWidget(refresh_master)
-        company_actions.addWidget(review_new_accounts)
         company_actions.addWidget(delete_company)
         company_actions.addStretch(1)
         layout.addLayout(company_actions)
 
         profile_row = QHBoxLayout()
-        profile_row.addWidget(QLabel("対応設定"))
+        profile_label = QLabel("対応設定")
+        profile_label.hide()
+        profile_row.addWidget(profile_label)
         self.profile_combo = QComboBox()
+        self.profile_combo.hide()
         self.profile_combo.addItems([item.profile_name for item in controller.state.profiles])
         if controller.state.selected_profile_id in self.profile_ids:
             self.profile_combo.setCurrentIndex(
@@ -370,12 +397,13 @@ class SettingsDialog(QDialog):
         self.profile_combo.currentIndexChanged.connect(self._select_profile)
         profile_row.addWidget(self.profile_combo, 1)
         import_button = QPushButton("追加")
+        import_button.hide()
         import_button.clicked.connect(self._import_profile)
         profile_row.addWidget(import_button)
         layout.addLayout(profile_row)
 
         context_row = QHBoxLayout()
-        context_row.addWidget(QLabel("JDL設定"))
+        context_row.addWidget(QLabel("JDL科目一覧"))
         self.context_label = QLabel(
             "科目一覧設定済み"
             if controller.state.selected_context_file
@@ -383,10 +411,11 @@ class SettingsDialog(QDialog):
         )
         context_row.addWidget(self.context_label, 1)
         context_button = QPushButton("選択")
+        context_button.hide()
         context_button.clicked.connect(self._select_context)
         context_row.addWidget(context_button)
         layout.addLayout(context_row)
-        note = QLabel("初回設定で受け取った、会社専用の確認済みファイルを選択してください。")
+        note = QLabel("科目構成が変わった場合は「JDL科目一覧を更新」を使用してください。")
         note.setObjectName("muted")
         note.setWordWrap(True)
         layout.addWidget(note)
@@ -463,6 +492,28 @@ class SettingsDialog(QDialog):
         dialog = TaxMappingConfirmationDialog(self.controller, company_id, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._reload_companies(self.controller.state)
+
+    def _review_settings(self) -> None:
+        company_id = self.company_combo.currentData()
+        if not company_id:
+            self.message_label.setText("会社設定を選択してください。")
+            return
+        source = self.controller.state.selected_file
+        if source is not None:
+            try:
+                review = self.controller.review_company_mapping_updates(
+                    company_id, source, include_confirmed=True
+                )
+            except Exception as exc:
+                log_local_exception("company_mapping_update_review", exc)
+                self.message_label.setText("CSVと現在の会社設定を確認できませんでした。")
+                return
+            if review.items:
+                dialog = CompanyMappingUpdateDialog(self.controller, review, self)
+                if dialog.exec() != QDialog.DialogCode.Accepted:
+                    return
+                self._reload_companies(self.controller.state)
+        self._confirm_tax()
 
     def _refresh_master(self) -> None:
         company_id = self.company_combo.currentData()
@@ -793,8 +844,8 @@ class CompanyAddDialog(QDialog):
 
     def _settings_page(self) -> QWidget:
         page, layout = self._page(
-            "変換設定を選択",
-            "この会社で使用する対応設定とJDL設定を選択してください。",
+            "JDL科目一覧を設定",
+            "この会社のJDLから印刷した科目一覧PDFを読み込んでください。",
         )
         self.profile_label = QLabel("対応設定")
         layout.addWidget(self.profile_label)
@@ -871,6 +922,16 @@ class CompanyAddDialog(QDialog):
             self.error_label.setText("会社設定名を入力してください。")
             return
         if index == 1:
+            if self.source_combo.currentText() == "Money Forward":
+                self.profile_ids = []
+                self.profile_combo.clear()
+                self.profile_combo.hide()
+                self.profile_label.hide()
+                self.no_profile_message.hide()
+                self.create_profile_button.hide()
+                self.pages.setCurrentIndex(index + 1)
+                self._update_actions()
+                return
             candidates = list(self.controller.profiles_for_source(self.source_combo.currentText()))
             if not candidates:
                 if self.source_combo.currentText() != "Money Forward":
@@ -894,7 +955,10 @@ class CompanyAddDialog(QDialog):
                 )
                 self.create_profile_button.setText("新しい対応設定を作成")
         if index == 2:
-            if self.profile_combo.currentIndex() < 0:
+            if (
+                self.source_combo.currentText() != "Money Forward"
+                and self.profile_combo.currentIndex() < 0
+            ):
                 self.error_label.setText("対応設定を選択してください。")
                 return
             if self.context_path is None:
@@ -929,12 +993,17 @@ class CompanyAddDialog(QDialog):
         self.error_label.setText("対応設定を保存しました。次へ進んでください。")
 
     def _render_confirmation(self) -> None:
+        setup_summary = (
+            "CSV読込後に必要な対応だけ確認します"
+            if self.source_combo.currentText() == "Money Forward"
+            else self.profile_combo.currentText()
+        )
         self.confirmation_label.setText(
             "\n".join(
                 (
                     f"会社設定名    {self.name_edit.text().strip()}",
                     f"入力元        {self.source_combo.currentText()}",
-                    f"対応設定      {self.profile_combo.currentText()}",
+                    f"対応内容      {setup_summary}",
                     "JDL設定       JDL IBEX 出納帳 35.5 / 設定済み"
                     if self.context_path
                     else "JDL設定       未選択",
@@ -945,7 +1014,18 @@ class CompanyAddDialog(QDialog):
 
     def _save(self) -> None:
         assert self.context_path is not None
-        profile_id = self.profile_ids[self.profile_combo.currentIndex()]
+        if self.source_combo.currentText() == "Money Forward" and not self.profile_ids:
+            try:
+                profile = self.controller.create_moneyforward_company_draft_profile(
+                    self.name_edit.text().strip(), self.context_path
+                )
+            except Exception:
+                self.error_label.setText("会社設定を作成できませんでした。科目一覧を確認してください。")
+                return
+            self.profile_ids = [profile.profile_id]
+            profile_id = profile.profile_id
+        else:
+            profile_id = self.profile_ids[self.profile_combo.currentIndex()]
         state = self.controller.add_company_setting(
             display_name=self.name_edit.text().strip(),
             source_label=self.source_combo.currentText(),

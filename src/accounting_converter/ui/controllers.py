@@ -375,10 +375,14 @@ class AccountingConverterController:
         return self.state
 
     def review_company_mapping_updates(
-        self, company_setting_id: str, source_path: Path
+        self,
+        company_setting_id: str,
+        source_path: Path,
+        *,
+        include_confirmed: bool = False,
     ) -> CompanyMappingUpdateReview:
         return self.company_mapping_update_service.review(
-            company_setting_id, source_path
+            company_setting_id, source_path, include_confirmed=include_confirmed
         )
 
     def apply_company_mapping_updates(
@@ -411,6 +415,15 @@ class AccountingConverterController:
             selections=selections,
             explicitly_confirmed=explicitly_confirmed,
             explicitly_confirmed_tax=explicitly_confirmed_tax,
+        )
+        self.load_profiles()
+        return profile
+
+    def create_moneyforward_company_draft_profile(
+        self, company_display_name: str, context_path: Path
+    ) -> ConversionProfile:
+        profile = self.moneyforward_profile_setup_service.create_company_draft_profile(
+            company_display_name, context_path
         )
         self.load_profiles()
         return profile

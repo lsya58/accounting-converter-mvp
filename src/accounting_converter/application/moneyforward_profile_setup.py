@@ -122,6 +122,35 @@ class MoneyForwardProfileSetupService:
         self.context_loader = JdlTargetContextLoader()
         self.account_pdf_drafts = JdlAccountPdfDraftStore()
 
+    def create_company_draft_profile(
+        self, company_display_name: str, context_path: Path
+    ) -> ConversionProfile:
+        """Create an empty, company-scoped profile before the first CSV review."""
+        if not company_display_name.strip():
+            raise MoneyForwardProfileSetupError("会社設定名を入力してください。")
+        if not self.account_pdf_drafts.is_draft(context_path):
+            raise MoneyForwardProfileSetupError("JDL科目一覧を読み込んでください。")
+        self.account_pdf_drafts.load(context_path)
+        now = datetime.now(timezone.utc)
+        profile = ConversionProfile(
+            profile_id=f"mf-jdl-{uuid.uuid4().hex}",
+            profile_name=f"{company_display_name.strip()} Money Forward → JDL",
+            source_format_identity=(
+                moneyforward_cloud_journal_export_observed_schema().identity
+            ),
+            target_format_identity=(
+                jdl_ibex_cashbook_official_journal_import_schema_definition().identity
+            ),
+            created_at=now,
+            updated_at=now,
+            notes=(
+                "会社固有JDL科目一覧から作成。科目・補助科目・税区分は"
+                "CSV読込後にユーザーが明示確認する。production READYを意味しません。"
+            ),
+        )
+        self.profile_store.create(profile)
+        return profile
+
     def analyze(self, source_path: Path, context_path: Path) -> MoneyForwardProfileSetupAnalysis:
         before = self._hash(source_path)
         context_is_draft = self.account_pdf_drafts.is_draft(context_path)

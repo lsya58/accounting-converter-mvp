@@ -42,7 +42,13 @@ class CompanyMappingUpdateService:
         self.profile_store = profile_store
         self.drafts = JdlAccountPdfDraftStore()
 
-    def review(self, company_setting_id: str, source_path: Path) -> CompanyMappingUpdateReview:
+    def review(
+        self,
+        company_setting_id: str,
+        source_path: Path,
+        *,
+        include_confirmed: bool = False,
+    ) -> CompanyMappingUpdateReview:
         setting = self.company_store.get(company_setting_id)
         profile = self.profile_store.get(setting.conversion_profile_id)
         context_path = self.company_store.context_path(setting)
@@ -51,8 +57,9 @@ class CompanyMappingUpdateService:
         accounts = AccountMappingReviewService().build(entries, draft.observation, profile)
         items: list[CompanyMappingUpdateItem] = []
         for item in accounts.items:
-            if item.usable:
+            if item.usable and not include_confirmed:
                 continue
+            current = profile.account_mappings.get(item.requirement.source_value)
             items.append(
                 CompanyMappingUpdateItem(
                     key=f"ACCOUNT|{item.requirement.source_value}",
@@ -60,7 +67,13 @@ class CompanyMappingUpdateService:
                     source_value=item.requirement.source_value,
                     parent_account=None,
                     available_targets=tuple(target.name for target in item.selectable_targets),
-                    exact_candidate=(item.exact_candidate.name if item.exact_candidate else None),
+                    exact_candidate=(
+                        current.target_value
+                        if item.usable and current is not None
+                        else item.exact_candidate.name
+                        if item.exact_candidate
+                        else None
+                    ),
                 )
             )
 
@@ -87,7 +100,7 @@ class CompanyMappingUpdateService:
                     and item.name == (mapping.metadata.get("output_name") or mapping.target_value)
                 )) == 1
             )
-            if usable:
+            if usable and not include_confirmed:
                 continue
             exact = tuple(item for item in candidates if item.name == requirement.source_value)
             items.append(
@@ -97,7 +110,11 @@ class CompanyMappingUpdateService:
                     source_value=requirement.source_value,
                     parent_account=requirement.parent_account,
                     available_targets=tuple(item.name for item in candidates),
-                    exact_candidate=exact[0].name if len(exact) == 1 else None,
+                    exact_candidate=(
+                        mapping.target_value
+                        if usable and mapping is not None
+                        else exact[0].name if len(exact) == 1 else None
+                    ),
                 )
             )
         return CompanyMappingUpdateReview(company_setting_id, source_path, context_path, tuple(items), len(entries))
@@ -109,6 +126,9 @@ class CompanyMappingUpdateService:
         setting = self.company_store.get(review.company_setting_id)
         old = self.profile_store.get(setting.conversion_profile_id)
         draft = self.drafts.load(review.context_path)
+        requirements = MappingRequirementExtractor().extract(
+            self._entries(review.source_path), old
+        )
         context_hash = hashlib.sha256(review.context_path.read_bytes()).hexdigest()
         account_targets = defaultdict(list)
         for item in draft.observation.printed_accounts:
@@ -117,6 +137,7 @@ class CompanyMappingUpdateService:
         sub_targets, ambiguous = self._subaccount_targets(draft.observation.subaccounts)
         accounts = dict(old.account_mappings)
         subs = dict(old.subaccount_context_mappings)
+        tax_mappings = dict(old.tax_mappings)
         for item in review.items:
             selected = selections[item.key]
             if item.mapping_type == "ACCOUNT":
@@ -145,11 +166,27 @@ class CompanyMappingUpdateService:
                     parent_account=item.parent_account,
                     metadata={"target_code": target.code, "output_name": target.name, "setup_context_sha256": context_hash},
                 )
+        for requirement in requirements.tax_categories:
+            tax_mappings.setdefault(
+                requirement.source_value,
+                MappingValue(
+                    requirement.source_value,
+                    None,
+                    MappingStatus.UNRESOLVED,
+                ),
+            )
         accounts = {
             key: replace(value, metadata={**value.metadata, "setup_context_sha256": context_hash})
             for key, value in accounts.items()
         }
-        updated = replace(old, profile_id=f"{old.profile_id}-update-{uuid.uuid4().hex}", account_mappings=accounts, subaccount_context_mappings=subs, updated_at=datetime.now(timezone.utc))
+        updated = replace(
+            old,
+            profile_id=f"{old.profile_id}-update-{uuid.uuid4().hex}",
+            account_mappings=accounts,
+            subaccount_context_mappings=subs,
+            tax_mappings=tax_mappings,
+            updated_at=datetime.now(timezone.utc),
+        )
         self.profile_store.create(updated)
         try:
             self.company_store.replace_context(review.company_setting_id, review.context_path, conversion_profile_id=updated.profile_id)
