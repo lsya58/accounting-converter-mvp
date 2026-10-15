@@ -385,6 +385,11 @@ class AccountingConverterController:
             company_setting_id, source_path, include_confirmed=include_confirmed
         )
 
+    def review_saved_company_mappings(
+        self, company_setting_id: str
+    ) -> CompanyMappingUpdateReview:
+        return self.company_mapping_update_service.review_saved(company_setting_id)
+
     def apply_company_mapping_updates(
         self,
         review: CompanyMappingUpdateReview,

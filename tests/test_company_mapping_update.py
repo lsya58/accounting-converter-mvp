@@ -109,6 +109,18 @@ class CompanyMappingUpdateTests(unittest.TestCase):
         self.service.apply(review, {item.key: "架空補助A"}, {item.key})
         self.assertFalse(self.service.review("company-a", source).items)
 
+    def test_saved_mappings_can_be_reviewed_without_source_csv(self):
+        review = self.service.review_saved("company-a")
+
+        self.assertIsNone(review.source_path)
+        self.assertEqual(
+            [(item.mapping_type, item.exact_candidate) for item in review.items],
+            [("ACCOUNT", "架空科目A"), ("SUBACCOUNT", "架空補助A")],
+        )
+        selections = {item.key: item.exact_candidate for item in review.items}
+        self.service.apply(review, selections, set(selections))
+        self.assertEqual(len(self.service.review_saved("company-a").items), 2)
+
     def test_conflicting_subaccount_identity_is_not_selectable(self):
         import json
 

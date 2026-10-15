@@ -226,6 +226,8 @@ class QtGuiContractTests(unittest.TestCase):
         self.assertIn("追加確認が必要な科目はありません", source)
         self.assertIn("WheelSafeComboBox()", source)
         self.assertIn('target.addItem("未選択", None)', source)
+        self.assertIn("review_saved_company_mappings", source)
+        self.assertIn("税設定の確認が必要です。CSV読込時に確認できます。", source)
 
     def test_tax_confirmation_dialog_supports_multiple_explicit_confirmations(self) -> None:
         source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(

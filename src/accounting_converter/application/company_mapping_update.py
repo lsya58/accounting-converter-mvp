@@ -30,7 +30,7 @@ class CompanyMappingUpdateItem:
 @dataclass(frozen=True)
 class CompanyMappingUpdateReview:
     company_setting_id: str
-    source_path: Path
+    source_path: Path | None
     context_path: Path
     items: tuple[CompanyMappingUpdateItem, ...]
     logical_journal_count: int
@@ -119,6 +119,68 @@ class CompanyMappingUpdateService:
             )
         return CompanyMappingUpdateReview(company_setting_id, source_path, context_path, tuple(items), len(entries))
 
+    def review_saved(self, company_setting_id: str) -> CompanyMappingUpdateReview:
+        setting = self.company_store.get(company_setting_id)
+        profile = self.profile_store.get(setting.conversion_profile_id)
+        context_path = self.company_store.context_path(setting)
+        draft = self.drafts.load(context_path)
+        account_targets = tuple(
+            item.name for item in draft.observation.printed_accounts if item.enabled
+        )
+        sub_targets, ambiguous = self._subaccount_targets(
+            draft.observation.subaccounts
+        )
+        items: list[CompanyMappingUpdateItem] = []
+        for source_value, mapping in sorted(profile.account_mappings.items()):
+            items.append(
+                CompanyMappingUpdateItem(
+                    key=f"ACCOUNT|{source_value}",
+                    mapping_type="ACCOUNT",
+                    source_value=source_value,
+                    parent_account=None,
+                    available_targets=account_targets,
+                    exact_candidate=(
+                        mapping.target_value
+                        if mapping.target_value in account_targets
+                        else None
+                    ),
+                )
+            )
+        account_codes = {
+            source: mapping.metadata.get("target_code", "")
+            for source, mapping in profile.account_mappings.items()
+            if mapping.status is MappingStatus.USER_CONFIRMED
+        }
+        for key, mapping in sorted(
+            profile.subaccount_context_mappings.items(),
+            key=lambda item: item[0].stable_key,
+        ):
+            parent_code = account_codes.get(key.parent_account or "", "")
+            candidates = tuple(
+                item
+                for item in sub_targets.get(parent_code, ())
+                if (item.parent_account_code, item.code, item.name) not in ambiguous
+            )
+            names = tuple(item.name for item in candidates)
+            items.append(
+                CompanyMappingUpdateItem(
+                    key=key.stable_key,
+                    mapping_type="SUBACCOUNT",
+                    source_value=key.source_value,
+                    parent_account=key.parent_account,
+                    available_targets=names,
+                    exact_candidate=(
+                        mapping.target_value
+                        if mapping.target_value in names
+                        else None
+                    ),
+                )
+            )
+        return CompanyMappingUpdateReview(
+            company_setting_id, context_path=context_path, source_path=None,
+            items=tuple(items), logical_journal_count=0,
+        )
+
     def apply(self, review: CompanyMappingUpdateReview, selections: Mapping[str, str], confirmed: set[str]) -> None:
         required = {item.key for item in review.items}
         if set(selections) != required or confirmed != required:
@@ -126,8 +188,12 @@ class CompanyMappingUpdateService:
         setting = self.company_store.get(review.company_setting_id)
         old = self.profile_store.get(setting.conversion_profile_id)
         draft = self.drafts.load(review.context_path)
-        requirements = MappingRequirementExtractor().extract(
-            self._entries(review.source_path), old
+        requirements = (
+            MappingRequirementExtractor().extract(
+                self._entries(review.source_path), old
+            )
+            if review.source_path is not None
+            else None
         )
         context_hash = hashlib.sha256(review.context_path.read_bytes()).hexdigest()
         account_targets = defaultdict(list)
@@ -166,15 +232,16 @@ class CompanyMappingUpdateService:
                     parent_account=item.parent_account,
                     metadata={"target_code": target.code, "output_name": target.name, "setup_context_sha256": context_hash},
                 )
-        for requirement in requirements.tax_categories:
-            tax_mappings.setdefault(
-                requirement.source_value,
-                MappingValue(
+        if requirements is not None:
+            for requirement in requirements.tax_categories:
+                tax_mappings.setdefault(
                     requirement.source_value,
-                    None,
-                    MappingStatus.UNRESOLVED,
-                ),
-            )
+                    MappingValue(
+                        requirement.source_value,
+                        None,
+                        MappingStatus.UNRESOLVED,
+                    ),
+                )
         accounts = {
             key: replace(value, metadata={**value.metadata, "setup_context_sha256": context_hash})
             for key, value in accounts.items()

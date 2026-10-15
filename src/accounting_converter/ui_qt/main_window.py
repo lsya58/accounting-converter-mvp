@@ -498,22 +498,27 @@ class SettingsDialog(QDialog):
         if not company_id:
             self.message_label.setText("会社設定を選択してください。")
             return
-        source = self.controller.state.selected_file
-        if source is not None:
-            try:
-                review = self.controller.review_company_mapping_updates(
-                    company_id, source, include_confirmed=True
-                )
-            except Exception as exc:
-                log_local_exception("company_mapping_update_review", exc)
-                self.message_label.setText("CSVと現在の会社設定を確認できませんでした。")
-                return
-            if review.items:
-                dialog = CompanyMappingUpdateDialog(self.controller, review, self)
-                if dialog.exec() != QDialog.DialogCode.Accepted:
-                    return
-                self._reload_companies(self.controller.state)
-        self._confirm_tax()
+        try:
+            review = self.controller.review_saved_company_mappings(company_id)
+            tax_review = self.controller.company_tax_mapping_review(company_id)
+        except Exception as exc:
+            log_local_exception("company_mapping_update_review", exc)
+            self.message_label.setText("現在の対応内容を確認できませんでした。")
+            return
+        dialog = CompanyMappingUpdateDialog(
+            self.controller, review, self, tax_message=(
+                "税設定の確認が必要です。CSV読込時に確認できます。"
+                if not tax_review.context_compatible
+                else tax_review.user_message
+                if not tax_review.items
+                else f"未確認の税区分が{len(tax_review.items)}件あります。"
+            )
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        self._reload_companies(self.controller.state)
+        if tax_review.items:
+            self._confirm_tax()
 
     def _refresh_master(self) -> None:
         company_id = self.company_combo.currentData()
@@ -690,7 +695,9 @@ class CompanyMasterRefreshDialog(QDialog):
 
 
 class CompanyMappingUpdateDialog(QDialog):
-    def __init__(self, controller, review, parent=None) -> None:
+    def __init__(
+        self, controller, review, parent=None, *, tax_message: str = ""
+    ) -> None:
         super().__init__(parent)
         self.controller = controller
         self.review = review
@@ -734,6 +741,12 @@ class CompanyMappingUpdateDialog(QDialog):
             table.setCellWidget(row, 4, confirmed)
             self.controls.append((item.key, target, confirmed))
         layout.addWidget(table, 1)
+        tax_status = QLabel(
+            tax_message or "税区分はCSV読込時に必要なものだけ確認します。"
+        )
+        tax_status.setObjectName("warningCard" if tax_message else "muted")
+        tax_status.setWordWrap(True)
+        layout.addWidget(tax_status)
         actions = QHBoxLayout()
         cancel = QPushButton("キャンセル")
         cancel.clicked.connect(self.reject)
@@ -747,7 +760,13 @@ class CompanyMappingUpdateDialog(QDialog):
         self._update_action()
 
     def _update_action(self, *_args) -> None:
-        self.save_button.setEnabled(all(combo.currentData() is not None and check.isChecked() for _, combo, check in self.controls))
+        self.save_button.setEnabled(
+            bool(self.controls)
+            and all(
+                combo.currentData() is not None and check.isChecked()
+                for _, combo, check in self.controls
+            )
+        )
 
     def _save(self) -> None:
         selections = {key: str(combo.currentData()) for key, combo, _ in self.controls if combo.currentData() is not None}
