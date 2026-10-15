@@ -9,7 +9,10 @@ from accounting_converter.application.first_release_workflow import (
     FirstReleasePreparedConversion,
     conversion_result_message,
 )
-from accounting_converter.application.company_settings import CompanySettingService
+from accounting_converter.application.company_settings import (
+    CompanySettingService,
+    CompanySettingStatus,
+)
 from accounting_converter.application.company_master_refresh import (
     AccountMasterRefreshPlan,
     CompanyMasterRefreshService,
@@ -267,11 +270,17 @@ class AccountingConverterController:
                 conversion_available=False,
                 conversion_summary=None,
                 user_message="会社設定を選択してください。",
+                jdl_environment_label="未設定",
+                jdl_master_configured=False,
+                jdl_master_state="未設定",
+                jdl_master_updated_at=None,
             )
             return self.state
         resolved = self.company_setting_service.resolve_for_source(
             company_setting_id, self._recognized_source_key()
         )
+        environment_label, master_state = self._jdl_environment_display(resolved)
+        updated_at = resolved.setting.updated_at.astimezone().strftime("%Y/%m/%d")
         if not resolved.available or resolved.profile is None or resolved.context is None:
             self._target_context = None
             context_file = (
@@ -290,6 +299,15 @@ class AccountingConverterController:
                 conversion_available=False,
                 conversion_summary=None,
                 user_message=resolved.user_message or "会社設定を確認してください。",
+                messages=(
+                    "JDLの科目構成が変更された可能性があります。最新の科目一覧PDFを読み込んでください。",
+                ) if resolved.status is CompanySettingStatus.STALE else (),
+                jdl_environment_label=environment_label,
+                jdl_master_configured=self.company_store.context_path(
+                    resolved.setting
+                ).is_file(),
+                jdl_master_state=master_state,
+                jdl_master_updated_at=updated_at,
             )
             return self.state
         self._target_context = resolved.context
@@ -303,6 +321,11 @@ class AccountingConverterController:
             conversion_summary=None,
             result_presentation=None,
             user_message="会社設定を選択しました。",
+            messages=(),
+            jdl_environment_label=environment_label,
+            jdl_master_configured=True,
+            jdl_master_state=master_state,
+            jdl_master_updated_at=updated_at,
         )
         return self.state
 
@@ -408,6 +431,23 @@ class AccountingConverterController:
             item.mapping_type == "SUBACCOUNT" for item in review.items
         )
         tax_count = len(review.tax_categories)
+        guidance: list[str] = []
+        if any(
+            item.mapping_type == "ACCOUNT" and not item.available_targets
+            for item in review.items
+        ):
+            guidance.append(
+                "JDL側に対応する科目が見つかりません。JDLで科目設定を確認し、必要なら科目を追加した後、「JDL科目一覧を更新」してください。"
+            )
+        if any(
+            item.mapping_type == "SUBACCOUNT" and not item.available_targets
+            for item in review.items
+        ):
+            guidance.append(
+                "この親科目に対応する補助科目がJDL側にありません。JDLの補助科目設定を確認してください。"
+            )
+        if tax_count:
+            guidance.append("税区分の確認が必要です。")
         if account_count or subaccount_count or tax_count:
             self._prepared = None
             self.state = replace(
@@ -418,7 +458,9 @@ class AccountingConverterController:
                 pending_account_confirmations=account_count,
                 pending_subaccount_confirmations=subaccount_count,
                 pending_tax_confirmations=tax_count,
-                messages=(),
+                unsupported_shape_count=review.unsupported_shape_count,
+                optional_field_blocker_count=review.optional_field_blocker_count,
+                messages=tuple(guidance),
                 user_message="確認が必要な項目があります。",
                 developer_error=None,
             )
@@ -431,9 +473,28 @@ class AccountingConverterController:
                 pending_account_confirmations=0,
                 pending_subaccount_confirmations=0,
                 pending_tax_confirmations=0,
+                unsupported_shape_count=review.unsupported_shape_count,
+                optional_field_blocker_count=review.optional_field_blocker_count,
                 messages=(),
             )
         return self.state
+
+    @staticmethod
+    def _jdl_environment_display(resolved) -> tuple[str, str]:
+        if resolved.context is not None:
+            label = f"{resolved.context.product} {resolved.context.version}"
+        elif "JDL_CONTEXT_DRAFT_UNCONFIRMED" in resolved.reason_codes:
+            label = "JDL IBEX 出納帳 35.5"
+        else:
+            label = "確認が必要"
+        state = {
+            CompanySettingStatus.AVAILABLE: "設定済み",
+            CompanySettingStatus.REQUIRES_CONFIRMATION: "確認が必要",
+            CompanySettingStatus.STALE: "科目一覧の更新が必要",
+            CompanySettingStatus.INCOMPATIBLE: "このJDL環境は確認が必要です",
+            CompanySettingStatus.MALFORMED: "このJDL環境は確認が必要です",
+        }[resolved.status]
+        return label, state
 
     def ensure_selected_tax_requirements(
         self, review: CompanyMappingUpdateReview

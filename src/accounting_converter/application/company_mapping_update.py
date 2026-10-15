@@ -17,6 +17,9 @@ from accounting_converter.application.jdl_master_observation import (
     JdlPrintedAccount,
 )
 from accounting_converter.application.mapping_review import MappingRequirementExtractor
+from accounting_converter.application.moneyforward_jdl_loss import MoneyForwardToJdlLossRule
+from accounting_converter.application.validation_pipeline import ValidationPipeline
+from accounting_converter.domain.journal import Side
 from accounting_converter.domain.mapping import MappingKey, MappingStatus, MappingType, MappingValue
 from accounting_converter.domain.profile import FormatProfile
 from accounting_converter.infrastructure.jdl_account_pdf_draft import JdlAccountPdfDraftStore
@@ -42,6 +45,8 @@ class CompanyMappingUpdateReview:
     items: tuple[CompanyMappingUpdateItem, ...]
     logical_journal_count: int
     tax_categories: tuple[str, ...] = ()
+    unsupported_shape_count: int = 0
+    optional_field_blocker_count: int = 0
 
 
 class CompanyMappingUpdateService:
@@ -126,6 +131,18 @@ class CompanyMappingUpdateService:
                     ),
                 )
             )
+        verified_shapes = {(1, 1), (1, 3), (2, 1), (2, 2), (2, 3), (4, 6), (5, 7), (5, 8)}
+        unsupported_shape_count = sum(
+            (
+                sum(line.side is Side.DEBIT for line in entry.lines),
+                sum(line.side is Side.CREDIT for line in entry.lines),
+            )
+            not in verified_shapes
+            for entry in entries
+        )
+        loss_results = ValidationPipeline((MoneyForwardToJdlLossRule(),)).validate(
+            entries
+        )
         return CompanyMappingUpdateReview(
             company_setting_id,
             source_path,
@@ -137,6 +154,8 @@ class CompanyMappingUpdateService:
                 for item in requirements.tax_categories
                 if item.requires_confirmation
             ),
+            unsupported_shape_count,
+            len({item.journal_id for item in loss_results if item.journal_id}),
         )
 
     def review_saved(self, company_setting_id: str) -> CompanyMappingUpdateReview:

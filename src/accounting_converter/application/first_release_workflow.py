@@ -65,6 +65,8 @@ class FirstReleaseSummary:
     simple_journal_count: int = 0
     compound_journal_count: int = 0
     output_path: Path | None = None
+    unsupported_shape_count: int = 0
+    optional_field_blocker_count: int = 0
 
 
 @dataclass(frozen=True)

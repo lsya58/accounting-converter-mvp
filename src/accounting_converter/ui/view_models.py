@@ -101,6 +101,12 @@ class AppState:
     pending_account_confirmations: int = 0
     pending_subaccount_confirmations: int = 0
     pending_tax_confirmations: int = 0
+    unsupported_shape_count: int = 0
+    optional_field_blocker_count: int = 0
+    jdl_environment_label: str = "未設定"
+    jdl_master_configured: bool = False
+    jdl_master_state: str = "未設定"
+    jdl_master_updated_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -251,11 +257,51 @@ def _friendly_guidance(state: AppState) -> str:
         if count
     )
     if pending:
-        return "確認が必要な項目があります。\n" + "\n".join(pending)
+        details = ("確認が必要な項目があります。", *pending, *state.messages)
+        return "\n".join(dict.fromkeys(details))
+    if state.messages:
+        return "\n".join(dict.fromkeys(state.messages))
     if not state.selected_profile_id or not state.selected_context_file:
         return "初回のみ、設定画面で会社設定とJDL設定を選択してください。"
     if not state.selected_output_file:
         return "変換後のCSVを保存する場所を選択してください。"
-    if state.messages:
-        return state.messages[0]
     return state.user_message
+
+
+def support_diagnostic_text(state: AppState, app_version: str) -> str:
+    """Return a support-ready summary that cannot include accounting values."""
+    recognition = state.file_recognition
+    summary = state.conversion_summary
+    readiness = present_main_screen(state).status_text
+    error_category = (
+        "確認が必要"
+        if state.pending_account_confirmations
+        or state.pending_subaccount_confirmations
+        or state.pending_tax_confirmations
+        else "変換条件未対応"
+        if readiness == "変換できません"
+        else "なし"
+    )
+    source_format = {
+        RecognizedFormat.MONEYFORWARD: "Money Forward 仕訳帳CSV（19項目）",
+        RecognizedFormat.YAYOI: "弥生 仕訳データ",
+        RecognizedFormat.UNKNOWN: "未対応CSV",
+    }.get(recognition.format, "未選択") if recognition else "未選択"
+    rows = (
+        ("アプリ", app_version),
+        ("入力元", recognition.display_name if recognition else "未選択"),
+        ("入力形式", source_format),
+        ("仕訳数", str(recognition.journal_count) if recognition and recognition.journal_count is not None else "未確認"),
+        ("科目確認", str(state.pending_account_confirmations)),
+        ("補助科目確認", str(state.pending_subaccount_confirmations)),
+        ("税区分確認", str(state.pending_tax_confirmations)),
+        ("未対応仕訳構成", str(summary.unsupported_shape_count if summary else state.unsupported_shape_count)),
+        ("保持方法未確認", str(summary.optional_field_blocker_count if summary else state.optional_field_blocker_count)),
+        ("JDL科目一覧", "設定済み" if state.jdl_master_configured else "未設定"),
+        ("JDL科目一覧の状態", state.jdl_master_state),
+        ("最終状態", readiness),
+        ("分類", error_category),
+    )
+    return "会計データ変換 サポート診断\n" + "\n".join(
+        f"{label}: {value}" for label, value in rows
+    )

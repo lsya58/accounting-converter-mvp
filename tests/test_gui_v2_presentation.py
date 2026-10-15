@@ -15,6 +15,7 @@ from accounting_converter.ui.view_models import (
     RecognizedFormat,
     UserFacingStatus,
     present_main_screen,
+    support_diagnostic_text,
 )
 from accounting_converter.adapters.input.moneyforward import MONEYFORWARD_OBSERVED_HEADER
 from accounting_converter.infrastructure.conversion_profile_store import ConversionProfileStore
@@ -183,6 +184,66 @@ class GuiV2PresentationTests(unittest.TestCase):
 
         self.assertEqual(view.status, UserFacingStatus.BLOCKED)
         self.assertFalse(view.settings_action_visible)
+
+    def test_actionable_confirmation_guidance_is_presented(self) -> None:
+        state = AppState(
+            selected_file=Path("private/customer.csv"),
+            selected_profile_id="profile",
+            selected_context_file=Path("context.json"),
+            file_recognition=FileRecognition(
+                RecognizedFormat.MONEYFORWARD, "Money Forwardの仕訳帳CSV", 4
+            ),
+            preflight_status="REQUIRES_CONFIRMATION",
+            pending_account_confirmations=1,
+            pending_subaccount_confirmations=1,
+            messages=(
+                "JDL側に対応する科目が見つかりません。JDLで科目設定を確認し、必要なら科目を追加した後、「JDL科目一覧を更新」してください。",
+                "この親科目に対応する補助科目がJDL側にありません。JDLの補助科目設定を確認してください。",
+            ),
+        )
+
+        guidance = present_main_screen(state).guidance
+
+        self.assertIn("JDL科目一覧を更新", guidance)
+        self.assertIn("補助科目設定", guidance)
+
+    def test_support_diagnostics_contains_counts_but_no_private_values(self) -> None:
+        state = AppState(
+            selected_file=Path("/private/顧客名/秘密.csv"),
+            file_recognition=FileRecognition(
+                RecognizedFormat.MONEYFORWARD, "Money Forwardの仕訳帳CSV", 482
+            ),
+            preflight_status="REQUIRES_CONFIRMATION",
+            pending_account_confirmations=3,
+            pending_subaccount_confirmations=2,
+            pending_tax_confirmations=1,
+            unsupported_shape_count=4,
+            optional_field_blocker_count=5,
+            jdl_environment_label="JDL IBEX 出納帳 35.5",
+            jdl_master_configured=True,
+            jdl_master_state="設定済み",
+            jdl_master_updated_at="2026/10/15",
+            messages=("架空の内部メッセージ",),
+        )
+
+        text = support_diagnostic_text(state, "0.1.0")
+
+        for expected in (
+            "アプリ: 0.1.0",
+            "仕訳数: 482",
+            "科目確認: 3",
+            "補助科目確認: 2",
+            "税区分確認: 1",
+            "未対応仕訳構成: 4",
+            "保持方法未確認: 5",
+            "JDL科目一覧: 設定済み",
+            "最終状態: 確認が必要です",
+        ):
+            self.assertIn(expected, text)
+        for private_value in (
+            "顧客名", "秘密.csv", "/private", "架空の内部メッセージ"
+        ):
+            self.assertNotIn(private_value, text)
 
     @staticmethod
     def _assert_no_internal_terms(text: str) -> None:

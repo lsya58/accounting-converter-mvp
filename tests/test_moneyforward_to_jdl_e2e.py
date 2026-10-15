@@ -523,6 +523,7 @@ class MoneyForwardToJdlSyntheticE2ETests(unittest.TestCase):
                 )
                 self.assertEqual(prepared.summary.readiness, expected)
                 if expected is FirstReleaseReadiness.BLOCKED:
+                    self.assertEqual(prepared.summary.unsupported_shape_count, 1)
                     self.assertFalse(output.exists())
 
     def test_exact_company_workflow_blocks_without_company_unresolved_or_trade_partner(self) -> None:
@@ -555,6 +556,10 @@ class MoneyForwardToJdlSyntheticE2ETests(unittest.TestCase):
                 )
                 self.assertEqual(prepared.summary.readiness, FirstReleaseReadiness.BLOCKED)
                 self.assertTrue(any(message in item for item in prepared.summary.blocking_reasons))
+                if message == "取引先情報":
+                    self.assertEqual(
+                        prepared.summary.optional_field_blocker_count, 1
+                    )
                 self.assertFalse(output.exists())
 
     def test_exact_company_workflow_does_not_overwrite_existing_output(self) -> None:

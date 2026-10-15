@@ -171,7 +171,9 @@ class MoneyForwardConversionWorkflow:
             or item.current_mapping_status is not MappingStatus.USER_CONFIRMED
         )
         reasons = list(self._mapping_reasons(requirements))
-        assignments, route_reasons = self._route_assignments(entries, profile, context)
+        assignments, route_reasons, unsupported_journals = self._route_assignments(
+            entries, profile, context
+        )
         reasons.extend(route_reasons)
         loss_results = ValidationPipeline((MoneyForwardToJdlLossRule(),)).validate(entries)
         reasons.extend(self._loss_reason(item.field) for item in loss_results)
@@ -205,6 +207,10 @@ class MoneyForwardConversionWorkflow:
         summary = self._summary(
             input_path, output_path, profile, context, tuple(dict.fromkeys(reasons)),
             len(requirements.all_requirements()), unconfirmed_count, entries,
+            unsupported_shape_count=len(unsupported_journals),
+            optional_field_blocker_count=len(
+                {item.journal_id for item in loss_results if item.journal_id}
+            ),
         )
         if reasons:
             return FirstReleasePreparedConversion(summary)
@@ -261,6 +267,7 @@ class MoneyForwardConversionWorkflow:
     def _route_assignments(self, entries, profile, context):
         assignments: dict[str, JdlEvidenceProfile] = {}
         reasons: list[str] = []
+        unsupported: set[str] = set()
         for entry in entries:
             debit_count = sum(line.side is Side.DEBIT for line in entry.lines)
             credit_count = sum(line.side is Side.CREDIT for line in entry.lines)
@@ -268,13 +275,16 @@ class MoneyForwardConversionWorkflow:
             if shape in _COMPOUND_PROFILES:
                 if moneyforward_verified_description_rows(entry) is None:
                     reasons.append("行単位の摘要を保持できない複合仕訳があります。")
+                    unsupported.add(entry.id)
                 elif context.tax_processing_mode is not JdlTaxProcessingMode.EXEMPT:
                     reasons.append("このJDL税設定では複合仕訳の実機確認が完了していません。")
+                    unsupported.add(entry.id)
                 else:
                     assignments[entry.id] = _COMPOUND_PROFILES[shape]
                 continue
             if shape != (1, 1):
                 reasons.append("未検証の仕訳構成が含まれています。")
+                unsupported.add(entry.id)
                 continue
             tax_lines = [
                 line for line in entry.lines
@@ -287,9 +297,11 @@ class MoneyForwardConversionWorkflow:
                     assignments[entry.id] = JdlEvidenceProfile.BASIC_1111
                 else:
                     reasons.append("この仕訳のJDL出力条件は実機確認済み範囲外です。")
+                    unsupported.add(entry.id)
                 continue
             if len(tax_lines) != 1:
                 reasons.append("貸借両側の税区分を持つ仕訳は現在の正式変換範囲外です。")
+                unsupported.add(entry.id)
                 continue
             line = tax_lines[0]
             source_tax = line.tax_info.category
@@ -304,7 +316,7 @@ class MoneyForwardConversionWorkflow:
                 reasons.append("税区分確認が必要です。「税区分を確認」から設定してください。")
                 continue
             assignments[entry.id] = route[0]
-        return assignments, reasons
+        return assignments, reasons, unsupported
 
     @staticmethod
     def _loss_reason(field: str | None) -> str:
@@ -357,7 +369,19 @@ class MoneyForwardConversionWorkflow:
         )
 
     @staticmethod
-    def _summary(input_path, output_path, profile, context, reasons, required, unresolved, entries):
+    def _summary(
+        input_path,
+        output_path,
+        profile,
+        context,
+        reasons,
+        required,
+        unresolved,
+        entries,
+        *,
+        unsupported_shape_count=0,
+        optional_field_blocker_count=0,
+    ):
         return FirstReleaseSummary(
             readiness=FirstReleaseReadiness.BLOCKED if reasons else FirstReleaseReadiness.READY,
             blocking_reasons=tuple(reasons),
@@ -375,4 +399,6 @@ class MoneyForwardConversionWorkflow:
             simple_journal_count=sum(not entry.is_compound() for entry in entries),
             compound_journal_count=sum(entry.is_compound() for entry in entries),
             output_path=output_path,
+            unsupported_shape_count=unsupported_shape_count,
+            optional_field_blocker_count=optional_field_blocker_count,
         )

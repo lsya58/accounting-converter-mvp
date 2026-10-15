@@ -245,6 +245,26 @@ class QtGuiContractTests(unittest.TestCase):
         self.assertIn("TaxMappingConfirmationDialog", main_window)
         self.assertNotIn("新しい科目を確認", workflow)
 
+    def test_pilot_support_and_jdl_environment_controls_are_visible(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
+            encoding="utf-8"
+        )
+        controller = Path("src/accounting_converter/ui/controllers.py").read_text(
+            encoding="utf-8"
+        )
+        for text in (
+            'QPushButton("確認項目をコピー")',
+            'QPushButton("診断情報をコピー")',
+            "JDL環境:",
+            "科目一覧:",
+            "最終更新日:",
+            "QApplication.clipboard()",
+        ):
+            self.assertIn(text, source)
+        self.assertIn("このJDL環境は確認が必要です", controller)
+        self.assertIn("JDL科目一覧を更新", controller)
+        self.assertIn("補助科目設定を確認", controller)
+
     def test_tax_confirmation_dialog_supports_multiple_explicit_confirmations(self) -> None:
         source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
             encoding="utf-8"

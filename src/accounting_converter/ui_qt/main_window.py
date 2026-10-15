@@ -6,6 +6,7 @@ from PySide6.QtCore import QUrl, Qt
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -28,7 +29,11 @@ from PySide6.QtWidgets import (
 )
 
 from accounting_converter.ui.controllers import AccountingConverterController
-from accounting_converter.ui.view_models import AppState, present_main_screen
+from accounting_converter.ui.view_models import (
+    AppState,
+    present_main_screen,
+    support_diagnostic_text,
+)
 from accounting_converter.infrastructure.local_diagnostic_log import (
     log_local_exception,
 )
@@ -137,11 +142,17 @@ class AccountingConverterMainWindow(QMainWindow):
         action_row = QHBoxLayout()
         self.settings_action = QPushButton("確認する")
         self.settings_action.clicked.connect(self._confirm_current_csv)
+        self.copy_guidance_button = QPushButton("確認項目をコピー")
+        self.copy_guidance_button.clicked.connect(self._copy_guidance)
+        self.copy_diagnostics_button = QPushButton("診断情報をコピー")
+        self.copy_diagnostics_button.clicked.connect(self._copy_diagnostics)
         self.convert_button = QPushButton("JDL用に変換する")
         self.convert_button.setObjectName("primaryButton")
         self.convert_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.convert_button.clicked.connect(self._convert)
         action_row.addWidget(self.settings_action)
+        action_row.addWidget(self.copy_guidance_button)
+        action_row.addWidget(self.copy_diagnostics_button)
         action_row.addStretch(1)
         action_row.addWidget(self.convert_button)
         status_layout.addLayout(status_row)
@@ -308,6 +319,15 @@ class AccountingConverterMainWindow(QMainWindow):
     def _show_drop_error(self, message: str) -> None:
         QMessageBox.warning(self, "ファイルを確認してください", message)
 
+    def _copy_guidance(self) -> None:
+        presentation = present_main_screen(self.controller.state)
+        QApplication.clipboard().setText(presentation.guidance)
+
+    def _copy_diagnostics(self) -> None:
+        QApplication.clipboard().setText(
+            support_diagnostic_text(self.controller.state, "0.1.0")
+        )
+
     def _show_report(self) -> None:
         QMessageBox.information(
             self,
@@ -352,6 +372,9 @@ class AccountingConverterMainWindow(QMainWindow):
         self.output_label.setText(str(state.selected_output_file) if state.selected_output_file else "保存先はまだ選択されていません")
         self.status_title.setText(presentation.status_text)
         self.status_detail.setText(presentation.guidance)
+        self.status_detail.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
         badge, foreground, background = status_visual(presentation.status)
         self.status_badge.setText(badge)
         self.status_badge.setStyleSheet(
@@ -359,6 +382,11 @@ class AccountingConverterMainWindow(QMainWindow):
         )
         self.convert_button.setEnabled(presentation.conversion_enabled)
         self.settings_action.setVisible(presentation.settings_action_visible)
+        self.copy_guidance_button.setVisible(
+            state.selected_file is not None
+            and presentation.status.value in {"CONFIRM", "BLOCKED"}
+        )
+        self.copy_diagnostics_button.setVisible(state.selected_file is not None)
         result = state.result_presentation
         self.result_card.setVisible(result is not None)
         if result is not None:
@@ -399,7 +427,6 @@ class SettingsDialog(QDialog):
                 f"{item.display_name}  /  {item.source_label} → JDL  /  {item.status_label}",
                 item.company_setting_id,
             )
-        self.company_combo.currentIndexChanged.connect(self._company_changed)
         company_row.addWidget(self.company_combo, 1)
         layout.addLayout(company_row)
         company_actions = QHBoxLayout()
@@ -455,6 +482,9 @@ class SettingsDialog(QDialog):
         context_button.clicked.connect(self._select_context)
         context_row.addWidget(context_button)
         layout.addLayout(context_row)
+        self.environment_label = QLabel()
+        self.environment_label.setWordWrap(True)
+        layout.addWidget(self.environment_label)
         note = QLabel("科目構成が変わった場合は「JDL科目一覧を更新」を使用してください。")
         note.setObjectName("muted")
         note.setWordWrap(True)
@@ -465,6 +495,13 @@ class SettingsDialog(QDialog):
         close_button = QPushButton("閉じる")
         close_button.clicked.connect(self.accept)
         layout.addWidget(close_button, alignment=Qt.AlignmentFlag.AlignRight)
+        self.company_combo.currentIndexChanged.connect(self._company_changed)
+        selected_index = self.company_combo.findData(
+            controller.state.selected_company_setting_id
+        )
+        if selected_index >= 0:
+            self.company_combo.setCurrentIndex(selected_index)
+        self._refresh_selected_setting(controller.state)
 
     def _select_profile(self, index: int) -> None:
         profile_id = self.profile_ids[index] if 0 <= index < len(self.profile_ids) else None
@@ -630,6 +667,15 @@ class SettingsDialog(QDialog):
             "JDL IBEX 出納帳 35.5 / 科目一覧設定済み"
             if state.selected_context_file
             else "未設定"
+        )
+        self.environment_label.setText(
+            "\n".join(
+                (
+                    f"JDL環境: {state.jdl_environment_label}",
+                    f"科目一覧: {state.jdl_master_state}",
+                    f"最終更新日: {state.jdl_master_updated_at or '未確認'}",
+                )
+            )
         )
         if state.selected_profile_id in self.profile_ids:
             self.profile_combo.blockSignals(True)
