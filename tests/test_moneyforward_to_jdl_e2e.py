@@ -19,6 +19,7 @@ from accounting_converter.adapters.output.jdl import (
     JdlContextConfirmationState,
     JdlContextProvenance,
     JdlEvidenceProfile,
+    JdlSubaccountIdentity,
     JdlTargetContextBuilder,
     jdl_ibex_35_5_output_profile,
 )
@@ -31,10 +32,14 @@ from accounting_converter.application.mapping_engine import MappingEngine
 from accounting_converter.application.moneyforward_jdl_loss import (
     MoneyForwardToJdlLossRule,
 )
+from accounting_converter.application.moneyforward_conversion_workflow import (
+    MoneyForwardConversionWorkflow,
+)
+from accounting_converter.application.first_release_workflow import FirstReleaseReadiness
 from accounting_converter.application.profile_preflight import mapping_rule_set_from_profile
 from accounting_converter.application.validation_pipeline import ValidationPipeline
 from accounting_converter.domain.conversion_profile import ConversionProfile
-from accounting_converter.domain.mapping import MappingStatus, MappingValue
+from accounting_converter.domain.mapping import MappingKey, MappingStatus, MappingType, MappingValue
 from accounting_converter.domain.profile import FormatProfile
 from accounting_converter.domain.validation import BalanceRule
 from accounting_converter.infrastructure.adapter_registry import (
@@ -465,6 +470,151 @@ class MoneyForwardToJdlSyntheticE2ETests(unittest.TestCase):
                 jdl_ibex_cashbook_official_journal_import_schema_definition().identity,
             )
         )
+
+    def test_exact_company_workflow_converts_confirmed_tax_and_parent_subaccount(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            row = self._with_columns(
+                self._row("31", debit_tax="課税仕入 10%", amount="1100"),
+                debit_sub="補助甲",
+            )
+            source = self._write(root / "mf.csv", [row])
+            output = root / "jdl.csv"
+            before = source.read_bytes()
+            profile = self._tax_subaccount_profile()
+            context = self._tax_subaccount_context()
+
+            prepared = MoneyForwardConversionWorkflow().prepare(
+                input_path=source,
+                output_path=output,
+                profile=profile,
+                context=context,
+                company_setting_validated=True,
+            )
+            result = MoneyForwardConversionWorkflow.execute(prepared)
+
+            self.assertEqual(prepared.summary.readiness, FirstReleaseReadiness.READY)
+            self.assertIsNotNone(result)
+            self.assertEqual(result.status, ConversionStatus.SUCCESS)
+            self.assertTrue(output.exists())
+            self.assertEqual(source.read_bytes(), before)
+
+    def test_exact_company_workflow_supports_verified_compound_and_blocks_unknown_shape(self) -> None:
+        supported = [
+            self._row("32", debit_amount="600", credit_amount="700", description="架空A"),
+            self._row("32", debit="当座預金", debit_amount="400", credit="小口現金", credit_amount="300", description="架空B"),
+        ]
+        unsupported = [
+            self._row("33", debit_amount="500", credit_amount="1000", description="架空A"),
+            self._row("33", debit="当座預金", debit_amount="300", credit="", credit_amount="", description="架空B"),
+            self._row("33", debit="小口現金", debit_amount="200", credit="", credit_amount="", description="架空C"),
+        ]
+        for rows, expected in ((supported, FirstReleaseReadiness.READY), (unsupported, FirstReleaseReadiness.BLOCKED)):
+            with self.subTest(expected=expected), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source = self._write(root / "mf.csv", rows)
+                output = root / "jdl.csv"
+                prepared = MoneyForwardConversionWorkflow().prepare(
+                    input_path=source,
+                    output_path=output,
+                    profile=self._conversion_profile(),
+                    context=self._target_context(),
+                    company_setting_validated=True,
+                )
+                self.assertEqual(prepared.summary.readiness, expected)
+                if expected is FirstReleaseReadiness.BLOCKED:
+                    self.assertFalse(output.exists())
+
+    def test_exact_company_workflow_blocks_without_company_unresolved_or_trade_partner(self) -> None:
+        cases = []
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            normal = self._write(root / "normal.csv", [self._row("34")])
+            partner = self._write(
+                root / "partner.csv", [self._row("35", debit_partner="架空取引先")]
+            )
+            unresolved = self._conversion_profile()
+            unresolved.account_mappings["現金"] = MappingValue(
+                "現金", status=MappingStatus.UNRESOLVED
+            )
+            cases.extend(
+                (
+                    (normal, self._conversion_profile(), False, "会社設定"),
+                    (normal, unresolved, True, "科目確認"),
+                    (partner, self._conversion_profile(), True, "取引先情報"),
+                )
+            )
+            for index, (source, profile, validated, message) in enumerate(cases):
+                output = root / f"blocked-{index}.csv"
+                prepared = MoneyForwardConversionWorkflow().prepare(
+                    input_path=source,
+                    output_path=output,
+                    profile=profile,
+                    context=self._target_context(),
+                    company_setting_validated=validated,
+                )
+                self.assertEqual(prepared.summary.readiness, FirstReleaseReadiness.BLOCKED)
+                self.assertTrue(any(message in item for item in prepared.summary.blocking_reasons))
+                self.assertFalse(output.exists())
+
+    def test_exact_company_workflow_does_not_overwrite_existing_output(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = self._write(root / "mf.csv", [self._row("36")])
+            output = root / "existing.csv"
+            output.write_bytes(b"existing")
+            prepared = MoneyForwardConversionWorkflow().prepare(
+                input_path=source,
+                output_path=output,
+                profile=self._conversion_profile(),
+                context=self._target_context(),
+                company_setting_validated=True,
+            )
+            self.assertEqual(prepared.summary.readiness, FirstReleaseReadiness.BLOCKED)
+            self.assertEqual(output.read_bytes(), b"existing")
+
+    def _tax_subaccount_profile(self) -> ConversionProfile:
+        profile = self._conversion_profile()
+        key = MappingKey(MappingType.SUBACCOUNT, "補助甲", "現金")
+        profile.subaccount_context_mappings[key] = MappingValue(
+            "補助甲",
+            "補助甲",
+            MappingStatus.USER_CONFIRMED,
+            "現金",
+            {"target_code": "1", "output_code": "1", "output_name": "補助甲"},
+        )
+        profile.tax_mappings["課税仕入 10%"] = MappingValue(
+            "課税仕入 10%",
+            "10%",
+            MappingStatus.USER_CONFIRMED,
+            metadata={
+                "jdl_tax_scope": "仕　入",
+                "jdl_evidence_id": "EVID-JDL-MF-TAX-PURCHASE-10-SUBACCOUNT-ROUNDTRIP-001",
+            },
+        )
+        return profile
+
+    def _tax_subaccount_context(self):
+        result = JdlTargetContextBuilder().build(
+            target_format_identity=jdl_ibex_cashbook_official_journal_import_schema_definition().identity,
+            product="JDL IBEX 出納帳",
+            version="35.5",
+            account_master=tuple(
+                JdlAccountIdentity(name, code, name, name) for name, code in self.codes.items()
+            ),
+            subaccounts=(JdlSubaccountIdentity("現金", "補助甲", "1", "1", "補助甲", True, "1001", "補助甲"),),
+            departments=(),
+            tax_processing_mode=JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED,
+            department_processing_enabled=False,
+            standard_taxation_confirmed=True,
+            individual_credit_method_confirmed=True,
+            confirmation_state=JdlContextConfirmationState.CONFIRMED,
+            provenance=JdlContextProvenance.USER_CONFIRMED_RUNTIME_SNAPSHOT,
+            no_fuzzy_matching=True,
+            no_automatic_replacement=True,
+        )
+        self.assertTrue(result.success, result.validation_results)
+        return result.context
 
     def _convert(self, source, output, assignments, *, context="DEFAULT", use_default_context=True, overwrite=False):
         profile = self._conversion_profile()

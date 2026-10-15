@@ -24,6 +24,9 @@ from accounting_converter.application.moneyforward_profile_setup import (
     TaxMappingSetupReview,
     profile_pending_setup_field_types,
 )
+from accounting_converter.application.moneyforward_conversion_workflow import (
+    MoneyForwardConversionWorkflow,
+)
 
 from accounting_converter.application.profile_preflight import (
     ConversionPreflightService,
@@ -120,6 +123,7 @@ class AccountingConverterController:
         jdl_analyzer: JdlCsvStructuralAnalyzer | None = None,
         yayoi_analyzer: YayoiCsvAnalyzer | None = None,
         conversion_workflow: FirstReleaseConversionWorkflow | None = None,
+        moneyforward_conversion_workflow: MoneyForwardConversionWorkflow | None = None,
         context_loader: JdlTargetContextLoader | None = None,
         company_store: CompanySettingStore | None = None,
         preferences_store: ApplicationPreferencesStore | None = None,
@@ -133,6 +137,10 @@ class AccountingConverterController:
         self.jdl_analyzer = jdl_analyzer or JdlCsvStructuralAnalyzer()
         self.yayoi_analyzer = yayoi_analyzer or YayoiCsvAnalyzer()
         self.conversion_workflow = conversion_workflow or FirstReleaseConversionWorkflow()
+        self.moneyforward_conversion_workflow = (
+            moneyforward_conversion_workflow or MoneyForwardConversionWorkflow()
+        )
+        self._active_conversion_workflow = self.conversion_workflow
         self.context_loader = context_loader or JdlTargetContextLoader()
         self.company_store = company_store or CompanySettingStore(
             default_company_store_dir(), self.profile_store
@@ -631,12 +639,40 @@ class AccountingConverterController:
 
     def prepare_conversion(self) -> AppState:
         try:
-            self._prepared = self.conversion_workflow.prepare(
-                input_path=self.state.selected_file,
-                output_path=self.state.selected_output_file,
-                profile=self._selected_profile(),
-                context=self._target_context,
-            )
+            if (
+                self.state.file_recognition is not None
+                and self.state.file_recognition.format is RecognizedFormat.MONEYFORWARD
+            ):
+                resolved = self._resolved_selected_company_for_conversion()
+                company_valid = bool(
+                    resolved
+                    and resolved.available
+                    and resolved.profile is not None
+                    and resolved.context is not None
+                    and resolved.profile.profile_id == self.state.selected_profile_id
+                )
+                self._active_conversion_workflow = self.moneyforward_conversion_workflow
+                self._prepared = self.moneyforward_conversion_workflow.prepare(
+                    input_path=self.state.selected_file,
+                    output_path=self.state.selected_output_file,
+                    profile=resolved.profile if resolved is not None else None,
+                    context=resolved.context if resolved is not None else None,
+                    company_setting_validated=company_valid,
+                    company_setting_error=(
+                        None
+                        if company_valid or resolved is None
+                        else resolved.user_message
+                        or "JDL科目一覧が更新されています。会社設定を確認してください。"
+                    ),
+                )
+            else:
+                self._active_conversion_workflow = self.conversion_workflow
+                self._prepared = self.conversion_workflow.prepare(
+                    input_path=self.state.selected_file,
+                    output_path=self.state.selected_output_file,
+                    profile=self._selected_profile(),
+                    context=self._target_context,
+                )
         except Exception as error:
             self._prepared = None
             return self._fail_state(
@@ -673,7 +709,7 @@ class AccountingConverterController:
                 user_message="実行前チェックを先に完了してください。",
             )
             return self.state
-        result = self.conversion_workflow.execute(self._prepared)
+        result = self._active_conversion_workflow.execute(self._prepared)
         if result is None:
             self.state = replace(
                 self.state,
@@ -723,6 +759,14 @@ class AccountingConverterController:
             developer_error=None,
         )
         return self.state
+
+    def _resolved_selected_company_for_conversion(self):
+        company_id = self.state.selected_company_setting_id
+        source_key = self._recognized_source_key()
+        if company_id is None or source_key is None:
+            return None
+        resolved = self.company_setting_service.resolve_for_source(company_id, source_key)
+        return resolved
 
     def diagnose_selected(self, kind: DiagnosticKind) -> AppState:
         if self.state.selected_file is None:

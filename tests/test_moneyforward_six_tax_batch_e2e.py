@@ -322,7 +322,7 @@ class MoneyForwardSixTaxBatchE2ETests(unittest.TestCase):
             "課税仕入 (軽)8%": self._mapping("課税仕入 (軽)8%", "軽減8%", "仕　入", "PR8"),
             "課税売上 (軽)8%": self._mapping("課税売上 (軽)8%", "軽減8%", "売一種", "SR8"),
             "非課税仕入": self._mapping("非課税仕入", "", "非仕入", "NTP"),
-            "対象外": self._mapping("対象外", "", "", "EVID-JDL-TAX-OUT-OF-SCOPE-HAND-001"),
+            "対象外": self._mapping("対象外", "", "", "EVID-JDL-MF-TAX-OUT-OF-SCOPE-SUBACCOUNT-ROUNDTRIP-001"),
         }
         return ConversionProfile(
             "mf-six-tax-synthetic", "Synthetic six tax cases", moneyforward_cloud_journal_export_observed_schema().identity,

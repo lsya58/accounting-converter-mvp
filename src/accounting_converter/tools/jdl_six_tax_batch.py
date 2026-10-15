@@ -174,7 +174,7 @@ def compare_jdl_six_tax_batch_artifact(
         and isinstance(item.get("metadata"), dict)
         and item["metadata"].get("jdl_tax_scope") == ""
         and item["metadata"].get("jdl_evidence_id")
-        == "EVID-JDL-TAX-OUT-OF-SCOPE-HAND-001"
+        == "EVID-JDL-MF-TAX-OUT-OF-SCOPE-SUBACCOUNT-ROUNDTRIP-001"
         for item in mappings
     ):
         return JdlSixTaxBatchComparison("PROFILE_MISMATCH", 6, 0, 0, 6, 0, 0, 0, 0)

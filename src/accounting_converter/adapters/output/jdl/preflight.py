@@ -518,7 +518,7 @@ class JdlOutputPreflight:
                 expected_scope=TAX_SCOPE_NON_TAXABLE_SALES,
                 expected_category="",
                 allow_tax_side_subaccount=True,
-                expected_mapping_evidence_id="EVID-JDL-TAX-NONTAXABLE-SALES-HAND-001",
+                expected_mapping_evidence_id="EVID-JDL-MF-TAX-NONTAXABLE-SALES-SUBACCOUNT-ROUNDTRIP-001",
             )
         elif evidence is JdlEvidenceProfile.TAX_OUT_OF_SCOPE_SUBACCOUNT_INCLUDED_1111:
             self._validate_tax(
@@ -530,7 +530,7 @@ class JdlOutputPreflight:
                 expected_scope="",
                 expected_category="",
                 allow_tax_side_subaccount=True,
-                expected_mapping_evidence_id="EVID-JDL-TAX-OUT-OF-SCOPE-HAND-001",
+                expected_mapping_evidence_id="EVID-JDL-MF-TAX-OUT-OF-SCOPE-SUBACCOUNT-ROUNDTRIP-001",
             )
         elif evidence is JdlEvidenceProfile.TAX_EXCLUDED_1111:
             self._validate_tax(debit, credit, entry, included=False, errors=errors)

@@ -39,6 +39,9 @@ EVIDENCE_ID_MF_JDL_SALES_REDUCED_8_SUBACCOUNT_ROUNDTRIP = (
 EVIDENCE_ID_MF_JDL_NON_TAXABLE_PURCHASE_SUBACCOUNT_ROUNDTRIP = (
     "EVID-JDL-MF-TAX-NONTAXABLE-PURCHASE-SUBACCOUNT-ROUNDTRIP-001"
 )
+EVIDENCE_ID_MF_JDL_NON_TAXABLE_SALES_SUBACCOUNT_ROUNDTRIP = (
+    "EVID-JDL-MF-TAX-NONTAXABLE-SALES-SUBACCOUNT-ROUNDTRIP-001"
+)
 EVIDENCE_ID_MF_JDL_OUT_OF_SCOPE_SUBACCOUNT_ROUNDTRIP = (
     "EVID-JDL-MF-TAX-OUT-OF-SCOPE-SUBACCOUNT-ROUNDTRIP-001"
 )
@@ -48,7 +51,8 @@ HUMAN_TAX_CASES = {
     "tax_purchase_reduced_8": ("DEBIT", "仕　入", "軽減8%", "EVID-JDL-TAX-PURCHASE-REDUCED-8-INCLUSIVE-HAND-001"),
     "tax_sales_reduced_8": ("CREDIT", "売一種", "軽減8%", "EVID-JDL-TAX-SALES-REDUCED-8-INCLUSIVE-HAND-001"),
     "tax_non_taxable_purchase": ("DEBIT", "非仕入", "", "EVID-JDL-TAX-NONTAXABLE-PURCHASE-HAND-001"),
-    "tax_out_of_scope": ("DEBIT", "", "", "EVID-JDL-TAX-OUT-OF-SCOPE-HAND-001"),
+    "tax_non_taxable_sales": ("CREDIT", "非売上", "", "EVID-JDL-MF-TAX-NONTAXABLE-SALES-SUBACCOUNT-ROUNDTRIP-001"),
+    "tax_out_of_scope": ("DEBIT", "", "", "EVID-JDL-MF-TAX-OUT-OF-SCOPE-SUBACCOUNT-ROUNDTRIP-001"),
 }
 
 
@@ -495,6 +499,26 @@ def compare_non_taxable_purchase_subaccount_roundtrip(
     )
 
 
+def compare_non_taxable_sales_subaccount_roundtrip(
+    human_evidence: Path, candidate: Path, reexport: Path
+) -> JdlTaxRoundTripComparison:
+    analyze_scoped_tax_human_evidence(
+        human_evidence, "tax_non_taxable_sales"
+    )
+    return _compare_tax_roundtrip(
+        human_evidence,
+        candidate,
+        reexport,
+        probe_case="tax_non_taxable_sales_with_subaccount",
+        evidence_id=EVIDENCE_ID_MF_JDL_NON_TAXABLE_SALES_SUBACCOUNT_ROUNDTRIP,
+        tax_prefix="貸方",
+        expected_scope="非売上",
+        expected_category="",
+        require_tax_side_subaccount=True,
+        subaccount_reference_candidate=True,
+    )
+
+
 def compare_out_of_scope_subaccount_roundtrip(
     human_evidence: Path,
     candidate: Path,
@@ -531,7 +555,7 @@ def compare_out_of_scope_subaccount_roundtrip(
         and isinstance(item.get("metadata"), dict)
         and item["metadata"].get("jdl_tax_scope") == ""
         and item["metadata"].get("jdl_evidence_id")
-        == "EVID-JDL-TAX-OUT-OF-SCOPE-HAND-001"
+        == "EVID-JDL-MF-TAX-OUT-OF-SCOPE-SUBACCOUNT-ROUNDTRIP-001"
         for item in mappings
     ):
         raise JdlTaxEvidenceError(

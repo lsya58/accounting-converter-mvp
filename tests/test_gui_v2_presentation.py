@@ -66,6 +66,22 @@ class GuiV2PresentationTests(unittest.TestCase):
         self.assertIn("Money Forward", view.recognition_text)
         self.assertFalse(view.conversion_enabled)
 
+    def test_moneyforward_prepare_uses_exact_company_route_and_requires_company(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = self._write_moneyforward(root / "input.csv")
+            controller = AccountingConverterController(
+                profile_store=ConversionProfileStore(root / "profiles")
+            )
+            controller.select_file(path)
+            controller.select_output_file(root / "output.csv")
+
+            state = controller.prepare_conversion()
+
+        self.assertFalse(state.conversion_available)
+        self.assertIn("会社設定", state.user_message)
+        self._assert_no_internal_terms(state.user_message)
+
     def test_unknown_csv_has_actionable_block_message(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "unknown.csv"

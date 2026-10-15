@@ -2,7 +2,7 @@
 
 ## Status
 
-Input Adapter v0実装済み。production AdapterRegistry登録、GUI route、Money Forward -> JDL READY化は行わない。Evidenceは`EVID-MF-JOURNAL-EXPORT-OBSERVED-001`の`OBSERVED` scopeに限定する。2026-10-08時点でConversionServiceを通るsynthetic E2Eを追加したが、これは配線とfail-closed動作の検証であり、MF -> JDL実機Import Evidenceではない。
+Input Adapter v0実装済み。production AdapterRegistry登録とMoney Forward全般のREADY化は行わない。GUIからは、解決済みのexact CompanySettingに限定したapplication routeだけを利用できる。Evidenceは各source/output profileの限定scopeを超えて一般化しない。
 
 ## Proposed Source Identity
 
@@ -86,4 +86,19 @@ MF raw Evidenceで通常観測した`対象外`をJDL空欄へ変換するcross-
 
 `MoneyForwardToJdlLossRule`は、JDL Output v0で表現先が確認できない取引先、tag、memo、invoice classification、複数摘要を値非表示のValidation Errorとしてblockする。source/evidence/grouping metadataは内部traceabilityであり、会計fieldの代替表現としてJDL CSVへ埋め込まない。将来loss acknowledgementを導入する場合も、明示的な利用者確認なしに破棄しない。
 
-このsynthetic E2Eによってproduction Registry、GUI、READY判定は変更しない。実業務source profile、cross-product tax mapping、MF起点JDL実機Importと再Export比較が後続gateである。
+このsynthetic E2E自体はproduction Registryや一般READY判定を変更しない。実機Evidenceで限定された出力profileだけが、次節のexact CompanySetting routeから利用できる。
+
+## Exact CompanySetting Formal Route
+
+The Windows GUI may invoke the Money Forward to JDL conversion pipeline only
+through `MoneyForwardConversionWorkflow`. This application-level route does not
+register Money Forward as a generally available production input adapter.
+
+The route requires the exact observed 19-column source identity, a currently
+resolvable CompanySetting, its unchanged profile and JDL context, and
+`USER_CONFIRMED` mappings for every observed account, parent-scoped subaccount,
+and tax literal. Output remains limited to individually verified simple/tax
+profiles and verified compound shapes. Unsupported optional fields, stale
+company state, unresolved mappings, unverified shapes, output validation
+failure, and an existing destination all block publication. `ConversionService`
+continues to publish atomically only after JDL output validation succeeds.
