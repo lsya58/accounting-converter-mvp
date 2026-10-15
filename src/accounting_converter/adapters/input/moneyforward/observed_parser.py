@@ -21,6 +21,9 @@ from accounting_converter.profiles.known_formats import MONEYFORWARD_JOURNAL_EXP
 MONEYFORWARD_OBSERVED_HEADER = MONEYFORWARD_JOURNAL_EXPORT_HEADER
 EVIDENCE_ID = "EVID-MF-JOURNAL-EXPORT-OBSERVED-001"
 _INTEGER_PATTERN = re.compile(r"[0-9]+")
+_DATE_PATTERN = re.compile(
+    r"(?P<year>[0-9]{4})/(?P<month>[0-9]{1,2})/(?P<day>[0-9]{1,2})"
+)
 
 
 class MoneyForwardObservedParserError(ValueError):
@@ -56,9 +59,9 @@ class MoneyForwardObservedParser:
             raise MoneyForwardObservedParserError("Money Forward CSV could not be read") from exc
         if raw.startswith((b"\xef\xbb\xbf", b"\xff\xfe", b"\xfe\xff")):
             raise MoneyForwardObservedParserError("BOM is not supported by the observed format")
-        if b"\r" in raw or (raw and not raw.endswith(b"\n")):
+        if raw and not raw.endswith(b"\n"):
             raise MoneyForwardObservedParserError(
-                "observed Money Forward CSV requires LF line endings and a final LF"
+                "observed Money Forward CSV requires a final newline"
             )
         try:
             text = raw.decode("cp932", errors="strict")
@@ -74,20 +77,28 @@ class MoneyForwardObservedParser:
             raise MoneyForwardObservedParserError("CSV has no data rows")
         if any(len(row) != 19 for row in parsed):
             raise MoneyForwardObservedParserError("every header and data row must have 19 columns")
-        self._validate_quote_all_serialization(text, parsed)
+        self._validate_observed_serialization(text, parsed)
         return [
             MoneyForwardObservedRow(row_number=index, values=tuple(row))
             for index, row in enumerate(parsed[1:], start=2)
         ]
 
     @staticmethod
-    def _validate_quote_all_serialization(original: str, rows: list[list[str]]) -> None:
-        output = io.StringIO(newline="")
-        writer = csv.writer(output, lineterminator="\n", quoting=csv.QUOTE_ALL)
-        writer.writerows(rows)
-        if output.getvalue() != original:
+    def _validate_observed_serialization(original: str, rows: list[list[str]]) -> None:
+        canonical_variants: list[str] = []
+        for quoting in (csv.QUOTE_ALL, csv.QUOTE_MINIMAL):
+            for line_ending in ("\n", "\r\n"):
+                output = io.StringIO(newline="")
+                writer = csv.writer(
+                    output,
+                    lineterminator=line_ending,
+                    quoting=quoting,
+                )
+                writer.writerows(rows)
+                canonical_variants.append(output.getvalue())
+        if original not in canonical_variants:
             raise MoneyForwardObservedParserError(
-                "observed identity requires every field to use canonical CSV quoting"
+                "CSV serialization does not match an observed Money Forward variant"
             )
 
     @staticmethod
@@ -197,7 +208,13 @@ class MoneyForwardObservedParser:
             tax_info = TaxInfo(
                 category=tax or None,
                 invoice_classification=invoice or None,
-                metadata={"source_format": "moneyforward_journal_export"},
+                metadata={
+                    "source_format": "moneyforward_journal_export",
+                    "invoice_source_value": invoice,
+                    "invoice_source_semantics": (
+                        "RAW_LITERAL" if invoice else "RAW_BLANK_AMBIGUOUS"
+                    ),
+                },
             )
         return JournalLine(
             side=side,
@@ -220,12 +237,19 @@ class MoneyForwardObservedParser:
 
     @staticmethod
     def _parse_date(value: str):
+        match = _DATE_PATTERN.fullmatch(value)
+        if match is None:
+            raise MoneyForwardObservedParserError(
+                "date must use observed YYYY/M/D digit-width variants"
+            )
         try:
-            parsed = datetime.strptime(value, "%Y/%m/%d")
+            parsed = datetime(
+                int(match.group("year")),
+                int(match.group("month")),
+                int(match.group("day")),
+            )
         except ValueError as exc:
-            raise MoneyForwardObservedParserError("invalid YYYY/MM/DD date") from exc
-        if parsed.strftime("%Y/%m/%d") != value:
-            raise MoneyForwardObservedParserError("date is not canonical YYYY/MM/DD")
+            raise MoneyForwardObservedParserError("invalid calendar date") from exc
         return parsed.date()
 
     @staticmethod

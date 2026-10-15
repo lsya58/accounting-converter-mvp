@@ -274,11 +274,19 @@ class AccountingConverterController:
         )
         if not resolved.available or resolved.profile is None or resolved.context is None:
             self._target_context = None
+            context_file = (
+                self.company_store.context_path(resolved.setting)
+                if resolved.profile is not None
+                and "JDL_CONTEXT_DRAFT_UNCONFIRMED" in resolved.reason_codes
+                else None
+            )
             self.state = replace(
                 self.state,
                 selected_company_setting_id=company_setting_id,
-                selected_profile_id=None,
-                selected_context_file=None,
+                selected_profile_id=(
+                    resolved.profile.profile_id if resolved.profile is not None else None
+                ),
+                selected_context_file=context_file,
                 conversion_available=False,
                 conversion_summary=None,
                 user_message=resolved.user_message or "会社設定を確認してください。",

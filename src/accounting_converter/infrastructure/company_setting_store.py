@@ -281,8 +281,8 @@ class CompanySettingStore:
                     CompanySettingStatus.REQUIRES_CONFIRMATION,
                     profile=profile,
                     user_message=(
-                        "JDL設定の確認が必要です。科目対応は保存されていますが、"
-                        "確認が完了するまで変換できません。"
+                        "この会社で使うJDL科目一覧は設定済みです。"
+                        "税設定などの確認が完了するまで変換できません。"
                     ),
                     reason_codes=("JDL_CONTEXT_DRAFT_UNCONFIRMED",),
                 )

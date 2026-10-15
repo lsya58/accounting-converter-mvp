@@ -25,6 +25,7 @@ from accounting_converter.application.jdl_account_list_pdf import (
     JdlAccountListPdfTextParser,
     JdlAccountListTextPage,
 )
+from accounting_converter.ui.controllers import AccountingConverterController
 
 
 class _SyntheticPdfExtractor:
@@ -201,6 +202,19 @@ class JdlAccountPdfDraftTests(unittest.TestCase):
         self.assertFalse(resolved.available)
         self.assertIsNone(resolved.context)
         self.assertEqual(resolved.reason_codes, ("JDL_CONTEXT_DRAFT_UNCONFIRMED",))
+
+        controller = AccountingConverterController(
+            profile_store=profiles,
+            company_store=companies,
+            account_pdf_draft_store=self.store,
+        )
+        controller.load_profiles()
+        controller.load_company_settings()
+        state = controller.select_company_setting(setting.company_setting_id)
+        self.assertEqual(state.selected_profile_id, profile.profile_id)
+        self.assertEqual(state.selected_context_file, companies.context_path(setting))
+        self.assertFalse(state.conversion_available)
+        self.assertIn("科目一覧は設定済み", state.user_message)
 
     def test_changed_draft_is_stale_and_unknown_target_is_blocked(self) -> None:
         self.store.import_pdf(self.pdf, self.draft_path)

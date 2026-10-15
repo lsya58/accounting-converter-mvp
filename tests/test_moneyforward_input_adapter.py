@@ -157,6 +157,26 @@ class MoneyForwardInputAdapterTests(unittest.TestCase):
                 expected_invoice = "70%控除" if index == 1 else None
                 self.assertEqual(debit.tax_info.invoice_classification, expected_invoice)
                 self.assertIsNone(debit.tax_info.tax_amount)
+                self.assertEqual(
+                    debit.tax_info.metadata["invoice_source_value"],
+                    expected_invoice or "",
+                )
+                self.assertEqual(
+                    debit.tax_info.metadata["invoice_source_semantics"],
+                    "RAW_LITERAL" if expected_invoice else "RAW_BLANK_AMBIGUOUS",
+                )
+
+    def test_blank_invoice_is_not_interpreted_as_qualified_or_unset(self) -> None:
+        entry = self._read([
+            self._row("1", debit_tax="課税仕入 10%", debit_invoice="")
+        ])[0]
+        tax = next(line for line in entry.lines if line.side is Side.DEBIT).tax_info
+
+        self.assertIsNone(tax.invoice_classification)
+        self.assertEqual(tax.metadata["invoice_source_value"], "")
+        self.assertEqual(
+            tax.metadata["invoice_source_semantics"], "RAW_BLANK_AMBIGUOUS"
+        )
 
     def test_both_side_tax_values_are_retained(self) -> None:
         entry = self._read([
@@ -197,6 +217,17 @@ class MoneyForwardInputAdapterTests(unittest.TestCase):
             self._row("1", debit_amount="500", credit_amount="500"),
             self._row("1", date_value="2026/10/07", debit_amount="500", credit_amount="500"),
         ])
+
+    def test_observed_date_digit_width_variants_are_canonicalized(self) -> None:
+        for source in ("2026/1/2", "2026/1/02", "2026/01/2", "2026/01/02"):
+            with self.subTest(source=source):
+                entry = self._read([self._row("1", date_value=source)])[0]
+                self.assertEqual(entry.date, date(2026, 1, 2))
+
+    def test_invalid_calendar_and_alternate_date_delimiter_block(self) -> None:
+        for source in ("2026/02/30", "2026/13/01", "2026-01-02"):
+            with self.subTest(source=source):
+                self._assert_blocked([self._row("1", date_value=source)])
 
     def test_unbalanced_group_blocks(self) -> None:
         self._assert_blocked([self._row("1", debit_amount="1000", credit_amount="999")])
@@ -256,20 +287,54 @@ class MoneyForwardInputAdapterTests(unittest.TestCase):
             ("架空A", "架空B"),
         )
 
-    def test_bom_crlf_utf8_and_non_quote_all_block(self) -> None:
+    def test_lf_and_crlf_observed_serializations_are_accepted(self) -> None:
+        for newline in ("\n", "\r\n"):
+            for quote_all in (True, False):
+                with self.subTest(
+                    newline=repr(newline), quote_all=quote_all
+                ), tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "input.csv"
+                    self._write(
+                        path,
+                        [
+                            self._row(
+                                "1",
+                                description='架空,摘要"A',
+                                memo="架空1行目\n架空2行目",
+                            )
+                        ],
+                        newline=newline,
+                        quote_all=quote_all,
+                    )
+                    entries = self.adapter.read(path, self.profile)
+                    self.assertEqual(len(entries), 1)
+                    self.assertEqual(entries[0].description, '架空,摘要"A')
+
+    def test_bom_and_utf8_block(self) -> None:
         row = self._row("1")
-        for encoding, newline, bom, quote_all in (
-            ("cp932", "\n", True, True),
-            ("cp932", "\r\n", False, True),
-            ("utf-8", "\n", False, True),
-            ("cp932", "\n", False, False),
+        for encoding, newline, bom in (
+            ("cp932", "\n", True),
+            ("utf-8", "\n", False),
         ):
-            with self.subTest(encoding=encoding, newline=repr(newline), bom=bom, quote_all=quote_all):
+            with self.subTest(encoding=encoding, newline=repr(newline), bom=bom):
                 with tempfile.TemporaryDirectory() as directory:
                     path = Path(directory) / "input.csv"
-                    self._write(path, [row], encoding, newline, bom, quote_all=quote_all)
+                    self._write(path, [row], encoding, newline, bom)
                     with self.assertRaises(MoneyForwardInputAdapterError):
                         self.adapter.read(path, self.profile)
+
+    def test_noncanonical_quoting_and_alternate_delimiter_block(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "input.csv"
+            self._write(path, [self._row("1")], quote_all=False)
+            raw = path.read_bytes()
+            path.write_bytes(raw.replace(b"1,2026", b'"1",2026', 1))
+            with self.assertRaises(MoneyForwardInputAdapterError):
+                self.adapter.read(path, self.profile)
+
+            path.write_bytes(raw.replace(b",", b";"))
+            with self.assertRaises(MoneyForwardInputAdapterError):
+                self.adapter.read(path, self.profile)
 
     def test_structural_validator_returns_error_without_exposing_values(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

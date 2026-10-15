@@ -377,7 +377,9 @@ class SettingsDialog(QDialog):
         context_row = QHBoxLayout()
         context_row.addWidget(QLabel("JDL設定"))
         self.context_label = QLabel(
-            "設定済み" if controller.state.selected_context_file else "未設定"
+            "科目一覧設定済み"
+            if controller.state.selected_context_file
+            else "未設定"
         )
         context_row.addWidget(self.context_label, 1)
         context_button = QPushButton("選択")
@@ -417,7 +419,9 @@ class SettingsDialog(QDialog):
         filename, _ = QFileDialog.getOpenFileName(self, "会社専用のJDL設定を選択", "", "JSON files (*.json)")
         if filename:
             state = self.controller.select_context_file(Path(filename))
-            self.context_label.setText("設定済み" if state.selected_context_file else "未設定")
+            self.context_label.setText(
+                "科目一覧設定済み" if state.selected_context_file else "未設定"
+            )
             self.message_label.setText(state.user_message)
 
     def _add_company(self) -> None:
@@ -527,7 +531,7 @@ class SettingsDialog(QDialog):
 
     def _refresh_selected_setting(self, state: AppState) -> None:
         self.context_label.setText(
-            "JDL IBEX 出納帳 35.5 / 設定済み"
+            "JDL IBEX 出納帳 35.5 / 科目一覧設定済み"
             if state.selected_context_file
             else "未設定"
         )

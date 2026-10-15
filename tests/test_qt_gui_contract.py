@@ -178,7 +178,7 @@ class QtGuiContractTests(unittest.TestCase):
             "JDLの科目",
             "0 / 0 件確認済み",
             "confirmed == total",
-            "JDL IBEX 出納帳 35.5 / 設定済み",
+            "JDL IBEX 出納帳 35.5 / 科目一覧設定済み",
         )
         for text in expected:
             self.assertIn(text, source)
