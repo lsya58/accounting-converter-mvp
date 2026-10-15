@@ -359,6 +359,14 @@ class QtGuiContractTests(unittest.TestCase):
         )
         self.assertIn("self._prepare_if_complete()", main_window_source)
 
+    def test_file_picker_and_drop_share_company_preserving_input_flow(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(encoding="utf-8")
+        main_window_source = source.split("class SettingsDialog", maxsplit=1)[0]
+        self.assertIn("self.drop_zone.file_selected.connect(self._select_input)", main_window_source)
+        self.assertIn("self._select_input(Path(filename))", main_window_source)
+        self.assertIn("self.controller.select_file(path)", main_window_source)
+        self.assertIn("self._refresh_current_csv_readiness()", main_window_source)
+
 
 if __name__ == "__main__":
     unittest.main()

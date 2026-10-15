@@ -197,6 +197,7 @@ class AccountingConverterController:
         return self.state
 
     def load_company_settings(self) -> AppState:
+        previously_selected = self.state.selected_company_setting_id
         try:
             settings = self.company_store.list()
             options = tuple(self._company_option(item.company_setting_id) for item in settings)
@@ -211,7 +212,11 @@ class AccountingConverterController:
         if selected not in known:
             selected = None
         self.state = replace(self.state, companies=options, selected_company_setting_id=selected)
-        if self.state.file_recognition is not None:
+        # A removed company must become explicitly unselected. Never replace it
+        # silently with another company just because a CSV is already loaded.
+        if self.state.file_recognition is not None and not (
+            previously_selected is not None and selected is None
+        ):
             self._auto_select_company_for_recognized_file()
         return self.state
 
@@ -267,9 +272,17 @@ class AccountingConverterController:
                 selected_company_setting_id=None,
                 selected_profile_id=None,
                 selected_context_file=None,
+                preflight_status=ProfilePreflightStatus.UNKNOWN.value,
                 conversion_available=False,
                 conversion_summary=None,
+                result_presentation=None,
+                pending_account_confirmations=0,
+                pending_subaccount_confirmations=0,
+                pending_tax_confirmations=0,
+                unsupported_shape_count=0,
+                optional_field_blocker_count=0,
                 user_message="会社設定を選択してください。",
+                messages=(),
                 jdl_environment_label="未設定",
                 jdl_master_configured=False,
                 jdl_master_state="未設定",
@@ -296,8 +309,15 @@ class AccountingConverterController:
                     resolved.profile.profile_id if resolved.profile is not None else None
                 ),
                 selected_context_file=context_file,
+                preflight_status=ProfilePreflightStatus.UNKNOWN.value,
                 conversion_available=False,
                 conversion_summary=None,
+                result_presentation=None,
+                pending_account_confirmations=0,
+                pending_subaccount_confirmations=0,
+                pending_tax_confirmations=0,
+                unsupported_shape_count=0,
+                optional_field_blocker_count=0,
                 user_message=resolved.user_message or "会社設定を確認してください。",
                 messages=(
                     "JDLの科目構成が変更された可能性があります。最新の科目一覧PDFを読み込んでください。",
@@ -317,9 +337,15 @@ class AccountingConverterController:
             selected_company_setting_id=company_setting_id,
             selected_profile_id=resolved.profile.profile_id,
             selected_context_file=self.company_store.context_path(resolved.setting),
+            preflight_status=ProfilePreflightStatus.UNKNOWN.value,
             conversion_available=False,
             conversion_summary=None,
             result_presentation=None,
+            pending_account_confirmations=0,
+            pending_subaccount_confirmations=0,
+            pending_tax_confirmations=0,
+            unsupported_shape_count=0,
+            optional_field_blocker_count=0,
             user_message="会社設定を選択しました。",
             messages=(),
             jdl_environment_label=environment_label,
@@ -1122,6 +1148,17 @@ class AccountingConverterController:
     def _auto_select_company_for_recognized_file(self) -> None:
         source_key = self._recognized_source_key()
         if source_key is None or not self.state.companies:
+            return
+        selected = self.state.selected_company_setting_id
+        if selected is not None:
+            known_ids = {item.company_setting_id for item in self.state.companies}
+            if selected not in known_ids:
+                self.select_company_setting(None)
+                return
+            # Refresh compatibility for the exact selected company. Source
+            # mismatch remains an explicit BLOCK; it must never select another
+            # company's profile or context as a fallback.
+            self.select_company_setting(selected)
             return
         candidates = []
         for option in self.state.companies:

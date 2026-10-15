@@ -173,6 +173,84 @@ class CompanySettingStoreTests(unittest.TestCase):
         state = controller.select_file(Path("tests/fixtures/yayoi/ae19_observed_single_synthetic.txt"))
         self.assertIsNone(state.selected_company_setting_id)
 
+    def test_recognizing_file_preserves_explicit_company_id_over_preference(self) -> None:
+        first = self._create()
+        second = self.company_store.create(
+            company_setting_id="company-2",
+            display_name="架空会社設定",
+            conversion_profile_id="profile-1",
+            context_source=self.context_source,
+        )
+        preferences = ApplicationPreferencesStore(self.root / "preferences.json")
+        preferences.save(ApplicationPreferences(first.company_setting_id))
+        controller = AccountingConverterController(
+            profile_store=self.profile_store,
+            company_store=self.company_store,
+            preferences_store=preferences,
+        )
+        controller.load_profiles()
+        controller.load_company_settings()
+        controller.select_company_setting(second.company_setting_id)
+        # Simulate an older persisted preference. Explicit UI selection must be
+        # authoritative for the current session even when this file is stale.
+        preferences.save(ApplicationPreferences(first.company_setting_id))
+
+        state = controller.select_file(
+            Path("tests/fixtures/yayoi/ae19_observed_single_synthetic.txt")
+        )
+
+        self.assertEqual(state.selected_company_setting_id, second.company_setting_id)
+        self.assertEqual(state.selected_profile_id, second.conversion_profile_id)
+
+    def test_company_repopulation_restores_selection_by_id(self) -> None:
+        self._create()
+        second = self.company_store.create(
+            company_setting_id="company-2",
+            display_name="架空会社設定",
+            conversion_profile_id="profile-1",
+            context_source=self.context_source,
+        )
+        controller = AccountingConverterController(
+            profile_store=self.profile_store,
+            company_store=self.company_store,
+            preferences_store=ApplicationPreferencesStore(self.root / "preferences.json"),
+        )
+        controller.load_profiles()
+        controller.load_company_settings()
+        controller.select_company_setting(second.company_setting_id)
+        controller.select_file(
+            Path("tests/fixtures/yayoi/ae19_observed_single_synthetic.txt")
+        )
+
+        state = controller.load_company_settings()
+
+        self.assertEqual(state.selected_company_setting_id, second.company_setting_id)
+
+    def test_removed_selected_company_does_not_fall_back_to_another_company(self) -> None:
+        self._create()
+        second = self.company_store.create(
+            company_setting_id="company-2",
+            display_name="別の架空設定",
+            conversion_profile_id="profile-1",
+            context_source=self.context_source,
+        )
+        controller = AccountingConverterController(
+            profile_store=self.profile_store,
+            company_store=self.company_store,
+            preferences_store=ApplicationPreferencesStore(self.root / "preferences.json"),
+        )
+        controller.load_profiles()
+        controller.load_company_settings()
+        controller.select_company_setting(second.company_setting_id)
+        controller.select_file(
+            Path("tests/fixtures/yayoi/ae19_observed_single_synthetic.txt")
+        )
+        self.company_store.delete(second.company_setting_id)
+
+        state = controller.load_company_settings()
+
+        self.assertIsNone(state.selected_company_setting_id)
+
     def test_controller_blocks_stale_setting(self) -> None:
         setting = self._create()
         profile = self.profile_store.get(setting.conversion_profile_id)
