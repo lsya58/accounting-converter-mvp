@@ -5,7 +5,7 @@ from accounting_converter.domain.conversion_profile import (
     ConversionProfile,
     ProfileVersionStatus,
 )
-from accounting_converter.domain.mapping import MappingKey, MappingValue
+from accounting_converter.domain.mapping import MappingKey, MappingValue, SubaccountPolicy
 from accounting_converter.domain.profile import FormatProfile
 from accounting_converter.domain.validation import Severity, ValidationResult
 
@@ -146,6 +146,17 @@ class JdlOutputRuntimeFactory:
         parent_mapping = profile.account_mappings.get(key.parent_account or "")
         if not mapping.is_resolved or parent_mapping is None or not parent_mapping.is_resolved:
             return False
+        if (
+            mapping.metadata.get("subaccount_policy")
+            == SubaccountPolicy.PARENT_ONLY_CONFIRMED.value
+        ):
+            return (
+                mapping.target_value == ""
+                and not any(
+                    item.parent_account == parent_mapping.target_value
+                    for item in context.subaccounts
+                )
+            )
         identity = next(
             (
                 item

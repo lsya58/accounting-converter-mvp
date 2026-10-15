@@ -10,9 +10,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from accounting_converter.adapters.input.moneyforward import MONEYFORWARD_OBSERVED_HEADER
-from accounting_converter.application.company_mapping_update import CompanyMappingUpdateService
+from accounting_converter.application.company_mapping_update import (
+    CompanyMappingUpdateService,
+    PARENT_ONLY_SELECTION,
+)
 from accounting_converter.domain.conversion_profile import ConversionProfile
-from accounting_converter.domain.mapping import MappingKey, MappingStatus, MappingType, MappingValue
+from accounting_converter.domain.mapping import (
+    MappingKey,
+    MappingStatus,
+    MappingType,
+    MappingValue,
+    SubaccountPolicy,
+)
 from accounting_converter.infrastructure.company_setting_store import CompanySettingStore
 from accounting_converter.infrastructure.conversion_profile_store import ConversionProfileStore
 from accounting_converter.infrastructure.jdl_account_pdf_draft import JdlAccountPdfDraftStore
@@ -27,6 +36,14 @@ class _Extractor:
             "  -0001 架空補助A  借\n"
             "  2001- 架空科目B  借B ○\n"
             "  -0002 架空補助B  借\n",
+        )
+
+
+class _NoSubaccountExtractor:
+    def extract_pages(self, _path):
+        return (
+            "科 目 一 覧\n1\n勘定科目 略名称 使用 課区 税区 入力 固変 比率 説明\n"
+            "  1001- 架空科目A  借A ○\n",
         )
 
 
@@ -110,6 +127,127 @@ class CompanyMappingUpdateTests(unittest.TestCase):
             self.service.apply(review, {item.key: "架空補助B"}, {item.key})
         self.service.apply(review, {item.key: "架空補助A"}, {item.key})
         self.assertFalse(self.service.review("company-a", source).items)
+
+    def test_parent_only_requires_explicit_confirmation_and_persists_by_company(self):
+        pdf = self.root / "master-no-sub.pdf"
+        pdf.write_bytes(b"synthetic")
+        draft = self.root / "master-no-sub.json"
+        JdlAccountPdfDraftStore(_NoSubaccountExtractor()).import_pdf(pdf, draft)
+        context_hash = hashlib.sha256(draft.read_bytes()).hexdigest()
+        now = datetime(2026, 10, 14, tzinfo=timezone.utc)
+        self.profiles.create(ConversionProfile(
+            "profile-parent-only", "親科目のみの架空設定",
+            moneyforward_cloud_journal_export_observed_schema().identity,
+            jdl_ibex_cashbook_official_journal_import_schema_definition().identity,
+            account_mappings={
+                "入力科目A": MappingValue(
+                    "入力科目A", "架空科目A", MappingStatus.USER_CONFIRMED,
+                    metadata={
+                        "target_code": "1001",
+                        "target_printed_name": "架空科目A",
+                        "setup_context_sha256": context_hash,
+                    },
+                )
+            },
+            created_at=now,
+            updated_at=now,
+        ))
+        self.companies.create(
+            company_setting_id="company-parent-only",
+            display_name="親科目のみの架空会社",
+            conversion_profile_id="profile-parent-only",
+            context_source=draft,
+        )
+        source = self.root / "parent-only.csv"
+        self._write(
+            source,
+            debit_account="入力科目A",
+            debit_sub="入力補助A",
+            credit_account="入力科目A",
+        )
+        review = self.service.review("company-parent-only", source)
+        item = next(i for i in review.items if i.mapping_type == "SUBACCOUNT")
+        self.assertTrue(item.parent_only_available)
+        self.assertEqual(item.available_targets, ())
+        with self.assertRaises(ValueError):
+            self.service.apply(review, {item.key: PARENT_ONLY_SELECTION}, set())
+
+        self.service.apply(
+            review,
+            {item.key: PARENT_ONLY_SELECTION},
+            {item.key},
+        )
+
+        self.assertFalse(self.service.review("company-parent-only", source).items)
+        setting = self.companies.get("company-parent-only")
+        profile = self.profiles.get(setting.conversion_profile_id)
+        mapping = profile.subaccount_context_mappings[item_key := MappingKey(
+            MappingType.SUBACCOUNT, "入力補助A", "入力科目A"
+        )]
+        self.assertEqual(mapping.target_value, "")
+        self.assertTrue(mapping.is_resolved)
+        self.assertEqual(
+            mapping.metadata["subaccount_policy"],
+            SubaccountPolicy.PARENT_ONLY_CONFIRMED.value,
+        )
+        other_company_mapping = self.profiles.get(
+            "profile-1"
+        ).subaccount_context_mappings[item_key]
+        self.assertEqual(other_company_mapping.target_value, "架空補助A")
+        self.assertNotEqual(
+            other_company_mapping.metadata.get("subaccount_policy"),
+            SubaccountPolicy.PARENT_ONLY_CONFIRMED.value,
+        )
+
+    def test_parent_only_is_blocked_when_jdl_parent_has_subaccounts(self):
+        source = self.root / "sub-parent-only.csv"
+        self._write(
+            source,
+            debit_account="入力科目A",
+            debit_sub="新規補助",
+            credit_account="入力科目A",
+        )
+        review = self.service.review("company-a", source)
+        item = next(i for i in review.items if i.mapping_type == "SUBACCOUNT")
+        self.assertFalse(item.parent_only_available)
+        with self.assertRaisesRegex(ValueError, "補助科目が設定"):
+            self.service.apply(
+                review,
+                {item.key: PARENT_ONLY_SELECTION},
+                {item.key},
+            )
+
+    def test_mapping_update_forks_shared_profile_for_company_isolation(self):
+        self.companies.create(
+            company_setting_id="company-b",
+            display_name="架空B",
+            conversion_profile_id="profile-1",
+            context_source=self.draft,
+        )
+        source = self.root / "isolated.csv"
+        self._write(
+            source,
+            debit_account="入力科目A",
+            debit_sub="新規補助",
+            credit_account="入力科目A",
+        )
+        review = self.service.review("company-a", source)
+        item = next(i for i in review.items if i.mapping_type == "SUBACCOUNT")
+
+        self.service.apply(review, {item.key: "架空補助A"}, {item.key})
+
+        self.assertNotEqual(
+            self.companies.get("company-a").conversion_profile_id,
+            "profile-1",
+        )
+        self.assertEqual(
+            self.companies.get("company-b").conversion_profile_id,
+            "profile-1",
+        )
+        self.assertNotIn(
+            MappingKey(MappingType.SUBACCOUNT, "新規補助", "入力科目A"),
+            self.profiles.get("profile-1").subaccount_context_mappings,
+        )
 
     def test_tax_only_requirement_is_persisted_unresolved_then_reused(self):
         source = self.root / "tax-only.csv"

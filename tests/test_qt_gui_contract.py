@@ -367,6 +367,14 @@ class QtGuiContractTests(unittest.TestCase):
         self.assertIn("self.controller.select_file(path)", main_window_source)
         self.assertIn("self._refresh_current_csv_readiness()", main_window_source)
 
+    def test_subaccount_review_offers_explicit_parent_only_policy(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(encoding="utf-8")
+        dialog = source.split("class CompanyMappingUpdateDialog", maxsplit=1)[1]
+        self.assertIn("親科目のみで変換する", dialog)
+        self.assertIn("MF側の補助科目情報は", dialog)
+        self.assertIn("PARENT_ONLY_SELECTION", dialog)
+        self.assertIn("combo.currentData() is not None and check.isChecked()", dialog)
+
 
 if __name__ == "__main__":
     unittest.main()

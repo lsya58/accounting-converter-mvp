@@ -28,6 +28,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from accounting_converter.application.company_mapping_update import (
+    PARENT_ONLY_SELECTION,
+)
 from accounting_converter.ui.controllers import AccountingConverterController
 from accounting_converter.ui.view_models import (
     AppState,
@@ -797,6 +800,14 @@ class CompanyMappingUpdateDialog(QDialog):
         )
         note.setWordWrap(True)
         layout.addWidget(note)
+        if any(item.parent_only_available for item in review.items):
+            policy_note = QLabel(
+                "「親科目のみで変換する」を選ぶと、MF側の補助科目情報は"
+                "JDLへ引き継がれません。この会社では親科目のみで変換します。"
+            )
+            policy_note.setObjectName("warningCard")
+            policy_note.setWordWrap(True)
+            layout.addWidget(policy_note)
         table = QTableWidget(len(review.items), 5)
         table.setHorizontalHeaderLabels(("種類", "親科目", "入力元", "JDLの科目", "確認"))
         table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
@@ -812,9 +823,13 @@ class CompanyMappingUpdateDialog(QDialog):
             target = WheelSafeComboBox()
             target.addItem("未選択", None)
             for value in item.available_targets:
-                target.addItem(value, value)
+                target.addItem(f"JDL補助科目へ対応: {value}" if item.mapping_type == "SUBACCOUNT" else value, value)
+            if item.mapping_type == "SUBACCOUNT" and item.parent_only_available:
+                target.addItem("親科目のみで変換する", PARENT_ONLY_SELECTION)
             if item.exact_candidate in item.available_targets:
                 target.setCurrentIndex(item.available_targets.index(item.exact_candidate) + 1)
+            elif item.exact_candidate == PARENT_ONLY_SELECTION:
+                target.setCurrentIndex(target.findData(PARENT_ONLY_SELECTION))
             confirmed = QCheckBox("確認しました")
             confirmed.setEnabled(target.currentData() is not None)
             target.currentIndexChanged.connect(

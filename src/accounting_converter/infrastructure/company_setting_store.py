@@ -175,6 +175,55 @@ class CompanySettingStore:
         )
         return updated
 
+    def replace_profile(
+        self, company_setting_id: str, conversion_profile_id: str
+    ) -> CompanySetting:
+        """Atomically bind one company to a separately persisted profile."""
+        current = self.get(company_setting_id)
+        profile = self.profile_store.get(conversion_profile_id)
+        context_path = self.context_path(current)
+        context_bytes = context_path.read_bytes()
+        if self.account_pdf_drafts.is_draft(context_path):
+            self.account_pdf_drafts.load(context_path)
+            expected_hashes = {
+                mapping.metadata.get("setup_context_sha256")
+                for mapping in profile.account_mappings.values()
+                if mapping.status.value == "USER_CONFIRMED"
+            }
+            if expected_hashes and expected_hashes != {self._hash(context_bytes)}:
+                raise CompanySettingStoreError(
+                    "profile mappings were not confirmed against this JDL setting"
+                )
+        else:
+            context = self.context_loader.load(context_path)
+            runtime = JdlOutputRuntimeFactory().resolve(
+                jdl_ibex_35_5_output_profile(), profile, context
+            )
+            if not runtime.resolved:
+                raise CompanySettingStoreError(
+                    "updated profile and saved JDL setting are incompatible"
+                )
+        if (
+            profile.source_format_identity.stable_key
+            != current.expected_source_format_key
+            or profile.target_format_identity.stable_key
+            != current.expected_target_format_key
+        ):
+            raise CompanySettingStoreError(
+                "updated profile format identity is incompatible"
+            )
+        updated = replace(
+            current,
+            conversion_profile_id=profile.profile_id,
+            profile_fingerprint=self._profile_fingerprint(profile),
+            updated_at=datetime.now(timezone.utc),
+        )
+        self._atomic_json(
+            self.root_dir / company_setting_id / self.COMPANY_FILE,
+            self._to_dict(updated),
+        )
+        return updated
+
     def replace_context(
         self,
         company_setting_id: str,

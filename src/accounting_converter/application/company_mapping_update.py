@@ -20,7 +20,13 @@ from accounting_converter.application.mapping_review import MappingRequirementEx
 from accounting_converter.application.moneyforward_jdl_loss import MoneyForwardToJdlLossRule
 from accounting_converter.application.validation_pipeline import ValidationPipeline
 from accounting_converter.domain.journal import Side
-from accounting_converter.domain.mapping import MappingKey, MappingStatus, MappingType, MappingValue
+from accounting_converter.domain.mapping import (
+    MappingKey,
+    MappingStatus,
+    MappingType,
+    MappingValue,
+    SubaccountPolicy,
+)
 from accounting_converter.domain.profile import FormatProfile
 from accounting_converter.infrastructure.jdl_account_pdf_draft import JdlAccountPdfDraftStore
 from accounting_converter.infrastructure.jdl_target_context_loader import JdlTargetContextLoader
@@ -35,6 +41,10 @@ class CompanyMappingUpdateItem:
     parent_account: str | None
     available_targets: tuple[str, ...]
     exact_candidate: str | None = None
+    parent_only_available: bool = False
+
+
+PARENT_ONLY_SELECTION = "__PARENT_ONLY_CONFIRMED__"
 
 
 @dataclass(frozen=True)
@@ -105,15 +115,28 @@ class CompanyMappingUpdateService:
                 if (item.parent_account_code, item.code, item.name) not in ambiguous
             )
             mapping = profile.subaccount_context_mappings.get(requirement.key)
-            usable = bool(
+            parent_only = bool(
                 mapping
                 and mapping.status is MappingStatus.USER_CONFIRMED
+                and mapping.metadata.get("subaccount_policy")
+                == SubaccountPolicy.PARENT_ONLY_CONFIRMED.value
+                and mapping.target_value == ""
+                and not candidates
+            )
+            preserve = bool(
+                mapping
+                and mapping.status is MappingStatus.USER_CONFIRMED
+                and mapping.metadata.get(
+                    "subaccount_policy",
+                    SubaccountPolicy.PRESERVE_SUBACCOUNT.value,
+                ) == SubaccountPolicy.PRESERVE_SUBACCOUNT.value
                 and len(tuple(
                     item for item in candidates
                     if item.code == mapping.metadata.get("target_code")
                     and item.name == (mapping.metadata.get("output_name") or mapping.target_value)
                 )) == 1
             )
+            usable = parent_only or preserve
             if usable and not include_confirmed:
                 continue
             exact = tuple(item for item in candidates if item.name == requirement.source_value)
@@ -125,10 +148,13 @@ class CompanyMappingUpdateService:
                     parent_account=requirement.parent_account,
                     available_targets=tuple(item.name for item in candidates),
                     exact_candidate=(
-                        mapping.target_value
-                        if usable and mapping is not None
+                        PARENT_ONLY_SELECTION
+                        if parent_only
+                        else mapping.target_value
+                        if preserve and mapping is not None
                         else exact[0].name if len(exact) == 1 else None
                     ),
+                    parent_only_available=bool(parent_code) and not candidates,
                 )
             )
         verified_shapes = {(1, 1), (1, 3), (2, 1), (2, 2), (2, 3), (4, 6), (5, 7), (5, 8)}
@@ -201,6 +227,13 @@ class CompanyMappingUpdateService:
                 if (item.parent_account_code, item.code, item.name) not in ambiguous
             )
             names = tuple(item.name for item in candidates)
+            parent_only = bool(
+                mapping.status is MappingStatus.USER_CONFIRMED
+                and mapping.metadata.get("subaccount_policy")
+                == SubaccountPolicy.PARENT_ONLY_CONFIRMED.value
+                and mapping.target_value == ""
+                and not candidates
+            )
             items.append(
                 CompanyMappingUpdateItem(
                     key=key.stable_key,
@@ -209,10 +242,13 @@ class CompanyMappingUpdateService:
                     parent_account=key.parent_account,
                     available_targets=names,
                     exact_candidate=(
-                        mapping.target_value
+                        PARENT_ONLY_SELECTION
+                        if parent_only
+                        else mapping.target_value
                         if mapping.target_value in names
                         else None
                     ),
+                    parent_only_available=bool(parent_code) and not candidates,
                 )
             )
         return CompanyMappingUpdateReview(
@@ -280,6 +316,29 @@ class CompanyMappingUpdateService:
             else:
                 parent = accounts.get(item.parent_account or "")
                 parent_code = parent.metadata.get("target_code", "") if parent else ""
+                if selected == PARENT_ONLY_SELECTION:
+                    if parent is None or not parent.is_resolved or not parent_code:
+                        raise ValueError("親科目の対応を先に確認してください。")
+                    if tuple(sub_targets.get(parent_code, ())):
+                        raise ValueError(
+                            "JDL側で補助科目が設定されているため、親科目のみにはできません。"
+                        )
+                    key = MappingKey(
+                        MappingType.SUBACCOUNT,
+                        item.source_value,
+                        item.parent_account,
+                    )
+                    subs[key] = MappingValue(
+                        item.source_value,
+                        "",
+                        MappingStatus.USER_CONFIRMED,
+                        parent_account=item.parent_account,
+                        metadata={
+                            "subaccount_policy": SubaccountPolicy.PARENT_ONLY_CONFIRMED.value,
+                            "setup_context_sha256": context_hash,
+                        },
+                    )
+                    continue
                 matches = tuple(
                     target for target in sub_targets.get(parent_code, ())
                     if target.name == selected
@@ -308,6 +367,7 @@ class CompanyMappingUpdateService:
                         ),
                         "output_code": identity.output_code if identity else target.code,
                         "output_name": target.name,
+                        "subaccount_policy": SubaccountPolicy.PRESERVE_SUBACCOUNT.value,
                         "setup_context_sha256": context_hash,
                     },
                 )
@@ -355,30 +415,7 @@ class CompanyMappingUpdateService:
             tax_mappings=tax_mappings,
             updated_at=datetime.now(timezone.utc),
         )
-        if self.drafts.is_draft(review.context_path):
-            updated = replace(
-                updated,
-                profile_id=f"{old.profile_id}-update-{uuid.uuid4().hex}",
-            )
-            self.profile_store.create(updated)
-            try:
-                self.company_store.replace_context(
-                    review.company_setting_id,
-                    review.context_path,
-                    conversion_profile_id=updated.profile_id,
-                )
-            except Exception:
-                self.profile_store.delete(updated.profile_id)
-                raise
-            return
-        self.profile_store.update(updated)
-        try:
-            self.company_store.refresh_profile_fingerprint(
-                review.company_setting_id
-            )
-        except Exception:
-            self.profile_store.update(old)
-            raise
+        self._persist_profile(review, old, updated)
 
     def _persist_profile(
         self,
@@ -386,29 +423,17 @@ class CompanyMappingUpdateService:
         old,
         updated,
     ) -> None:
-        if self.drafts.is_draft(review.context_path):
-            updated = replace(
-                updated,
-                profile_id=f"{old.profile_id}-update-{uuid.uuid4().hex}",
-            )
-            self.profile_store.create(updated)
-            try:
-                self.company_store.replace_context(
-                    review.company_setting_id,
-                    review.context_path,
-                    conversion_profile_id=updated.profile_id,
-                )
-            except Exception:
-                self.profile_store.delete(updated.profile_id)
-                raise
-            return
-        self.profile_store.update(updated)
+        updated = replace(
+            updated,
+            profile_id=f"{old.profile_id}-update-{uuid.uuid4().hex}",
+        )
+        self.profile_store.create(updated)
         try:
-            self.company_store.refresh_profile_fingerprint(
-                review.company_setting_id
+            self.company_store.replace_profile(
+                review.company_setting_id, updated.profile_id
             )
         except Exception:
-            self.profile_store.update(old)
+            self.profile_store.delete(updated.profile_id)
             raise
 
     def _master_observation(self, context_path: Path) -> JdlMasterObservation:

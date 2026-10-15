@@ -8,7 +8,12 @@ from pathlib import Path
 from typing import Mapping
 
 from accounting_converter.domain.conversion_profile import ConversionProfile
-from accounting_converter.domain.mapping import MappingKey, MappingStatus, MappingValue
+from accounting_converter.domain.mapping import (
+    MappingKey,
+    MappingStatus,
+    MappingValue,
+    SubaccountPolicy,
+)
 from accounting_converter.infrastructure.jdl_account_pdf_draft import (
     JdlAccountPdfDraftStore,
 )
@@ -128,7 +133,23 @@ class CompanyMasterRefreshService:
                 and item.code == target_code
                 and item.name == target_name
             )
-            if previous.status is MappingStatus.USER_CONFIRMED and len(matches) == 1:
+            parent_only = (
+                previous.metadata.get("subaccount_policy")
+                == SubaccountPolicy.PARENT_ONLY_CONFIRMED.value
+            )
+            parent_subaccounts = tuple(
+                item
+                for item in draft.observation.subaccounts
+                if item.parent_account_code == parent_code
+            )
+            safely_preserved = (
+                previous.status is MappingStatus.USER_CONFIRMED
+                and (
+                    (parent_only and not parent_subaccounts)
+                    or (not parent_only and len(matches) == 1)
+                )
+            )
+            if safely_preserved:
                 subaccount_mappings[key] = MappingValue(
                     source_value=previous.source_value,
                     target_value=previous.target_value,

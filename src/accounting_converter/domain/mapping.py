@@ -16,6 +16,11 @@ class MappingType(str, Enum):
     TAX_CATEGORY = "TAX_CATEGORY"
 
 
+class SubaccountPolicy(str, Enum):
+    PRESERVE_SUBACCOUNT = "PRESERVE_SUBACCOUNT"
+    PARENT_ONLY_CONFIRMED = "PARENT_ONLY_CONFIRMED"
+
+
 @dataclass(frozen=True)
 class MappingKey:
     mapping_type: MappingType
