@@ -211,7 +211,7 @@ class JdlTargetContextValidator:
             )
         for item in context.account_master:
             if (
-                item.mapping_value != item.target_name
+                not self._text(item.mapping_value)
                 or not self._numeric(item.target_master_code, 4)
                 or not self._text(item.target_name, 4)
                 or not self._text(item.target_formal_name, 12)

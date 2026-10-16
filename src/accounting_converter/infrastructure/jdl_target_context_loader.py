@@ -27,6 +27,35 @@ class JdlTargetContextLoader:
 
     SCHEMA_VERSION = "1"
 
+    def to_json_text(self, context: JdlTargetContext) -> str:
+        payload = {
+            "schema_version": self.SCHEMA_VERSION,
+            "product": context.product,
+            "version": context.version,
+            "account_master": [
+                {
+                    "mapping_value": item.mapping_value,
+                    "target_master_code": item.target_master_code,
+                    "target_name": item.target_name,
+                    "target_formal_name": item.target_formal_name,
+                }
+                for item in context.account_master
+            ],
+            "subaccounts": [item.__dict__ for item in context.subaccounts],
+            "departments": [item.__dict__ for item in context.departments],
+            "tax_processing_mode": context.tax_processing_mode.value,
+            "department_processing_enabled": context.department_processing_enabled,
+            "standard_taxation_confirmed": context.standard_taxation_confirmed,
+            "individual_credit_method_confirmed": (
+                context.individual_credit_method_confirmed
+            ),
+            "confirmation_state": context.confirmation_state.value,
+            "provenance": context.provenance.value,
+            "no_fuzzy_matching": context.no_fuzzy_matching,
+            "no_automatic_replacement": context.no_automatic_replacement,
+        }
+        return json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+
     def load(self, path: Path) -> JdlTargetContext:
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))

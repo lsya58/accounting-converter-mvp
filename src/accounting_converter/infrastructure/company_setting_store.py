@@ -276,6 +276,50 @@ class CompanySettingStore:
                 company_temp.unlink()
         return updated
 
+    def replace_with_confirmed_context(
+        self,
+        company_setting_id: str,
+        context_bytes: bytes,
+        *,
+        conversion_profile_id: str,
+    ) -> CompanySetting:
+        """Atomically replace a PDF draft with a validated runtime context."""
+        current = self.get(company_setting_id)
+        profile = self.profile_store.get(conversion_profile_id)
+        destination = self.context_path(current)
+        if not self.account_pdf_drafts.is_draft(destination):
+            raise CompanySettingStoreError("JDL tax setting is already confirmed")
+        context_temp = destination.with_name(f".{destination.name}.confirm.tmp")
+        company_path = self.root_dir / company_setting_id / self.COMPANY_FILE
+        company_temp = company_path.with_name(f".{self.COMPANY_FILE}.confirm.tmp")
+        try:
+            self._exclusive_write(context_temp, context_bytes)
+            context = self.context_loader.load(context_temp)
+            runtime = JdlOutputRuntimeFactory().resolve(
+                jdl_ibex_35_5_output_profile(), profile, context
+            )
+            if not runtime.resolved:
+                raise CompanySettingStoreError(
+                    "confirmed JDL setting and mappings are incompatible"
+                )
+            updated = replace(
+                current,
+                conversion_profile_id=profile.profile_id,
+                profile_fingerprint=self._profile_fingerprint(profile),
+                context_fingerprint=self._hash(context_bytes),
+                updated_at=datetime.now(timezone.utc),
+            )
+            self._write_json(company_temp, self._to_dict(updated), exclusive=True)
+            self._from_json(company_temp)
+            os.replace(context_temp, destination)
+            os.replace(company_temp, company_path)
+            return updated
+        finally:
+            if context_temp.exists():
+                context_temp.unlink()
+            if company_temp.exists():
+                company_temp.unlink()
+
     def delete(self, company_setting_id: str) -> None:
         self._validate_id(company_setting_id)
         directory = self.root_dir / company_setting_id

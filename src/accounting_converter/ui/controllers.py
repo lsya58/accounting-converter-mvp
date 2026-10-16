@@ -21,6 +21,9 @@ from accounting_converter.application.company_mapping_update import (
     CompanyMappingUpdateReview,
     CompanyMappingUpdateService,
 )
+from accounting_converter.application.company_tax_context_confirmation import (
+    CompanyTaxContextConfirmationService,
+)
 from accounting_converter.application.moneyforward_profile_setup import (
     MoneyForwardProfileSetupAnalysis,
     MoneyForwardProfileSetupService,
@@ -154,6 +157,11 @@ class AccountingConverterController:
         )
         self.company_mapping_update_service = CompanyMappingUpdateService(
             self.company_store, self.profile_store
+        )
+        self.company_tax_context_confirmation_service = (
+            CompanyTaxContextConfirmationService(
+                self.company_store, self.profile_store
+            )
         )
         self.moneyforward_profile_setup_service = MoneyForwardProfileSetupService(
             self.profile_store
@@ -595,6 +603,35 @@ class AccountingConverterController:
         return self.moneyforward_profile_setup_service.tax_mapping_review(
             resolved.profile, resolved.context
         )
+
+    def company_tax_context_pending(self, company_setting_id: str) -> bool:
+        try:
+            return self.company_tax_context_confirmation_service.is_pending(
+                company_setting_id
+            )
+        except Exception:
+            return False
+
+    def confirm_company_tax_context(
+        self, company_setting_id: str, *, explicitly_confirmed: bool
+    ) -> AppState:
+        try:
+            self.company_tax_context_confirmation_service.confirm_taxable_included(
+                company_setting_id, confirmed=explicitly_confirmed
+            )
+        except Exception as error:
+            return self._fail_state(
+                "JDL税設定を保存できませんでした。科目対応を確認してください。",
+                error,
+            )
+        self.load_profiles()
+        self.load_company_settings()
+        state = self.select_company_setting(company_setting_id)
+        self.state = replace(
+            state,
+            user_message="JDL税設定を保存しました。税区分を確認してください。",
+        )
+        return self.state
 
     def confirm_company_tax_mapping(
         self, company_setting_id: str, source_value: str

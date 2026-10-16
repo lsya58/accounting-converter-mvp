@@ -232,6 +232,26 @@ class QtGuiContractTests(unittest.TestCase):
         self.assertIn("review_saved_company_mappings", source)
         self.assertIn("税設定の確認が必要です。CSV読込時に確認できます。", source)
 
+    def test_pdf_company_has_explicit_jdl_tax_context_confirmation_flow(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
+            encoding="utf-8"
+        )
+        controller = Path("src/accounting_converter/ui/controllers.py").read_text(
+            encoding="utf-8"
+        )
+        for text in (
+            'QPushButton("JDL税設定を確認")',
+            "class JdlTaxContextConfirmationDialog",
+            "課税事業者",
+            "税込処理",
+            "本則課税",
+            "個別対応方式",
+            "上記の設定であることを確認しました",
+            "税区分を確認するには、この会社のJDL税設定の登録が必要です。",
+        ):
+            self.assertIn(text, source)
+        self.assertIn("confirm_company_tax_context", controller)
+
     def test_mapping_dialog_initializes_actions_before_subaccount_refresh(self) -> None:
         source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
             encoding="utf-8"

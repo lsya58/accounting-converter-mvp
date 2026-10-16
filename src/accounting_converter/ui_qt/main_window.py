@@ -244,11 +244,29 @@ class AccountingConverterMainWindow(QMainWindow):
                     self._refresh_current_csv_readiness()
                     return
             elif tax_review.user_message:
-                QMessageBox.information(
-                    self,
-                    "税区分の確認",
-                    "税設定の確認が必要です。会社のJDL設定を確認してください。",
-                )
+                if self.controller.company_tax_context_pending(company_id):
+                    context_dialog = JdlTaxContextConfirmationDialog(
+                        self.controller, company_id, self
+                    )
+                    if context_dialog.exec() != QDialog.DialogCode.Accepted:
+                        self._refresh_current_csv_readiness()
+                        return
+                    tax_review = self.controller.company_tax_mapping_review(company_id)
+                    if tax_review.items:
+                        dialog = TaxMappingConfirmationDialog(
+                            self.controller, company_id, self
+                        )
+                        if dialog.exec() != QDialog.DialogCode.Accepted:
+                            self._refresh_current_csv_readiness()
+                            return
+                else:
+                    QMessageBox.information(
+                        self,
+                        "税区分の確認",
+                        "税区分を確認するには、この会社のJDL税設定の登録が必要です。\n"
+                        "現在の科目一覧は読み込み済みですが、課税方式と税込・税抜の"
+                        "設定がまだ確認されていません。",
+                    )
         self._refresh_current_csv_readiness()
 
     def _refresh_current_csv_readiness(self) -> None:
@@ -443,10 +461,13 @@ class SettingsDialog(QDialog):
         confirm_tax.clicked.connect(self._review_settings)
         refresh_master = QPushButton("JDL科目一覧を更新")
         refresh_master.clicked.connect(self._refresh_master)
+        self.tax_context_button = QPushButton("JDL税設定を確認")
+        self.tax_context_button.clicked.connect(self._confirm_tax_context)
         company_actions.addWidget(add_company)
         company_actions.addWidget(rename_company)
         company_actions.addWidget(confirm_tax)
         company_actions.addWidget(refresh_master)
+        company_actions.addWidget(self.tax_context_button)
         company_actions.addWidget(delete_company)
         company_actions.addStretch(1)
         layout.addLayout(company_actions)
@@ -573,6 +594,15 @@ class SettingsDialog(QDialog):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._reload_companies(self.controller.state)
 
+    def _confirm_tax_context(self) -> None:
+        company_id = self.company_combo.currentData()
+        if not company_id:
+            self.message_label.setText("会社設定を選択してください。")
+            return
+        dialog = JdlTaxContextConfirmationDialog(self.controller, company_id, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._reload_companies(self.controller.state)
+
     def _review_settings(self) -> None:
         company_id = self.company_combo.currentData()
         if not company_id:
@@ -666,6 +696,7 @@ class SettingsDialog(QDialog):
         self._refresh_selected_setting(state)
 
     def _refresh_selected_setting(self, state: AppState) -> None:
+        company_id = state.selected_company_setting_id
         self.context_label.setText(
             "JDL IBEX 出納帳 35.5 / 科目一覧設定済み"
             if state.selected_context_file
@@ -680,13 +711,17 @@ class SettingsDialog(QDialog):
                 )
             )
         )
+        pending_tax_context = bool(
+            company_id
+            and self.controller.company_tax_context_pending(company_id)
+        )
+        self.tax_context_button.setVisible(pending_tax_context)
         if state.selected_profile_id in self.profile_ids:
             self.profile_combo.blockSignals(True)
             self.profile_combo.setCurrentIndex(
                 self.profile_ids.index(state.selected_profile_id)
             )
             self.profile_combo.blockSignals(False)
-        company_id = state.selected_company_setting_id
         self.message_label.setText(
             self.controller.company_setting_status_reason(company_id)
             if company_id
@@ -1544,6 +1579,60 @@ class MoneyForwardProfileSetupDialog(QDialog):
             f"{self.analysis.context.product} {self.analysis.context.version} / 設定済み"
         )
         self.accept()
+
+
+class JdlTaxContextConfirmationDialog(QDialog):
+    def __init__(self, controller, company_setting_id: str, parent=None) -> None:
+        super().__init__(parent)
+        self.controller = controller
+        self.company_setting_id = company_setting_id
+        self.setWindowTitle("JDL税設定を確認")
+        self.setMinimumWidth(520)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(12)
+        title = QLabel("JDL税設定を確認")
+        title.setObjectName("sectionTitle")
+        layout.addWidget(title)
+        guidance = QLabel(
+            "この会社で使用しているJDLの設定を確認してください。"
+            "converterからJDL本体の設定を変更することはありません。"
+        )
+        guidance.setWordWrap(True)
+        layout.addWidget(guidance)
+        details = QLabel(
+            "製品: JDL IBEX 出納帳\n"
+            "Version: 35.5\n"
+            "税処理: 課税事業者\n"
+            "計算方式: 税込処理\n"
+            "課税方式: 本則課税\n"
+            "仕入税額控除: 個別対応方式"
+        )
+        details.setObjectName("card")
+        layout.addWidget(details)
+        self.confirmed = QCheckBox("上記の設定であることを確認しました")
+        layout.addWidget(self.confirmed)
+        actions = QHBoxLayout()
+        cancel = QPushButton("キャンセル")
+        cancel.clicked.connect(self.reject)
+        self.save_button = QPushButton("確認して保存")
+        self.save_button.setObjectName("primaryButton")
+        self.save_button.setEnabled(False)
+        self.confirmed.toggled.connect(self.save_button.setEnabled)
+        self.save_button.clicked.connect(self._save)
+        actions.addStretch(1)
+        actions.addWidget(cancel)
+        actions.addWidget(self.save_button)
+        layout.addLayout(actions)
+
+    def _save(self) -> None:
+        if not self.confirmed.isChecked():
+            return
+        state = self.controller.confirm_company_tax_context(
+            self.company_setting_id, explicitly_confirmed=True
+        )
+        if state.user_message.startswith("JDL税設定を保存しました"):
+            self.accept()
 
 
 class TaxMappingConfirmationDialog(QDialog):
