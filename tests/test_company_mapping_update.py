@@ -128,6 +128,94 @@ class CompanyMappingUpdateTests(unittest.TestCase):
         self.service.apply(review, {item.key: "架空補助A"}, {item.key})
         self.assertFalse(self.service.review("company-a", source).items)
 
+    def test_unstored_confirmed_parent_selection_exposes_only_its_subaccounts(self):
+        now = datetime(2026, 10, 14, tzinfo=timezone.utc)
+        self.profiles.create(ConversionProfile(
+            "profile-unconfirmed-parent", "未保存親の架空設定",
+            moneyforward_cloud_journal_export_observed_schema().identity,
+            jdl_ibex_cashbook_official_journal_import_schema_definition().identity,
+            created_at=now, updated_at=now,
+        ))
+        self.companies.create(
+            company_setting_id="company-unconfirmed-parent",
+            display_name="未保存親の架空会社",
+            conversion_profile_id="profile-unconfirmed-parent",
+            context_source=self.draft,
+        )
+        source = self.root / "unconfirmed-parent.csv"
+        self._write(
+            source,
+            debit_account="入力科目A",
+            debit_sub="新規補助",
+            credit_account="入力科目A",
+        )
+
+        review = self.service.review("company-unconfirmed-parent", source)
+        account = next(i for i in review.items if i.mapping_type == "ACCOUNT")
+        subaccount = next(i for i in review.items if i.mapping_type == "SUBACCOUNT")
+
+        self.assertEqual(subaccount.available_targets, ())
+        self.assertEqual(
+            subaccount.subaccount_targets_for("架空科目A"), ("架空補助A",)
+        )
+        self.assertEqual(
+            subaccount.subaccount_targets_for("架空科目B"), ("架空補助B",)
+        )
+        self.assertIsNone(subaccount.confirmed_parent_target)
+        self.assertNotIn(
+            "架空補助B", subaccount.subaccount_targets_for("架空科目A")
+        )
+
+        selections = {
+            account.key: "架空科目A",
+            subaccount.key: "架空補助A",
+        }
+        self.service.apply(review, selections, set(selections))
+        self.assertFalse(
+            self.service.review("company-unconfirmed-parent", source).items
+        )
+
+        editable = self.service.review(
+            "company-unconfirmed-parent", source, include_confirmed=True
+        )
+        saved_subaccount = next(
+            item for item in editable.items if item.mapping_type == "SUBACCOUNT"
+        )
+        self.assertEqual(saved_subaccount.confirmed_parent_target, "架空科目A")
+        self.assertEqual(saved_subaccount.exact_candidate, "架空補助A")
+
+    def test_changed_unstored_parent_rejects_stale_subaccount_selection(self):
+        now = datetime(2026, 10, 14, tzinfo=timezone.utc)
+        self.profiles.create(ConversionProfile(
+            "profile-parent-change", "親変更の架空設定",
+            moneyforward_cloud_journal_export_observed_schema().identity,
+            jdl_ibex_cashbook_official_journal_import_schema_definition().identity,
+            created_at=now, updated_at=now,
+        ))
+        self.companies.create(
+            company_setting_id="company-parent-change",
+            display_name="親変更の架空会社",
+            conversion_profile_id="profile-parent-change",
+            context_source=self.draft,
+        )
+        source = self.root / "parent-change.csv"
+        self._write(
+            source,
+            debit_account="入力科目A",
+            debit_sub="新規補助",
+            credit_account="入力科目A",
+        )
+        review = self.service.review("company-parent-change", source)
+        account = next(i for i in review.items if i.mapping_type == "ACCOUNT")
+        subaccount = next(i for i in review.items if i.mapping_type == "SUBACCOUNT")
+
+        with self.assertRaisesRegex(ValueError, "補助科目を確認"):
+            self.service.apply(
+                review,
+                {account.key: "架空科目B", subaccount.key: "架空補助A"},
+                {account.key, subaccount.key},
+            )
+
     def test_parent_only_requires_explicit_confirmation_and_persists_by_company(self):
         pdf = self.root / "master-no-sub.pdf"
         pdf.write_bytes(b"synthetic")

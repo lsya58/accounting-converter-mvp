@@ -375,6 +375,18 @@ class QtGuiContractTests(unittest.TestCase):
         self.assertIn("PARENT_ONLY_SELECTION", dialog)
         self.assertIn("combo.currentData() is not None and check.isChecked()", dialog)
 
+    def test_subaccount_candidates_follow_confirmed_parent_selection(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(encoding="utf-8")
+        dialog = source.split("class CompanyMappingUpdateDialog", maxsplit=1)[1]
+
+        self.assertIn("self._refresh_subaccounts", dialog)
+        self.assertIn("account_confirmed.isChecked()", dialog)
+        self.assertIn("item.subaccount_targets_for", dialog)
+        self.assertIn("item.confirmed_parent_target", dialog)
+        self.assertIn("combo.clear()", dialog)
+        self.assertIn('combo.addItem("未選択", None)', dialog)
+        self.assertIn("checkbox.setChecked(False)", dialog)
+
 
 if __name__ == "__main__":
     unittest.main()

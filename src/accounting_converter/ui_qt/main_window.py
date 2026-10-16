@@ -791,6 +791,8 @@ class CompanyMappingUpdateDialog(QDialog):
         self.controller = controller
         self.review = review
         self.controls: list[tuple[str, QComboBox, QCheckBox]] = []
+        self.account_controls: dict[str, tuple[QComboBox, QCheckBox]] = {}
+        self.subaccount_controls: list[tuple[object, QComboBox, QCheckBox]] = []
         self.setWindowTitle("新しい科目を確認")
         self.resize(980, 680)
         self.setMinimumSize(760, 520)
@@ -841,6 +843,22 @@ class CompanyMappingUpdateDialog(QDialog):
             table.setCellWidget(row, 3, target)
             table.setCellWidget(row, 4, confirmed)
             self.controls.append((item.key, target, confirmed))
+            if item.mapping_type == "ACCOUNT":
+                self.account_controls[item.source_value] = (target, confirmed)
+                target.currentIndexChanged.connect(
+                    lambda _index, source=item.source_value: self._refresh_subaccounts(
+                        source
+                    )
+                )
+                confirmed.stateChanged.connect(
+                    lambda _state, source=item.source_value: self._refresh_subaccounts(
+                        source
+                    )
+                )
+            else:
+                self.subaccount_controls.append((item, target, confirmed))
+        for source_value in self.account_controls:
+            self._refresh_subaccounts(source_value)
         layout.addWidget(table, 1)
         tax_status = QLabel(
             tax_message or "税区分はCSV読込時に必要なものだけ確認します。"
@@ -858,6 +876,47 @@ class CompanyMappingUpdateDialog(QDialog):
         actions.addWidget(cancel)
         actions.addWidget(self.save_button)
         layout.addLayout(actions)
+        self._update_action()
+
+    def _refresh_subaccounts(self, source_account: str) -> None:
+        account_control = self.account_controls.get(source_account)
+        if account_control is None:
+            return
+        account_combo, account_confirmed = account_control
+        parent_target = account_combo.currentData()
+        parent_is_confirmed = bool(
+            parent_target is not None and account_confirmed.isChecked()
+        )
+        for item, combo, checkbox in self.subaccount_controls:
+            if item.parent_account != source_account:
+                continue
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItem("未選択", None)
+            if parent_is_confirmed:
+                targets = item.subaccount_targets_for(str(parent_target))
+                for value in targets:
+                    combo.addItem(f"JDL補助科目へ対応: {value}", value)
+                if item.has_parent_target(str(parent_target)) and not targets:
+                    combo.addItem(
+                        "親科目のみで変換する", PARENT_ONLY_SELECTION
+                    )
+            restore_saved_selection = (
+                parent_is_confirmed
+                and str(parent_target) == item.confirmed_parent_target
+            )
+            if restore_saved_selection and item.exact_candidate in targets:
+                combo.setCurrentIndex(combo.findData(item.exact_candidate))
+            elif (
+                restore_saved_selection
+                and item.exact_candidate == PARENT_ONLY_SELECTION
+            ):
+                combo.setCurrentIndex(combo.findData(PARENT_ONLY_SELECTION))
+            else:
+                combo.setCurrentIndex(0)
+            combo.blockSignals(False)
+            checkbox.setChecked(False)
+            checkbox.setEnabled(combo.currentData() is not None)
         self._update_action()
 
     def _update_action(self, *_args) -> None:

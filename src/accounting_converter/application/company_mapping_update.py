@@ -42,6 +42,24 @@ class CompanyMappingUpdateItem:
     available_targets: tuple[str, ...]
     exact_candidate: str | None = None
     parent_only_available: bool = False
+    subaccount_targets_by_parent: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    confirmed_parent_target: str | None = None
+
+    def subaccount_targets_for(self, parent_target: str) -> tuple[str, ...]:
+        return next(
+            (
+                targets
+                for target, targets in self.subaccount_targets_by_parent
+                if target == parent_target
+            ),
+            (),
+        )
+
+    def has_parent_target(self, parent_target: str) -> bool:
+        return any(
+            target == parent_target
+            for target, _targets in self.subaccount_targets_by_parent
+        )
 
 
 PARENT_ONLY_SELECTION = "__PARENT_ONLY_CONFIRMED__"
@@ -103,12 +121,18 @@ class CompanyMappingUpdateService:
 
         requirements = MappingRequirementExtractor().extract(entries, profile)
         targets, ambiguous = self._subaccount_targets(master.subaccounts)
+        account_review_by_source = {
+            item.requirement.source_value: item for item in accounts.items
+        }
         account_codes = {
             source: mapping.metadata.get("target_code", "")
             for source, mapping in profile.account_mappings.items()
             if mapping.status is MappingStatus.USER_CONFIRMED
         }
         for requirement in requirements.subaccounts:
+            confirmed_parent_mapping = profile.account_mappings.get(
+                requirement.parent_account or ""
+            )
             parent_code = account_codes.get(requirement.parent_account or "", "")
             candidates = tuple(
                 item for item in targets.get(parent_code, ())
@@ -140,6 +164,14 @@ class CompanyMappingUpdateService:
             if usable and not include_confirmed:
                 continue
             exact = tuple(item for item in candidates if item.name == requirement.source_value)
+            parent_review = account_review_by_source.get(
+                requirement.parent_account or ""
+            )
+            parent_targets = (
+                parent_review.selectable_targets
+                if parent_review is not None
+                else ()
+            )
             items.append(
                 CompanyMappingUpdateItem(
                     key=requirement.key.stable_key,
@@ -155,6 +187,16 @@ class CompanyMappingUpdateService:
                         else exact[0].name if len(exact) == 1 else None
                     ),
                     parent_only_available=bool(parent_code) and not candidates,
+                    subaccount_targets_by_parent=self._subaccount_options_by_parent(
+                        parent_targets, targets, ambiguous
+                    ),
+                    confirmed_parent_target=(
+                        confirmed_parent_mapping.target_value
+                        if confirmed_parent_mapping is not None
+                        and confirmed_parent_mapping.status
+                        is MappingStatus.USER_CONFIRMED
+                        else None
+                    ),
                 )
             )
         verified_shapes = {(1, 1), (1, 3), (2, 1), (2, 2), (2, 3), (4, 6), (5, 7), (5, 8)}
@@ -192,6 +234,9 @@ class CompanyMappingUpdateService:
         account_targets = tuple(
             item.name for item in master.printed_accounts if item.enabled
         )
+        printed_account_targets = tuple(
+            item for item in master.printed_accounts if item.enabled
+        )
         sub_targets, ambiguous = self._subaccount_targets(
             master.subaccounts
         )
@@ -221,6 +266,9 @@ class CompanyMappingUpdateService:
             key=lambda item: item[0].stable_key,
         ):
             parent_code = account_codes.get(key.parent_account or "", "")
+            confirmed_parent_mapping = profile.account_mappings.get(
+                key.parent_account or ""
+            )
             candidates = tuple(
                 item
                 for item in sub_targets.get(parent_code, ())
@@ -249,6 +297,16 @@ class CompanyMappingUpdateService:
                         else None
                     ),
                     parent_only_available=bool(parent_code) and not candidates,
+                    subaccount_targets_by_parent=self._subaccount_options_by_parent(
+                        printed_account_targets, sub_targets, ambiguous
+                    ),
+                    confirmed_parent_target=(
+                        confirmed_parent_mapping.target_value
+                        if confirmed_parent_mapping is not None
+                        and confirmed_parent_mapping.status
+                        is MappingStatus.USER_CONFIRMED
+                        else None
+                    ),
                 )
             )
         return CompanyMappingUpdateReview(
@@ -487,6 +545,22 @@ class CompanyMappingUpdateService:
             or identities[(item.parent_account_code, item.code, item.name)] > 1
         }
         return by_parent, ambiguous
+
+    @staticmethod
+    def _subaccount_options_by_parent(account_targets, sub_targets, ambiguous):
+        options: list[tuple[str, tuple[str, ...]]] = []
+        seen_names: set[str] = set()
+        for account in account_targets:
+            if account.name in seen_names:
+                continue
+            seen_names.add(account.name)
+            names = tuple(
+                item.name
+                for item in sub_targets.get(account.code, ())
+                if (item.parent_account_code, item.code, item.name) not in ambiguous
+            )
+            options.append((account.name, names))
+        return tuple(options)
 
     @staticmethod
     def _entries(path: Path):
