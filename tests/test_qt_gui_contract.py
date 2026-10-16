@@ -232,6 +232,20 @@ class QtGuiContractTests(unittest.TestCase):
         self.assertIn("review_saved_company_mappings", source)
         self.assertIn("税設定の確認が必要です。CSV読込時に確認できます。", source)
 
+    def test_mapping_dialog_initializes_actions_before_subaccount_refresh(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
+            encoding="utf-8"
+        )
+        dialog = source.split("class CompanyMappingUpdateDialog", maxsplit=1)[1].split(
+            "class CompanyAddDialog", maxsplit=1
+        )[0]
+        save_button = dialog.index('self.save_button = QPushButton("追加対応を保存")')
+        initial_refresh = dialog.index(
+            "for source_value in self.account_controls:\n"
+            "            self._refresh_subaccounts(source_value)"
+        )
+        self.assertLess(save_button, initial_refresh)
+
     def test_normal_moneyforward_flow_does_not_expose_old_settings_route(self) -> None:
         window = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
             encoding="utf-8"

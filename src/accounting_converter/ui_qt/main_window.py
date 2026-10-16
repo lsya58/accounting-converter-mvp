@@ -857,8 +857,6 @@ class CompanyMappingUpdateDialog(QDialog):
                 )
             else:
                 self.subaccount_controls.append((item, target, confirmed))
-        for source_value in self.account_controls:
-            self._refresh_subaccounts(source_value)
         layout.addWidget(table, 1)
         tax_status = QLabel(
             tax_message or "税区分はCSV読込時に必要なものだけ確認します。"
@@ -876,6 +874,8 @@ class CompanyMappingUpdateDialog(QDialog):
         actions.addWidget(cancel)
         actions.addWidget(self.save_button)
         layout.addLayout(actions)
+        for source_value in self.account_controls:
+            self._refresh_subaccounts(source_value)
         self._update_action()
 
     def _refresh_subaccounts(self, source_account: str) -> None:
