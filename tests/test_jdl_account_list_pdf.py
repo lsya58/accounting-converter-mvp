@@ -95,6 +95,101 @@ class JdlAccountListPdfTextParserTests(unittest.TestCase):
         )
         self.assertFalse(draft.production_usable)
 
+    def test_subaccount_accepts_only_observed_setting_tail_structures(self) -> None:
+        pages = list(self._pages())
+        pages[0] = JdlAccountListTextPage(
+            1,
+            self._page_header(1)
+            + "         1211- 架空借方親科目                借架空借方親 ○\n"
+            + "             -0001 架空借方補助              借  仕 入  固定\n"
+            + "         6121- 架空貸方親科目                貸架空貸方親 ○\n"
+            + "             -0001 架空貸方補助              貸  売 上  無\n",
+        )
+
+        result = self._parse(tuple(pages))
+
+        self.assertEqual(len(result.subaccounts), 2)
+        self.assertEqual(
+            tuple(item.parent_account_code for item in result.subaccounts),
+            ("1211", "6121"),
+        )
+        self.assertEqual(
+            tuple(item.code for item in result.subaccounts), ("0001", "0001")
+        )
+
+    def test_unknown_or_incomplete_subaccount_setting_tail_is_blocked(self) -> None:
+        for tail in ("未知", "仕 入", "売 上 推測値"):
+            with self.subTest(tail=tail):
+                pages = list(self._pages())
+                pages[0] = JdlAccountListTextPage(
+                    1,
+                    self._page_header(1)
+                    + "         1211- 架空親科目A                   借架空親A ○\n"
+                    + f"             -0001 架空補助A                借  {tail}\n",
+                )
+                with self.assertRaises(JdlAccountListPdfParseError):
+                    self._parse(tuple(pages))
+
+    def test_subaccount_requires_four_digits_name_and_balance(self) -> None:
+        malformed_rows = (
+            "             -001 架空補助A                 借\n",
+            "             -00001 架空補助A               借\n",
+            "             -0001                          借\n",
+            "             -0001 架空補助A\n",
+        )
+        for row in malformed_rows:
+            with self.subTest(row_length=len(row)):
+                pages = list(self._pages())
+                pages[0] = JdlAccountListTextPage(
+                    1,
+                    self._page_header(1)
+                    + "         1211- 架空親科目A                   借架空親A ○\n"
+                    + row,
+                )
+                with self.assertRaises(JdlAccountListPdfParseError):
+                    self._parse(tuple(pages))
+
+    def test_five_page_mixed_accounts_parents_and_setting_tails(self) -> None:
+        pages = (
+            JdlAccountListTextPage(
+                1,
+                self._page_header(1)
+                + "         1111  架空現金                      借架空現金 ○\n"
+                + "         1211- 架空当座                      借架空当座 ○\n"
+                + "             -0001 架空当座補助              借\n",
+            ),
+            JdlAccountListTextPage(
+                2,
+                self._page_header(2)
+                + "         1311- 架空普通                      借架空普通 ○\n"
+                + "             -0001 架空普通補助A             借\n"
+                + "             -0002 架空普通補助B             借\n",
+            ),
+            JdlAccountListTextPage(
+                3,
+                self._page_header(3)
+                + "         6121- 架空売上                      貸架空売上 ○\n"
+                + "             -0001 架空売上補助              貸  売 上  無\n",
+            ),
+            JdlAccountListTextPage(
+                4,
+                self._page_header(4)
+                + "         8621- 架空費用                      借架空費用 ○\n"
+                + "             -0001 架空費用補助              借  仕 入  固定\n",
+            ),
+            self._page(5, "9991", "架空その他", "借架空その他", "○"),
+        )
+
+        result = self._parse(pages)
+        parent_codes = {
+            item.parent_account_code for item in result.subaccounts
+        }
+
+        self.assertEqual(len(result.printed_accounts), 6)
+        self.assertEqual(len(result.subaccounts), 5)
+        self.assertEqual(parent_codes, {"1211", "1311", "6121", "8621"})
+        self.assertEqual(result.sources[0].page_count, 5)
+
     def test_indented_code_less_row_is_not_subaccount(self) -> None:
         result = self._parse(self._pages())
 

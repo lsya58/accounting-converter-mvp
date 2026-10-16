@@ -44,8 +44,9 @@ class JdlAccountListPdfTextParser:
     )
     _SUBACCOUNT_ROW = re.compile(
         r"^\s*-(?P<code>\d{4})\s+"
-        r"(?P<name>.+?)\s{2,}"
-        r"(?P<balance>[借貸])\s*$"
+        r"(?P<name>\S(?:.*?\S)?)\s{2,}"
+        r"(?P<balance>[借貸])"
+        r"(?P<tail>\s+(?:仕\s+入|売\s+上)\s+(?:固定|無))?\s*$"
     )
     _SUBACCOUNT_LIKE_ROW = re.compile(r"^\s*-\d")
     _UNCODED_ROW = re.compile(

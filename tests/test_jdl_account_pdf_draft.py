@@ -71,7 +71,7 @@ class JdlAccountPdfDraftTests(unittest.TestCase):
                 "架空予備 借 架空 予備 ×\n"
             )
             if page_number == 2:
-                compact += "-0001 貸\n"
+                compact += "-0001                 貸\n"
             pages.append(
                 JdlAccountListTextPage(
                     page_number,
@@ -91,6 +91,32 @@ class JdlAccountPdfDraftTests(unittest.TestCase):
         self.assertEqual(len(result.printed_accounts), 5)
         self.assertFalse(result.subaccounts)
         self.assertEqual(result.completeness.value, "OBSERVED_PRINTED_MASTER")
+
+    def test_pypdf_compact_subaccount_setting_tail_is_strictly_normalized(self) -> None:
+        compact = (
+            "科 目 一 覧 1\n"
+            "勘 定 科 目 略 名 称 使用 課 区 税 区 入力 固変 比 率 説 明\n"
+            "1211- 架空親科目 借 架空親 ○\n"
+            "-0001 架空補助 借 仕 入 固定\n"
+        )
+        normalized = PypdfTextExtractor._normalize_observed_page(compact, 1)
+        result = JdlAccountListPdfTextParser().parse_pages(
+            (JdlAccountListTextPage(1, normalized),),
+            source_sha256="a" * 64,
+            acquisition_method="synthetic pypdf layout",
+            human_observed=True,
+        )
+
+        self.assertEqual(len(result.printed_accounts), 1)
+        self.assertEqual(len(result.subaccounts), 1)
+        self.assertEqual(result.subaccounts[0].parent_account_code, "1211")
+
+    def test_pypdf_unknown_subaccount_setting_tail_is_not_normalized(self) -> None:
+        line = "-0001 架空補助 借 未知 設定"
+
+        normalized = PypdfTextExtractor._normalize_observed_page(line, 1)
+
+        self.assertEqual(normalized, line)
 
     def test_import_never_overwrites_and_conflicts_are_blocked(self) -> None:
         self.store.import_pdf(self.pdf, self.draft_path)

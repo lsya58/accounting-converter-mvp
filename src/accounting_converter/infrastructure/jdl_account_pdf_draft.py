@@ -61,13 +61,16 @@ class PypdfTextExtractor:
                 continue
 
             subaccount = re.fullmatch(
-                r"-(?P<code>\d{4})\s+(?P<name>.+?)\s+(?P<balance>[借貸])",
+                r"-(?P<code>\d{4})\s+(?P<name>\S(?:.*?\S)?)\s+"
+                r"(?P<balance>[借貸])"
+                r"(?P<tail>\s+(?:仕\s+入|売\s+上)\s+(?:固定|無))?",
                 stripped,
             )
             if subaccount:
+                tail = subaccount.group("tail") or ""
                 normalized.append(
                     f"  -{subaccount.group('code')} {subaccount.group('name')}  "
-                    f"{subaccount.group('balance')}"
+                    f"{subaccount.group('balance')}{tail}"
                 )
                 continue
             if re.fullmatch(r"-\d{4}\s+[借貸]", stripped):
