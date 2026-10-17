@@ -206,3 +206,44 @@ privacy-safe集計ではsimple 439、compound 43だった。従来のsynthetic/o
 完全synthetic CSVを使い、MoneyForwardInputAdapterからCommon Journal Model、Mapping/Validation、Evidence-limited JDL Output、Output Validation、Verification Reportまで既存ConversionService経路で接続確認した。simple、同日simple pair、exact 1D3Cだけが、test-onlyの明示Mapping、確認済みJDL target context、MF tax field空欄という限定条件で成功した。
 
 これは`OBSERVED` source Evidenceの昇格でも、MF -> JDL real-import Evidenceでもない。実rawで観測した`対象外`をJDLの免税時空欄へ対応させるMappingは未確認のためblockする。MFでは解析可能な3D1C/2D2C/3D3CもJDL側Evidence外としてblockする。取引先、tag、memo、invoice classificationはJDL Output v0でlosslessな表現先が未確認のためsilent dropせずblockする。
+
+## Additional synthetic export coverage (2026-10-14)
+
+追加のMoney Forward仕訳帳Export 1件をraw bytesから再解析した。CP932、BOMなし、LF、exact 19-column header、全40 data rowsが19列で、既存Input Adapterにより33 logical journalsとして解析・貸借一致した。
+
+- 借方・貸方・両側のdepartment populationを確認
+- 借方・貸方・両側のtrade partner populationを確認
+- 借貸双方のsubaccount、tax、invoice field populationを確認
+- 6 tax literals、invoice非空2 literals、invoice blankを確認
+- single tag、`|`を含むmultiple tags、memo、comma/double quoteを含むCSV fieldを確認
+- raw embedded newlineは0件。Human UIで入力したnewline-like memoはExportで単一fieldへ正規化されていたが、その変換規則は未確定
+- simpleのほか1D3C、3D1C、2D2C、3D3Cを同じexact identityで確認
+
+invoice blankはCSV単独では「適格」「未設定」「対象外taxで意味なし」を区別できない。Input Adapterは非空literalをそのまま保持し、blankを`RAW_BLANK_AMBIGUOUS`としてsource metadataへ記録する。Human UIで観測した控除率ごとの日付制約をInput Adapterで再実装せず、source literalとraw blankを解釈せず受け取る。日付・tax・partnerからinvoice semanticを推測しない。
+
+## MF Evidence coverage status
+
+| Area | Status | Evidence boundary |
+| --- | --- | --- |
+| simple | VERIFIED | exact observed 19-column parsing and synthetic pipeline |
+| compound | PARTIAL | multiple source shapes observed; JDL row-description Evidenceは1D3C/2D1C/2D2C/2D3C限定 |
+| subaccount | VERIFIED | 借貸双方のraw保持。target mappingはparent-scoped confirmation必須 |
+| department | VERIFIED | 借方・貸方・両側のraw保持 |
+| trade partner | PARTIAL | 借方・貸方・両側のraw保持。JDL lossless target field未確認 |
+| tax | PARTIAL | 6 literalsは限定round-trip済み。private実データの追加2 literalsは未解決 |
+| invoice | PARTIAL | 非空2 literalsと両sideを観測。blank semanticは判別不能 |
+| description | PARTIAL | source rowごとに保持。大規模compound shapeはJDL Evidence不足 |
+| tag | VERIFIED | single/multiple fieldをraw保持。target表現は未確認 |
+| memo | PARTIAL | quoting保持。newline-like inputのExport正規化規則は未確定 |
+| CSV quoting | VERIFIED | comma/double quoteを標準CSV parserで保持 |
+| debit/credit asymmetry | VERIFIED | optional fieldsの借貸双方および両側populationを確認 |
+
+## Source tax population and target semantics (2026-10-17)
+
+Money Forward実機の仕訳帳Exportでは、通常の1D1Cでも借貸両側にtax literalが出力される。Human-created synthetic test companyの複数Exportでは、課税仕入・課税売上・軽減8%・非課税仕入の反対側が`対象外`となり、対象外同士も観測した。反対側blankは観測していない。
+
+同じ傾向はprivate実顧客Exportでも確認した。482 logical journalsのfileでは1D1C 439件中、課税仕入10% / 対象外が279件、対象外 / 課税売上10%が65件、対象外 / 対象外が83件だった。別の1,953 logical journalsのfileでも、1D1C 1,902件中1,648件が課税仕入10% / 対象外だった。具体的な顧客値は記録しない。`仕訳帳_20261014_2002.csv`もHumanがsynthetic仕訳をMF UIへ入力して取得した実機Exportであり、手作業fixtureではない。
+
+MF source literalとJDL target semanticsは区別する。`対象外`は文字列一致だけで無視せず、exact JDL Contextに対するUSER_CONFIRMED mapping、専用Evidence ID、Context hashが一致する場合だけtarget tax category/scope blankへ変換できる。JDL側の限定round-trip Evidenceは、課税sideだけにtax fieldsを出力し、opposite sideをblankにする表現を支持する。
+
+旧formal workflowのsource-side `tax_lines == 1`条件は、反対側blankのsynthetic test helperとJDL probe形状に由来し、MF実機Export Evidenceとは不整合だった。formal routeは全source tax mappingを検証した後、MappingEngine適用後のtarget semantic shapeを評価する。実効taxが複数、unknown/unconfirmed/stale mapping、Context hashまたはEvidence scope不一致は引き続きBLOCKする。

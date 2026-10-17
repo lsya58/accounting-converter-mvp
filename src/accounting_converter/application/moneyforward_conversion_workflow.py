@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 from accounting_converter.adapters.input.moneyforward import (
@@ -39,6 +40,9 @@ from accounting_converter.infrastructure.adapter_registry import (
     AdapterAvailabilityStatus,
     AdapterRegistry,
     production_adapter_registry,
+)
+from accounting_converter.infrastructure.jdl_target_context_loader import (
+    JdlTargetContextLoader,
 )
 from accounting_converter.profiles.jdl_official import JdlTaxProcessingMode
 from accounting_converter.profiles.known_formats import (
@@ -171,8 +175,14 @@ class MoneyForwardConversionWorkflow:
             or item.current_mapping_status is not MappingStatus.USER_CONFIRMED
         )
         reasons = list(self._mapping_reasons(requirements))
+        mapping_engine = MappingEngine(mapping_rule_set_from_profile(profile))
+        mapping_result = mapping_engine.apply(entries)
         assignments, route_reasons, unsupported_journals = self._route_assignments(
-            entries, profile, context
+            entries,
+            mapping_result.entries,
+            profile,
+            context,
+            company_setting_validated=company_setting_validated,
         )
         reasons.extend(route_reasons)
         loss_results = ValidationPipeline((MoneyForwardToJdlLossRule(),)).validate(entries)
@@ -183,9 +193,7 @@ class MoneyForwardConversionWorkflow:
             assignments,
             route_id="GUI-MF-EXACT-COMPANY-SETTING-V0",
         )
-        mapping_engine = MappingEngine(mapping_rule_set_from_profile(profile))
         if not reasons:
-            mapping_result = mapping_engine.apply(entries)
             if mapping_result.unresolved_count or mapping_result.validation_results:
                 reasons.append("会社設定に未確認の対応があります。")
             else:
@@ -264,11 +272,22 @@ class MoneyForwardConversionWorkflow:
                 reasons.append(message)
         return tuple(reasons)
 
-    def _route_assignments(self, entries, profile, context):
+    def _route_assignments(
+        self,
+        entries,
+        mapped_entries,
+        profile,
+        context,
+        *,
+        company_setting_validated: bool = False,
+    ):
         assignments: dict[str, JdlEvidenceProfile] = {}
         reasons: list[str] = []
         unsupported: set[str] = set()
-        for entry in entries:
+        context_sha256 = hashlib.sha256(
+            JdlTargetContextLoader().to_json_text(context).encode("utf-8")
+        ).hexdigest()
+        for entry, mapped_entry in zip(entries, mapped_entries, strict=True):
             debit_count = sum(line.side is Side.DEBIT for line in entry.lines)
             credit_count = sum(line.side is Side.CREDIT for line in entry.lines)
             shape = (debit_count, credit_count)
@@ -286,11 +305,15 @@ class MoneyForwardConversionWorkflow:
                 reasons.append("未検証の仕訳構成が含まれています。")
                 unsupported.add(entry.id)
                 continue
-            tax_lines = [
-                line for line in entry.lines
-                if line.tax_info is not None and line.tax_info.category
+            source_tax_lines = [
+                (source_line, mapped_line)
+                for source_line, mapped_line in zip(
+                    entry.lines, mapped_entry.lines, strict=True
+                )
+                if source_line.tax_info is not None
+                and source_line.tax_info.category
             ]
-            if not tax_lines:
+            if not source_tax_lines:
                 if context.tax_processing_mode is JdlTaxProcessingMode.EXEMPT and not any(
                     line.sub_account or line.department for line in entry.lines
                 ):
@@ -299,14 +322,67 @@ class MoneyForwardConversionWorkflow:
                     reasons.append("この仕訳のJDL出力条件は実機確認済み範囲外です。")
                     unsupported.add(entry.id)
                 continue
-            if len(tax_lines) != 1:
+            mappings = {
+                source_line.tax_info.category: profile.tax_mappings.get(
+                    source_line.tax_info.category
+                )
+                for source_line, _mapped_line in source_tax_lines
+            }
+            if any(
+                mapping is None
+                or mapping.status is not MappingStatus.USER_CONFIRMED
+                or (
+                    mapping.metadata.get("jdl_context_sha256") is not None
+                    and mapping.metadata.get("jdl_context_sha256") != context_sha256
+                )
+                or (
+                    mapping.metadata.get("jdl_context_sha256") is None
+                    and not company_setting_validated
+                )
+                or mapping.metadata.get("jdl_tax_processing_mode")
+                != context.tax_processing_mode.value
+                or not mapping.metadata.get("jdl_evidence_id")
+                for mapping in mappings.values()
+            ):
+                reasons.append("税区分確認が必要です。「税区分を確認」から設定してください。")
+                unsupported.add(entry.id)
+                continue
+
+            effective_tax_lines = [
+                (source_line, mapped_line)
+                for source_line, mapped_line in source_tax_lines
+                if self._has_target_tax_semantics(mapped_line)
+            ]
+            if len(effective_tax_lines) > 1:
                 reasons.append("貸借両側の税区分を持つ仕訳は現在の正式変換範囲外です。")
                 unsupported.add(entry.id)
                 continue
-            line = tax_lines[0]
-            source_tax = line.tax_info.category
+
+            route_candidates = (
+                effective_tax_lines
+                if effective_tax_lines
+                else [
+                    (source_line, mapped_line)
+                    for source_line, mapped_line in source_tax_lines
+                    if (
+                        mapped_line.side,
+                        source_line.tax_info.category,
+                        bool(mapped_line.sub_account),
+                    )
+                    in _TAX_ROUTES
+                ]
+            )
+            if len(route_candidates) != 1:
+                reasons.append("この仕訳のJDL出力条件は実機確認済み範囲外です。")
+                unsupported.add(entry.id)
+                continue
+
+            source_line, mapped_line = route_candidates[0]
+            source_tax = source_line.tax_info.category
             mapping = profile.tax_mappings.get(source_tax)
-            route = _TAX_ROUTES.get((line.side, source_tax, bool(line.sub_account)))
+            route = _TAX_ROUTES.get(
+                (mapped_line.side, source_tax, bool(mapped_line.sub_account))
+            )
             if (
                 route is None
                 or mapping is None
@@ -317,6 +393,23 @@ class MoneyForwardConversionWorkflow:
                 continue
             assignments[entry.id] = route[0]
         return assignments, reasons, unsupported
+
+    @staticmethod
+    def _has_target_tax_semantics(line: JournalLine) -> bool:
+        info = line.tax_info
+        return bool(
+            info
+            and (
+                info.category
+                or info.metadata.get("jdl_tax_scope")
+                or info.rate is not None
+                or info.tax_inclusion
+                or info.reduced_rate is True
+                or info.tax_amount is not None
+                or info.metadata.get("jdl_tax_input_method")
+                or info.metadata.get("jdl_transaction_account")
+            )
+        )
 
     @staticmethod
     def _loss_reason(field: str | None) -> str:

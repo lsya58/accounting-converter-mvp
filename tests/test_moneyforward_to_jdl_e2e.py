@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import tempfile
 import unittest
@@ -45,6 +46,9 @@ from accounting_converter.domain.validation import BalanceRule
 from accounting_converter.infrastructure.adapter_registry import (
     AdapterAvailabilityStatus,
     production_adapter_registry,
+)
+from accounting_converter.infrastructure.jdl_target_context_loader import (
+    JdlTargetContextLoader,
 )
 from accounting_converter.profiles.jdl_official import JdlTaxProcessingMode
 from accounting_converter.profiles.known_formats import (
@@ -481,8 +485,8 @@ class MoneyForwardToJdlSyntheticE2ETests(unittest.TestCase):
             source = self._write(root / "mf.csv", [row])
             output = root / "jdl.csv"
             before = source.read_bytes()
-            profile = self._tax_subaccount_profile()
             context = self._tax_subaccount_context()
+            profile = self._tax_subaccount_profile(context)
 
             prepared = MoneyForwardConversionWorkflow().prepare(
                 input_path=source,
@@ -578,7 +582,78 @@ class MoneyForwardToJdlSyntheticE2ETests(unittest.TestCase):
             self.assertEqual(prepared.summary.readiness, FirstReleaseReadiness.BLOCKED)
             self.assertEqual(output.read_bytes(), b"existing")
 
-    def _tax_subaccount_profile(self) -> ConversionProfile:
+    def test_exact_company_workflow_routes_real_export_tax_pairs_after_mapping(self) -> None:
+        context = self._mapped_tax_context()
+        profile = self._mapped_tax_profile(context)
+        cases = (
+            ("41", self._row("41", debit="当座預金", credit="普通預金", debit_tax="課税仕入 10%", credit_tax="対象外"), "TAX_PURCHASE_10"),
+            ("42", self._with_columns(self._row("42", debit="当座預金", credit="現金", debit_tax="対象外", credit_tax="課税売上 10%"), credit_sub="補助甲"), "TAX_SALES_10"),
+            ("43", self._with_columns(self._row("43", debit="現金", credit="当座預金", debit_tax="課税仕入 (軽)8%", credit_tax="対象外"), debit_sub="補助甲"), "TAX_PURCHASE_REDUCED_8"),
+            ("44", self._with_columns(self._row("44", debit="当座預金", credit="現金", debit_tax="対象外", credit_tax="課税売上 (軽)8%"), credit_sub="補助甲"), "TAX_SALES_REDUCED_8"),
+            ("45", self._with_columns(self._row("45", debit="現金", credit="当座預金", debit_tax="非課税仕入", credit_tax="対象外"), debit_sub="補助甲"), "TAX_NON_TAXABLE_PURCHASE"),
+        )
+        for transaction, row, label in cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source = self._write(root / f"{transaction}.csv", [row])
+                output = root / "jdl.csv"
+                prepared = MoneyForwardConversionWorkflow().prepare(
+                    input_path=source,
+                    output_path=output,
+                    profile=profile,
+                    context=context,
+                    company_setting_validated=True,
+                )
+                result = MoneyForwardConversionWorkflow.execute(prepared)
+                self.assertEqual(prepared.summary.readiness, FirstReleaseReadiness.READY)
+                self.assertIsNotNone(result)
+                self.assertEqual(result.status, ConversionStatus.SUCCESS)
+
+    def test_exact_company_workflow_blocks_unsafe_source_tax_pairs(self) -> None:
+        context = self._mapped_tax_context()
+        base = self._mapped_tax_profile(context)
+        cases = []
+        both_effective = self._row(
+            "51", debit="当座預金", credit="普通預金",
+            debit_tax="課税仕入 10%", credit_tax="課税売上 10%",
+        )
+        cases.append((both_effective, base))
+        for status, context_hash in (
+            (MappingStatus.UNRESOLVED, self._context_hash(context)),
+            (MappingStatus.USER_CONFIRMED, "stale-context"),
+        ):
+            profile = self._mapped_tax_profile(context)
+            current = profile.tax_mappings["対象外"]
+            profile.tax_mappings["対象外"] = MappingValue(
+                "対象外", "", status,
+                metadata={**current.metadata, "jdl_context_sha256": context_hash},
+            )
+            cases.append((self._row("52", debit_tax="課税仕入 10%", credit_tax="対象外"), profile))
+        cases.append((self._row("53", debit_tax="未知税", credit_tax="対象外"), base))
+        wrong_evidence = self._mapped_tax_profile(context)
+        current = wrong_evidence.tax_mappings["課税仕入 10%"]
+        wrong_evidence.tax_mappings["課税仕入 10%"] = MappingValue(
+            "課税仕入 10%", "10%", MappingStatus.USER_CONFIRMED,
+            metadata={**current.metadata, "jdl_evidence_id": "WRONG-EVIDENCE"},
+        )
+        cases.append((self._row("54", debit_tax="課税仕入 10%", credit_tax="対象外"), wrong_evidence))
+
+        for index, (row, profile) in enumerate(cases):
+            with self.subTest(index=index), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source = self._write(root / f"blocked-{index}.csv", [row])
+                output = root / "jdl.csv"
+                prepared = MoneyForwardConversionWorkflow().prepare(
+                    input_path=source,
+                    output_path=output,
+                    profile=profile,
+                    context=context,
+                    company_setting_validated=True,
+                )
+                self.assertEqual(prepared.summary.readiness, FirstReleaseReadiness.BLOCKED)
+                self.assertFalse(output.exists())
+
+    def _tax_subaccount_profile(self, context) -> ConversionProfile:
         profile = self._conversion_profile()
         key = MappingKey(MappingType.SUBACCOUNT, "補助甲", "現金")
         profile.subaccount_context_mappings[key] = MappingValue(
@@ -595,8 +670,45 @@ class MoneyForwardToJdlSyntheticE2ETests(unittest.TestCase):
             metadata={
                 "jdl_tax_scope": "仕　入",
                 "jdl_evidence_id": "EVID-JDL-MF-TAX-PURCHASE-10-SUBACCOUNT-ROUNDTRIP-001",
+                "jdl_tax_processing_mode": "TAXABLE_TAX_INCLUDED",
+                "setup_context_sha256": self._context_hash(context),
+                "jdl_context_sha256": self._context_hash(context),
             },
         )
+        return profile
+
+    def _mapped_tax_profile(self, context) -> ConversionProfile:
+        profile = self._conversion_profile()
+        for parent in ("現金",):
+            for side in ("DEBIT", "CREDIT"):
+                profile.subaccount_context_mappings[
+                    MappingKey(MappingType.SUBACCOUNT, "補助甲", parent, side)
+                ] = MappingValue(
+                    "補助甲", "補助甲", MappingStatus.USER_CONFIRMED, parent,
+                    {"target_code": "1", "output_code": "1", "output_name": "補助甲"},
+                )
+        context_hash = self._context_hash(context)
+        specs = {
+            "課税仕入 10%": ("10%", "仕　入", "EVID-JDL-MF-TAX-PURCHASE-10-ROUNDTRIP-001"),
+            "課税売上 10%": ("10%", "売一種", "EVID-JDL-MF-TAX-SALES-10-SUBACCOUNT-ROUNDTRIP-001"),
+            "課税仕入 (軽)8%": ("軽減8%", "仕　入", "EVID-JDL-MF-TAX-PURCHASE-REDUCED-8-SUBACCOUNT-ROUNDTRIP-001"),
+            "課税売上 (軽)8%": ("軽減8%", "売一種", "EVID-JDL-MF-TAX-SALES-REDUCED-8-SUBACCOUNT-ROUNDTRIP-001"),
+            "非課税仕入": ("", "非仕入", "EVID-JDL-MF-TAX-NONTAXABLE-PURCHASE-SUBACCOUNT-ROUNDTRIP-001"),
+            "対象外": ("", "", "EVID-JDL-MF-TAX-OUT-OF-SCOPE-SUBACCOUNT-ROUNDTRIP-001"),
+        }
+        profile.tax_mappings.update({
+            source: MappingValue(
+                source, target, MappingStatus.USER_CONFIRMED,
+                metadata={
+                    "jdl_tax_scope": scope,
+                    "jdl_evidence_id": evidence,
+                    "jdl_tax_processing_mode": "TAXABLE_TAX_INCLUDED",
+                    "setup_context_sha256": context_hash,
+                    "jdl_context_sha256": context_hash,
+                },
+            )
+            for source, (target, scope, evidence) in specs.items()
+        })
         return profile
 
     def _tax_subaccount_context(self):
@@ -620,6 +732,28 @@ class MoneyForwardToJdlSyntheticE2ETests(unittest.TestCase):
         )
         self.assertTrue(result.success, result.validation_results)
         return result.context
+
+    def _mapped_tax_context(self):
+        result = JdlTargetContextBuilder().build(
+            target_format_identity=jdl_ibex_cashbook_official_journal_import_schema_definition().identity,
+            product="JDL IBEX 出納帳", version="35.5",
+            account_master=tuple(JdlAccountIdentity(name, code, name, name) for name, code in self.codes.items()),
+            subaccounts=(JdlSubaccountIdentity("現金", "補助甲", "1", "1", "補助甲", True, "1001", "補助甲"),),
+            departments=(), tax_processing_mode=JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED,
+            department_processing_enabled=False, standard_taxation_confirmed=True,
+            individual_credit_method_confirmed=True,
+            confirmation_state=JdlContextConfirmationState.CONFIRMED,
+            provenance=JdlContextProvenance.USER_CONFIRMED_RUNTIME_SNAPSHOT,
+            no_fuzzy_matching=True, no_automatic_replacement=True,
+        )
+        self.assertTrue(result.success, result.validation_results)
+        return result.context
+
+    @staticmethod
+    def _context_hash(context) -> str:
+        return hashlib.sha256(
+            JdlTargetContextLoader().to_json_text(context).encode("utf-8")
+        ).hexdigest()
 
     def _convert(self, source, output, assignments, *, context="DEFAULT", use_default_context=True, overwrite=False):
         profile = self._conversion_profile()
@@ -738,9 +872,12 @@ class MoneyForwardToJdlSyntheticE2ETests(unittest.TestCase):
         )
 
     @staticmethod
-    def _with_columns(row: tuple[str, ...], *, debit_sub="", debit_department=""):
+    def _with_columns(
+        row: tuple[str, ...], *, debit_sub="", credit_sub="", debit_department=""
+    ):
         values = list(row)
         values[3] = debit_sub
+        values[10] = credit_sub
         values[4] = debit_department
         return tuple(values)
 

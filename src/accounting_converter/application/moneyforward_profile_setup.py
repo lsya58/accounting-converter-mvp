@@ -323,6 +323,9 @@ class MoneyForwardProfileSetupService:
         )
         self.profile_store.create(profile)
         confirmation = MappingConfirmationService(self.profile_store)
+        tax_context_sha256 = hashlib.sha256(
+            JdlTargetContextLoader().to_json_text(analysis.context).encode("utf-8")
+        ).hexdigest()
         try:
             pending_keys = set(analysis.pending_field_keys)
             if set(analysis.unresolved_tax_categories) <= confirmed_tax:
@@ -371,7 +374,7 @@ class MoneyForwardProfileSetupService:
                     profile_id,
                     MappingKey(MappingType.TAX_CATEGORY, source_value),
                     item.target_value,
-                    metadata=self._tax_mapping_metadata(item, context_sha256),
+                    metadata=self._tax_mapping_metadata(item, tax_context_sha256),
                 )
             saved = self.profile_store.get(profile_id)
             runtime = (
@@ -445,11 +448,14 @@ class MoneyForwardProfileSetupService:
             raise MoneyForwardProfileSetupError(
                 "現在のJDL設定ではこの税区分を確認できません。"
             )
+        context_sha256 = hashlib.sha256(
+            JdlTargetContextLoader().to_json_text(context).encode("utf-8")
+        ).hexdigest()
         return MappingConfirmationService(self.profile_store).confirm_mapping(
             profile_id,
             MappingKey(MappingType.TAX_CATEGORY, source_value),
             item.target_value,
-            metadata=self._tax_mapping_metadata(item),
+            metadata=self._tax_mapping_metadata(item, context_sha256),
             allow_empty_tax_target=True,
         )
 
@@ -524,7 +530,10 @@ class MoneyForwardProfileSetupService:
             "jdl_evidence_id": item.evidence_id,
             "jdl_tax_processing_mode": "TAXABLE_TAX_INCLUDED",
             **(
-                {"setup_context_sha256": context_sha256}
+                {
+                    "setup_context_sha256": context_sha256,
+                    "jdl_context_sha256": context_sha256,
+                }
                 if context_sha256 is not None
                 else {}
             ),
