@@ -31,10 +31,16 @@ from accounting_converter.application.moneyforward_jdl_loss import (
 )
 from accounting_converter.application.moneyforward_trade_partner import (
     MoneyForwardTradePartnerDescriptionPolicy,
+    TRADE_PARTNER_2D2C_TAXABLE_EVIDENCE_ID,
+    TRADE_PARTNER_2D2C_TAXABLE_NO_SUBACCOUNT_EVIDENCE_ID,
 )
 from accounting_converter.application.profile_preflight import mapping_rule_set_from_profile
 from accounting_converter.application.validation_pipeline import ValidationPipeline
-from accounting_converter.domain.conversion_profile import ConversionProfile
+from accounting_converter.domain.conversion_profile import (
+    ConversionProfile,
+    LossPolicy,
+    TRADE_PARTNER_TRANSFORMATION_KEY,
+)
 from accounting_converter.domain.journal import JournalEntry, JournalLine, Side
 from accounting_converter.domain.mapping import MappingStatus
 from accounting_converter.domain.profile import FormatProfile
@@ -320,15 +326,51 @@ class MoneyForwardConversionWorkflow:
                     if len(effective) == 1:
                         source, mapped = effective[0]
                         route = _TAX_ROUTES.get((mapped.side, source.tax_info.category, bool(mapped.sub_account)))
+                    verified_combination = False
+                    selected_profile = None
+                    if route is not None:
+                        if route[0] is JdlEvidenceProfile.TAX_PURCHASE_10_SUBACCOUNT_INCLUDED_1111:
+                            expected_combination_evidence = (
+                                TRADE_PARTNER_2D2C_TAXABLE_EVIDENCE_ID
+                            )
+                        elif route[0] is JdlEvidenceProfile.TAX_INCLUDED_1111:
+                            expected_combination_evidence = (
+                                TRADE_PARTNER_2D2C_TAXABLE_NO_SUBACCOUNT_EVIDENCE_ID
+                            )
+                        else:
+                            expected_combination_evidence = None
+                        marker = entry.metadata.get(TRADE_PARTNER_TRANSFORMATION_KEY)
+                        verified_combination = (
+                            marker is None
+                            and route[0]
+                            in {
+                                JdlEvidenceProfile.TAX_PURCHASE_10_SUBACCOUNT_INCLUDED_1111,
+                                JdlEvidenceProfile.TAX_INCLUDED_1111,
+                            }
+                        ) or (
+                            isinstance(marker, dict)
+                            and marker.get("policy")
+                            == LossPolicy.APPEND_TRADE_PARTNER_TO_DESCRIPTION_CONFIRMED.value
+                            and marker.get("jdl_combination_evidence_id")
+                            == expected_combination_evidence
+                        )
+                        if verified_combination:
+                            selected_profile = (
+                                JdlEvidenceProfile.COMPOUND_2D2C_PURCHASE_10_TAXABLE
+                                if route[0]
+                                is JdlEvidenceProfile.TAX_PURCHASE_10_SUBACCOUNT_INCLUDED_1111
+                                else JdlEvidenceProfile.COMPOUND_2D2C_PURCHASE_10_TAXABLE_NO_SUBACCOUNT
+                            )
                     if (
                         route is None
-                        or route[0] is not JdlEvidenceProfile.TAX_PURCHASE_10_SUBACCOUNT_INCLUDED_1111
+                        or not verified_combination
                         or profile.tax_mappings[source.tax_info.category].metadata.get("jdl_evidence_id") != route[1]
                     ):
                         reasons.append("この2D2C課税仕訳は実機確認済み範囲外です。")
                         unsupported.add(entry.id)
                     else:
-                        assignments[entry.id] = JdlEvidenceProfile.COMPOUND_2D2C_PURCHASE_10_TAXABLE
+                        assert selected_profile is not None
+                        assignments[entry.id] = selected_profile
                 elif context.tax_processing_mode is not JdlTaxProcessingMode.EXEMPT:
                     reasons.append("このJDL税設定では複合仕訳の実機確認が完了していません。")
                     unsupported.add(entry.id)

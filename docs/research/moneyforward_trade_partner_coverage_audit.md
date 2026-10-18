@@ -40,27 +40,61 @@ Tax-field presence is not the same as an unresolved tax blocker. None of these 4
 
 The current structural ceiling is 410/482 (85.06%). The implemented, explicitly confirmed 1D1C description policy passes privacy-safe prechecks for all 29 otherwise-clear journals: final descriptions are at most 32 characters and strict CP932 encodable. Subject to successful Human JDL import/re-export Evidence, the ceiling becomes 439/482 (91.08%). The other 18 require the 2D2C taxable feature combination/route to be resolved independently.
 
-The remaining 18 one-sided trade-partner journals were subsequently checked
-against the private source without exposing values. All 18 are `2D2C` cases
-with one debit purchase-10 tax line, one side and one distinct partner,
-CP932-safe descriptions within 32 characters, and no invoice/tag/memo/
-department blocker. However, all 18 source tax lines have no subaccount, while
-the verified combined probe has an exact parent-scoped subaccount. They are
-therefore outside its Evidence identity. The `2D2C` taxable base and the same
-base with the explicit description policy passed Human JDL import and strict
-re-export comparison under
-`EVID-JDL-COMPOUND-2D2C-PURCHASE-10-TAXABLE-ROUNDTRIP-001` and
-`EVID-MF-JDL-TRADE-PARTNER-2D2C-TAXABLE-DESCRIPTION-ROUNDTRIP-001`, but release
-zero of these 18 journals. The Evidence-backed ceiling remains 439/482
-(91.08%) until a no-subaccount target scope is verified.
+The remaining 18 one-sided trade-partner journals were checked against the
+private source without exposing values. All 18 are `2D2C` cases with one debit
+purchase-10 tax line, no tax-side subaccount, one side and one distinct partner,
+CP932-safe descriptions within 32 characters, and no invoice, tag, memo, or
+department blocker. The exact no-subaccount target variant passed Human JDL
+Import and strict re-export comparison as
+`EVID-MF-JDL-TRADE-PARTNER-2D2C-TAXABLE-NO-SUBACCOUNT-DESCRIPTION-ROUNDTRIP-001`.
+All 18 now match the limited Evidence scope, raising Evidence-backed coverage
+from 439/482 (91.08%) to 457/482 (94.81%). This does not generalize to another
+shape, tax category, partner cardinality, optional-field combination, or stale
+context.
 
-Threshold arithmetic, measured from the current 410-journal ceiling:
+Threshold arithmetic after the exact no-subaccount release:
 
-| Target | Minimum passing journals | Additional journals needed now | Additional after trade-partner-only release |
-|---|---:|---:|---:|
-| 90% | 434 | 24 | 0 |
-| 95% | 458 | 48 | 19 |
-| 98% | 473 | 63 | 34 |
+| Target | Minimum passing journals | Additional journals needed from 457 |
+|---|---:|---:|
+| 90% | 434 | 0 |
+| 95% | 458 | 1 |
+| 98% | 473 | 16 |
+
+The remaining standalone `2D2C` purchase-10 case with no taxable-side
+subaccount and no trade partner passed Human JDL import and strict re-export
+comparison under
+`EVID-JDL-COMPOUND-2D2C-PURCHASE-10-TAXABLE-NO-SUBACCOUNT-ROUNDTRIP-001`.
+It releases exactly one additional private journal. Evidence-backed coverage is
+therefore 458/482 (95.02%). The remaining 24 journals have other compound
+shapes and are not covered by this Evidence.
+
+| Remaining shape | Journals |
+|---|---:|
+| 2D1C | 10 |
+| 4D6C | 5 |
+| 5D8C | 5 |
+| 10D9C | 1 |
+| 1D2C | 1 |
+| 2D3C | 1 |
+| 5D7C | 1 |
+| Total | 24 |
+
+## Limited-pilot batch gate
+
+The 95.02% figure is Evidence coverage, not an assertion that the complete
+482-journal source is READY. The formal runtime is atomic, so the 24 remaining
+unsupported journals correctly block a whole-file conversion. A privacy-safe
+date analysis found 23 candidate intervals containing no unsupported shape;
+the largest contains 38 journals. These are structural candidates only and
+must be run through the exact saved CompanySetting before being called READY.
+
+Before a limited pilot, one READY-only candidate batch must complete the formal
+pipeline and JDL import/re-export check as a batch. The gate includes source and
+output journal counts, physical-row counts, debit and credit totals, grouping
+and order, atomic no-partial-output behavior, privacy-safe diagnostics, a JDL
+backup, and a documented retry procedure using a new output path. Automated
+backup/restore UI and support for the remaining shapes can follow during the
+pilot; weakening the atomic gate cannot.
 
 ## JDL representation evidence
 

@@ -606,6 +606,94 @@ class MoneyForwardToJdlSyntheticE2ETests(unittest.TestCase):
             rows = self._output_rows(output)
             self.assertEqual(rows[1][rows[0].index("摘要")], "TEST / 取引先:PARTNER-A")
 
+    def test_exact_company_workflow_routes_verified_2d2c_taxable_partner_without_subaccount(self) -> None:
+        rows = [
+            self._row(
+                "38", debit="当座預金", debit_amount="600",
+                credit="現金", credit_amount="300", debit_tax="課税仕入 10%",
+                credit_tax="対象外", debit_partner="PARTNER-A", description="TEST",
+            ),
+            self._row(
+                "38", debit="小口現金", debit_amount="400",
+                credit="小口現金", credit_amount="700", debit_tax="対象外",
+                credit_tax="対象外", description="ROW2",
+            ),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = self._write(root / "partner-2d2c.csv", rows)
+            output = root / "jdl.csv"
+            context = self._mapped_tax_context()
+            profile = self._mapped_tax_profile(context)
+            profile.loss_policy_mappings[TRADE_PARTNER_LOSS_POLICY_KEY] = MappingValue(
+                TRADE_PARTNER_LOSS_POLICY_KEY,
+                LossPolicy.APPEND_TRADE_PARTNER_TO_DESCRIPTION_CONFIRMED.value,
+                MappingStatus.USER_CONFIRMED,
+                metadata={
+                    "jdl_context_sha256": self._context_hash(context),
+                    "jdl_evidence_id": (
+                        "EVID-MF-JDL-TRADE-PARTNER-1D1C-"
+                        "DESCRIPTION-ROUNDTRIP-001"
+                    ),
+                },
+            )
+            prepared = MoneyForwardConversionWorkflow().prepare(
+                input_path=source,
+                output_path=output,
+                profile=profile,
+                context=context,
+                company_setting_validated=True,
+            )
+            result = MoneyForwardConversionWorkflow.execute(prepared)
+            output_rows = self._output_rows(output)
+
+        self.assertEqual(prepared.summary.readiness, FirstReleaseReadiness.READY)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.status, ConversionStatus.SUCCESS)
+        header, first, second = output_rows
+        self.assertEqual([first[0], second[0]], ["1110", "1101"])
+        self.assertFalse(first[header.index("借方補助")])
+        self.assertFalse(first[header.index("借方補助名称")])
+        self.assertEqual(first[header.index("借方課区")], "仕　入")
+        self.assertEqual(first[header.index("借方税区")], "10%")
+        self.assertEqual(first[header.index("摘要")], "TEST / 取引先:PARTNER-A")
+
+    def test_2d2c_taxable_without_subaccount_uses_verified_narrow_profile(self) -> None:
+        rows = [
+            self._row(
+                "39", debit="当座預金", debit_amount="600",
+                credit="現金", credit_amount="300", debit_tax="課税仕入 10%",
+                credit_tax="対象外", description="TEST",
+            ),
+            self._row(
+                "39", debit="小口現金", debit_amount="400",
+                credit="小口現金", credit_amount="700", debit_tax="対象外",
+                credit_tax="対象外", description="ROW2",
+            ),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = self._write(root / "no-partner-2d2c.csv", rows)
+            output = root / "jdl.csv"
+            prepared = MoneyForwardConversionWorkflow().prepare(
+                input_path=source,
+                output_path=output,
+                profile=self._mapped_tax_profile(self._mapped_tax_context()),
+                context=self._mapped_tax_context(),
+                company_setting_validated=True,
+            )
+            result = MoneyForwardConversionWorkflow.execute(prepared)
+            output_rows = self._output_rows(output)
+        self.assertEqual(prepared.summary.readiness, FirstReleaseReadiness.READY)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.status, ConversionStatus.SUCCESS)
+        header, first, second = output_rows
+        self.assertEqual([first[0], second[0]], ["1110", "1101"])
+        self.assertFalse(first[header.index("借方補助")])
+        self.assertFalse(first[header.index("借方補助名称")])
+        self.assertEqual(first[header.index("借方課区")], "仕　入")
+        self.assertEqual(first[header.index("借方税区")], "10%")
+
     def test_exact_company_workflow_does_not_overwrite_existing_output(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -27,6 +27,12 @@ TRADE_PARTNER_1D1C_EVIDENCE_ID = (
 TRADE_PARTNER_2D2C_TAXABLE_EVIDENCE_ID = (
     "EVID-MF-JDL-TRADE-PARTNER-2D2C-TAXABLE-DESCRIPTION-ROUNDTRIP-001"
 )
+TRADE_PARTNER_2D2C_TAXABLE_NO_SUBACCOUNT_EVIDENCE_ID = (
+    "EVID-MF-JDL-TRADE-PARTNER-2D2C-TAXABLE-NO-SUBACCOUNT-"
+    "DESCRIPTION-ROUNDTRIP-001"
+)
+
+
 class MoneyForwardTradePartnerDescriptionPolicy:
     """Applies one explicitly confirmed 1D1C trade-partner transformation."""
 
@@ -101,9 +107,21 @@ class MoneyForwardTradePartnerDescriptionPolicy:
 
         partner = next(iter(partners))
         suffix = f"{TRADE_PARTNER_DESCRIPTION_PREFIX}{partner}"
+        source_description = entry.description
+        if (debit_count, credit_count) == (2, 2):
+            observed_description = partner_lines[0].metadata.get(
+                "moneyforward_description"
+            )
+            if not isinstance(observed_description, str):
+                return entry, self._error(
+                    entry,
+                    "MF-JDL-PARTNER-ROW-DESCRIPTION",
+                    "取引先を保持する行の摘要を確認できません。",
+                )
+            source_description = observed_description
         description = (
-            f"{entry.description}{TRADE_PARTNER_DESCRIPTION_SEPARATOR}{suffix}"
-            if entry.description
+            f"{source_description}{TRADE_PARTNER_DESCRIPTION_SEPARATOR}{suffix}"
+            if source_description
             else suffix
         )
         if len(description) > 32:
@@ -144,12 +162,36 @@ class MoneyForwardTradePartnerDescriptionPolicy:
             TRADE_PARTNER_TRANSFORMATION_KEY: {
                 "policy": policy.target_value,
                 "source_side": next(iter(sides)),
+                "jdl_combination_evidence_id": self._combination_evidence_id(
+                    lines, debit_count, credit_count
+                ),
                 "target_description_sha256": hashlib.sha256(
                     description.encode("utf-8")
                 ).hexdigest(),
             },
         }
         return replace(entry, lines=lines, description=description, metadata=metadata), None
+
+    @staticmethod
+    def _combination_evidence_id(
+        lines: list, debit_count: int, credit_count: int
+    ) -> str | None:
+        if (debit_count, credit_count) != (2, 2):
+            return None
+        tax_lines = [
+            line
+            for line in lines
+            if line.side.value == "DEBIT"
+            and line.tax_info is not None
+            and line.tax_info.category == "課税仕入 10%"
+        ]
+        if len(tax_lines) != 1:
+            return None
+        return (
+            TRADE_PARTNER_2D2C_TAXABLE_EVIDENCE_ID
+            if tax_lines[0].sub_account
+            else TRADE_PARTNER_2D2C_TAXABLE_NO_SUBACCOUNT_EVIDENCE_ID
+        )
 
     @staticmethod
     def _error(entry: JournalEntry, rule_id: str, message: str) -> ValidationResult:
