@@ -16,6 +16,7 @@ from accounting_converter.application.company_mapping_update import (
 )
 from accounting_converter.domain.conversion_profile import ConversionProfile
 from accounting_converter.domain.mapping import (
+    DEFAULT_SUBACCOUNT_SOURCE_VALUE,
     MappingKey,
     MappingStatus,
     MappingType,
@@ -60,7 +61,10 @@ class CompanyMappingUpdateTests(unittest.TestCase):
             "profile-1", "架空設定", moneyforward_cloud_journal_export_observed_schema().identity,
             jdl_ibex_cashbook_official_journal_import_schema_definition().identity,
             account_mappings={"入力科目A": MappingValue("入力科目A", "架空科目A", MappingStatus.USER_CONFIRMED, metadata={"target_code":"1001","target_printed_name":"架空科目A","setup_context_sha256":context_hash})},
-            subaccount_context_mappings={MappingKey(MappingType.SUBACCOUNT,"入力補助A","入力科目A"): MappingValue("入力補助A","架空補助A",MappingStatus.USER_CONFIRMED,parent_account="入力科目A",metadata={"target_code":"0001","output_name":"架空補助A"})},
+            subaccount_context_mappings={
+                MappingKey(MappingType.SUBACCOUNT,"入力補助A","入力科目A"): MappingValue("入力補助A","架空補助A",MappingStatus.USER_CONFIRMED,parent_account="入力科目A",metadata={"target_code":"0001","output_code":"0001","output_name":"架空補助A"}),
+                MappingKey(MappingType.SUBACCOUNT,DEFAULT_SUBACCOUNT_SOURCE_VALUE,"入力科目A"): MappingValue(DEFAULT_SUBACCOUNT_SOURCE_VALUE,"架空補助A",MappingStatus.USER_CONFIRMED,parent_account="入力科目A",metadata={"target_code":"0001","output_code":"0001","output_name":"架空補助A","subaccount_policy":SubaccountPolicy.DEFAULT_TARGET_SUBACCOUNT.value}),
+            },
             created_at=now, updated_at=now,
         ))
         self.companies = CompanySettingStore(self.root / "companies", self.profiles)
@@ -72,16 +76,20 @@ class CompanyMappingUpdateTests(unittest.TestCase):
     def test_only_new_account_is_reviewed_and_confirmation_is_reused(self):
         source=self.root/"new.csv"; self._write(source, debit_account="入力科目A",debit_sub="入力補助A",credit_account="新規科目")
         review=self.service.review("company-a",source)
-        self.assertEqual([(i.mapping_type,i.source_value) for i in review.items],[("ACCOUNT","新規科目")])
+        self.assertEqual(
+            [(i.mapping_type,i.source_value) for i in review.items],
+            [("ACCOUNT","新規科目"), ("DEFAULT_SUBACCOUNT","（補助科目なし）")],
+        )
         with self.assertRaises(ValueError): self.service.apply(review,{},set())
-        item=review.items[0]
-        self.service.apply(review,{item.key:"架空科目B"},{item.key})
+        account, default = review.items
+        selections = {account.key:"架空科目B", default.key:"架空補助B"}
+        self.service.apply(review,selections,set(selections))
         self.assertFalse(self.service.review("company-a",source).items)
 
         editable = self.service.review(
             "company-a", source, include_confirmed=True
         )
-        self.assertEqual(len(editable.items), 3)
+        self.assertEqual(len(editable.items), 4)
         self.assertTrue(
             all(item.exact_candidate for item in editable.items)
         )
@@ -105,9 +113,11 @@ class CompanyMappingUpdateTests(unittest.TestCase):
         )
 
         review = self.service.review("company-empty", source)
-        self.assertEqual(len(review.items), 1)
-        item = review.items[0]
-        self.service.apply(review, {item.key: "架空科目A"}, {item.key})
+        self.assertEqual(len(review.items), 2)
+        account = next(item for item in review.items if item.mapping_type == "ACCOUNT")
+        default = next(item for item in review.items if item.mapping_type == "DEFAULT_SUBACCOUNT")
+        selections = {account.key: "架空科目A", default.key: "架空補助A"}
+        self.service.apply(review, selections, set(selections))
 
         self.assertFalse(self.service.review("company-empty", source).items)
         setting = self.companies.get("company-empty")
@@ -153,6 +163,9 @@ class CompanyMappingUpdateTests(unittest.TestCase):
         review = self.service.review("company-unconfirmed-parent", source)
         account = next(i for i in review.items if i.mapping_type == "ACCOUNT")
         subaccount = next(i for i in review.items if i.mapping_type == "SUBACCOUNT")
+        default = next(
+            i for i in review.items if i.mapping_type == "DEFAULT_SUBACCOUNT"
+        )
 
         self.assertEqual(subaccount.available_targets, ())
         self.assertEqual(
@@ -169,6 +182,7 @@ class CompanyMappingUpdateTests(unittest.TestCase):
         selections = {
             account.key: "架空科目A",
             subaccount.key: "架空補助A",
+            default.key: "架空補助A",
         }
         self.service.apply(review, selections, set(selections))
         self.assertFalse(
@@ -208,12 +222,19 @@ class CompanyMappingUpdateTests(unittest.TestCase):
         review = self.service.review("company-parent-change", source)
         account = next(i for i in review.items if i.mapping_type == "ACCOUNT")
         subaccount = next(i for i in review.items if i.mapping_type == "SUBACCOUNT")
+        default = next(
+            i for i in review.items if i.mapping_type == "DEFAULT_SUBACCOUNT"
+        )
 
         with self.assertRaisesRegex(ValueError, "補助科目を確認"):
             self.service.apply(
                 review,
-                {account.key: "架空科目B", subaccount.key: "架空補助A"},
-                {account.key, subaccount.key},
+                {
+                    account.key: "架空科目B",
+                    subaccount.key: "架空補助A",
+                    default.key: "架空補助B",
+                },
+                {account.key, subaccount.key, default.key},
             )
 
     def test_parent_only_requires_explicit_confirmation_and_persists_by_company(self):
@@ -305,6 +326,69 @@ class CompanyMappingUpdateTests(unittest.TestCase):
                 {item.key},
             )
 
+    def test_blank_source_subaccount_requires_explicit_default_and_persists(self):
+        profile = self.profiles.get("profile-1")
+        self.profiles.update(replace(
+            profile,
+            subaccount_context_mappings={
+                key: value
+                for key, value in profile.subaccount_context_mappings.items()
+                if key.source_value != DEFAULT_SUBACCOUNT_SOURCE_VALUE
+            },
+        ))
+        source = self.root / "default-subaccount.csv"
+        self._write(
+            source,
+            debit_account="入力科目A",
+            debit_sub="",
+            credit_account="入力科目A",
+        )
+
+        review = self.service.review("company-a", source)
+        item = next(
+            item for item in review.items
+            if item.mapping_type == "DEFAULT_SUBACCOUNT"
+        )
+        self.assertEqual(item.parent_account, "入力科目A")
+        self.assertEqual(item.available_targets, ("架空補助A",))
+        with self.assertRaises(ValueError):
+            self.service.apply(review, {item.key: "架空補助A"}, set())
+
+        self.service.apply(review, {item.key: "架空補助A"}, {item.key})
+        self.assertFalse(self.service.review("company-a", source).items)
+        setting = self.companies.get("company-a")
+        saved = self.profiles.get(setting.conversion_profile_id)
+        mapping = saved.subaccount_context_mappings[
+            MappingKey(
+                MappingType.SUBACCOUNT,
+                DEFAULT_SUBACCOUNT_SOURCE_VALUE,
+                "入力科目A",
+            )
+        ]
+        self.assertEqual(mapping.target_value, "架空補助A")
+        self.assertEqual(
+            mapping.metadata["subaccount_policy"],
+            SubaccountPolicy.DEFAULT_TARGET_SUBACCOUNT.value,
+        )
+
+    def test_blank_source_default_coexists_with_explicit_source_mapping(self):
+        source = self.root / "mixed-subaccounts.csv"
+        rows = [
+            ["1","2026/10/14","入力科目A","","","","対象外","","100","入力科目A","","","","","対象外","100","架空摘要A","",""],
+            ["2","2026/10/15","入力科目A","入力補助A","","","対象外","","100","入力科目A","入力補助A","","","","対象外","100","架空摘要B","",""],
+        ]
+        with source.open("w", encoding="cp932", newline="") as stream:
+            writer = csv.writer(stream, lineterminator="\n", quoting=csv.QUOTE_ALL)
+            writer.writerow(MONEYFORWARD_OBSERVED_HEADER)
+            writer.writerows(rows)
+        saved = self.profiles.get(
+            self.companies.get("company-a").conversion_profile_id
+        )
+        self.assertIn(
+            MappingKey(MappingType.SUBACCOUNT, "入力補助A", "入力科目A"),
+            saved.subaccount_context_mappings,
+        )
+
     def test_mapping_update_forks_shared_profile_for_company_isolation(self):
         self.companies.create(
             company_setting_id="company-b",
@@ -381,11 +465,15 @@ class CompanyMappingUpdateTests(unittest.TestCase):
         self.assertIsNone(review.source_path)
         self.assertEqual(
             [(item.mapping_type, item.exact_candidate) for item in review.items],
-            [("ACCOUNT", "架空科目A"), ("SUBACCOUNT", "架空補助A")],
+            [
+                ("ACCOUNT", "架空科目A"),
+                ("DEFAULT_SUBACCOUNT", "架空補助A"),
+                ("SUBACCOUNT", "架空補助A"),
+            ],
         )
         selections = {item.key: item.exact_candidate for item in review.items}
         self.service.apply(review, selections, set(selections))
-        self.assertEqual(len(self.service.review_saved("company-a").items), 2)
+        self.assertEqual(len(self.service.review_saved("company-a").items), 3)
 
     def test_confirmed_runtime_context_uses_in_flow_review_and_save(self):
         context = self.root / "confirmed-context.json"

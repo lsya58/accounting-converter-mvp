@@ -168,6 +168,18 @@ class CompanyTaxContextConfirmationTests(unittest.TestCase):
 
         profile = self.profiles.get(updated_setting.conversion_profile_id)
         self.assertTrue(
+            all(
+                value.status is MappingStatus.USER_CONFIRMED
+                for value in profile.account_mappings.values()
+            )
+        )
+        self.assertTrue(
+            all(
+                value.status is MappingStatus.USER_CONFIRMED
+                for value in profile.subaccount_context_mappings.values()
+            )
+        )
+        self.assertTrue(
             all(value.status is MappingStatus.UNRESOLVED for value in profile.tax_mappings.values())
         )
         self.assertTrue(

@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -450,7 +451,7 @@ class SettingsDialog(QDialog):
             )
         company_row.addWidget(self.company_combo, 1)
         layout.addLayout(company_row)
-        company_actions = QHBoxLayout()
+        company_actions = QGridLayout()
         add_company = QPushButton("会社を追加")
         add_company.clicked.connect(self._add_company)
         rename_company = QPushButton("名前を変更")
@@ -463,13 +464,18 @@ class SettingsDialog(QDialog):
         refresh_master.clicked.connect(self._refresh_master)
         self.tax_context_button = QPushButton("JDL税設定を確認")
         self.tax_context_button.clicked.connect(self._confirm_tax_context)
-        company_actions.addWidget(add_company)
-        company_actions.addWidget(rename_company)
-        company_actions.addWidget(confirm_tax)
-        company_actions.addWidget(refresh_master)
-        company_actions.addWidget(self.tax_context_button)
-        company_actions.addWidget(delete_company)
-        company_actions.addStretch(1)
+        refresh_master.setMinimumWidth(refresh_master.sizeHint().width() + 12)
+        self.tax_context_button.setMinimumWidth(
+            self.tax_context_button.sizeHint().width() + 12
+        )
+        company_actions.addWidget(add_company, 0, 0)
+        company_actions.addWidget(rename_company, 0, 1)
+        company_actions.addWidget(delete_company, 0, 2)
+        company_actions.addWidget(confirm_tax, 1, 0)
+        company_actions.addWidget(refresh_master, 1, 1)
+        company_actions.addWidget(self.tax_context_button, 1, 2)
+        for column in range(3):
+            company_actions.setColumnStretch(column, 1)
         layout.addLayout(company_actions)
 
         profile_row = QHBoxLayout()
@@ -854,13 +860,22 @@ class CompanyMappingUpdateDialog(QDialog):
         table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         for row, item in enumerate(review.items):
-            table.setItem(row, 0, QTableWidgetItem("補助科目" if item.mapping_type == "SUBACCOUNT" else "科目"))
+            kind_label = {
+                "SUBACCOUNT": "補助科目",
+                "DEFAULT_SUBACCOUNT": "補助なし時",
+            }.get(item.mapping_type, "科目")
+            table.setItem(row, 0, QTableWidgetItem(kind_label))
             table.setItem(row, 1, QTableWidgetItem(item.parent_account or ""))
             table.setItem(row, 2, QTableWidgetItem(item.source_value))
             target = WheelSafeComboBox()
             target.addItem("未選択", None)
             for value in item.available_targets:
-                target.addItem(f"JDL補助科目へ対応: {value}" if item.mapping_type == "SUBACCOUNT" else value, value)
+                target.addItem(
+                    f"JDL補助科目へ対応: {value}"
+                    if item.mapping_type in {"SUBACCOUNT", "DEFAULT_SUBACCOUNT"}
+                    else value,
+                    value,
+                )
             if item.mapping_type == "SUBACCOUNT" and item.parent_only_available:
                 target.addItem("親科目のみで変換する", PARENT_ONLY_SELECTION)
             if item.exact_candidate in item.available_targets:
@@ -932,7 +947,11 @@ class CompanyMappingUpdateDialog(QDialog):
                 targets = item.subaccount_targets_for(str(parent_target))
                 for value in targets:
                     combo.addItem(f"JDL補助科目へ対応: {value}", value)
-                if item.has_parent_target(str(parent_target)) and not targets:
+                if (
+                    item.mapping_type == "SUBACCOUNT"
+                    and item.has_parent_target(str(parent_target))
+                    and not targets
+                ):
                     combo.addItem(
                         "親科目のみで変換する", PARENT_ONLY_SELECTION
                     )
@@ -1595,8 +1614,9 @@ class JdlTaxContextConfirmationDialog(QDialog):
         title.setObjectName("sectionTitle")
         layout.addWidget(title)
         guidance = QLabel(
-            "この会社で使用しているJDLの設定を確認してください。"
-            "converterからJDL本体の設定を変更することはありません。"
+            "この変換機能は、以下のJDL設定で実機検証済みです。\n"
+            "この会社のJDL設定がすべて一致していることを確認してください。"
+            "この画面からJDL本体の設定を変更することはありません。"
         )
         guidance.setWordWrap(True)
         layout.addWidget(guidance)
@@ -1610,7 +1630,7 @@ class JdlTaxContextConfirmationDialog(QDialog):
         )
         details.setObjectName("card")
         layout.addWidget(details)
-        self.confirmed = QCheckBox("上記の設定であることを確認しました")
+        self.confirmed = QCheckBox("JDL側が上記の設定であることを確認しました")
         layout.addWidget(self.confirmed)
         actions = QHBoxLayout()
         cancel = QPushButton("キャンセル")

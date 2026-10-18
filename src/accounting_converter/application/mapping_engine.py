@@ -5,6 +5,7 @@ from typing import Sequence
 
 from accounting_converter.domain.journal import JournalEntry, JournalLine, TaxInfo
 from accounting_converter.domain.mapping import (
+    DEFAULT_SUBACCOUNT_SOURCE_VALUE,
     MappingKey,
     MappingStatus,
     MappingType,
@@ -108,6 +109,20 @@ class MappingEngine:
         validation_results: list[ValidationResult],
     ) -> str | None:
         if source is None or source == "":
+            default_key = MappingKey(
+                mapping_type=MappingType.SUBACCOUNT,
+                source_value=DEFAULT_SUBACCOUNT_SOURCE_VALUE,
+                parent_account=parent_account,
+                side=side,
+            )
+            default_mapping = context_rules.get(default_key)
+            if default_mapping is not None:
+                mapping_values.append(default_mapping)
+                if default_mapping.is_resolved:
+                    return default_mapping.target_value
+                validation_results.append(
+                    self._unresolved_result("（補助科目なし）", field, entry)
+                )
             return source
         context_key = MappingKey(
             mapping_type=MappingType.SUBACCOUNT,

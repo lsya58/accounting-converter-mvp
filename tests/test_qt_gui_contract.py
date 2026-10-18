@@ -246,11 +246,36 @@ class QtGuiContractTests(unittest.TestCase):
             "税込処理",
             "本則課税",
             "個別対応方式",
-            "上記の設定であることを確認しました",
+            "JDL側が上記の設定であることを確認しました",
+            "この画面からJDL本体の設定を変更することはありません。",
             "税区分を確認するには、この会社のJDL税設定の登録が必要です。",
         ):
             self.assertIn(text, source)
         self.assertIn("confirm_company_tax_context", controller)
+
+    def test_company_setting_actions_reserve_width_for_windows_text(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "refresh_master.setMinimumWidth(refresh_master.sizeHint().width() + 12)",
+            source,
+        )
+        self.assertIn(
+            "self.tax_context_button.sizeHint().width() + 12", source
+        )
+        self.assertIn("company_actions = QGridLayout()", source)
+        self.assertIn("company_actions.addWidget(refresh_master, 1, 1)", source)
+
+    def test_mapping_dialog_distinguishes_default_subaccount_from_parent_only(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('"DEFAULT_SUBACCOUNT": "補助なし時"', source)
+        self.assertIn(
+            'item.mapping_type in {"SUBACCOUNT", "DEFAULT_SUBACCOUNT"}', source
+        )
+        self.assertIn('item.mapping_type == "SUBACCOUNT"', source)
 
     def test_mapping_dialog_initializes_actions_before_subaccount_refresh(self) -> None:
         source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(

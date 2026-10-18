@@ -21,6 +21,7 @@ from accounting_converter.application.moneyforward_jdl_loss import MoneyForwardT
 from accounting_converter.application.validation_pipeline import ValidationPipeline
 from accounting_converter.domain.journal import Side
 from accounting_converter.domain.mapping import (
+    DEFAULT_SUBACCOUNT_SOURCE_VALUE,
     MappingKey,
     MappingStatus,
     MappingType,
@@ -199,6 +200,16 @@ class CompanyMappingUpdateService:
                     ),
                 )
             )
+        self._append_default_subaccount_items(
+            items,
+            entries,
+            profile,
+            account_review_by_source,
+            account_codes,
+            targets,
+            ambiguous,
+            include_confirmed=include_confirmed,
+        )
         verified_shapes = {(1, 1), (1, 3), (2, 1), (2, 2), (2, 3), (4, 6), (5, 7), (5, 8)}
         unsupported_shape_count = sum(
             (
@@ -275,6 +286,11 @@ class CompanyMappingUpdateService:
                 if (item.parent_account_code, item.code, item.name) not in ambiguous
             )
             names = tuple(item.name for item in candidates)
+            is_default = (
+                key.source_value == DEFAULT_SUBACCOUNT_SOURCE_VALUE
+                and mapping.metadata.get("subaccount_policy")
+                == SubaccountPolicy.DEFAULT_TARGET_SUBACCOUNT.value
+            )
             parent_only = bool(
                 mapping.status is MappingStatus.USER_CONFIRMED
                 and mapping.metadata.get("subaccount_policy")
@@ -285,8 +301,8 @@ class CompanyMappingUpdateService:
             items.append(
                 CompanyMappingUpdateItem(
                     key=key.stable_key,
-                    mapping_type="SUBACCOUNT",
-                    source_value=key.source_value,
+                    mapping_type=("DEFAULT_SUBACCOUNT" if is_default else "SUBACCOUNT"),
+                    source_value=("（補助科目なし）" if is_default else key.source_value),
                     parent_account=key.parent_account,
                     available_targets=names,
                     exact_candidate=(
@@ -375,6 +391,10 @@ class CompanyMappingUpdateService:
                 parent = accounts.get(item.parent_account or "")
                 parent_code = parent.metadata.get("target_code", "") if parent else ""
                 if selected == PARENT_ONLY_SELECTION:
+                    if item.mapping_type == "DEFAULT_SUBACCOUNT":
+                        raise ValueError(
+                            "補助なし仕訳の既定補助にはJDL補助科目を選択してください。"
+                        )
                     if parent is None or not parent.is_resolved or not parent_code:
                         raise ValueError("親科目の対応を先に確認してください。")
                     if tuple(sub_targets.get(parent_code, ())):
@@ -415,9 +435,14 @@ class CompanyMappingUpdateService:
                     ),
                     None,
                 ) if runtime_context is not None else None
-                key = MappingKey(MappingType.SUBACCOUNT, item.source_value, item.parent_account)
+                source_value = (
+                    DEFAULT_SUBACCOUNT_SOURCE_VALUE
+                    if item.mapping_type == "DEFAULT_SUBACCOUNT"
+                    else item.source_value
+                )
+                key = MappingKey(MappingType.SUBACCOUNT, source_value, item.parent_account)
                 subs[key] = MappingValue(
-                    item.source_value, target.name, MappingStatus.USER_CONFIRMED,
+                    source_value, target.name, MappingStatus.USER_CONFIRMED,
                     parent_account=item.parent_account,
                     metadata={
                         "target_code": (
@@ -425,7 +450,11 @@ class CompanyMappingUpdateService:
                         ),
                         "output_code": identity.output_code if identity else target.code,
                         "output_name": target.name,
-                        "subaccount_policy": SubaccountPolicy.PRESERVE_SUBACCOUNT.value,
+                        "subaccount_policy": (
+                            SubaccountPolicy.DEFAULT_TARGET_SUBACCOUNT.value
+                            if item.mapping_type == "DEFAULT_SUBACCOUNT"
+                            else SubaccountPolicy.PRESERVE_SUBACCOUNT.value
+                        ),
                         "setup_context_sha256": context_hash,
                     },
                 )
@@ -451,6 +480,76 @@ class CompanyMappingUpdateService:
             updated_at=datetime.now(timezone.utc),
         )
         self._persist_profile(review, old, updated)
+
+    @staticmethod
+    def _append_default_subaccount_items(
+        items,
+        entries,
+        profile,
+        account_review_by_source,
+        account_codes,
+        targets,
+        ambiguous,
+        *,
+        include_confirmed,
+    ) -> None:
+        source_accounts = sorted({
+            line.account
+            for entry in entries
+            for line in entry.lines
+            if line.account and not line.sub_account
+        })
+        for source_account in source_accounts:
+            key = MappingKey(
+                MappingType.SUBACCOUNT,
+                DEFAULT_SUBACCOUNT_SOURCE_VALUE,
+                source_account,
+            )
+            mapping = profile.subaccount_context_mappings.get(key)
+            parent_code = account_codes.get(source_account, "")
+            candidates = tuple(
+                item for item in targets.get(parent_code, ())
+                if (item.parent_account_code, item.code, item.name) not in ambiguous
+            )
+            usable = bool(
+                mapping
+                and mapping.status is MappingStatus.USER_CONFIRMED
+                and mapping.metadata.get("subaccount_policy")
+                == SubaccountPolicy.DEFAULT_TARGET_SUBACCOUNT.value
+                and len(tuple(
+                    item for item in candidates
+                    if item.code == mapping.metadata.get("target_code")
+                    and item.name == (mapping.metadata.get("output_name") or mapping.target_value)
+                )) == 1
+            )
+            parent_review = account_review_by_source.get(source_account)
+            parent_targets = parent_review.selectable_targets if parent_review else ()
+            has_possible_target = bool(candidates) or any(
+                targets.get(item.code) for item in parent_targets
+            )
+            if not has_possible_target and mapping is None:
+                continue
+            if usable and not include_confirmed:
+                continue
+            parent_mapping = profile.account_mappings.get(source_account)
+            items.append(CompanyMappingUpdateItem(
+                key=key.stable_key,
+                mapping_type="DEFAULT_SUBACCOUNT",
+                source_value="（補助科目なし）",
+                parent_account=source_account,
+                available_targets=tuple(item.name for item in candidates),
+                exact_candidate=(mapping.target_value if usable and mapping else None),
+                parent_only_available=False,
+                subaccount_targets_by_parent=CompanyMappingUpdateService._subaccount_options_by_parent(
+                    parent_targets, targets, ambiguous
+                ),
+                confirmed_parent_target=(
+                    parent_mapping.target_value
+                    if parent_mapping is not None
+                    and parent_mapping.status is MappingStatus.USER_CONFIRMED
+                    else None
+                ),
+            ))
 
     def ensure_tax_requirements(self, review: CompanyMappingUpdateReview) -> None:
         """Persist observed tax requirements without confirming or mapping them."""

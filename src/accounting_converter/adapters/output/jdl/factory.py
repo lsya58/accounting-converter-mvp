@@ -5,7 +5,12 @@ from accounting_converter.domain.conversion_profile import (
     ConversionProfile,
     ProfileVersionStatus,
 )
-from accounting_converter.domain.mapping import MappingKey, MappingValue, SubaccountPolicy
+from accounting_converter.domain.mapping import (
+    DEFAULT_SUBACCOUNT_SOURCE_VALUE,
+    MappingKey,
+    MappingValue,
+    SubaccountPolicy,
+)
 from accounting_converter.domain.profile import FormatProfile
 from accounting_converter.domain.validation import Severity, ValidationResult
 
@@ -157,6 +162,19 @@ class JdlOutputRuntimeFactory:
                     for item in context.subaccounts
                 )
             )
+        policy = mapping.metadata.get(
+            "subaccount_policy", SubaccountPolicy.PRESERVE_SUBACCOUNT.value
+        )
+        if policy not in {
+            SubaccountPolicy.PRESERVE_SUBACCOUNT.value,
+            SubaccountPolicy.DEFAULT_TARGET_SUBACCOUNT.value,
+        }:
+            return False
+        if (
+            policy == SubaccountPolicy.DEFAULT_TARGET_SUBACCOUNT.value
+            and key.source_value != DEFAULT_SUBACCOUNT_SOURCE_VALUE
+        ):
+            return False
         identity = next(
             (
                 item

@@ -53,7 +53,14 @@ from accounting_converter.domain.journal import (
     SourceReference,
     TaxInfo,
 )
-from accounting_converter.domain.mapping import MappingKey, MappingStatus, MappingType, MappingValue
+from accounting_converter.domain.mapping import (
+    DEFAULT_SUBACCOUNT_SOURCE_VALUE,
+    MappingKey,
+    MappingStatus,
+    MappingType,
+    MappingValue,
+    SubaccountPolicy,
+)
 from accounting_converter.domain.profile import FormatProfile
 from accounting_converter.domain.validation import BalanceRule, UnsupportedCompoundStructureRule
 from accounting_converter.infrastructure.adapter_registry import (
@@ -154,6 +161,47 @@ class MappingPreparationAndAdapterRegistryTests(unittest.TestCase):
 
         self.assertEqual(len(requirements.subaccounts), 1)
         self.assertEqual(requirements.subaccounts[0].occurrence_count, 2)
+
+    def test_default_subaccount_applies_only_when_source_subaccount_is_empty(self) -> None:
+        default_key = MappingKey(
+            MappingType.SUBACCOUNT,
+            DEFAULT_SUBACCOUNT_SOURCE_VALUE,
+            "売掛金",
+        )
+        explicit_key = MappingKey(
+            MappingType.SUBACCOUNT,
+            "カード",
+            "売掛金",
+        )
+        profile = self.profile(subaccount_context_mappings={
+            default_key: MappingValue(
+                DEFAULT_SUBACCOUNT_SOURCE_VALUE,
+                "既定補助",
+                MappingStatus.USER_CONFIRMED,
+                parent_account="売掛金",
+                metadata={
+                    "subaccount_policy": SubaccountPolicy.DEFAULT_TARGET_SUBACCOUNT.value
+                },
+            ),
+            explicit_key: MappingValue(
+                "カード",
+                "カード補助",
+                MappingStatus.USER_CONFIRMED,
+                parent_account="売掛金",
+                metadata={
+                    "subaccount_policy": SubaccountPolicy.PRESERVE_SUBACCOUNT.value
+                },
+            ),
+        })
+        blank = self.entry("J001", debit_account="売掛金", debit_sub="")
+        explicit = self.entry("J002", debit_account="売掛金", debit_sub="カード")
+
+        mapped = MappingEngine(mapping_rule_set_from_profile(profile)).apply(
+            (blank, explicit)
+        )
+
+        self.assertEqual(mapped.entries[0].lines[0].sub_account, "既定補助")
+        self.assertEqual(mapped.entries[1].lines[0].sub_account, "カード補助")
 
     def test_context_aware_subaccount_different_parent_is_separate_requirement(self) -> None:
         entries = (
