@@ -44,7 +44,7 @@ file-level multi-groupは、同日の`SUPPORTED_1111_BASIC + SUPPORTED_COMPOUND_
 
 ## Must Block
 
-unknown product/version、未知Evidence profile、未確認master、1000+tax/department、department+tax、8%/売上側/未知tax literal、取引科目、compound内tax/subaccount/department、2借方対1貸方、many-to-many、2-record compound、複数compound、検証済みexact pair以外のmulti-group、3 groups以上、nonblank伝番、CP932変換不能、truncate/normalize/inferred valueをblockする。
+unknown product/version、未知Evidence profile、未確認master、1000+tax/department、department+tax、未知tax literal、取引科目、compound内tax/subaccount/department、未検証compound shape、複数compound、検証済みexact pair以外のmulti-group、3 groups以上、nonblank伝番、CP932変換不能、truncate/normalize/inferred valueをblockする。行単位摘要は専用Evidence profileの1D3C、2D1C、2D2C、2D3Cだけを許可する。
 
 ## Release Gate Result
 

@@ -29,6 +29,9 @@ from accounting_converter.application.moneyforward_jdl_loss import (
     MoneyForwardToJdlLossRule,
     moneyforward_verified_description_rows,
 )
+from accounting_converter.application.moneyforward_trade_partner import (
+    MoneyForwardTradePartnerDescriptionPolicy,
+)
 from accounting_converter.application.profile_preflight import mapping_rule_set_from_profile
 from accounting_converter.application.validation_pipeline import ValidationPipeline
 from accounting_converter.domain.conversion_profile import ConversionProfile
@@ -167,6 +170,11 @@ class MoneyForwardConversionWorkflow:
                 ("Money Forwardの仕訳帳CSVを安全に解析できませんでした。",),
             )
 
+        trade_partner_policy = MoneyForwardTradePartnerDescriptionPolicy(
+            profile, context
+        )
+        trade_partner_result = trade_partner_policy.apply(entries)
+        entries = trade_partner_result.entries
         requirements = MappingRequirementExtractor().extract(entries, profile)
         unconfirmed_count = sum(
             1
@@ -175,6 +183,10 @@ class MoneyForwardConversionWorkflow:
             or item.current_mapping_status is not MappingStatus.USER_CONFIRMED
         )
         reasons = list(self._mapping_reasons(requirements))
+        reasons.extend(
+            self._trade_partner_reason(item.rule_id)
+            for item in trade_partner_result.validation_results
+        )
         mapping_engine = MappingEngine(mapping_rule_set_from_profile(profile))
         mapping_result = mapping_engine.apply(entries)
         assignments, route_reasons, unsupported_journals = self._route_assignments(
@@ -189,9 +201,12 @@ class MoneyForwardConversionWorkflow:
         reasons.extend(self._loss_reason(item.field) for item in loss_results)
         reasons = list(dict.fromkeys(reasons))
 
-        route = ExplicitJdlEvidenceRoutePolicy(
-            assignments,
-            route_id="GUI-MF-EXACT-COMPANY-SETTING-V0",
+        route = _TradePartnerAndEvidenceRoutePolicy(
+            trade_partner_policy,
+            ExplicitJdlEvidenceRoutePolicy(
+                assignments,
+                route_id="GUI-MF-EXACT-COMPANY-SETTING-V0",
+            ),
         )
         if not reasons:
             if mapping_result.unresolved_count or mapping_result.validation_results:
@@ -295,6 +310,25 @@ class MoneyForwardConversionWorkflow:
                 if moneyforward_verified_description_rows(entry) is None:
                     reasons.append("行単位の摘要を保持できない複合仕訳があります。")
                     unsupported.add(entry.id)
+                elif shape == (2, 2) and context.tax_processing_mode is JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED:
+                    effective = [
+                        (source, mapped)
+                        for source, mapped in zip(entry.lines, mapped_entry.lines, strict=True)
+                        if self._has_target_tax_semantics(mapped)
+                    ]
+                    route = None
+                    if len(effective) == 1:
+                        source, mapped = effective[0]
+                        route = _TAX_ROUTES.get((mapped.side, source.tax_info.category, bool(mapped.sub_account)))
+                    if (
+                        route is None
+                        or route[0] is not JdlEvidenceProfile.TAX_PURCHASE_10_SUBACCOUNT_INCLUDED_1111
+                        or profile.tax_mappings[source.tax_info.category].metadata.get("jdl_evidence_id") != route[1]
+                    ):
+                        reasons.append("この2D2C課税仕訳は実機確認済み範囲外です。")
+                        unsupported.add(entry.id)
+                    else:
+                        assignments[entry.id] = JdlEvidenceProfile.COMPOUND_2D2C_PURCHASE_10_TAXABLE
                 elif context.tax_processing_mode is not JdlTaxProcessingMode.EXEMPT:
                     reasons.append("このJDL税設定では複合仕訳の実機確認が完了していません。")
                     unsupported.add(entry.id)
@@ -430,6 +464,16 @@ class MoneyForwardConversionWorkflow:
         return "未検証のJDL出力条件が含まれています。"
 
     @staticmethod
+    def _trade_partner_reason(rule_id: str) -> str:
+        if rule_id == "MF-JDL-PARTNER-POLICY":
+            return "取引先情報の扱いを会社設定で確認してください。"
+        if rule_id == "MF-JDL-PARTNER-DESCRIPTION-LENGTH":
+            return "取引先を含む摘要がJDLの32文字制限を超えています。"
+        if rule_id == "MF-JDL-PARTNER-DESCRIPTION-CP932":
+            return "取引先を含む摘要にJDLで使用できない文字があります。"
+        return "この取引先付き仕訳は現在の正式変換範囲外です。"
+
+    @staticmethod
     def _basic_reasons(
         input_path,
         output_path,
@@ -495,3 +539,15 @@ class MoneyForwardConversionWorkflow:
             unsupported_shape_count=unsupported_shape_count,
             optional_field_blocker_count=optional_field_blocker_count,
         )
+
+
+class _TradePartnerAndEvidenceRoutePolicy:
+    def __init__(self, trade_partner_policy, evidence_policy) -> None:
+        self._trade_partner_policy = trade_partner_policy
+        self._evidence_policy = evidence_policy
+
+    def apply(self, entries):
+        transformed = self._trade_partner_policy.apply(entries)
+        if transformed.validation_results:
+            return transformed
+        return self._evidence_policy.apply(transformed.entries)

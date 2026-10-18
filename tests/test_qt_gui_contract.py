@@ -72,6 +72,18 @@ class QtGuiContractTests(unittest.TestCase):
         for literal in visible_literals:
             self.assertNotIn(f'"{literal}"', source)
 
+    def test_trade_partner_policy_requires_explicit_company_confirmation(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
+            encoding="utf-8"
+        )
+        for text in (
+            "取引先情報の扱い",
+            "JDLには取引先専用のCSV項目がないため",
+            "この会社では取引先を摘要へ追加して変換する",
+            "自動では有効になりません。内容を確認してください。",
+        ):
+            self.assertIn(text, source)
+
     def test_company_add_flow_has_explanations_and_japanese_actions(self) -> None:
         source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(encoding="utf-8")
         expected = (

@@ -157,6 +157,7 @@ class ConversionProfileStore:
             ("subaccount_mappings", profile.subaccount_mappings),
             ("department_mappings", profile.department_mappings),
             ("tax_mappings", profile.tax_mappings),
+            ("loss_policy_mappings", profile.loss_policy_mappings),
         ):
             _validate_mapping_dict(mapping_name, mappings)
         _validate_context_mapping_dict(
@@ -198,6 +199,7 @@ def _profile_to_dict(profile: ConversionProfile) -> dict[str, Any]:
         ),
         "department_mappings": _mappings_to_list(profile.department_mappings),
         "tax_mappings": _mappings_to_list(profile.tax_mappings),
+        "loss_policy_mappings": _mappings_to_list(profile.loss_policy_mappings),
         "normalization_rules": [
             _normalization_rule_to_dict(rule) for rule in profile.normalization_rules
         ],
@@ -235,6 +237,9 @@ def _profile_from_dict(payload: Any) -> ConversionProfile:
         ),
         department_mappings=_mappings_from_list(payload.get("department_mappings", [])),
         tax_mappings=_mappings_from_list(payload.get("tax_mappings", [])),
+        loss_policy_mappings=_mappings_from_list(
+            payload.get("loss_policy_mappings", [])
+        ),
         normalization_rules=tuple(
             _normalization_rule_from_dict(item)
             for item in payload.get("normalization_rules", [])

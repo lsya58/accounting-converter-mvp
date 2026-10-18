@@ -39,7 +39,11 @@ from accounting_converter.application.moneyforward_conversion_workflow import (
 from accounting_converter.application.first_release_workflow import FirstReleaseReadiness
 from accounting_converter.application.profile_preflight import mapping_rule_set_from_profile
 from accounting_converter.application.validation_pipeline import ValidationPipeline
-from accounting_converter.domain.conversion_profile import ConversionProfile
+from accounting_converter.domain.conversion_profile import (
+    ConversionProfile,
+    LossPolicy,
+    TRADE_PARTNER_LOSS_POLICY_KEY,
+)
 from accounting_converter.domain.mapping import MappingKey, MappingStatus, MappingType, MappingValue
 from accounting_converter.domain.profile import FormatProfile
 from accounting_converter.domain.validation import BalanceRule
@@ -565,6 +569,42 @@ class MoneyForwardToJdlSyntheticE2ETests(unittest.TestCase):
                         prepared.summary.optional_field_blocker_count, 1
                     )
                 self.assertFalse(output.exists())
+
+    def test_exact_company_workflow_preserves_confirmed_trade_partner_in_description(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = self._write(
+                root / "partner.csv",
+                [self._row("37", description="TEST", debit_partner="PARTNER-A")],
+            )
+            output = root / "jdl.csv"
+            context = self._target_context()
+            profile = self._conversion_profile()
+            profile.loss_policy_mappings[TRADE_PARTNER_LOSS_POLICY_KEY] = MappingValue(
+                TRADE_PARTNER_LOSS_POLICY_KEY,
+                LossPolicy.APPEND_TRADE_PARTNER_TO_DESCRIPTION_CONFIRMED.value,
+                MappingStatus.USER_CONFIRMED,
+                metadata={
+                    "jdl_context_sha256": self._context_hash(context),
+                    "jdl_evidence_id": (
+                        "EVID-MF-JDL-TRADE-PARTNER-1D1C-"
+                        "DESCRIPTION-ROUNDTRIP-001"
+                    ),
+                },
+            )
+            prepared = MoneyForwardConversionWorkflow().prepare(
+                input_path=source,
+                output_path=output,
+                profile=profile,
+                context=context,
+                company_setting_validated=True,
+            )
+            result = MoneyForwardConversionWorkflow.execute(prepared)
+            self.assertEqual(prepared.summary.readiness, FirstReleaseReadiness.READY)
+            self.assertIsNotNone(result)
+            self.assertEqual(result.status, ConversionStatus.SUCCESS)
+            rows = self._output_rows(output)
+            self.assertEqual(rows[1][rows[0].index("摘要")], "TEST / 取引先:PARTNER-A")
 
     def test_exact_company_workflow_does_not_overwrite_existing_output(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

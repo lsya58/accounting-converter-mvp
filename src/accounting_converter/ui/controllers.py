@@ -24,6 +24,9 @@ from accounting_converter.application.company_mapping_update import (
 from accounting_converter.application.company_tax_context_confirmation import (
     CompanyTaxContextConfirmationService,
 )
+from accounting_converter.application.company_trade_partner_policy import (
+    CompanyTradePartnerPolicyService,
+)
 from accounting_converter.application.moneyforward_profile_setup import (
     MoneyForwardProfileSetupAnalysis,
     MoneyForwardProfileSetupService,
@@ -162,6 +165,9 @@ class AccountingConverterController:
             CompanyTaxContextConfirmationService(
                 self.company_store, self.profile_store
             )
+        )
+        self.company_trade_partner_policy_service = CompanyTradePartnerPolicyService(
+            self.company_store, self.profile_store
         )
         self.moneyforward_profile_setup_service = MoneyForwardProfileSetupService(
             self.profile_store
@@ -603,6 +609,33 @@ class AccountingConverterController:
         return self.moneyforward_profile_setup_service.tax_mapping_review(
             resolved.profile, resolved.context
         )
+
+    def company_trade_partner_policy_state(self, company_setting_id: str):
+        return self.company_trade_partner_policy_service.state(company_setting_id)
+
+    def confirm_company_trade_partner_policy(
+        self, company_setting_id: str, *, explicitly_confirmed: bool
+    ) -> AppState:
+        if not explicitly_confirmed:
+            return self._fail_state(
+                "取引先情報の扱いを確認してください。",
+                ValueError("explicit confirmation is required"),
+            )
+        try:
+            self.company_trade_partner_policy_service.confirm(company_setting_id)
+        except Exception as error:
+            return self._fail_state(
+                "取引先情報の扱いを保存できませんでした。JDL設定を確認してください。",
+                error,
+            )
+        self.load_profiles()
+        self.load_company_settings()
+        state = self.select_company_setting(company_setting_id)
+        self.state = replace(
+            state,
+            user_message="取引先情報をJDLの摘要へ記録する設定を保存しました。",
+        )
+        return self.state
 
     def company_tax_context_pending(self, company_setting_id: str) -> bool:
         try:

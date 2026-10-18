@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 
 from accounting_converter.domain.journal import JournalEntry, JournalLine, Side
+from accounting_converter.domain.conversion_profile import (
+    LossPolicy,
+    TRADE_PARTNER_TRANSFORMATION_KEY,
+)
 
 
 VERIFIED_DESCRIPTION_SHAPES = frozenset(
@@ -47,12 +52,26 @@ class MoneyForwardToJdlLossRule:
             fields.add("description")
 
         for line in entry.lines:
-            if line.metadata.get("moneyforward_trade_partner"):
+            if (
+                line.metadata.get("moneyforward_trade_partner")
+                and not self._has_confirmed_trade_partner_transformation(entry)
+            ):
                 fields.add("trade_partner")
             if line.tax_info and line.tax_info.invoice_classification:
                 fields.add("invoice_classification")
 
         return [self._error(entry, field) for field in sorted(fields)]
+
+    @staticmethod
+    def _has_confirmed_trade_partner_transformation(entry: JournalEntry) -> bool:
+        marker = entry.metadata.get(TRADE_PARTNER_TRANSFORMATION_KEY)
+        return bool(
+            isinstance(marker, dict)
+            and marker.get("policy")
+            == LossPolicy.APPEND_TRADE_PARTNER_TO_DESCRIPTION_CONFIRMED.value
+            and marker.get("target_description_sha256")
+            == hashlib.sha256((entry.description or "").encode("utf-8")).hexdigest()
+        )
 
     def _error(self, entry: JournalEntry, field: str) -> ValidationResult:
         return ValidationResult(

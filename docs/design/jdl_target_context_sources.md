@@ -60,3 +60,9 @@ Development mode may retain direct JSON loading, but ordinary users should not n
 - PDFまたは対応設定が保存後に変わった場合はstaleとしてBLOCKする。
 
 この導線は会社固有の確認作業を再利用可能にするためのものであり、PDFを`FULL_MASTER`、正式`JdlTargetContext`、production READYへ昇格するものではない。subaccount PDFとdepartment PDFは将来同じ観測service boundaryへ追加できるが、今回の通常GUI対象はaccount PDFのみとする。
+
+### Observed subaccount requiredness
+
+完全syntheticな4つの親科目について、parent-scoped補助元帳PDFと、補助未指定時にJDL登録/Importが拒否されるruntime behaviorを観測した。MVPではcurrent companyのObserved masterに利用可能な補助が存在する親科目を`subaccount required`として扱う。別会社のmaster、名称一致、global dictionaryからrequirednessを推測しない。
+
+この判定に別の「補助使用ON/OFF」設定を必須前提として追加しない。current Observed masterがpartial、conflicted、stale、またはparent relation不明なら安全側にBLOCKし、exact parent-scoped `USER_CONFIRMED` mappingだけを利用する。

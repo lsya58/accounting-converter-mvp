@@ -83,6 +83,9 @@ EVIDENCE_IDS = {
     JdlEvidenceProfile.COMPOUND_2D2C_LINE_DESCRIPTIONS: (
         "EVID-JDL-COMPOUND-2D2C-PER-ROW-DESCRIPTION-001"
     ),
+    JdlEvidenceProfile.COMPOUND_2D2C_PURCHASE_10_TAXABLE: (
+        "EVID-JDL-COMPOUND-2D2C-PURCHASE-10-TAXABLE-ROUNDTRIP-001"
+    ),
     JdlEvidenceProfile.COMPOUND_2D1C_LINE_DESCRIPTIONS: (
         "EVID-JDL-COMPOUND-2D1C-PER-ROW-DESCRIPTION-001"
     ),
@@ -273,6 +276,7 @@ class JdlOutputPreflight:
             JdlEvidenceProfile.COMPOUND_1D3C,
             JdlEvidenceProfile.COMPOUND_1D3C_LINE_DESCRIPTIONS,
             JdlEvidenceProfile.COMPOUND_2D2C_LINE_DESCRIPTIONS,
+            JdlEvidenceProfile.COMPOUND_2D2C_PURCHASE_10_TAXABLE,
             JdlEvidenceProfile.COMPOUND_2D1C_LINE_DESCRIPTIONS,
             JdlEvidenceProfile.COMPOUND_2D3C_LINE_DESCRIPTIONS,
             JdlEvidenceProfile.COMPOUND_4D6C_LINE_DESCRIPTIONS,
@@ -320,6 +324,7 @@ class JdlOutputPreflight:
         line_description_profiles = {
             JdlEvidenceProfile.COMPOUND_1D3C_LINE_DESCRIPTIONS,
             JdlEvidenceProfile.COMPOUND_2D2C_LINE_DESCRIPTIONS,
+            JdlEvidenceProfile.COMPOUND_2D2C_PURCHASE_10_TAXABLE,
             JdlEvidenceProfile.COMPOUND_2D1C_LINE_DESCRIPTIONS,
             JdlEvidenceProfile.COMPOUND_2D3C_LINE_DESCRIPTIONS,
             JdlEvidenceProfile.COMPOUND_4D6C_LINE_DESCRIPTIONS,
@@ -329,6 +334,7 @@ class JdlOutputPreflight:
         expected_shapes = {
             JdlEvidenceProfile.COMPOUND_1D3C_LINE_DESCRIPTIONS: (1, 3, 3),
             JdlEvidenceProfile.COMPOUND_2D2C_LINE_DESCRIPTIONS: (2, 2, 2),
+            JdlEvidenceProfile.COMPOUND_2D2C_PURCHASE_10_TAXABLE: (2, 2, 2),
             JdlEvidenceProfile.COMPOUND_2D1C_LINE_DESCRIPTIONS: (2, 1, 2),
             JdlEvidenceProfile.COMPOUND_2D3C_LINE_DESCRIPTIONS: (2, 3, 3),
             JdlEvidenceProfile.COMPOUND_4D6C_LINE_DESCRIPTIONS: (4, 6, 6),
@@ -353,15 +359,26 @@ class JdlOutputPreflight:
         if not entry.is_balanced():
             errors.append(self._error("JDL-OUT-BALANCE", "複合仕訳がgroup単位で貸借一致しません。", "amount", entry))
             return []
-        if any(self._has_optional_features(line) for line in entry.lines):
-            errors.append(self._error("JDL-OUT-COMPOUND-FEATURE", "複合仕訳内の補助・部門・税は未対応です。", "journal_structure", entry))
-            return []
-        if self.context.tax_processing_mode is not JdlTaxProcessingMode.EXEMPT:
-            errors.append(self._error("JDL-OUT-COMPOUND-TAX-MODE", "複合仕訳は免税profileだけ対応します。", "tax_processing", entry))
-            return []
         for line in entry.lines:
             self._validate_account(line, entry, errors)
             self._validate_amount(line.amount, entry, errors)
+        if evidence is JdlEvidenceProfile.COMPOUND_2D2C_PURCHASE_10_TAXABLE:
+            assert physical_rows is not None
+            first = physical_rows[0]
+            if first.debit is None or first.credit is None:
+                errors.append(self._error("JDL-OUT-COMPOUND-TAX-ROW", "課税対象の先頭行がEvidenceと一致しません。", "tax", entry))
+                return []
+            self._validate_tax(
+                first.debit, first.credit, entry,
+                included=True, errors=errors, allow_tax_side_subaccount=True,
+            )
+            if any(self._has_optional_features(line) for row in physical_rows[1:] for line in (row.debit, row.credit) if line is not None):
+                errors.append(self._error("JDL-OUT-COMPOUND-TAX-EXTRA-FEATURE", "2行目に未検証featureがあります。", "journal_structure", entry))
+        else:
+            if any(self._has_optional_features(line) for line in entry.lines):
+                errors.append(self._error("JDL-OUT-COMPOUND-FEATURE", "複合仕訳内の補助・部門・税は未対応です。", "journal_structure", entry))
+            if self.context.tax_processing_mode is not JdlTaxProcessingMode.EXEMPT:
+                errors.append(self._error("JDL-OUT-COMPOUND-TAX-MODE", "複合仕訳は免税profileだけ対応します。", "tax_processing", entry))
         if errors:
             return []
         if evidence in line_description_profiles:

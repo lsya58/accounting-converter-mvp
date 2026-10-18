@@ -24,6 +24,16 @@ class FormatIdentityMatchStatus(str, Enum):
     UNKNOWN = "UNKNOWN"
 
 
+class LossPolicy(str, Enum):
+    APPEND_TRADE_PARTNER_TO_DESCRIPTION_CONFIRMED = (
+        "APPEND_TRADE_PARTNER_TO_DESCRIPTION_CONFIRMED"
+    )
+
+
+TRADE_PARTNER_LOSS_POLICY_KEY = "trade_partner"
+TRADE_PARTNER_TRANSFORMATION_KEY = "moneyforward_trade_partner_transformation"
+
+
 @dataclass(frozen=True)
 class ConversionProfile:
     profile_id: str
@@ -37,6 +47,7 @@ class ConversionProfile:
     )
     department_mappings: dict[str, MappingValue] = field(default_factory=dict)
     tax_mappings: dict[str, MappingValue] = field(default_factory=dict)
+    loss_policy_mappings: dict[str, MappingValue] = field(default_factory=dict)
     normalization_rules: tuple[NormalizationRule, ...] = ()
     schema_version: str = CURRENT_CONVERSION_PROFILE_SCHEMA_VERSION
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))

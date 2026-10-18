@@ -38,7 +38,13 @@ from accounting_converter.application.moneyforward_jdl_loss import MoneyForwardT
 from accounting_converter.application.profile_preflight import mapping_rule_set_from_profile
 from accounting_converter.application.validation_pipeline import ValidationPipeline
 from accounting_converter.domain.conversion_profile import ConversionProfile
-from accounting_converter.domain.mapping import MappingKey, MappingStatus, MappingType, MappingValue
+from accounting_converter.domain.mapping import (
+    MappingKey,
+    MappingStatus,
+    MappingType,
+    MappingValue,
+    SubaccountPolicy,
+)
 from accounting_converter.domain.profile import FormatProfile
 from accounting_converter.domain.validation import BalanceRule
 from accounting_converter.infrastructure.adapter_registry import AdapterAvailabilityStatus, production_adapter_registry
@@ -106,6 +112,37 @@ class MoneyForwardSixTaxBatchE2ETests(unittest.TestCase):
             self.assertFalse(output.exists())
             self.assertEqual(result.output_record_count, 0)
             self.assertTrue(any(item.field == "subaccount_mapping" for item in result.validation_results))
+
+    def test_parent_only_policy_requires_a_parent_without_observed_subaccounts(self) -> None:
+        profile = self._profile()
+        key = MappingKey(MappingType.SUBACCOUNT, "補助甲", "仕入乙")
+        mappings = dict(profile.subaccount_context_mappings)
+        mappings[key] = MappingValue(
+            "補助甲",
+            "",
+            MappingStatus.USER_CONFIRMED,
+            "仕入乙",
+            {"subaccount_policy": SubaccountPolicy.PARENT_ONLY_CONFIRMED.value},
+        )
+        profile = replace(profile, subaccount_context_mappings=mappings)
+        context_with_subaccount = self._context()
+        blocked = JdlOutputRuntimeFactory().resolve(
+            jdl_ibex_35_5_output_profile(), profile, context_with_subaccount
+        )
+        self.assertIsNone(blocked.output_adapter)
+
+        context_without_parent_subaccount = replace(
+            context_with_subaccount,
+            subaccounts=tuple(
+                item
+                for item in context_with_subaccount.subaccounts
+                if item.parent_account != "仕入乙"
+            ),
+        )
+        allowed = JdlOutputRuntimeFactory().resolve(
+            jdl_ibex_35_5_output_profile(), profile, context_without_parent_subaccount
+        )
+        self.assertIsNotNone(allowed.output_adapter)
 
     def test_existing_formal_output_is_not_overwritten(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

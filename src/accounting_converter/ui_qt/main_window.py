@@ -464,6 +464,8 @@ class SettingsDialog(QDialog):
         refresh_master.clicked.connect(self._refresh_master)
         self.tax_context_button = QPushButton("JDL税設定を確認")
         self.tax_context_button.clicked.connect(self._confirm_tax_context)
+        trade_partner_button = QPushButton("取引先情報の扱い")
+        trade_partner_button.clicked.connect(self._confirm_trade_partner_policy)
         refresh_master.setMinimumWidth(refresh_master.sizeHint().width() + 12)
         self.tax_context_button.setMinimumWidth(
             self.tax_context_button.sizeHint().width() + 12
@@ -474,6 +476,7 @@ class SettingsDialog(QDialog):
         company_actions.addWidget(confirm_tax, 1, 0)
         company_actions.addWidget(refresh_master, 1, 1)
         company_actions.addWidget(self.tax_context_button, 1, 2)
+        company_actions.addWidget(trade_partner_button, 2, 0)
         for column in range(3):
             company_actions.setColumnStretch(column, 1)
         layout.addLayout(company_actions)
@@ -609,6 +612,15 @@ class SettingsDialog(QDialog):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._reload_companies(self.controller.state)
 
+    def _confirm_trade_partner_policy(self) -> None:
+        company_id = self.company_combo.currentData()
+        if not company_id:
+            self.message_label.setText("会社設定を選択してください。")
+            return
+        dialog = TradePartnerPolicyDialog(self.controller, company_id, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._reload_companies(self.controller.state)
+
     def _review_settings(self) -> None:
         company_id = self.company_combo.currentData()
         if not company_id:
@@ -733,6 +745,69 @@ class SettingsDialog(QDialog):
             if company_id
             else state.user_message
         )
+
+
+class TradePartnerPolicyDialog(QDialog):
+    def __init__(self, controller, company_id: str, parent=None) -> None:
+        super().__init__(parent)
+        self.controller = controller
+        self.company_id = company_id
+        self.setWindowTitle("取引先情報の扱い")
+        self.setMinimumWidth(560)
+        layout = QVBoxLayout(self)
+        title = QLabel("Money Forwardの取引先情報")
+        title.setObjectName("sectionTitle")
+        layout.addWidget(title)
+        explanation = QLabel(
+            "JDLには取引先専用のCSV項目がないため、この会社では取引先名を"
+            "摘要へ追加して記録します。摘要が32文字を超える場合やJDLで表現"
+            "できない文字がある場合は、情報を省略せず変換を停止します。"
+        )
+        explanation.setWordWrap(True)
+        layout.addWidget(explanation)
+        state = controller.company_trade_partner_policy_state(company_id)
+        self.confirmed = QCheckBox(
+            "この会社では取引先を摘要へ追加して変換する"
+        )
+        self.confirmed.setChecked(state.confirmed)
+        self.confirmed.setEnabled(state.context_compatible and not state.confirmed)
+        layout.addWidget(self.confirmed)
+        self.message = QLabel(
+            "設定済みです。"
+            if state.confirmed
+            else "JDL設定の確認後に明示的な確認が必要です。"
+            if not state.context_compatible
+            else "自動では有効になりません。内容を確認してください。"
+        )
+        self.message.setObjectName("muted")
+        layout.addWidget(self.message)
+        actions = QHBoxLayout()
+        cancel = QPushButton("キャンセル")
+        cancel.clicked.connect(self.reject)
+        self.save_button = QPushButton("保存")
+        self.save_button.setObjectName("primaryButton")
+        self.save_button.setEnabled(
+            state.context_compatible and not state.confirmed and self.confirmed.isChecked()
+        )
+        self.confirmed.toggled.connect(
+            lambda checked: self.save_button.setEnabled(
+                state.context_compatible and not state.confirmed and checked
+            )
+        )
+        self.save_button.clicked.connect(self._save)
+        actions.addStretch(1)
+        actions.addWidget(cancel)
+        actions.addWidget(self.save_button)
+        layout.addLayout(actions)
+
+    def _save(self) -> None:
+        state = self.controller.confirm_company_trade_partner_policy(
+            self.company_id, explicitly_confirmed=self.confirmed.isChecked()
+        )
+        if state.developer_error is not None:
+            self.message.setText("保存できませんでした。JDL設定を確認してください。")
+            return
+        self.accept()
 
 
 class CompanyMasterRefreshDialog(QDialog):
