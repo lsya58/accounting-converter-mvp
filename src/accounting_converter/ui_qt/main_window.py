@@ -1768,6 +1768,17 @@ class TaxMappingConfirmationDialog(QDialog):
             guidance.setObjectName("muted")
             guidance.setWordWrap(True)
             layout.addWidget(guidance)
+
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QFrame.Shape.NoFrame)
+            scroll.setHorizontalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+            )
+            cards = QWidget()
+            cards_layout = QVBoxLayout(cards)
+            cards_layout.setContentsMargins(0, 0, 0, 0)
+            cards_layout.setSpacing(10)
             for item in self.review.items:
                 card = QFrame()
                 card.setObjectName("card")
@@ -1778,12 +1789,15 @@ class TaxMappingConfirmationDialog(QDialog):
                 confirmed.stateChanged.connect(self._update_save_enabled)
                 card_layout.addWidget(confirmed)
                 self.confirmations[item.source_value] = confirmed
-                layout.addWidget(card)
+                cards_layout.addWidget(card)
             if self.review.user_message:
                 warning = QLabel(self.review.user_message)
                 warning.setObjectName("warningCard")
                 warning.setWordWrap(True)
-                layout.addWidget(warning)
+                cards_layout.addWidget(warning)
+            cards_layout.addStretch(1)
+            scroll.setWidget(cards)
+            layout.addWidget(scroll, 1)
         else:
             message = QLabel(
                 self.review.user_message

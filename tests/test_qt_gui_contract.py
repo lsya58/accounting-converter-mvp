@@ -382,6 +382,24 @@ class QtGuiContractTests(unittest.TestCase):
         self.assertIn("confirm_company_tax_mappings", dialog)
         self.assertIn("def confirm_company_tax_mappings", controller)
 
+    def test_tax_confirmation_cards_scroll_without_moving_actions(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
+            encoding="utf-8"
+        )
+        dialog = source.split("class TaxMappingConfirmationDialog", maxsplit=1)[1].split(
+            "class CompanyRenameDialog", maxsplit=1
+        )[0]
+        cards_section, actions_section = dialog.split(
+            "actions = QHBoxLayout()", maxsplit=1
+        )
+        self.assertIn("scroll = QScrollArea()", cards_section)
+        self.assertIn("scroll.setWidgetResizable(True)", cards_section)
+        self.assertIn("ScrollBarAlwaysOff", cards_section)
+        self.assertIn("scroll.setWidget(cards)", cards_section)
+        self.assertIn("layout.addWidget(scroll, 1)", cards_section)
+        self.assertIn('QPushButton("確認を保存")', actions_section)
+        self.assertNotIn("scroll.setWidget", actions_section)
+
     def test_mapping_selector_ignores_wheel_so_table_can_scroll(self) -> None:
         source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
             encoding="utf-8"
