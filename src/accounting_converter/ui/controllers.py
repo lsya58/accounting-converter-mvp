@@ -69,6 +69,9 @@ from accounting_converter.infrastructure.jdl_target_context_loader import (
 from accounting_converter.infrastructure.jdl_account_pdf_draft import (
     JdlAccountPdfDraftStore,
 )
+from accounting_converter.infrastructure.local_diagnostic_log import (
+    log_local_exception,
+)
 from accounting_converter.infrastructure.company_setting_store import (
     CompanySettingStore,
     CompanySettingStoreError,
@@ -653,6 +656,7 @@ class AccountingConverterController:
                 company_setting_id, confirmed=explicitly_confirmed
             )
         except Exception as error:
+            log_local_exception("company_tax_context_confirmation", error)
             return self._fail_state(
                 "JDL税設定を保存できませんでした。科目対応を確認してください。",
                 error,

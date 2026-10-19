@@ -264,6 +264,19 @@ class QtGuiContractTests(unittest.TestCase):
         ):
             self.assertIn(text, source)
         self.assertIn("confirm_company_tax_context", controller)
+        self.assertIn(
+            'log_local_exception("company_tax_context_confirmation", error)',
+            controller,
+        )
+        self.assertIn(
+            'QMessageBox.warning(\n            self,\n            "JDL税設定を保存できませんでした"',
+            source,
+        )
+        self.assertIn(
+            "if dialog.exec() == QDialog.DialogCode.Accepted:\n"
+            "            self._reload_companies(self.controller.state)",
+            source,
+        )
 
     def test_company_setting_actions_reserve_width_for_windows_text(self) -> None:
         source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(

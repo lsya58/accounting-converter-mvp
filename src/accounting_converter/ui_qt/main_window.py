@@ -1728,6 +1728,12 @@ class JdlTaxContextConfirmationDialog(QDialog):
         )
         if state.user_message.startswith("JDL税設定を保存しました"):
             self.accept()
+            return
+        QMessageBox.warning(
+            self,
+            "JDL税設定を保存できませんでした",
+            state.user_message,
+        )
 
 
 class TaxMappingConfirmationDialog(QDialog):

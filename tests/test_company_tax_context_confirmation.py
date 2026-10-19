@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import tempfile
 import unittest
+from unittest.mock import patch
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -242,6 +243,39 @@ class CompanyTaxContextConfirmationTests(unittest.TestCase):
                 item.status is MappingStatus.USER_CONFIRMED
                 for item in profile.tax_mappings.values()
             )
+        )
+
+    def test_controller_logs_tax_context_persistence_failure(self) -> None:
+        controller = AccountingConverterController(
+            profile_store=self.profiles,
+            company_store=self.companies,
+            preferences_store=ApplicationPreferencesStore(
+                self.root / "preferences.json"
+            ),
+        )
+        failure = CompanyTaxContextConfirmationError("synthetic failure")
+        with (
+            patch.object(
+                controller.company_tax_context_confirmation_service,
+                "confirm_taxable_included",
+                side_effect=failure,
+            ),
+            patch(
+                "accounting_converter.ui.controllers.log_local_exception"
+            ) as logger,
+        ):
+            state = controller.confirm_company_tax_context(
+                "company-1", explicitly_confirmed=True
+            )
+        logger.assert_called_once_with(
+            "company_tax_context_confirmation", failure
+        )
+        self.assertEqual(
+            state.user_message,
+            "JDL税設定を保存できませんでした。科目対応を確認してください。",
+        )
+        self.assertEqual(
+            state.developer_error, "CompanyTaxContextConfirmationError"
         )
 
 
