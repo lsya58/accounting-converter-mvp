@@ -278,6 +278,23 @@ class QtGuiContractTests(unittest.TestCase):
             source,
         )
 
+    def test_master_refresh_failure_is_logged_and_user_visible(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            'log_local_exception("jdl_account_master_refresh_apply", exc)',
+            source,
+        )
+        self.assertIn(
+            'QMessageBox.warning(self, "更新を保存できませんでした", message)',
+            source,
+        )
+        self.assertIn(
+            "既存の科目対応が新しい科目一覧と一致しません。",
+            source,
+        )
+
     def test_company_setting_actions_reserve_width_for_windows_text(self) -> None:
         source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
             encoding="utf-8"

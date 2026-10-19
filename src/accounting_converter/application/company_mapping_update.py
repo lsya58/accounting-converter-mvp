@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import uuid
 from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -18,6 +17,7 @@ from accounting_converter.application.jdl_master_observation import (
 )
 from accounting_converter.application.mapping_review import MappingRequirementExtractor
 from accounting_converter.application.moneyforward_jdl_loss import MoneyForwardToJdlLossRule
+from accounting_converter.application.profile_revision import revised_profile_id
 from accounting_converter.application.validation_pipeline import ValidationPipeline
 from accounting_converter.domain.journal import Side
 from accounting_converter.domain.mapping import (
@@ -582,7 +582,7 @@ class CompanyMappingUpdateService:
     ) -> None:
         updated = replace(
             updated,
-            profile_id=f"{old.profile_id}-update-{uuid.uuid4().hex}",
+            profile_id=revised_profile_id(old.profile_id, "update"),
         )
         self.profile_store.create(updated)
         try:

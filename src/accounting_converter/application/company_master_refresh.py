@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import hashlib
-import uuid
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping
 
+from accounting_converter.application.profile_revision import revised_profile_id
 from accounting_converter.domain.conversion_profile import ConversionProfile
 from accounting_converter.domain.mapping import (
     MappingKey,
@@ -170,7 +170,7 @@ class CompanyMasterRefreshService:
                 )
         updated = replace(
             old_profile,
-            profile_id=f"{old_profile.profile_id}-refresh-{uuid.uuid4().hex}",
+            profile_id=revised_profile_id(old_profile.profile_id, "refresh"),
             account_mappings=mappings,
             subaccount_context_mappings=subaccount_mappings,
             updated_at=datetime.now(timezone.utc),

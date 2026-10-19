@@ -3,11 +3,16 @@ from __future__ import annotations
 import hashlib
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
 from accounting_converter.application.company_master_refresh import (
     CompanyMasterRefreshService,
+)
+from accounting_converter.application.profile_revision import (
+    MAX_REVISION_PROFILE_ID_LENGTH,
+    revised_profile_id,
 )
 from accounting_converter.domain.conversion_profile import ConversionProfile
 from accounting_converter.domain.mapping import MappingStatus, MappingValue
@@ -123,6 +128,41 @@ class CompanyMasterRefreshTests(unittest.TestCase):
             self.service.apply(plan, {"入力科目B": "存在しない科目"}, {"入力科目B"})
         self.service.apply(plan, {"入力科目B": "代替科目"}, {"入力科目B"})
         self.assertEqual(self.companies.resolve("company-a").status.value, "REQUIRES_CONFIRMATION")
+
+    def test_repeated_revision_ids_remain_windows_path_safe(self) -> None:
+        profile_id = "profile-1"
+        for operation in ("update", "tax-context", "partner", "refresh") * 25:
+            profile_id = revised_profile_id(profile_id, operation)
+            self.assertLessEqual(
+                len(profile_id), MAX_REVISION_PROFILE_ID_LENGTH
+            )
+            self.assertTrue(
+                set(profile_id)
+                <= set("abcdefghijklmnopqrstuvwxyz0123456789-")
+            )
+
+    def test_refresh_replaces_long_legacy_profile_id_with_bounded_id(self) -> None:
+        legacy_id = "p" * 180
+        old = self.profiles.get("profile-1")
+        self.profiles.create(replace(old, profile_id=legacy_id))
+        self.companies.replace_profile("company-a", legacy_id)
+
+        new = self._draft(
+            "long-id-refresh",
+            (("1001", "架空科目A"), ("1002", "架空科目B")),
+        )
+        plan = self.service.plan("company-a", new)
+        self.service.apply(plan, {}, set())
+
+        refreshed = self.companies.get("company-a")
+        self.assertLessEqual(
+            len(refreshed.conversion_profile_id),
+            MAX_REVISION_PROFILE_ID_LENGTH,
+        )
+        self.assertEqual(
+            self.companies.resolve("company-a").status.value,
+            "REQUIRES_CONFIRMATION",
+        )
 
     def _draft(self, name: str, rows: tuple[tuple[str, str], ...]) -> Path:
         pdf = self.root / f"{name}.pdf"

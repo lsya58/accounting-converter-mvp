@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import hashlib
-import uuid
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 
+from accounting_converter.application.moneyforward_trade_partner import (
+    TRADE_PARTNER_1D1C_EVIDENCE_ID,
+)
+from accounting_converter.application.profile_revision import revised_profile_id
 from accounting_converter.domain.conversion_profile import (
     LossPolicy,
     TRADE_PARTNER_LOSS_POLICY_KEY,
@@ -14,9 +17,6 @@ from accounting_converter.infrastructure.company_setting_store import CompanySet
 from accounting_converter.infrastructure.conversion_profile_store import ConversionProfileStore
 from accounting_converter.infrastructure.jdl_account_pdf_draft import JdlAccountPdfDraftStore
 from accounting_converter.infrastructure.jdl_target_context_loader import JdlTargetContextLoader
-from accounting_converter.application.moneyforward_trade_partner import (
-    TRADE_PARTNER_1D1C_EVIDENCE_ID,
-)
 
 
 @dataclass(frozen=True)
@@ -70,7 +70,7 @@ class CompanyTradePartnerPolicyService:
         )
         updated = replace(
             old,
-            profile_id=f"{old.profile_id}-partner-{uuid.uuid4().hex}",
+            profile_id=revised_profile_id(old.profile_id, "partner"),
             loss_policy_mappings=policies,
             updated_at=datetime.now(timezone.utc),
         )

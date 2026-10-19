@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import uuid
 from dataclasses import replace
 from datetime import datetime, timezone
 
@@ -12,6 +11,7 @@ from accounting_converter.adapters.output.jdl import (
     JdlSubaccountIdentity,
     JdlTargetContextBuilder,
 )
+from accounting_converter.application.profile_revision import revised_profile_id
 from accounting_converter.domain.mapping import MappingStatus, MappingValue
 from accounting_converter.infrastructure.jdl_account_pdf_draft import (
     JdlAccountPdfDraftStore,
@@ -133,7 +133,7 @@ class CompanyTaxContextConfirmationService:
         }
         updated = replace(
             old,
-            profile_id=f"{old.profile_id}-tax-context-{uuid.uuid4().hex}",
+            profile_id=revised_profile_id(old.profile_id, "tax-context"),
             account_mappings=accounts,
             subaccount_context_mappings=subaccounts,
             tax_mappings=taxes,

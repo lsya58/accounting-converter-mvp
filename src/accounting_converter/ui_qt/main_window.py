@@ -894,7 +894,14 @@ class CompanyMasterRefreshDialog(QDialog):
             )
         except Exception as exc:
             log_local_exception("jdl_account_master_refresh_apply", exc)
-            self.status_label.setText("更新を保存できませんでした。")
+            message = (
+                "既存の科目対応が新しい科目一覧と一致しません。"
+                "科目対応を確認してください。"
+                if isinstance(exc, ValueError)
+                else "科目一覧を保存できませんでした。保存先を確認してください。"
+            )
+            self.status_label.setText(message)
+            QMessageBox.warning(self, "更新を保存できませんでした", message)
             return
         self.accept()
 
