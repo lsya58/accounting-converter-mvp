@@ -6,13 +6,17 @@ import json
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from accounting_converter.adapters.input.jdl import JdlMigrationParser
+from accounting_converter.adapters.input.jdl import (
+    JdlMigrationParser,
+    jdl_source_tax_key,
+)
 from accounting_converter.application.jdl_account_list_pdf import (
     JdlAccountListPdfTextParser,
     JdlAccountListTextPage,
 )
 from accounting_converter.application.company_settings import CompanySettingStatus
 from accounting_converter.application.jdl_migration import JdlMigrationPreflight
+from accounting_converter.application.jdl_migration_tax_evidence import evidence_for
 from accounting_converter.adapters.output.jdl.models import (
     JdlAccountIdentity,
     JdlTargetContext,
@@ -27,11 +31,12 @@ from accounting_converter.profiles.known_formats import (
 
 
 def build_review(source: Path, target_pdf: Path) -> dict[str, object]:
+    target_pdf_sha256 = hashlib.sha256(target_pdf.read_bytes()).hexdigest()
     parsed = JdlMigrationParser().parse_path(source)
     pages = PypdfTextExtractor().extract_pages(target_pdf)
     observation = JdlAccountListPdfTextParser().parse_pages(
         tuple(JdlAccountListTextPage(index, text) for index, text in enumerate(pages, 1)),
-        source_sha256=hashlib.sha256(target_pdf.read_bytes()).hexdigest(),
+        source_sha256=target_pdf_sha256,
         acquisition_method="local JDL migration review",
         human_observed=True,
     )
@@ -43,6 +48,8 @@ def build_review(source: Path, target_pdf: Path) -> dict[str, object]:
 
     source_accounts: dict[tuple[str, str], dict[str, str]] = {}
     source_subaccounts: dict[tuple[str, str, str, str], dict[str, str]] = {}
+    account_journals: dict[tuple[str, str], set[str]] = defaultdict(set)
+    subaccount_journals: dict[tuple[str, str, str, str], set[str]] = defaultdict(set)
     overflow_rows: list[dict[str, object]] = []
     tax_counts: Counter[tuple[str, str, str]] = Counter()
     for entry in parsed.entries:
@@ -50,7 +57,7 @@ def build_review(source: Path, target_pdf: Path) -> dict[str, object]:
             length = len(str(row.get("description", "")))
             if length > 32:
                 overflow_rows.append({
-                    "journal_identifier": f"{entry.journal_id}:row-{row_index}",
+                    "journal_identifier": f"{entry.id}:row-{row_index}",
                     "current_length": length,
                 })
         for line in entry.lines:
@@ -60,6 +67,7 @@ def build_review(source: Path, target_pdf: Path) -> dict[str, object]:
                 metadata.get("jdl_source_account_name", "")
             )
             source_accounts[(code, name)] = {"code": code, "name": name}
+            account_journals[(code, name)].add(entry.id)
             sub_code = str(metadata.get("jdl_source_subaccount_code", ""))
             sub_name = str(metadata.get("jdl_source_subaccount_name", ""))
             if sub_code or sub_name:
@@ -71,6 +79,7 @@ def build_review(source: Path, target_pdf: Path) -> dict[str, object]:
                     "decision": "HUMAN_REQUIRED",
                     "allowed_choices": ["CREATE_AND_PRESERVE", "PARENT_ONLY_CONFIRMED"],
                 }
+                subaccount_journals[(code, name, sub_code, sub_name)].add(entry.id)
             if line.tax_info is not None:
                 tax_counts[
                     (
@@ -104,9 +113,26 @@ def build_review(source: Path, target_pdf: Path) -> dict[str, object]:
                 "target_candidates": [
                     {"code": item.code, "name": item.name} for item in candidates
                 ],
+                "affected_journal_count": len(account_journals[(code, name)]),
+                "disabled_name_match": any(
+                    match is not None
+                    and match.group("name").strip() == name
+                    and match.group("use") == "×"
+                    for page in pages
+                    for line in page.splitlines()
+                    for match in (JdlAccountListPdfTextParser._UNCODED_ROW.match(line),)
+                ),
                 "decision": "HUMAN_REQUIRED",
             }
         )
+
+    for identity, item in source_subaccounts.items():
+        item["affected_journal_count"] = len(subaccount_journals[identity])
+        item["target_parent_exact"] = bool(
+            (target := by_code.get(identity[0])) is not None
+            and target.name == identity[1]
+        )
+        item["target_candidates"] = []
 
     source_schema = jdl_ibex_cashbook_migration_input_schema_definition()
     target_schema = jdl_ibex_cashbook_official_journal_import_schema_definition()
@@ -140,7 +166,7 @@ def build_review(source: Path, target_pdf: Path) -> dict[str, object]:
         "not_for_production": True,
         "formal_output_enabled": False,
         "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
-        "target_pdf_sha256": hashlib.sha256(target_pdf.read_bytes()).hexdigest(),
+        "target_pdf_sha256": target_pdf_sha256,
         "counts": {
             "logical_journals": len(parsed.entries),
             "physical_rows": parsed.journal_record_count,
@@ -161,13 +187,9 @@ def build_review(source: Path, target_pdf: Path) -> dict[str, object]:
                 "credit_method",
             ],
             "source_identities": [
-                {
-                    "scope": scope,
-                    "category": category,
-                    "input_method": input_method,
-                    "row_count": count,
-                    "decision": "EVIDENCE_AND_HUMAN_CONFIRMATION_REQUIRED",
-                }
+                _tax_review_item(
+                    scope, category, input_method, count, target_pdf_sha256
+                )
                 for (scope, category, input_method), count in sorted(tax_counts.items())
             ],
         },
@@ -181,6 +203,41 @@ def build_review(source: Path, target_pdf: Path) -> dict[str, object]:
             "output_journals": 0,
             "blocker_counts": dict(sorted(blocker_counts.items())),
         },
+    }
+
+
+def _tax_review_item(
+    scope: str,
+    category: str,
+    input_method: str,
+    count: int,
+    target_pdf_sha256: str,
+) -> dict[str, object]:
+    source_key = jdl_source_tax_key(scope, category, input_method)
+    evidence = evidence_for(source_key, target_pdf_sha256)
+    if evidence is not None:
+        return {
+            "scope": scope,
+            "category": category,
+            "input_method": input_method,
+            "row_count": count,
+            "evidence_status": "VERIFIED_BY_REAL_IMPORT",
+            "reference_evidence_id": evidence.evidence_id,
+            "decision": "HUMAN_CONFIRMATION_REQUIRED",
+        }
+    reference_id = (
+        "EVID-JDL-MF-TAX-NONTAXABLE-SALES-SUBACCOUNT-ROUNDTRIP-001"
+        if scope == "非売上" and category == ""
+        else ""
+    )
+    return {
+        "scope": scope,
+        "category": category,
+        "input_method": input_method,
+        "row_count": count,
+        "evidence_status": "REFERENCE_ONLY" if reference_id else "UNVERIFIED",
+        "reference_evidence_id": reference_id,
+        "decision": "EVIDENCE_AND_HUMAN_CONFIRMATION_REQUIRED",
     }
 
 

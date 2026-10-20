@@ -31,6 +31,8 @@ class JdlMigrationAccountReview:
     source_name: str
     classification: str
     targets: tuple[tuple[str, str], ...]
+    affected_journal_count: int
+    disabled_name_match: bool
 
 
 @dataclass(frozen=True)
@@ -41,6 +43,8 @@ class JdlMigrationSubaccountReview:
     source_code: str
     source_name: str
     targets: tuple[tuple[str, str], ...]
+    affected_journal_count: int
+    target_parent_exact: bool
 
 
 @dataclass(frozen=True)
@@ -48,6 +52,8 @@ class JdlMigrationTaxReview:
     label: str
     row_count: int
     status: str
+    evidence_status: str
+    evidence_id: str
 
 
 @dataclass(frozen=True)
@@ -106,6 +112,8 @@ class JdlMigrationHumanReviewService:
                 ))),
                 int(item.get("row_count", 0)),
                 str(item.get("decision", "EVIDENCE_REQUIRED")),
+                str(item.get("evidence_status", "UNVERIFIED")),
+                str(item.get("reference_evidence_id", "")),
             )
             for item in tax.get("source_identities", ())
         )
@@ -220,6 +228,8 @@ class JdlMigrationHumanReviewService:
         return JdlMigrationAccountReview(
             f"ACCOUNT|{code}|{name}", code, name,
             str(item.get("classification", "UNKNOWN")), targets,
+            int(item.get("affected_journal_count", 0)),
+            bool(item.get("disabled_name_match", False)),
         )
 
     @staticmethod
@@ -238,4 +248,6 @@ class JdlMigrationHumanReviewService:
         return JdlMigrationSubaccountReview(
             f"SUBACCOUNT|{parent_code}|{source_code}|{source_name}",
             parent_code, parent_name, source_code, source_name, targets,
+            int(item.get("affected_journal_count", 0)),
+            bool(item.get("target_parent_exact", False)),
         )

@@ -801,21 +801,28 @@ class JdlMigrationHumanReviewDialog(QDialog):
         layout = QVBoxLayout(content)
 
         layout.addWidget(QLabel(f"科目の確認（{len(review.accounts)}件）"))
-        account_table = QTableWidget(len(review.accounts), 5)
+        account_table = QTableWidget(len(review.accounts), 6)
         account_table.setHorizontalHeaderLabels(
-            ("入力元コード", "入力元科目", "差異", "JDLの科目", "確認")
+            ("入力元コード", "入力元科目", "差異", "影響", "JDLの科目", "確認")
         )
         account_table.horizontalHeader().setSectionResizeMode(
-            3, QHeaderView.ResizeMode.Stretch
+            4, QHeaderView.ResizeMode.Stretch
         )
         for row, item in enumerate(review.accounts):
             account_table.setItem(row, 0, QTableWidgetItem(item.source_code))
             account_table.setItem(row, 1, QTableWidgetItem(item.source_name))
             account_table.setItem(row, 2, QTableWidgetItem(item.classification))
+            account_table.setItem(row, 3, QTableWidgetItem(
+                f"{item.affected_journal_count}仕訳"
+            ))
             combo = WheelSafeComboBox()
             combo.addItem("未選択", None)
             for code, name in item.targets:
                 combo.addItem(f"{code} {name}", (code, name))
+            if not item.targets and item.disabled_name_match:
+                combo.setToolTip(
+                    "同名科目はJDL側で使用不可です。使用可能にして科目一覧PDFを再出力してください。"
+                )
             confirmed = QCheckBox("確認しました")
             confirmed.setEnabled(False)
             combo.currentIndexChanged.connect(
@@ -824,8 +831,8 @@ class JdlMigrationHumanReviewDialog(QDialog):
                     check.setEnabled(box.currentData() is not None),
                 )
             )
-            account_table.setCellWidget(row, 3, combo)
-            account_table.setCellWidget(row, 4, confirmed)
+            account_table.setCellWidget(row, 4, combo)
+            account_table.setCellWidget(row, 5, confirmed)
             self.account_controls[item.key] = (combo, confirmed)
         account_table.resizeRowsToContents()
         account_table.setMinimumHeight(min(260, 62 + len(review.accounts) * 38))
@@ -840,7 +847,7 @@ class JdlMigrationHumanReviewDialog(QDialog):
                 f"{item.parent_code} {item.parent_name}"
             ))
             sub_table.setItem(row, 1, QTableWidgetItem(
-                f"{item.source_code} {item.source_name}"
+                f"{item.source_code} {item.source_name}（{item.affected_journal_count}仕訳）"
             ))
             combo = WheelSafeComboBox()
             combo.addItem("未選択", None)
@@ -879,7 +886,7 @@ class JdlMigrationHumanReviewDialog(QDialog):
         for item in review.taxes:
             label = QLabel(
                 f"{item.label or '税identity'}: {item.row_count}行 / "
-                "実機確認が不足しているためBLOCK中"
+                f"{item.evidence_status} / 実機確認が不足しているためBLOCK中"
             )
             label.setWordWrap(True)
             layout.addWidget(label)

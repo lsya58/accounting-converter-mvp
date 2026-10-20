@@ -1,0 +1,23 @@
+{
+  "NOT_FOR_PRODUCTION": true,
+  "bom": false,
+  "candidate_sha256": "1ea2aa29ea6ec46b6200f939d5f42052edcfde7b5c5bb1482f1174fde946f407",
+  "encoding": "CP932",
+  "expected_preflight_blockers": [
+    "JDL-MIGRATION-TAX-UNVERIFIED"
+  ],
+  "header_output_period_end": "20261129",
+  "header_output_period_start": "20261129",
+  "journal_count": 1,
+  "journal_date": "20261129",
+  "line_ending": "CRLF",
+  "mapping_promotion_allowed": false,
+  "official_columns": 30,
+  "physical_rows": 1,
+  "probe_case": "sales_second_10",
+  "production_allowed": false,
+  "schema_version": "1",
+  "semantic_scope": "売二種",
+  "target_master_sha256": "5c53f4a613b0046913b42a4af41fd89023477ff84d5cdc27abf799d2ef3ca822",
+  "tax_category": "10%"
+}

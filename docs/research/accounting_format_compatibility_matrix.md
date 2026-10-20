@@ -68,6 +68,18 @@
 
 ## JDL-origin master migration pilot candidate (2026-10-19)
 
+### Operator-confirmed target master re-audit (2026-10-20)
+
+- 実際のJDL-to-JDL会社から取得した科目一覧をtarget候補として再監査した。PDF 7 pages、strict code-bearing rows 79、parser 79、Observed Master 79、enabled candidate 79でmissing/extra 0。completenessは79/79 PASS、分類は`OBSERVED_PRINTED_MASTER`のままであり、`FULL_MASTER`には昇格しない。
+- enabled accountは79、code-less excluded rowsは298、observed subaccountsは0、account/subaccount conflictsは0。code-lessまたは使用区分`×`の行をcandidateへ昇格しない。
+- source 40 account identitiesとの比較はexact 35、same-code/name-changed 1、same-name/code-changed 1、candidateなし3、ambiguous 0。source subaccount identities 4に対するtarget subaccount candidateは0で、silent parent-onlyは禁止する。
+- 以前の別会社候補PDFから作ったmapping、fingerprint、review結果は流用しない。Human review packとtax probeは、このoperator-confirmed target masterのSHA-256へ明示的に結び付ける。
+- printed account defaultだけではtarget tax contextやsource tax identity 3種類の互換性を確定できない。tax contextのHuman確認と未観測tax probeが完了するまでformal outputはBLOCKする。
+- 同じoperator-confirmed target masterに結び付けたsynthetic `1111` probesで、貸方`売二種 / 10%`と`売五種 / 10%`をそれぞれJDLへImportし、同一batch re-exportからdate/account/descriptionの複合identityで一意に照合した。両probeとも30列、CP932、BOMなし、CRLF、account/subaccount/amount/tax/description/balanceのstrict comparisonが差分0でPASSした。
+- Evidence IDsは`EVID-JDL-MIGRATION-TAX-SALES-SECOND-10-ROUNDTRIP-001`と`EVID-JDL-MIGRATION-TAX-SALES-FIFTH-10-ROUNDTRIP-001`。scopeはexact target master、`111`/`612`、1D1C、補助blank、貸方tax、反対側tax blankに限定し、他account・shape・tax contextへ一般化しない。
+- target税Context fingerprintとHuman tax mappingはまだ未確認である。Evidence registryは記録したがactivation fingerprintを空のまま保持し、migration preflightのverified tax keysへ接続しない。Evidence単独ではREADYにしない。
+- source `非売上 / tax blank`は別route・別masterの既存Evidenceしかないため`REFERENCE_ONLY`を維持し、今回targetへの適用はBLOCKする。
+
 ### Human attestation
 
 - Humanは、privateなJDL CSVを最終的にJDLへ取り込みたい仕訳データ、privateな科目一覧PDFをその取込先会社のtarget master候補として提供した。
@@ -85,6 +97,30 @@
 - 5 account mismatchesの影響は、same-code/name-changeが1 identity/1 journal、same-name/code-changeが1 identity/3 journals、no-candidateが3 identities/14 journals。no-candidateのうち1 identity/1 journalだけがtargetのcode-less・使用`×`行と名称一致する。これはJDL側で有効化して明示codeを持つPDFを再取得する候補であり、converterでcodeを推測する対象ではない。残る4 identitiesはUSER_CONFIRMED mappingまたはtarget master側の明示的な追加・変更が必要。
 - CSVのparent-scoped subaccount identities 4は、親account identity自体は4/4 exactだが、subaccountを持たない観測target masterにexact一致しない。476 physical rows / 476 journalsに影響する。各identityについてtargetに明示作成してpreserveするか、情報損失を理解した上でexplicit parent-only policyとするかHuman確認が必要であり、推測やsilent dropは行わない。
 - tax categoryは3種/544 rows。貸方非課税売上の観測literal 8 rowsには限定的な1D1C real-import Evidenceがあるが、任意のJDL-origin shape/contextへの一般化はしない。他の2 literal（535 rowsと1 row）にexact real-import Evidenceはなく、target company/contextでのHuman probeが必要。税率だけで課区の同値性を推測しない。
+
+### JDL-to-JDL migration implementation status
+
+- **完了済み**: strict official 30-column input、diagnostic row separation、
+  1,158 logical journals / 1,271 physical rowsのlossless grouping、79/79の
+  printed-master completeness、fail-closed preflight、atomic no-output gate、
+  およびスクロール可能なHuman review workflow。
+- **Human確認待ち**: account mismatch 5件とsource subaccount 4件。
+  same-code / same-name候補も自動確定しない。target masterの補助は0件のため、
+  補助保持にはJDL側で補助作成とPDF再出力が必要であり、parent-onlyは情報損失を
+  理解した明示確認を必須とする。
+- **Evidence待ち**: source tax identity 3種。`非売上`には限定的な既存Evidenceが
+  あるが、今回のJDL-origin route / target masterへ一般化しない。`売二種 10%`と
+  `売五種 10%`は専用synthetic probeの実Import・再Export strict PASSが必要。
+- **未実装**: 32文字超過摘要のreplacement policy。現在の2件はtruncateせずBLOCK。
+  将来の最小案は、置換文字列をjournal単位で明示保存する
+  `HUMAN_CONFIRMED_DESCRIPTION_REPLACEMENT`であり、元摘要・置換後摘要の
+  CP932/32文字検証と監査記録が揃うまで実装しない。
+- **現在のformal状態**: `output_allowed=false`、partial output 0件。
+  account/subaccount Human確認、target tax context確認、tax実機Evidence、摘要2件の
+  policyがすべて揃うまでformal outputを有効化しない。
+
+次のHuman実機作業はprivateのJDL migration tax probe 2件である。raw candidate、
+実会社値、review packはGit管理しない。production Registryにも登録しない。
 - 摘要32文字超過は2 rows/2 journals（33文字と35文字）。CP932 encode自体は可能だが、現行JDL output preflightの32文字上限を超えるためBLOCKを維持する。自動truncationは不可で、対応するならHumanが変換後摘要を明示確認する別policy/Evidenceが必要。
 
 ### Route and readiness
