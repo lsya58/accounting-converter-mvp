@@ -8,6 +8,9 @@ from accounting_converter.adapters.input.jdl import jdl_source_tax_key
 JDL_TO_JDL_TARGET_MASTER_SHA256 = (
     "5c53f4a613b0046913b42a4af41fd89023477ff84d5cdc27abf799d2ef3ca822"
 )
+JDL_TO_JDL_TARGET_MASTER_IDENTITY_SHA256 = (
+    "c1a4edeb39a59aba8fcefd6fbe6a2db2095c02a30749a7cc7f9b0f9ba1a233b9"
+)
 
 
 @dataclass(frozen=True)
@@ -41,6 +44,22 @@ def evidence_for(
             for item in JDL_MIGRATION_TAX_EVIDENCE
             if item.source_tax_key == source_tax_key
             and item.target_master_sha256 == target_master_sha256
+        ),
+        None,
+    )
+
+
+def evidence_for_master_identity(
+    source_tax_key: str, target_master_identity_sha256: str
+) -> JdlMigrationTaxEvidence | None:
+    if target_master_identity_sha256 != JDL_TO_JDL_TARGET_MASTER_IDENTITY_SHA256:
+        return None
+    return next(
+        (
+            item
+            for item in JDL_MIGRATION_TAX_EVIDENCE
+            if item.source_tax_key == source_tax_key
+            and item.target_master_sha256 == JDL_TO_JDL_TARGET_MASTER_SHA256
         ),
         None,
     )

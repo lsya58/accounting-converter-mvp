@@ -11,7 +11,9 @@ from pathlib import Path
 from typing import Any
 
 from accounting_converter.adapters.output.jdl import (
+    JdlAccountIdentity,
     JdlOutputRuntimeFactory,
+    JdlSubaccountIdentity,
     jdl_ibex_35_5_output_profile,
 )
 from accounting_converter.application.company_settings import (
@@ -151,6 +153,44 @@ class CompanySettingStore:
         return target_context_master_identity_sha256(
             self.context_loader.load(context_path)
         )
+
+    def target_master_inventory(
+        self, company_setting_id: str
+    ) -> tuple[
+        tuple[JdlAccountIdentity, ...],
+        tuple[JdlSubaccountIdentity, ...],
+        frozenset[str],
+    ]:
+        setting = self.get(company_setting_id)
+        context_path = self.context_path(setting)
+        if self.account_pdf_drafts.is_draft(context_path):
+            observation = self.account_pdf_drafts.load(context_path).observation
+            accounts = tuple(
+                JdlAccountIdentity(
+                    item.name, item.code, item.abbreviation, item.name
+                )
+                for item in observation.printed_accounts
+                if item.enabled
+            )
+            subaccounts = tuple(
+                JdlSubaccountIdentity(
+                    parent_account=item.parent_account_name,
+                    mapping_value=item.name,
+                    target_master_code=item.code,
+                    output_code=item.code,
+                    output_name=item.name,
+                    output_representation_confirmed=False,
+                    parent_account_code=item.parent_account_code,
+                    target_name=item.name,
+                )
+                for item in observation.subaccounts
+            )
+            disabled_names = frozenset(
+                item.name for item in observation.printed_accounts if not item.enabled
+            )
+            return accounts, subaccounts, disabled_names
+        context = self.context_loader.load(context_path)
+        return context.account_master, context.subaccounts, frozenset()
 
     def rename(self, company_setting_id: str, display_name: str) -> CompanySetting:
         self._validate_name(display_name)

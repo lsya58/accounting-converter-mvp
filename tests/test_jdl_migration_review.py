@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 from accounting_converter.application.jdl_migration_review import (
     JdlMigrationHumanReviewService,
@@ -14,7 +16,12 @@ from accounting_converter.application.company_settings import (
     ResolvedCompanySetting,
 )
 from accounting_converter.domain.conversion_profile import ConversionProfile
-from accounting_converter.domain.mapping import MappingStatus, SubaccountPolicy
+from accounting_converter.domain.mapping import (
+    MappingStatus,
+    MappingValue,
+    SubaccountPolicy,
+)
+from accounting_converter.adapters.input.jdl import jdl_source_account_key
 from accounting_converter.profiles.known_formats import (
     jdl_ibex_cashbook_migration_input_schema_definition,
     jdl_ibex_cashbook_official_journal_import_schema_definition,
@@ -67,6 +74,20 @@ class _CompanyStore:
     def target_master_identity_sha256(self, company_id):
         self.get(company_id)
         return self.master_hash
+
+    def target_master_inventory(self, company_id):
+        self.get(company_id)
+        return (
+            tuple(
+                SimpleNamespace(
+                    target_master_code=f"{8000 + index}",
+                    target_formal_name=f"出力科目{index}",
+                )
+                for index in range(5)
+            ),
+            (),
+            frozenset(),
+        )
 
     def replace_profile(self, company_id, profile_id):
         self.get(company_id)
@@ -186,6 +207,87 @@ class JdlMigrationHumanReviewTests(unittest.TestCase):
 
         self.assertIn("STABLE-CODE", str(error))
         self.assertEqual(error.user_message, "利用者向けメッセージ")
+
+    def test_derives_current_review_without_external_json_and_offers_all_targets(self):
+        source = Path("tests/fixtures/jdl/valid_simple.csv")
+
+        review = self.service.derive("company-a", source)
+
+        self.assertTrue(review.derived_state)
+        self.assertEqual(len(review.accounts), 3)
+        self.assertTrue(all(not item.recommended_targets for item in review.accounts))
+        self.assertTrue(all(len(item.targets) == 5 for item in review.accounts))
+        self.assertTrue(all(
+            item.targets[0] == ("8000", "出力科目0")
+            for item in review.accounts
+        ))
+
+    def test_derived_review_omits_reusable_confirmed_mapping(self):
+        profile = self.profile_store.get("profile-initial")
+        source_key = jdl_source_account_key("111", "現金")
+        self.profile_store.values[profile.profile_id] = replace(
+            profile,
+            account_mappings={
+                source_key: MappingValue(
+                    source_key,
+                    "出力科目0",
+                    MappingStatus.USER_CONFIRMED,
+                    metadata={
+                        "target_code": "8000",
+                        "target_printed_name": "出力科目0",
+                    },
+                )
+            },
+        )
+
+        review = self.service.derive(
+            "company-a", Path("tests/fixtures/jdl/valid_simple.csv")
+        )
+
+        self.assertEqual(review.reused_account_count, 1)
+        self.assertNotIn("111", {item.source_code for item in review.accounts})
+
+    def test_derived_review_blocks_save_after_source_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.csv"
+            source.write_bytes(Path("tests/fixtures/jdl/valid_simple.csv").read_bytes())
+            review = self.service.derive("company-a", source)
+            source.write_bytes(source.read_bytes() + b"changed")
+
+            with self.assertRaises(JdlMigrationReviewError) as caught:
+                self.service.save(review, {}, set(), {}, set())
+
+        self.assertEqual(
+            caught.exception.code, "JDL-MIGRATION-REVIEW-SOURCE-CHANGED"
+        )
+
+    def test_other_enabled_target_requires_confirmation_then_is_reused(self):
+        source = Path("tests/fixtures/jdl/valid_simple.csv")
+        review = self.service.derive("company-a", source)
+        item = review.accounts[0]
+        selected = item.targets[-1]
+
+        self.service.save(
+            review, {item.key: selected}, {item.key}, {}, set()
+        )
+        reopened = self.service.derive("company-a", source)
+
+        self.assertEqual(reopened.reused_account_count, 1)
+        self.assertNotIn(item.source_code, {row.source_code for row in reopened.accounts})
+
+    def test_derived_review_blocks_save_after_master_changes(self):
+        review = self.service.derive(
+            "company-a", Path("tests/fixtures/jdl/valid_simple.csv")
+        )
+        self.company_store.master_hash = "c" * 64
+
+        with self.assertRaises(JdlMigrationReviewError) as caught:
+            self.service.save(review, {}, set(), {}, set())
+
+        self.assertEqual(
+            caught.exception.code,
+            "JDL-MIGRATION-REVIEW-TARGET-MASTER-CHANGED",
+        )
 
     @staticmethod
     def _payload():

@@ -6,8 +6,10 @@ from pathlib import Path
 
 from accounting_converter.adapters.input.jdl import jdl_source_tax_key
 from accounting_converter.application.jdl_migration_tax_evidence import (
+    JDL_TO_JDL_TARGET_MASTER_IDENTITY_SHA256,
     JDL_TO_JDL_TARGET_MASTER_SHA256,
     evidence_for,
+    evidence_for_master_identity,
     verified_tax_keys_for_context,
 )
 from accounting_converter.tools.generate_jdl_migration_tax_probes import (
@@ -56,6 +58,18 @@ class JdlMigrationTaxEvidenceTests(unittest.TestCase):
             )
             self.assertIsNotNone(evidence)
             self.assertEqual(evidence.evidence_id, evidence_id)
+            by_identity = evidence_for_master_identity(
+                jdl_source_tax_key(scope, "10%", ""),
+                JDL_TO_JDL_TARGET_MASTER_IDENTITY_SHA256,
+            )
+            self.assertEqual(by_identity, evidence)
+
+    def test_master_identity_mismatch_does_not_reuse_evidence(self) -> None:
+        self.assertIsNone(
+            evidence_for_master_identity(
+                jdl_source_tax_key("売二種", "10%", ""), "wrong-master"
+            )
+        )
 
     def test_evidence_does_not_activate_without_confirmed_context(self) -> None:
         self.assertEqual(

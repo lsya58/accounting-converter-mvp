@@ -633,15 +633,8 @@ class SettingsDialog(QDialog):
         if not company_id:
             self.message_label.setText("会社設定を選択してください。")
             return
-        filename, _ = QFileDialog.getOpenFileName(
-            self, "JDL移行の確認ファイルを選択", "", "JSON files (*.json)"
-        )
-        if not filename:
-            return
         try:
-            review = self.controller.load_jdl_migration_review(
-                company_id, Path(filename)
-            )
+            review = self.controller.current_jdl_migration_review(company_id)
         except Exception as exc:
             log_local_exception("jdl_migration_review_load", exc)
             QMessageBox.warning(
@@ -799,6 +792,21 @@ class JdlMigrationHumanReviewDialog(QDialog):
         guidance.setWordWrap(True)
         outer.addWidget(guidance)
 
+        source_label = QLabel(f"対象ファイル: {review.source_path.name}")
+        source_label.setObjectName("muted")
+        outer.addWidget(source_label)
+
+        summary = QLabel(
+            f"既存対応: 科目 {review.reused_account_count}件 / "
+            f"補助科目 {review.reused_subaccount_count}件 / "
+            f"税区分 {review.reused_tax_count}件\n"
+            f"今回の確認: 科目 {len(review.accounts)}件 / "
+            f"補助科目 {len(review.subaccounts)}件 / "
+            f"税区分 {len(review.taxes)}件 / 摘要 {len(review.descriptions)}件"
+        )
+        summary.setWordWrap(True)
+        outer.addWidget(summary)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -813,20 +821,51 @@ class JdlMigrationHumanReviewDialog(QDialog):
         account_table.horizontalHeader().setSectionResizeMode(
             4, QHeaderView.ResizeMode.Stretch
         )
+        classification_labels = {
+            "SAME_CODE_NAME_CHANGED": "同じコード・名称変更",
+            "SAME_NAME_CODE_CHANGED": "同じ名称・コード変更",
+            "AMBIGUOUS": "候補が複数あります",
+            "NONE": "推奨候補なし",
+        }
         for row, item in enumerate(review.accounts):
             account_table.setItem(row, 0, QTableWidgetItem(item.source_code))
             account_table.setItem(row, 1, QTableWidgetItem(item.source_name))
-            account_table.setItem(row, 2, QTableWidgetItem(item.classification))
+            account_table.setItem(row, 2, QTableWidgetItem(
+                classification_labels.get(item.classification, "確認が必要")
+            ))
             account_table.setItem(row, 3, QTableWidgetItem(
                 f"{item.affected_journal_count}仕訳"
             ))
             combo = WheelSafeComboBox()
             combo.addItem("未選択", None)
-            for code, name in item.targets:
+            if item.recommended_targets:
+                heading_index = combo.count()
+                combo.addItem("推奨候補", None)
+                combo.model().item(heading_index).setEnabled(False)
+            for code, name in item.recommended_targets:
                 combo.addItem(f"{code} {name}", (code, name))
-            if not item.targets and item.disabled_name_match:
+            other_targets = tuple(
+                target for target in item.targets
+                if target not in item.recommended_targets
+            )
+            if other_targets:
+                heading_index = combo.count()
+                combo.addItem("その他のJDL科目", None)
+                combo.model().item(heading_index).setEnabled(False)
+                for code, name in other_targets:
+                    combo.addItem(f"{code} {name}", (code, name))
+            if not item.targets:
+                combo.addItem("対応する利用可能なJDL科目がありません", None)
                 combo.setToolTip(
-                    "同名科目はJDL側で使用不可です。使用可能にして科目一覧PDFを再出力してください。"
+                    "JDL側で科目を使用可能にして、JDL科目一覧を更新してください。"
+                )
+            elif not item.recommended_targets:
+                combo.setToolTip(
+                    "推奨候補はありません。現在のJDL科目一覧から対応先を選択してください。"
+                )
+            if item.disabled_name_match:
+                combo.setToolTip(
+                    "同名科目はJDL側で使用不可です。使用可能にしてJDL科目一覧を更新するか、他のJDL科目を明示選択してください。"
                 )
             confirmed = QCheckBox("確認しました")
             confirmed.setEnabled(False)
@@ -842,6 +881,12 @@ class JdlMigrationHumanReviewDialog(QDialog):
         account_table.resizeRowsToContents()
         account_table.setMinimumHeight(min(260, 62 + len(review.accounts) * 38))
         layout.addWidget(account_table)
+        if any(not item.targets for item in review.accounts):
+            unavailable = QLabel(
+                "対応する利用可能なJDL科目がありません。JDL側で科目を使用可能にした後、会社設定の「JDL科目一覧を更新」を実行してください。"
+            )
+            unavailable.setWordWrap(True)
+            layout.addWidget(unavailable)
 
         layout.addWidget(QLabel(f"補助科目の確認（{len(review.subaccounts)}件）"))
         sub_table = QTableWidget(len(review.subaccounts), 4)
@@ -866,6 +911,9 @@ class JdlMigrationHumanReviewDialog(QDialog):
                 combo.setToolTip(
                     "補助を保持するにはJDL側で補助科目を作成し、科目一覧を更新してください。"
                 )
+                sub_table.item(row, 1).setToolTip(
+                    "補助を保持するにはJDL側で補助科目を作成し、科目一覧を更新してください。親科目のみを選ぶと補助情報は引き継がれません。"
+                )
             confirmed = QCheckBox("確認しました")
             confirmed.setEnabled(False)
             combo.currentIndexChanged.connect(
@@ -880,6 +928,12 @@ class JdlMigrationHumanReviewDialog(QDialog):
         sub_table.resizeRowsToContents()
         sub_table.setMinimumHeight(min(230, 62 + len(review.subaccounts) * 38))
         layout.addWidget(sub_table)
+        if any(not item.targets for item in review.subaccounts):
+            subaccount_note = QLabel(
+                "補助科目を保持するには、JDL側で対象の親科目に補助科目を作成してから「JDL科目一覧を更新」してください。親科目のみで変換する場合は、補助情報が引き継がれないことを確認して明示選択してください。"
+            )
+            subaccount_note.setWordWrap(True)
+            layout.addWidget(subaccount_note)
 
         layout.addWidget(QLabel("税設定"))
         tax_context = QLabel(
@@ -889,9 +943,14 @@ class JdlMigrationHumanReviewDialog(QDialog):
         tax_context.setWordWrap(True)
         layout.addWidget(tax_context)
         for item in review.taxes:
+            tax_state = (
+                "実機確認済み・会社設定の確認が必要"
+                if item.evidence_status == "VERIFIED_BY_REAL_IMPORT"
+                else "実機確認が不足しているため変換できません"
+            )
             label = QLabel(
-                f"{item.label or '税identity'}: {item.row_count}行 / "
-                f"{item.evidence_status} / 実機確認が不足しているためBLOCK中"
+                f"{item.label or '税区分'}: {item.row_count}行 / "
+                f"{tax_state}"
             )
             label.setWordWrap(True)
             layout.addWidget(label)
@@ -905,10 +964,10 @@ class JdlMigrationHumanReviewDialog(QDialog):
             )
             layout.addWidget(QLabel(
                 f"{item.journal_identifier}: {length_text} / "
-                "32文字を超えるためBLOCKのままです。"
+                "32文字を超えるため変換できません。"
             ))
         description_note = QLabel(
-            "切り捨ては行いません。将来、Human確認済みの置換policyが必要です。"
+            "切り捨ては行いません。変換するには、確認済みの置換ルールが必要です。"
         )
         description_note.setWordWrap(True)
         layout.addWidget(description_note)
@@ -917,7 +976,7 @@ class JdlMigrationHumanReviewDialog(QDialog):
         outer.addWidget(scroll, 1)
 
         self.status_label = QLabel(
-            "未確認または実機Evidence不足の項目がある間は変換できません。"
+            "未確認または実機確認が不足している項目がある間は変換できません。"
         )
         self.status_label.setWordWrap(True)
         outer.addWidget(self.status_label)

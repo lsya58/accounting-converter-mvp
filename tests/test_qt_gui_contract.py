@@ -21,10 +21,24 @@ class QtGuiContractTests(unittest.TestCase):
         )[1].split("class TradePartnerPolicyDialog", maxsplit=1)[0]
         for contract in (
             "QScrollArea()", "確認結果を保存", "jdl_migration_review_save",
-            "QMessageBox.warning", "実機確認が不足しているためBLOCK中",
-            "32文字を超えるためBLOCKのままです",
+            "QMessageBox.warning", "実機確認が不足しているため変換できません",
+            "32文字を超えるため変換できません",
         ):
             self.assertIn(contract, dialog)
+
+    def test_jdl_migration_review_uses_current_state_without_json_picker(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
+            encoding="utf-8"
+        )
+        handler = source.split(
+            "def _review_jdl_migration", maxsplit=1
+        )[1].split("def _review_settings", maxsplit=1)[0]
+
+        self.assertIn("current_jdl_migration_review", handler)
+        self.assertNotIn("QFileDialog", handler)
+        self.assertIn("その他のJDL科目", source)
+        self.assertIn("対応する利用可能なJDL科目がありません", source)
+        self.assertIn("補助を保持するにはJDL側で補助科目を作成", source)
 
     def test_runtime_dependency_and_dual_build_entries_are_declared(self) -> None:
         project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))

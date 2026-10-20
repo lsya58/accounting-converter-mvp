@@ -38,6 +38,7 @@ from accounting_converter.application.moneyforward_conversion_workflow import (
 )
 from accounting_converter.application.jdl_migration_review import (
     JdlMigrationHumanReviewService,
+    JdlMigrationReviewError,
 )
 
 from accounting_converter.application.profile_preflight import (
@@ -567,6 +568,17 @@ class AccountingConverterController:
 
     def load_jdl_migration_review(self, company_setting_id: str, path: Path):
         return self.jdl_migration_review_service.load(company_setting_id, path)
+
+    def current_jdl_migration_review(self, company_setting_id: str):
+        source_path = self.state.selected_file
+        if source_path is None:
+            raise JdlMigrationReviewError(
+                "JDL-MIGRATION-REVIEW-SOURCE-NOT-SELECTED",
+                "先にメイン画面で移行元のJDL仕訳ファイルを選択してください。",
+            )
+        return self.jdl_migration_review_service.derive(
+            company_setting_id, source_path
+        )
 
     def save_jdl_migration_review(
         self, review, account_selections, account_confirmed,
