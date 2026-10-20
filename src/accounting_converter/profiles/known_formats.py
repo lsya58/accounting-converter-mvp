@@ -517,6 +517,38 @@ def jdl_ibex_cashbook_35_5_observed_schema_definition() -> SchemaDefinition:
     )
 
 
+def jdl_ibex_cashbook_migration_input_schema_definition() -> SchemaDefinition:
+    """Strict, non-production input identity for JDL old-master migration."""
+    observed = jdl_ibex_cashbook_35_5_observed_schema_definition()
+    return SchemaDefinition(
+        identity=FormatIdentity(
+            vendor="JDL",
+            product="JDL IBEX 出納帳",
+            format_name="JDL 30-column old-master migration input",
+            direction=FormatDirection.INPUT,
+            evidence_level=EvidenceLevel.OBSERVED,
+            major_version="35",
+            minor_version="5",
+            source_reference=JDL_OBSERVED_SOURCE,
+            notes=(
+                "Strict migration input identity. It is intentionally absent from "
+                "the production adapter registry until Human mapping and tax "
+                "Evidence gates are complete."
+            ),
+        ),
+        fields=observed.fields,
+        capabilities=observed.capabilities,
+        delimiter=observed.delimiter,
+        encoding="cp932",
+        has_header=CapabilityStatus.SUPPORTED,
+        column_count=30,
+        date_formats=("%Y%m%d",),
+        numeric_format="integer_yen_observed",
+        blank_representation="empty_field",
+        notes="NOT_FOR_PRODUCTION: JDL old-master migration foundation only.",
+    )
+
+
 def jdl_ibex_cashbook_official_journal_import_schema_definition() -> SchemaDefinition:
     spec = jdl_ibex_cashbook_official_journal_import_spec()
     fields = tuple(

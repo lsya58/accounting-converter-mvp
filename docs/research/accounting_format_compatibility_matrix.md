@@ -66,6 +66,72 @@
 - バージョン未検証のJDL由来Export sampleでも30列header family、CP932、CRLF、BOMなし、同じ識別フラグ集合が再観測された。ただし35.5固有仕様として統合しない。
 - Money Forward クラウド会計の仕訳帳Exportでは、完全架空の段階的7 artifactsから19列exact header、CP932、BOMなし、LF、同一非空取引Noによる1D3C grouping候補、補助/部門/tax/取引先/tag/memo field populationを観測した。これはJDL向けExportとは別routeであり、同一schemaと仮定しない。
 
+## JDL-origin master migration pilot candidate (2026-10-19)
+
+### Human attestation
+
+- Humanは、privateなJDL CSVを最終的にJDLへ取り込みたい仕訳データ、privateな科目一覧PDFをその取込先会社のtarget master候補として提供した。
+- 同一会社性はHuman attestationであり、ファイル内容から会社identityを推測していない。
+
+### Observed files
+
+- CSV SHA-256: d9e8564ff2ef0e0028d82ac4ff1c62303038aeaeb67bf9e102a367cb784af427
+- PDF SHA-256: a7e09a33e95d0ef8b11f106781f9585e57d5b985876c452490288d4bd1ddde03
+- CSVはCP932、BOMなし、CRLF、official 30-column header、1271 journal records、1158 logical journals。貸借合計は全1158 journalsで一致した。
+- CSVには2657のJDL master-reference diagnostic rowsが混在する。これはそのままのformal Import candidateではない。
+- PDFは7 pages、OBSERVED_PRINTED_MASTER、code-bearing enabled accounts 79、code-less excluded rows 298、observed subaccounts 0、account/subaccount conflict 0として現行parserで読み取れた。raw textのcode-bearing account 79、parser 79、Observed Master 79、refresh candidate 79が完全一致し、missing/extraは0。このPDFに対するprinted-master parser completenessは79/79 PASSとする。
+- code-less 298行はすべて使用区分`×`であり、identityとなる明示codeがないため意図的に候補から除外する。当座預金が候補に出ないこともこの安全仕様によるもので、parser bugではない。JDL側で使用可能にし、明示code付きの最新PDFを再出力するまで候補化しない。
+- CSVのunique account identities 40のうち35はcode + printed name identityがtarget masterとexact一致。5はidentity再確認が必要（same-code/name-change 1、same-name/code-change 1、no exact candidate 3）。ambiguous candidateは0。
+- 5 account mismatchesの影響は、same-code/name-changeが1 identity/1 journal、same-name/code-changeが1 identity/3 journals、no-candidateが3 identities/14 journals。no-candidateのうち1 identity/1 journalだけがtargetのcode-less・使用`×`行と名称一致する。これはJDL側で有効化して明示codeを持つPDFを再取得する候補であり、converterでcodeを推測する対象ではない。残る4 identitiesはUSER_CONFIRMED mappingまたはtarget master側の明示的な追加・変更が必要。
+- CSVのparent-scoped subaccount identities 4は、親account identity自体は4/4 exactだが、subaccountを持たない観測target masterにexact一致しない。476 physical rows / 476 journalsに影響する。各identityについてtargetに明示作成してpreserveするか、情報損失を理解した上でexplicit parent-only policyとするかHuman確認が必要であり、推測やsilent dropは行わない。
+- tax categoryは3種/544 rows。貸方非課税売上の観測literal 8 rowsには限定的な1D1C real-import Evidenceがあるが、任意のJDL-origin shape/contextへの一般化はしない。他の2 literal（535 rowsと1 row）にexact real-import Evidenceはなく、target company/contextでのHuman probeが必要。税率だけで課区の同値性を推測しない。
+- 摘要32文字超過は2 rows/2 journals（33文字と35文字）。CP932 encode自体は可能だが、現行JDL output preflightの32文字上限を超えるためBLOCKを維持する。自動truncationは不可で、対応するならHumanが変換後摘要を明示確認する別policy/Evidenceが必要。
+
+### Route and readiness
+
+- File classification: JDL official 30-column family with embedded diagnostic rows; normalization and old-master to new-master mapping are required.
+- Route classification: JDL old master -> JDL new master。Money Forward -> JDL workflowへは押し込まない。
+- production registryのinput adaptersはMoney ForwardとYayoiだけ。JDL-originにはstrict migration Input Adapterを追加したが、Human mappingとtax Evidenceのgateが未完了のためproduction registryには登録せず、formal outputも有効化しない。
+- Formal dry-run: BLOCKED。Import candidate、partial output、Windows buildは生成しない。
+- 対応には、diagnostic-row handling、exact 30-column JDL input adapter、USER_CONFIRMED account/subaccount migration、compound grouping preservation、tax/description validation、atomic outputを備えた独立routeが必要。小さなparser緩和としては扱わない。
+
+### Minimum implementation scope
+
+1. strict JDL 30-column Input Adapter: exact header/column count、CP932、BOM、CRLF、calendar/date、amount、flag sequenceを検証し、source bytesを変更しない。
+2. diagnostic separation: journal rowsと2,657行のdiagnostic/master-reference rowsを構造的に分離し、不明行が1件でもあれば全体をBLOCKする。diagnosticを黙って通常journalへ変換しない。
+3. Common Journal Model conversion: sourceのaccount/subaccount code+name、tax raw semantics、physical-row description、source row/order/flag/group identityをmetadataとしてlosslessに保持する。
+4. JDL -> JDL CompanySetting: source/target FormatIdentity、target company context/master fingerprint、USER_CONFIRMED mappingsを会社単位で保存する。既存`expected_source_format_key` / `expected_target_format_key`とprofile/context fingerprintは再利用できる。
+5. mapping: 35 exact accountsはidentity validation後に候補化できるがauto-confirmしない。5 mismatchesはHuman確認、4 subaccountsはparent-scoped preserveまたはexplicit parent-onlyをidentityごとに確認する。
+6. tax preservation/validation: source tax literalをそのまま保持し、target contextとexact Evidenceが一致するものだけ出力する。未観測2 literalとEvidence scope外shapeはHuman probe終了までBLOCKする。
+7. grouping/order/description: `1000/1111/1110/1100/1101`のgroup boundaryとphysical-row orderを保持し、貸借一致をjournalごとに再検証する。摘要は32文字、CP932 losslessを満たす場合だけ出力する。
+8. atomic output: 全1158 journalsをpreflightし、1件でも未解決・未対応ならformal CSVを生成しない。成功時のみstrict JDL Output Adapter/Validatorで別pathへpublishし、overwriteしない。
+
+### Human confirmation before implementation
+
+- account mismatch 5 identities: source identityとtarget候補の対応を1件ずつ確認する。code-less・使用`×`と一致する1 identityは、JDL側で使用可能にしてcode付きPDFを再取得するか、別の有効targetへmappingするかを確認する。
+- subaccount 4 identities: 各々をtarget JDLに新規作成して保持するか、source補助情報を引き継がないexplicit parent-onlyを許可するかを確認する。作成後は最新PDFでparent-scoped identityを再観測する。
+- tax environment: target JDLのproduct/version、課税事業者区分、税込/税抜、課税方式、対応方式をHumanが確認する。未観測2 literalは最小synthetic Import/re-export probeでtarget受入とraw再出力を確認する。
+- descriptions: 32文字超過2 journalsをformal migration対象からBLOCKするか、Human確認済みの置換文を使う新policyを必要とするかを確認する。
+
+### Future route model
+
+- `ConversionProfile`はsource/target `FormatIdentity`、`CompanySetting`はsource/target format keyとtarget context fingerprintをすでに分離している。そのため`Source: JDL` / `Target: JDL` / `Target Company: pilot_case_001`のモデルへは拡張可能。
+- MVPではJDL input adapter/route registrationと既存CompanySettingのsource label追加に限定し、全面的なvendor selectorやoffice templateは後回しとする。MF固有のtax/optional-field normalizationは再利用せず、共通のmapping、target context、preflight、atomic conversion/output validationだけを再利用する。
+
+### Foundation implementation status
+
+- strict JDL migration Input Adapterはexact 30-column header、CP932、BOMなし、CRLF、official flags、calendar date、integer yen、balance、compound flag sequenceをfail-closedで検証する。production registryには未登録。
+- diagnostic/master-reference rowは「30列・先頭fieldが`//`・残り29 fieldsがblank」の観測構造だけをsource diagnostic metadataに分離する。それ以外のunknown rowはBLOCKする。
+- CJM metadataにsource account/subaccount code+name、tax scope/category/input method、raw 30 columns、physical row index、flag、voucher、row descriptionを保持する。
+- migration preflightはaccount/subaccount USER_CONFIRMED mapping、tax Evidence、32文字、CP932、flags、balance、target context freshnessを一括判定する。実案件1,158 journalsは現在BLOCKで、output journalsは0。
+- syntheticの検証済み1D1Cに限り既存JDL serializer/validatorへ接続するroute testを追加。実案件candidateは生成しない。
+
+### Unverified
+
+- Human attestationとfile consistencyは分離し、target JDL companyへのImport成功は未検証。
+- PDF自体からJDL application versionを確定していない。現行parserの35.5 contextと同一と推測しない。
+- 診断行の構造的分離、未解決mapping、targetに存在しないsubaccount、すべてのobserved compound shapes、未観測tax literal、長い摘要のformal outputは未検証。
+
 ## 未確定のまま残す事項
 
 - 実際に使用する弥生製品/バージョン
