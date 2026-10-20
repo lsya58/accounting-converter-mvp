@@ -36,6 +36,9 @@ from accounting_converter.application.moneyforward_profile_setup import (
 from accounting_converter.application.moneyforward_conversion_workflow import (
     MoneyForwardConversionWorkflow,
 )
+from accounting_converter.application.jdl_migration_review import (
+    JdlMigrationHumanReviewService,
+)
 
 from accounting_converter.application.profile_preflight import (
     ConversionPreflightService,
@@ -162,6 +165,9 @@ class AccountingConverterController:
             self.company_store, self.profile_store
         )
         self.company_mapping_update_service = CompanyMappingUpdateService(
+            self.company_store, self.profile_store
+        )
+        self.jdl_migration_review_service = JdlMigrationHumanReviewService(
             self.company_store, self.profile_store
         )
         self.company_tax_context_confirmation_service = (
@@ -557,6 +563,23 @@ class AccountingConverterController:
         self, company_setting_id: str
     ) -> CompanyMappingUpdateReview:
         return self.company_mapping_update_service.review_saved(company_setting_id)
+
+    def load_jdl_migration_review(self, company_setting_id: str, path: Path):
+        return self.jdl_migration_review_service.load(company_setting_id, path)
+
+    def save_jdl_migration_review(
+        self, review, account_selections, account_confirmed,
+        subaccount_selections, subaccount_confirmed,
+    ) -> AppState:
+        self.jdl_migration_review_service.save(
+            review, account_selections, account_confirmed,
+            subaccount_selections, subaccount_confirmed,
+        )
+        self.load_profiles()
+        self.load_company_settings()
+        state = self.select_company_setting(review.company_setting_id)
+        self.state = replace(state, user_message="移行内容の確認結果を保存しました。")
+        return self.state
 
     def apply_company_mapping_updates(
         self,

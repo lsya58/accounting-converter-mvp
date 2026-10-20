@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 from accounting_converter.application.company_mapping_update import (
     PARENT_ONLY_SELECTION,
 )
+from accounting_converter.domain.mapping import SubaccountPolicy
 from accounting_converter.ui.controllers import AccountingConverterController
 from accounting_converter.ui.view_models import (
     AppState,
@@ -466,6 +467,8 @@ class SettingsDialog(QDialog):
         self.tax_context_button.clicked.connect(self._confirm_tax_context)
         trade_partner_button = QPushButton("取引先情報の扱い")
         trade_partner_button.clicked.connect(self._confirm_trade_partner_policy)
+        migration_review_button = QPushButton("JDL移行内容を確認")
+        migration_review_button.clicked.connect(self._review_jdl_migration)
         refresh_master.setMinimumWidth(refresh_master.sizeHint().width() + 12)
         self.tax_context_button.setMinimumWidth(
             self.tax_context_button.sizeHint().width() + 12
@@ -477,6 +480,7 @@ class SettingsDialog(QDialog):
         company_actions.addWidget(refresh_master, 1, 1)
         company_actions.addWidget(self.tax_context_button, 1, 2)
         company_actions.addWidget(trade_partner_button, 2, 0)
+        company_actions.addWidget(migration_review_button, 2, 1)
         for column in range(3):
             company_actions.setColumnStretch(column, 1)
         layout.addLayout(company_actions)
@@ -621,6 +625,31 @@ class SettingsDialog(QDialog):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._reload_companies(self.controller.state)
 
+    def _review_jdl_migration(self) -> None:
+        company_id = self.company_combo.currentData()
+        if not company_id:
+            self.message_label.setText("会社設定を選択してください。")
+            return
+        filename, _ = QFileDialog.getOpenFileName(
+            self, "JDL移行の確認ファイルを選択", "", "JSON files (*.json)"
+        )
+        if not filename:
+            return
+        try:
+            review = self.controller.load_jdl_migration_review(
+                company_id, Path(filename)
+            )
+        except Exception as exc:
+            log_local_exception("jdl_migration_review_load", exc)
+            QMessageBox.warning(
+                self, "移行内容を確認できませんでした",
+                "確認ファイルと会社設定を確認してください。",
+            )
+            return
+        dialog = JdlMigrationHumanReviewDialog(self.controller, review, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._reload_companies(self.controller.state)
+
     def _review_settings(self) -> None:
         company_id = self.company_combo.currentData()
         if not company_id:
@@ -745,6 +774,185 @@ class SettingsDialog(QDialog):
             if company_id
             else state.user_message
         )
+
+
+class JdlMigrationHumanReviewDialog(QDialog):
+    def __init__(self, controller, review, parent=None) -> None:
+        super().__init__(parent)
+        self.controller = controller
+        self.review = review
+        self.account_controls = {}
+        self.subaccount_controls = {}
+        self.setWindowTitle("JDL移行内容を確認")
+        self.resize(920, 680)
+        self.setMinimumSize(700, 480)
+        outer = QVBoxLayout(self)
+        outer.addWidget(QLabel("JDL移行内容を確認"))
+        guidance = QLabel(
+            "候補は自動確定されません。選択した項目だけを確認済みとして保存します。"
+        )
+        guidance.setWordWrap(True)
+        outer.addWidget(guidance)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        content = QWidget()
+        layout = QVBoxLayout(content)
+
+        layout.addWidget(QLabel(f"科目の確認（{len(review.accounts)}件）"))
+        account_table = QTableWidget(len(review.accounts), 5)
+        account_table.setHorizontalHeaderLabels(
+            ("入力元コード", "入力元科目", "差異", "JDLの科目", "確認")
+        )
+        account_table.horizontalHeader().setSectionResizeMode(
+            3, QHeaderView.ResizeMode.Stretch
+        )
+        for row, item in enumerate(review.accounts):
+            account_table.setItem(row, 0, QTableWidgetItem(item.source_code))
+            account_table.setItem(row, 1, QTableWidgetItem(item.source_name))
+            account_table.setItem(row, 2, QTableWidgetItem(item.classification))
+            combo = WheelSafeComboBox()
+            combo.addItem("未選択", None)
+            for code, name in item.targets:
+                combo.addItem(f"{code} {name}", (code, name))
+            confirmed = QCheckBox("確認しました")
+            confirmed.setEnabled(False)
+            combo.currentIndexChanged.connect(
+                lambda _index, box=combo, check=confirmed: (
+                    check.setChecked(False),
+                    check.setEnabled(box.currentData() is not None),
+                )
+            )
+            account_table.setCellWidget(row, 3, combo)
+            account_table.setCellWidget(row, 4, confirmed)
+            self.account_controls[item.key] = (combo, confirmed)
+        account_table.resizeRowsToContents()
+        account_table.setMinimumHeight(min(260, 62 + len(review.accounts) * 38))
+        layout.addWidget(account_table)
+
+        layout.addWidget(QLabel(f"補助科目の確認（{len(review.subaccounts)}件）"))
+        sub_table = QTableWidget(len(review.subaccounts), 4)
+        sub_table.setHorizontalHeaderLabels(("親科目", "入力元補助", "処理方法", "確認"))
+        sub_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        for row, item in enumerate(review.subaccounts):
+            sub_table.setItem(row, 0, QTableWidgetItem(
+                f"{item.parent_code} {item.parent_name}"
+            ))
+            sub_table.setItem(row, 1, QTableWidgetItem(
+                f"{item.source_code} {item.source_name}"
+            ))
+            combo = WheelSafeComboBox()
+            combo.addItem("未選択", None)
+            for code, name in item.targets:
+                combo.addItem(f"JDL補助科目へ対応: {code} {name}", (code, name))
+            combo.addItem(
+                "親科目のみで変換する",
+                SubaccountPolicy.PARENT_ONLY_CONFIRMED.value,
+            )
+            if not item.targets:
+                combo.setToolTip(
+                    "補助を保持するにはJDL側で補助科目を作成し、科目一覧を更新してください。"
+                )
+            confirmed = QCheckBox("確認しました")
+            confirmed.setEnabled(False)
+            combo.currentIndexChanged.connect(
+                lambda _index, box=combo, check=confirmed: (
+                    check.setChecked(False),
+                    check.setEnabled(box.currentData() is not None),
+                )
+            )
+            sub_table.setCellWidget(row, 2, combo)
+            sub_table.setCellWidget(row, 3, confirmed)
+            self.subaccount_controls[item.key] = (combo, confirmed)
+        sub_table.resizeRowsToContents()
+        sub_table.setMinimumHeight(min(230, 62 + len(review.subaccounts) * 38))
+        layout.addWidget(sub_table)
+
+        layout.addWidget(QLabel("税設定"))
+        tax_context = QLabel(
+            "JDL Version / 課税事業者・免税 / 税込・税抜 / 課税方式 / 対応方式を"
+            "既存の「JDL税設定を確認」から確認してください。"
+        )
+        tax_context.setWordWrap(True)
+        layout.addWidget(tax_context)
+        for item in review.taxes:
+            label = QLabel(
+                f"{item.label or '税identity'}: {item.row_count}行 / "
+                "実機確認が不足しているためBLOCK中"
+            )
+            label.setWordWrap(True)
+            layout.addWidget(label)
+
+        layout.addWidget(QLabel("摘要の確認"))
+        for item in review.descriptions:
+            length_text = (
+                f"{item.current_length}文字"
+                if item.current_length
+                else "文字数詳細なし"
+            )
+            layout.addWidget(QLabel(
+                f"{item.journal_identifier}: {length_text} / "
+                "32文字を超えるためBLOCKのままです。"
+            ))
+        description_note = QLabel(
+            "切り捨ては行いません。将来、Human確認済みの置換policyが必要です。"
+        )
+        description_note.setWordWrap(True)
+        layout.addWidget(description_note)
+        layout.addStretch(1)
+        scroll.setWidget(content)
+        outer.addWidget(scroll, 1)
+
+        self.status_label = QLabel(
+            "未確認または実機Evidence不足の項目がある間は変換できません。"
+        )
+        self.status_label.setWordWrap(True)
+        outer.addWidget(self.status_label)
+        actions = QHBoxLayout()
+        cancel = QPushButton("キャンセル")
+        cancel.clicked.connect(self.reject)
+        save = QPushButton("確認結果を保存")
+        save.setObjectName("primaryButton")
+        save.clicked.connect(self._save)
+        actions.addStretch(1)
+        actions.addWidget(cancel)
+        actions.addWidget(save)
+        outer.addLayout(actions)
+
+    def _save(self) -> None:
+        account_selections = {
+            key: combo.currentData()
+            for key, (combo, _check) in self.account_controls.items()
+            if combo.currentData() is not None
+        }
+        account_confirmed = {
+            key for key, (_combo, check) in self.account_controls.items()
+            if check.isChecked()
+        }
+        subaccount_selections = {
+            key: combo.currentData()
+            for key, (combo, _check) in self.subaccount_controls.items()
+            if combo.currentData() is not None
+        }
+        subaccount_confirmed = {
+            key for key, (_combo, check) in self.subaccount_controls.items()
+            if check.isChecked()
+        }
+        try:
+            self.controller.save_jdl_migration_review(
+                self.review, account_selections, account_confirmed,
+                subaccount_selections, subaccount_confirmed,
+            )
+        except Exception as exc:
+            log_local_exception("jdl_migration_review_save", exc)
+            self.status_label.setText("確認結果を保存できませんでした。設定を確認してください。")
+            QMessageBox.warning(
+                self, "確認結果を保存できませんでした",
+                "選択内容と会社設定を確認してください。",
+            )
+            return
+        self.accept()
 
 
 class TradePartnerPolicyDialog(QDialog):

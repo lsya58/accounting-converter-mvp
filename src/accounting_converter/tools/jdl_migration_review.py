@@ -43,13 +43,16 @@ def build_review(source: Path, target_pdf: Path) -> dict[str, object]:
 
     source_accounts: dict[tuple[str, str], dict[str, str]] = {}
     source_subaccounts: dict[tuple[str, str, str, str], dict[str, str]] = {}
-    overflow_count = 0
+    overflow_rows: list[dict[str, object]] = []
     tax_counts: Counter[tuple[str, str, str]] = Counter()
     for entry in parsed.entries:
-        overflow_count += sum(
-            len(str(row.get("description", ""))) > 32
-            for row in entry.metadata.get("physical_rows", ())
-        )
+        for row_index, row in enumerate(entry.metadata.get("physical_rows", ()), 1):
+            length = len(str(row.get("description", "")))
+            if length > 32:
+                overflow_rows.append({
+                    "journal_identifier": f"{entry.journal_id}:row-{row_index}",
+                    "current_length": length,
+                })
         for line in entry.lines:
             metadata = line.metadata
             code = str(metadata.get("jdl_source_account_code", ""))
@@ -145,7 +148,7 @@ def build_review(source: Path, target_pdf: Path) -> dict[str, object]:
             "account_mismatches": len(mismatches),
             "subaccount_identities": len(source_subaccounts),
             "tax_identities": len(tax_counts),
-            "description_overflow_rows": overflow_count,
+            "description_overflow_rows": len(overflow_rows),
         },
         "account_mismatches": mismatches,
         "subaccounts": list(source_subaccounts.values()),
@@ -169,7 +172,8 @@ def build_review(source: Path, target_pdf: Path) -> dict[str, object]:
             ],
         },
         "description": {
-            "overflow_row_count": overflow_count,
+            "overflow_row_count": len(overflow_rows),
+            "overflow_rows": overflow_rows,
             "policy": "BLOCK_NO_TRUNCATION",
         },
         "current_preflight": {

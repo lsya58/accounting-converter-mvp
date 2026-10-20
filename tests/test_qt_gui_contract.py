@@ -12,6 +12,20 @@ from accounting_converter.ui_qt.theme import APP_STYLE_SHEET, COLORS, status_vis
 
 
 class QtGuiContractTests(unittest.TestCase):
+    def test_jdl_migration_review_is_scrollable_and_failures_are_visible(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
+            encoding="utf-8"
+        )
+        dialog = source.split(
+            "class JdlMigrationHumanReviewDialog", maxsplit=1
+        )[1].split("class TradePartnerPolicyDialog", maxsplit=1)[0]
+        for contract in (
+            "QScrollArea()", "確認結果を保存", "jdl_migration_review_save",
+            "QMessageBox.warning", "実機確認が不足しているためBLOCK中",
+            "32文字を超えるためBLOCKのままです",
+        ):
+            self.assertIn(contract, dialog)
+
     def test_runtime_dependency_and_dual_build_entries_are_declared(self) -> None:
         project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
         self.assertIn("PySide6>=6.8,<7", project["project"]["dependencies"])
