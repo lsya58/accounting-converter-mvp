@@ -9,6 +9,10 @@ from accounting_converter.application.jdl_migration_review import (
     JdlMigrationHumanReviewService,
     JdlMigrationReviewError,
 )
+from accounting_converter.application.company_settings import (
+    CompanySettingStatus,
+    ResolvedCompanySetting,
+)
 from accounting_converter.domain.conversion_profile import ConversionProfile
 from accounting_converter.domain.mapping import MappingStatus, SubaccountPolicy
 from accounting_converter.profiles.known_formats import (
@@ -20,6 +24,12 @@ from accounting_converter.profiles.known_formats import (
 class _Setting:
     def __init__(self, profile_id="profile-initial"):
         self.conversion_profile_id = profile_id
+        self.expected_source_format_key = (
+            jdl_ibex_cashbook_migration_input_schema_definition().identity.stable_key
+        )
+        self.expected_target_format_key = (
+            jdl_ibex_cashbook_official_journal_import_schema_definition().identity.stable_key
+        )
 
 
 class _ProfileStore:
@@ -40,11 +50,23 @@ class _ProfileStore:
 class _CompanyStore:
     def __init__(self):
         self.setting = _Setting()
+        self.master_hash = "b" * 64
+        self.status = CompanySettingStatus.AVAILABLE
 
     def get(self, company_id):
-        if company_id != "company-a":
+        if company_id not in {"company-a", "company-b"}:
             raise ValueError("company not found")
         return self.setting
+
+    def resolve(self, company_id):
+        return ResolvedCompanySetting(
+            self.get(company_id), self.status,
+            profile=None, context=None,
+        )
+
+    def target_master_identity_sha256(self, company_id):
+        self.get(company_id)
+        return self.master_hash
 
     def replace_profile(self, company_id, profile_id):
         self.get(company_id)
@@ -113,6 +135,58 @@ class JdlMigrationHumanReviewTests(unittest.TestCase):
                 {subaccount.key},
             )
 
+    def test_same_case_and_master_can_open_for_another_company_id(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._write(Path(directory), self._payload())
+            self.assertEqual(
+                len(self.service.load("company-b", path).accounts), 5
+            )
+
+    def test_master_format_schema_and_stale_mismatches_are_blocked(self):
+        cases = (
+            (
+                "target_master_identity_sha256", "c" * 64,
+                "JDL-MIGRATION-REVIEW-TARGET-MASTER-MISMATCH",
+            ),
+            (
+                "source_format_key", "wrong-source",
+                "JDL-MIGRATION-REVIEW-SOURCE-FORMAT-MISMATCH",
+            ),
+            (
+                "target_format_key", "wrong-target",
+                "JDL-MIGRATION-REVIEW-TARGET-FORMAT-MISMATCH",
+            ),
+            (
+                "review_schema_version", "1",
+                "JDL-MIGRATION-REVIEW-SCHEMA-UNSUPPORTED",
+            ),
+        )
+        for field, value, code in cases:
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                payload = self._payload()
+                payload[field] = value
+                with self.assertRaises(JdlMigrationReviewError) as caught:
+                    self.service.load(
+                        "company-a", self._write(Path(directory), payload)
+                    )
+                self.assertEqual(caught.exception.code, code)
+
+        self.company_store.status = CompanySettingStatus.STALE
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(JdlMigrationReviewError) as caught:
+                self.service.load(
+                    "company-a", self._write(Path(directory), self._payload())
+                )
+        self.assertEqual(
+            caught.exception.code, "JDL-MIGRATION-REVIEW-COMPANY-STALE"
+        )
+
+    def test_error_string_contains_stable_code_for_local_diagnostics(self):
+        error = JdlMigrationReviewError("STABLE-CODE", "利用者向けメッセージ")
+
+        self.assertIn("STABLE-CODE", str(error))
+        self.assertEqual(error.user_message, "利用者向けメッセージ")
+
     @staticmethod
     def _payload():
         accounts = []
@@ -131,7 +205,16 @@ class JdlMigrationHumanReviewTests(unittest.TestCase):
         } for index in range(4)]
         return {
             "document_type": "JDL_MIGRATION_HUMAN_REVIEW",
+            "review_schema_version": "2",
             "formal_output_enabled": False,
+            "source_sha256": "a" * 64,
+            "target_master_identity_sha256": "b" * 64,
+            "source_format_key": (
+                jdl_ibex_cashbook_migration_input_schema_definition().identity.stable_key
+            ),
+            "target_format_key": (
+                jdl_ibex_cashbook_official_journal_import_schema_definition().identity.stable_key
+            ),
             "account_mismatches": accounts,
             "subaccounts": subaccounts,
             "tax": {

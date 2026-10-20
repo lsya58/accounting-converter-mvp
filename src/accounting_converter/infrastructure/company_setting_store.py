@@ -32,6 +32,10 @@ from accounting_converter.infrastructure.jdl_account_pdf_draft import (
     JdlAccountPdfDraftError,
     JdlAccountPdfDraftStore,
 )
+from accounting_converter.application.jdl_master_identity import (
+    observed_master_identity_sha256,
+    target_context_master_identity_sha256,
+)
 
 
 class CompanySettingStoreError(ValueError):
@@ -136,6 +140,17 @@ class CompanySettingStore:
             if company_file.exists():
                 settings.append(self._from_json(company_file))
         return tuple(settings)
+
+    def target_master_identity_sha256(self, company_setting_id: str) -> str:
+        setting = self.get(company_setting_id)
+        context_path = self.context_path(setting)
+        if self.account_pdf_drafts.is_draft(context_path):
+            return observed_master_identity_sha256(
+                self.account_pdf_drafts.load(context_path).observation
+            )
+        return target_context_master_identity_sha256(
+            self.context_loader.load(context_path)
+        )
 
     def rename(self, company_setting_id: str, display_name: str) -> CompanySetting:
         self._validate_name(display_name)

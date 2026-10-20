@@ -13,7 +13,15 @@ from accounting_converter.application.jdl_master_observation import (
     JdlMasterObservationService,
     JdlMasterSourceEvidence,
 )
-from accounting_converter.adapters.output.jdl import JdlAccountIdentity
+from accounting_converter.application.jdl_master_identity import (
+    observed_master_identity_sha256,
+    target_context_master_identity_sha256,
+)
+from accounting_converter.adapters.output.jdl import (
+    JdlAccountIdentity,
+    JdlSubaccountIdentity,
+    JdlTargetContext,
+)
 from accounting_converter.infrastructure.adapter_registry import (
     AdapterAvailabilityStatus,
     production_adapter_registry,
@@ -22,6 +30,7 @@ from accounting_converter.profiles.known_formats import (
     jdl_ibex_cashbook_official_journal_import_schema_definition,
     moneyforward_cloud_journal_export_observed_schema,
 )
+from accounting_converter.profiles.jdl_official import JdlTaxProcessingMode
 
 
 class JdlAccountListPdfTextParserTests(unittest.TestCase):
@@ -370,6 +379,41 @@ class JdlAccountListPdfTextParserTests(unittest.TestCase):
         self.assertFalse(draft.production_usable)
         self.assertFalse(draft.context.account_master)
         self.assertIn("架空現金", draft.context.accounts)
+
+    def test_master_identity_is_stable_between_pdf_observation_and_context(self) -> None:
+        result = self._parse(self._pages())
+        context = JdlTargetContext(
+            product="JDL IBEX 出納帳",
+            version="35.5",
+            accounts=frozenset(),
+            tax_processing_mode=JdlTaxProcessingMode.UNCONFIRMED,
+            target_format_identity=(
+                jdl_ibex_cashbook_official_journal_import_schema_definition().identity
+            ),
+            account_master=tuple(
+                JdlAccountIdentity(item.name, item.code, item.abbreviation, item.name)
+                for item in result.printed_accounts
+                if item.enabled
+            ),
+            subaccounts=tuple(
+                JdlSubaccountIdentity(
+                    parent_account=item.parent_account_name,
+                    mapping_value=item.name,
+                    target_master_code=item.code,
+                    output_code=item.code,
+                    output_name=item.name,
+                    output_representation_confirmed=True,
+                    parent_account_code=item.parent_account_code,
+                    target_name=item.name,
+                )
+                for item in result.subaccounts
+            ),
+        )
+
+        self.assertEqual(
+            observed_master_identity_sha256(result),
+            target_context_master_identity_sha256(context),
+        )
 
     def test_runtime_comparison_reports_conflicts_without_promoting_runtime_only(self) -> None:
         printed = self._parse(self._pages())

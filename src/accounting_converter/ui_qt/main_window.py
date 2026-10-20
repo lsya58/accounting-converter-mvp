@@ -32,6 +32,9 @@ from PySide6.QtWidgets import (
 from accounting_converter.application.company_mapping_update import (
     PARENT_ONLY_SELECTION,
 )
+from accounting_converter.application.jdl_migration_review import (
+    JdlMigrationReviewError,
+)
 from accounting_converter.domain.mapping import SubaccountPolicy
 from accounting_converter.ui.controllers import AccountingConverterController
 from accounting_converter.ui.view_models import (
@@ -643,7 +646,9 @@ class SettingsDialog(QDialog):
             log_local_exception("jdl_migration_review_load", exc)
             QMessageBox.warning(
                 self, "移行内容を確認できませんでした",
-                "確認ファイルと会社設定を確認してください。",
+                exc.user_message
+                if isinstance(exc, JdlMigrationReviewError)
+                else "確認ファイルと会社設定を確認してください。",
             )
             return
         dialog = JdlMigrationHumanReviewDialog(self.controller, review, self)

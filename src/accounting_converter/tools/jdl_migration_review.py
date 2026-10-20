@@ -17,6 +17,9 @@ from accounting_converter.application.jdl_account_list_pdf import (
 from accounting_converter.application.company_settings import CompanySettingStatus
 from accounting_converter.application.jdl_migration import JdlMigrationPreflight
 from accounting_converter.application.jdl_migration_tax_evidence import evidence_for
+from accounting_converter.application.jdl_master_identity import (
+    observed_master_identity_sha256,
+)
 from accounting_converter.adapters.output.jdl.models import (
     JdlAccountIdentity,
     JdlTargetContext,
@@ -163,10 +166,16 @@ def build_review(source: Path, target_pdf: Path) -> dict[str, object]:
 
     return {
         "document_type": "JDL_MIGRATION_HUMAN_REVIEW",
+        "review_schema_version": "2",
         "not_for_production": True,
         "formal_output_enabled": False,
         "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
         "target_pdf_sha256": target_pdf_sha256,
+        "target_master_identity_sha256": observed_master_identity_sha256(
+            observation
+        ),
+        "source_format_key": source_schema.identity.stable_key,
+        "target_format_key": target_schema.identity.stable_key,
         "counts": {
             "logical_journals": len(parsed.entries),
             "physical_rows": parsed.journal_record_count,

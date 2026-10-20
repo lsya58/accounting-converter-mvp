@@ -11,6 +11,7 @@ from accounting_converter.adapters.input.jdl import (
     jdl_source_subaccount_key,
 )
 from accounting_converter.application.profile_revision import revised_profile_id
+from accounting_converter.application.company_settings import CompanySettingStatus
 from accounting_converter.domain.mapping import (
     MappingKey,
     MappingStatus,
@@ -21,7 +22,12 @@ from accounting_converter.domain.mapping import (
 
 
 class JdlMigrationReviewError(ValueError):
-    pass
+    def __init__(self, code: str, message: str) -> None:
+        # Keep the stable code in local diagnostics while showing only the
+        # human-facing message in the dialog.
+        super().__init__(f"{code}: {message}")
+        self.code = code
+        self.user_message = message
 
 
 @dataclass(frozen=True)
@@ -84,21 +90,71 @@ class JdlMigrationHumanReviewService:
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-            raise JdlMigrationReviewError("移行確認ファイルを読み取れません。") from exc
+            raise JdlMigrationReviewError(
+                "JDL-MIGRATION-REVIEW-READ-FAILED",
+                "移行確認ファイルを読み取れません。",
+            ) from exc
         if payload.get("document_type") != "JDL_MIGRATION_HUMAN_REVIEW":
-            raise JdlMigrationReviewError("移行確認ファイルの形式が一致しません。")
+            raise JdlMigrationReviewError(
+                "JDL-MIGRATION-REVIEW-DOCUMENT-MISMATCH",
+                "移行確認ファイルの形式が一致しません。",
+            )
+        if payload.get("review_schema_version") != "2":
+            raise JdlMigrationReviewError(
+                "JDL-MIGRATION-REVIEW-SCHEMA-UNSUPPORTED",
+                "確認ファイルが古いため、最新の確認ファイルを選択してください。",
+            )
         if payload.get("formal_output_enabled") is not False:
-            raise JdlMigrationReviewError("formal outputが無効なreview packだけを使用できます。")
+            raise JdlMigrationReviewError(
+                "JDL-MIGRATION-REVIEW-UNSAFE-PACK",
+                "安全確認用ではない確認ファイルは開けません。",
+            )
         setting = self.company_store.get(company_setting_id)
-        review_target_hash = str(payload.get("target_pdf_sha256", ""))
-        current_context_hash = str(getattr(setting, "context_fingerprint", ""))
+        profile = self.profile_store.get(setting.conversion_profile_id)
+        resolved = self.company_store.resolve(company_setting_id)
+        if resolved.status in {
+            CompanySettingStatus.STALE,
+            CompanySettingStatus.INCOMPATIBLE,
+            CompanySettingStatus.MALFORMED,
+        }:
+            raise JdlMigrationReviewError(
+                "JDL-MIGRATION-REVIEW-COMPANY-STALE",
+                "会社設定が古くなっています。JDL科目一覧と対応内容を確認してください。",
+            )
+        source_sha256 = str(payload.get("source_sha256", ""))
+        if len(source_sha256) != 64:
+            raise JdlMigrationReviewError(
+                "JDL-MIGRATION-REVIEW-CASE-IDENTITY-MISSING",
+                "実案件を識別できない確認ファイルです。最新の確認ファイルを選択してください。",
+            )
+        source_format_key = str(payload.get("source_format_key", ""))
+        target_format_key = str(payload.get("target_format_key", ""))
         if (
-            review_target_hash
-            and current_context_hash
-            and review_target_hash != current_context_hash
+            source_format_key != setting.expected_source_format_key
+            or source_format_key != profile.source_format_identity.stable_key
         ):
             raise JdlMigrationReviewError(
-                "確認ファイルと現在のJDL科目一覧が一致しません。"
+                "JDL-MIGRATION-REVIEW-SOURCE-FORMAT-MISMATCH",
+                "入力元の形式が確認ファイルと一致しません。",
+            )
+        if (
+            target_format_key != setting.expected_target_format_key
+            or target_format_key != profile.target_format_identity.stable_key
+        ):
+            raise JdlMigrationReviewError(
+                "JDL-MIGRATION-REVIEW-TARGET-FORMAT-MISMATCH",
+                "変換先の形式が確認ファイルと一致しません。",
+            )
+        review_master_hash = str(
+            payload.get("target_master_identity_sha256", "")
+        )
+        current_master_hash = self.company_store.target_master_identity_sha256(
+            company_setting_id
+        )
+        if not review_master_hash or review_master_hash != current_master_hash:
+            raise JdlMigrationReviewError(
+                "JDL-MIGRATION-REVIEW-TARGET-MASTER-MISMATCH",
+                "科目一覧が確認ファイルと一致しません。最新の確認ファイルを選択してください。",
             )
 
         accounts = tuple(self._account(item) for item in payload.get("account_mismatches", ()))
@@ -155,7 +211,10 @@ class JdlMigrationHumanReviewService:
                 continue
             selected = account_selections.get(item.key)
             if selected not in item.targets:
-                raise JdlMigrationReviewError("確認したJDL科目を選択してください。")
+                raise JdlMigrationReviewError(
+                    "JDL-MIGRATION-REVIEW-ACCOUNT-SELECTION-REQUIRED",
+                    "確認したJDL科目を選択してください。",
+                )
             target_code, target_name = selected
             accounts[jdl_source_account_key(item.source_code, item.source_name)] = MappingValue(
                 jdl_source_account_key(item.source_code, item.source_name),
@@ -171,7 +230,10 @@ class JdlMigrationHumanReviewService:
             parent_key = jdl_source_account_key(item.parent_code, item.parent_name)
             parent = accounts.get(parent_key)
             if parent is None or parent.status is not MappingStatus.USER_CONFIRMED:
-                raise JdlMigrationReviewError("親科目の対応を先に確認してください。")
+                raise JdlMigrationReviewError(
+                    "JDL-MIGRATION-REVIEW-PARENT-REQUIRED",
+                    "親科目の対応を先に確認してください。",
+                )
             key = MappingKey(
                 MappingType.SUBACCOUNT,
                 jdl_source_subaccount_key(item.source_code, item.source_name),
@@ -179,7 +241,10 @@ class JdlMigrationHumanReviewService:
             )
             if selected == SubaccountPolicy.PARENT_ONLY_CONFIRMED.value:
                 if item.targets:
-                    raise JdlMigrationReviewError("JDL補助科目がある場合は対応先を選択してください。")
+                    raise JdlMigrationReviewError(
+                        "JDL-MIGRATION-REVIEW-SUBACCOUNT-TARGET-REQUIRED",
+                        "JDL補助科目がある場合は対応先を選択してください。",
+                    )
                 subs[key] = MappingValue(
                     key.source_value, "", MappingStatus.USER_CONFIRMED,
                     parent_account=parent_key,
@@ -198,7 +263,10 @@ class JdlMigrationHumanReviewService:
                     },
                 )
             else:
-                raise JdlMigrationReviewError("補助科目の処理方法を確認してください。")
+                raise JdlMigrationReviewError(
+                    "JDL-MIGRATION-REVIEW-SUBACCOUNT-SELECTION-REQUIRED",
+                    "補助科目の処理方法を確認してください。",
+                )
 
         updated = replace(
             old,
@@ -219,7 +287,10 @@ class JdlMigrationHumanReviewService:
         source = item.get("source", {})
         code, name = str(source.get("code", "")), str(source.get("name", ""))
         if not code or not name:
-            raise JdlMigrationReviewError("科目identityが不足しています。")
+            raise JdlMigrationReviewError(
+                "JDL-MIGRATION-REVIEW-ACCOUNT-IDENTITY-MISSING",
+                "科目identityが不足しています。",
+            )
         targets = tuple(
             (str(target.get("code", "")), str(target.get("name", "")))
             for target in item.get("target_candidates", ())
@@ -239,7 +310,10 @@ class JdlMigrationHumanReviewService:
         source_code = str(item.get("source_code", ""))
         source_name = str(item.get("source_name", ""))
         if not all((parent_code, parent_name, source_code, source_name)):
-            raise JdlMigrationReviewError("補助科目identityが不足しています。")
+            raise JdlMigrationReviewError(
+                "JDL-MIGRATION-REVIEW-SUBACCOUNT-IDENTITY-MISSING",
+                "補助科目identityが不足しています。",
+            )
         targets = tuple(
             (str(target.get("code", "")), str(target.get("name", "")))
             for target in item.get("target_candidates", ())

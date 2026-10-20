@@ -143,6 +143,7 @@ class CompanyTaxContextConfirmationTests(unittest.TestCase):
 
     def test_explicit_confirmation_promotes_draft_and_preserves_master(self) -> None:
         old_fingerprint = self.setting.context_fingerprint
+        master_identity = self.companies.target_master_identity_sha256("company-1")
         self.assertTrue(self.service.is_pending("company-1"))
         with self.assertRaises(CompanyTaxContextConfirmationError):
             self.service.confirm_taxable_included("company-1", confirmed=False)
@@ -156,6 +157,13 @@ class CompanyTaxContextConfirmationTests(unittest.TestCase):
         )
         self.assertFalse(self.service.is_pending("company-1"))
         self.assertNotEqual(updated_setting.context_fingerprint, old_fingerprint)
+        reopened_companies = CompanySettingStore(
+            self.root / "companies", self.profiles
+        )
+        self.assertEqual(
+            reopened_companies.target_master_identity_sha256("company-1"),
+            master_identity,
+        )
         self.assertEqual(saved_context, context)
         self.assertEqual(len(saved_context.account_master), 2)
         self.assertEqual(len(saved_context.subaccounts), 1)
