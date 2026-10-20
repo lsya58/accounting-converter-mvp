@@ -22,6 +22,7 @@ from accounting_converter.infrastructure.company_setting_store import (
 )
 from accounting_converter.infrastructure.conversion_profile_store import ConversionProfileStore
 from accounting_converter.profiles.known_formats import (
+    jdl_ibex_cashbook_migration_input_schema_definition,
     jdl_ibex_cashbook_official_journal_import_schema_definition,
     moneyforward_cloud_journal_export_observed_schema,
     yayoi_ae19_direct_export_observed_schema,
@@ -266,6 +267,51 @@ class CompanySettingStoreTests(unittest.TestCase):
         self.assertFalse(state.conversion_available)
         self.assertIsNone(state.selected_profile_id)
         self.assertIn("会社設定を確認", state.user_message)
+
+    def test_controller_creates_and_reopens_jdl_to_jdl_company_identity(self) -> None:
+        controller = AccountingConverterController(
+            profile_store=self.profile_store,
+            company_store=self.company_store,
+            preferences_store=ApplicationPreferencesStore(
+                self.root / "preferences.json"
+            ),
+        )
+        controller.load_profiles()
+        profile = controller.create_jdl_migration_company_draft_profile(
+            "架空JDL移行会社"
+        )
+        self.assertEqual(
+            profile.source_format_identity.stable_key,
+            jdl_ibex_cashbook_migration_input_schema_definition().identity.stable_key,
+        )
+        self.assertEqual(
+            profile.target_format_identity.stable_key,
+            jdl_ibex_cashbook_official_journal_import_schema_definition().identity.stable_key,
+        )
+        self.assertEqual(
+            [item.profile_id for item in controller.profiles_for_source("JDL")],
+            [profile.profile_id],
+        )
+
+        state = controller.add_company_setting(
+            display_name="架空JDL移行会社",
+            source_label="JDL",
+            conversion_profile_id=profile.profile_id,
+            context_source=self.context_source,
+        )
+        setting = self.company_store.get(state.selected_company_setting_id)
+        reopened = self.profile_store.get(setting.conversion_profile_id)
+        self.assertEqual(
+            setting.expected_source_format_key,
+            jdl_ibex_cashbook_migration_input_schema_definition().identity.stable_key,
+        )
+        self.assertEqual(
+            setting.expected_target_format_key,
+            jdl_ibex_cashbook_official_journal_import_schema_definition().identity.stable_key,
+        )
+        self.assertEqual(reopened.source_format_identity, profile.source_format_identity)
+        self.assertEqual(reopened.target_format_identity, profile.target_format_identity)
+        self.assertFalse(state.conversion_available)
 
     def _create(self):
         return self.company_store.create(

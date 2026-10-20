@@ -87,6 +87,7 @@ from accounting_converter.infrastructure.application_preferences import (
 )
 from accounting_converter.profiles.known_formats import (
     jdl_ibex_cashbook_35_5_observed_schema_definition,
+    jdl_ibex_cashbook_migration_input_schema_definition,
     jdl_ibex_cashbook_official_journal_import_schema_definition,
     moneyforward_cloud_journal_export_observed_schema,
     yayoi_ae19_direct_export_observed_schema,
@@ -621,6 +622,33 @@ class AccountingConverterController:
         profile = self.moneyforward_profile_setup_service.create_company_draft_profile(
             company_display_name, context_path
         )
+        self.load_profiles()
+        return profile
+
+    def create_jdl_migration_company_draft_profile(
+        self, company_display_name: str
+    ) -> ConversionProfile:
+        import uuid
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        profile = ConversionProfile(
+            profile_id=f"jdl-migration-{uuid.uuid4().hex}",
+            profile_name=f"{company_display_name.strip()} JDL → JDL",
+            source_format_identity=(
+                jdl_ibex_cashbook_migration_input_schema_definition().identity
+            ),
+            target_format_identity=(
+                jdl_ibex_cashbook_official_journal_import_schema_definition().identity
+            ),
+            created_at=now,
+            updated_at=now,
+            notes=(
+                "JDL→JDL migration用の未確認会社設定。Human mapping、target税Context、"
+                "tax Evidence、description policyが揃うまでformal output不可。"
+            ),
+        )
+        self.profile_store.create(profile)
         self.load_profiles()
         return profile
 
@@ -1287,6 +1315,8 @@ class AccountingConverterController:
             return "弥生"
         if source_key == moneyforward_cloud_journal_export_observed_schema().identity.stable_key:
             return "Money Forward"
+        if source_key == jdl_ibex_cashbook_migration_input_schema_definition().identity.stable_key:
+            return "JDL"
         return "未対応"
 
     @staticmethod

@@ -119,6 +119,17 @@ class QtGuiContractTests(unittest.TestCase):
         self.assertNotIn('"OK"', source)
         self.assertNotIn('"Cancel"', source)
 
+    def test_company_add_flow_exposes_gated_jdl_to_jdl_identity(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            'self.source_combo.addItems(("Money Forward", "弥生", "JDL"))',
+            source,
+        )
+        self.assertIn('self.target_combo.addItem("JDL")', source)
+        self.assertIn("create_jdl_migration_company_draft_profile", source)
+
     def test_dialog_controls_have_explicit_light_theme_states(self) -> None:
         for selector in (
             "QDialog", "QLineEdit", "QComboBox", "QAbstractItemView",

@@ -1367,8 +1367,12 @@ class CompanyAddDialog(QDialog):
         )
         layout.addWidget(QLabel("入力元"))
         self.source_combo = QComboBox()
-        self.source_combo.addItems(("Money Forward", "弥生"))
+        self.source_combo.addItems(("Money Forward", "弥生", "JDL"))
         layout.addWidget(self.source_combo)
+        layout.addWidget(QLabel("変換先"))
+        self.target_combo = QComboBox()
+        self.target_combo.addItem("JDL")
+        layout.addWidget(self.target_combo)
         layout.addStretch(1)
         return page
 
@@ -1452,7 +1456,7 @@ class CompanyAddDialog(QDialog):
             self.error_label.setText("会社設定名を入力してください。")
             return
         if index == 1:
-            if self.source_combo.currentText() == "Money Forward":
+            if self.source_combo.currentText() in {"Money Forward", "JDL"}:
                 self.profile_ids = []
                 self.profile_combo.clear()
                 self.profile_combo.hide()
@@ -1486,7 +1490,7 @@ class CompanyAddDialog(QDialog):
                 self.create_profile_button.setText("新しい対応設定を作成")
         if index == 2:
             if (
-                self.source_combo.currentText() != "Money Forward"
+                self.source_combo.currentText() not in {"Money Forward", "JDL"}
                 and self.profile_combo.currentIndex() < 0
             ):
                 self.error_label.setText("対応設定を選択してください。")
@@ -1525,7 +1529,7 @@ class CompanyAddDialog(QDialog):
     def _render_confirmation(self) -> None:
         setup_summary = (
             "CSV読込後に必要な対応だけ確認します"
-            if self.source_combo.currentText() == "Money Forward"
+            if self.source_combo.currentText() in {"Money Forward", "JDL"}
             else self.profile_combo.currentText()
         )
         self.confirmation_label.setText(
@@ -1533,6 +1537,7 @@ class CompanyAddDialog(QDialog):
                 (
                     f"会社設定名    {self.name_edit.text().strip()}",
                     f"入力元        {self.source_combo.currentText()}",
+                    f"変換先        {self.target_combo.currentText()}",
                     f"対応内容      {setup_summary}",
                     "JDL設定       JDL IBEX 出納帳 35.5 / 設定済み"
                     if self.context_path
@@ -1544,13 +1549,27 @@ class CompanyAddDialog(QDialog):
 
     def _save(self) -> None:
         assert self.context_path is not None
-        if self.source_combo.currentText() == "Money Forward" and not self.profile_ids:
+        source = self.source_combo.currentText()
+        if source == "Money Forward" and not self.profile_ids:
             try:
                 profile = self.controller.create_moneyforward_company_draft_profile(
                     self.name_edit.text().strip(), self.context_path
                 )
             except Exception:
                 self.error_label.setText("会社設定を作成できませんでした。科目一覧を確認してください。")
+                return
+            self.profile_ids = [profile.profile_id]
+            profile_id = profile.profile_id
+        elif source == "JDL" and not self.profile_ids:
+            try:
+                profile = self.controller.create_jdl_migration_company_draft_profile(
+                    self.name_edit.text().strip()
+                )
+            except Exception as exc:
+                log_local_exception("jdl_migration_profile_create", exc)
+                self.error_label.setText(
+                    "JDL移行用の会社設定を作成できませんでした。"
+                )
                 return
             self.profile_ids = [profile.profile_id]
             profile_id = profile.profile_id
