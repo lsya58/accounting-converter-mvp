@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 
 from accounting_converter.adapters.output.jdl import (
     JdlAccountIdentity,
     JdlContextConfirmationState,
     JdlContextProvenance,
+    JdlInputTaxCreditMethod,
+    JdlSimplifiedBusinessCategory,
     JdlSubaccountIdentity,
+    JdlTaxationMethod,
+    JdlTargetContext,
     JdlTargetContextBuilder,
 )
 from accounting_converter.application.profile_revision import revised_profile_id
@@ -29,6 +33,16 @@ class CompanyTaxContextConfirmationError(ValueError):
     pass
 
 
+@dataclass(frozen=True)
+class JdlTaxContextSelection:
+    tax_processing_mode: JdlTaxProcessingMode
+    taxation_method: JdlTaxationMethod = JdlTaxationMethod.UNCONFIRMED
+    input_tax_credit_method: JdlInputTaxCreditMethod = (
+        JdlInputTaxCreditMethod.UNCONFIRMED
+    )
+    simplified_business_category: JdlSimplifiedBusinessCategory | None = None
+
+
 class CompanyTaxContextConfirmationService:
     """Promotes one explicitly confirmed PDF master to the scoped tax context."""
 
@@ -42,33 +56,48 @@ class CompanyTaxContextConfirmationService:
         setting = self.company_store.get(company_setting_id)
         return self.drafts.is_draft(self.company_store.context_path(setting))
 
+    def current_context(self, company_setting_id: str) -> JdlTargetContext | None:
+        setting = self.company_store.get(company_setting_id)
+        path = self.company_store.context_path(setting)
+        if self.drafts.is_draft(path):
+            return None
+        return self.contexts.load(path)
+
     def confirm_taxable_included(self, company_setting_id: str, *, confirmed: bool):
+        return self.confirm(
+            company_setting_id,
+            selection=JdlTaxContextSelection(
+                tax_processing_mode=JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED,
+                taxation_method=JdlTaxationMethod.STANDARD,
+                input_tax_credit_method=JdlInputTaxCreditMethod.INDIVIDUAL,
+            ),
+            confirmed=confirmed,
+        )
+
+    def confirm(
+        self,
+        company_setting_id: str,
+        *,
+        selection: JdlTaxContextSelection,
+        confirmed: bool,
+    ):
         if not confirmed:
             raise CompanyTaxContextConfirmationError(
                 "JDL tax setting requires explicit confirmation"
             )
         setting = self.company_store.get(company_setting_id)
         draft_path = self.company_store.context_path(setting)
-        if not self.drafts.is_draft(draft_path):
-            raise CompanyTaxContextConfirmationError(
-                "JDL tax setting is already confirmed"
-            )
-        draft = self.drafts.load(draft_path)
-        if draft.observation.conflicts:
-            raise CompanyTaxContextConfirmationError(
-                "JDL printed master contains unresolved conflicts"
-            )
-        if draft.observation.departments or draft.observation.printed_departments:
-            raise CompanyTaxContextConfirmationError(
-                "department settings require separate confirmation"
-            )
-        result = JdlTargetContextBuilder().build(
-            target_format_identity=(
-                jdl_ibex_cashbook_official_journal_import_schema_definition().identity
-            ),
-            product="JDL IBEX 出納帳",
-            version="35.5",
-            account_master=tuple(
+        if self.drafts.is_draft(draft_path):
+            draft = self.drafts.load(draft_path)
+            if draft.observation.conflicts:
+                raise CompanyTaxContextConfirmationError(
+                    "JDL printed master contains unresolved conflicts"
+                )
+            if draft.observation.departments or draft.observation.printed_departments:
+                raise CompanyTaxContextConfirmationError(
+                    "department settings require separate confirmation"
+                )
+            account_master = tuple(
                 JdlAccountIdentity(
                     mapping_value=item.name,
                     target_master_code=item.code,
@@ -77,8 +106,8 @@ class CompanyTaxContextConfirmationService:
                 )
                 for item in draft.observation.printed_accounts
                 if item.enabled
-            ),
-            subaccounts=tuple(
+            )
+            subaccounts = tuple(
                 JdlSubaccountIdentity(
                     parent_account=item.parent_account_name,
                     mapping_value=item.name,
@@ -91,12 +120,36 @@ class CompanyTaxContextConfirmationService:
                 )
                 for item in draft.observation.subaccounts
                 if item.evidence_scope == "PRINTED_EXPLICIT_PARENT"
+            )
+            departments = ()
+            department_processing_enabled = False
+        else:
+            current = self.contexts.load(draft_path)
+            account_master = current.account_master
+            subaccounts = current.subaccounts
+            departments = current.departments
+            department_processing_enabled = current.department_processing_enabled
+        result = JdlTargetContextBuilder().build(
+            target_format_identity=(
+                jdl_ibex_cashbook_official_journal_import_schema_definition().identity
             ),
-            departments=(),
-            tax_processing_mode=JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED,
-            department_processing_enabled=False,
-            standard_taxation_confirmed=True,
-            individual_credit_method_confirmed=True,
+            product="JDL IBEX 出納帳",
+            version="35.5",
+            account_master=account_master,
+            subaccounts=subaccounts,
+            departments=departments,
+            tax_processing_mode=selection.tax_processing_mode,
+            department_processing_enabled=department_processing_enabled,
+            standard_taxation_confirmed=(
+                selection.taxation_method is JdlTaxationMethod.STANDARD
+            ),
+            individual_credit_method_confirmed=(
+                selection.input_tax_credit_method
+                is JdlInputTaxCreditMethod.INDIVIDUAL
+            ),
+            taxation_method=selection.taxation_method,
+            input_tax_credit_method=selection.input_tax_credit_method,
+            simplified_business_category=selection.simplified_business_category,
             confirmation_state=JdlContextConfirmationState.CONFIRMED,
             provenance=JdlContextProvenance.USER_CONFIRMED_RUNTIME_SNAPSHOT,
             no_fuzzy_matching=True,

@@ -18,6 +18,7 @@ from accounting_converter.application.profile_revision import revised_profile_id
 from accounting_converter.application.company_settings import CompanySettingStatus
 from accounting_converter.application.jdl_migration_tax_evidence import (
     evidence_for_master_identity,
+    tax_context_identity_sha256,
 )
 from accounting_converter.domain.mapping import (
     MappingKey,
@@ -244,6 +245,12 @@ class JdlMigrationHumanReviewService:
         target_master_identity = (
             self.company_store.target_master_identity_sha256(company_setting_id)
         )
+        target_context = self.company_store.resolve(company_setting_id).context
+        context_identity = (
+            tax_context_identity_sha256(target_context)
+            if target_context is not None
+            else None
+        )
         for (scope, category, input_method), count in sorted(tax_counts.items()):
             key = jdl_source_tax_key(scope, category, input_method)
             saved = profile.tax_mappings.get(key)
@@ -251,21 +258,38 @@ class JdlMigrationHumanReviewService:
                 reused_taxes += 1
                 continue
             evidence = evidence_for_master_identity(key, target_master_identity)
+            evidence_active = (
+                evidence is not None
+                and context_identity is not None
+                and evidence.confirmed_context_fingerprint == context_identity
+            )
             taxes.append(JdlMigrationTaxReview(
                 " / ".join(filter(None, (scope, category, input_method))),
                 count,
                 "HUMAN_CONFIRMATION_REQUIRED"
-                if evidence is not None
+                if evidence_active
                 else "EVIDENCE_AND_HUMAN_CONFIRMATION_REQUIRED",
-                "VERIFIED_BY_REAL_IMPORT" if evidence is not None else "UNVERIFIED",
-                evidence.evidence_id if evidence is not None else "",
+                "VERIFIED_BY_REAL_IMPORT" if evidence_active else "UNVERIFIED",
+                evidence.evidence_id if evidence_active else "",
             ))
 
+        tax_context_requirements = [
+            "product_and_version",
+            "taxpayer_status",
+            "tax_included_or_excluded",
+            "taxation_method",
+        ]
+        if (
+            target_context is not None
+            and target_context.effective_taxation_method.value == "SIMPLIFIED"
+        ):
+            tax_context_requirements.append("simplified_business_category")
+        else:
+            tax_context_requirements.append("credit_method")
         return JdlMigrationHumanReview(
             company_setting_id, tuple(accounts), tuple(subaccounts), tuple(taxes),
             tuple(overflow),
-            ("product_and_version", "taxpayer_status", "tax_included_or_excluded",
-             "taxation_method", "credit_method"),
+            tuple(tax_context_requirements),
             source_path, source_sha256,
             target_master_identity,
             setting.expected_source_format_key, setting.expected_target_format_key,

@@ -12,6 +12,25 @@
 
 実ファイル・UI・帳票由来のEvidenceは原則 `OBSERVED` とする。実機Import成功を確認した経路だけを限定的に `VERIFIED_BY_REAL_IMPORT` として記録する。マニュアル由来の確認事項は別途 `OFFICIAL_DOCUMENTED` として保持し、限定的な成功だけでJDLOutputAdapterのEvidenceLevelは上げない。
 
+## Company-scoped tax contexts
+
+JDLの税設定は全社共通ではなく、CompanySettingごとの確認済みcontextとして扱う。
+従来の35.5 Evidenceは本則課税・税込・個別対応方式のexact scopeであり、本則課税だけが
+JDLで利用可能という意味ではない。別の実機会社では課税・税込・簡易課税・第一種事業を
+Human確認した。簡易課税contextは本則課税contextから自動変換せず、明示的な再確認を必須とする。
+
+canonical master identityとtax context identityは分離する。税設定だけを変更した場合、確認済み
+account/subaccount mappingは保持するが、tax mappingは未確認へ戻す。Evidence activationは製品、
+version、税込/税抜、課税方式、本則方式または簡易事業区分の完全一致を必要とする。別記消費税と
+端数処理は現時点でJDL 30列Import semanticsを変えるEvidenceがないため参考設定であり、identityを
+過剰分割しない。
+
+`EVID-JDL-MIGRATION-TAX-SALES-SECOND-10-ROUNDTRIP-001`と
+`EVID-JDL-MIGRATION-TAX-SALES-FIFTH-10-ROUNDTRIP-001`は、exact target masterかつ
+課税・税込・簡易課税・第一種事業contextだけでactivationできる。shape/account/tax identityの
+scopeは既存Evidenceのまま維持する。非売上・税区blankは未検証であり、正式target master上の
+enabled accountを使う別probeが必要なためBLOCKを維持する。
+
 ## EVID-JDL-MANUAL-001
 
 - source: JDL IBEX 出納帳 操作マニュアル P312-P327

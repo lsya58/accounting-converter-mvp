@@ -25,7 +25,7 @@ class _Controller:
         self.calls = 0
 
     def confirm_company_tax_context(
-        self, company_setting_id: str, *, explicitly_confirmed: bool
+        self, company_setting_id: str, *, explicitly_confirmed: bool, **selection
     ):
         self.calls += 1
         assert company_setting_id == "company-1"
@@ -38,6 +38,9 @@ class _Controller:
             ),
             developer_error=None if self.succeeds else "SyntheticError",
         )
+
+    def company_tax_context(self, company_setting_id: str):
+        return None
 
 
 @unittest.skipUnless(PYSIDE6_AVAILABLE, "PySide6 is not installed")
@@ -60,6 +63,17 @@ class JdlTaxContextConfirmationDialogTests(unittest.TestCase):
 
         self.assertEqual(controller.calls, 1)
         self.assertEqual(dialog.result(), QDialog.DialogCode.Accepted)
+
+    def test_simplified_first_category_is_submitted_explicitly(self) -> None:
+        controller = _Controller(succeeds=True)
+        dialog = JdlTaxContextConfirmationDialog(controller, "company-1")
+        dialog.taxation_method.setCurrentIndex(1)
+        self.assertFalse(dialog.credit_method.isVisible())
+        self.assertFalse(dialog.confirmed.isChecked())
+        dialog.business_category.setCurrentIndex(0)
+        dialog.confirmed.setChecked(True)
+        dialog.save_button.click()
+        self.assertEqual(controller.calls, 1)
 
     def test_persistence_failure_stays_open_and_shows_error(self) -> None:
         controller = _Controller(succeeds=False)

@@ -342,14 +342,22 @@ class CompanySettingStore:
         current = self.get(company_setting_id)
         profile = self.profile_store.get(conversion_profile_id)
         destination = self.context_path(current)
-        if not self.account_pdf_drafts.is_draft(destination):
-            raise CompanySettingStoreError("JDL tax setting is already confirmed")
+        previous_master_identity = self.target_master_identity_sha256(
+            company_setting_id
+        )
         context_temp = destination.with_name(f".{destination.name}.confirm.tmp")
         company_path = self.root_dir / company_setting_id / self.COMPANY_FILE
         company_temp = company_path.with_name(f".{self.COMPANY_FILE}.confirm.tmp")
         try:
             self._exclusive_write(context_temp, context_bytes)
             context = self.context_loader.load(context_temp)
+            if (
+                target_context_master_identity_sha256(context)
+                != previous_master_identity
+            ):
+                raise CompanySettingStoreError(
+                    "tax context update cannot change the JDL account master"
+                )
             runtime = JdlOutputRuntimeFactory().resolve(
                 jdl_ibex_35_5_output_profile(), profile, context
             )

@@ -69,6 +69,26 @@ class JdlContextProvenance(str, Enum):
     UNCONFIRMED = "UNCONFIRMED"
 
 
+class JdlTaxationMethod(str, Enum):
+    UNCONFIRMED = "UNCONFIRMED"
+    STANDARD = "STANDARD"
+    SIMPLIFIED = "SIMPLIFIED"
+
+
+class JdlInputTaxCreditMethod(str, Enum):
+    UNCONFIRMED = "UNCONFIRMED"
+    INDIVIDUAL = "INDIVIDUAL"
+
+
+class JdlSimplifiedBusinessCategory(str, Enum):
+    FIRST = "FIRST"
+    SECOND = "SECOND"
+    THIRD = "THIRD"
+    FOURTH = "FOURTH"
+    FIFTH = "FIFTH"
+    SIXTH = "SIXTH"
+
+
 @dataclass(frozen=True)
 class JdlAccountIdentity:
     mapping_value: str
@@ -111,6 +131,11 @@ class JdlTargetContext:
     department_processing_enabled: bool = False
     standard_taxation_confirmed: bool = False
     individual_credit_method_confirmed: bool = False
+    taxation_method: JdlTaxationMethod = JdlTaxationMethod.UNCONFIRMED
+    input_tax_credit_method: JdlInputTaxCreditMethod = (
+        JdlInputTaxCreditMethod.UNCONFIRMED
+    )
+    simplified_business_category: JdlSimplifiedBusinessCategory | None = None
     no_fuzzy_matching: bool = True
     no_automatic_replacement: bool = True
     confirmation_state: JdlContextConfirmationState = (
@@ -128,7 +153,24 @@ class JdlTargetContext:
             "subaccount_master_count": len(self.subaccounts),
             "department_master_count": len(self.departments),
             "tax_company_context": self.tax_processing_mode.value,
+            "taxation_method": self.effective_taxation_method.value,
         }
+
+    @property
+    def effective_taxation_method(self) -> JdlTaxationMethod:
+        if self.taxation_method is not JdlTaxationMethod.UNCONFIRMED:
+            return self.taxation_method
+        if self.standard_taxation_confirmed:
+            return JdlTaxationMethod.STANDARD
+        return JdlTaxationMethod.UNCONFIRMED
+
+    @property
+    def effective_input_tax_credit_method(self) -> JdlInputTaxCreditMethod:
+        if self.input_tax_credit_method is not JdlInputTaxCreditMethod.UNCONFIRMED:
+            return self.input_tax_credit_method
+        if self.individual_credit_method_confirmed:
+            return JdlInputTaxCreditMethod.INDIVIDUAL
+        return JdlInputTaxCreditMethod.UNCONFIRMED
 
 
 @dataclass(frozen=True)

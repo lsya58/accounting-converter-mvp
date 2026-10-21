@@ -36,6 +36,12 @@ from accounting_converter.application.jdl_migration_review import (
     JdlMigrationReviewError,
 )
 from accounting_converter.domain.mapping import SubaccountPolicy
+from accounting_converter.adapters.output.jdl import (
+    JdlInputTaxCreditMethod,
+    JdlSimplifiedBusinessCategory,
+    JdlTaxationMethod,
+)
+from accounting_converter.profiles.jdl_official import JdlTaxProcessingMode
 from accounting_converter.ui.controllers import AccountingConverterController
 from accounting_converter.ui.view_models import (
     AppState,
@@ -1994,24 +2000,56 @@ class JdlTaxContextConfirmationDialog(QDialog):
         title.setObjectName("sectionTitle")
         layout.addWidget(title)
         guidance = QLabel(
-            "この変換機能は、以下のJDL設定で実機検証済みです。\n"
-            "この会社のJDL設定がすべて一致していることを確認してください。"
+            "JDL本体の会社設定を見ながら選択してください。"
             "この画面からJDL本体の設定を変更することはありません。"
         )
         guidance.setWordWrap(True)
         layout.addWidget(guidance)
-        details = QLabel(
-            "製品: JDL IBEX 出納帳\n"
-            "Version: 35.5\n"
-            "税処理: 課税事業者\n"
-            "計算方式: 税込処理\n"
-            "課税方式: 本則課税\n"
-            "仕入税額控除: 個別対応方式"
+        product = QLabel("製品: JDL IBEX 出納帳\nVersion: 35.5")
+        product.setObjectName("card")
+        layout.addWidget(product)
+
+        form = QGridLayout()
+        self.taxable_status = WheelSafeComboBox()
+        self.taxable_status.addItem("課税", "TAXABLE")
+        self.taxable_status.addItem("免税", "EXEMPT")
+        self.accounting_method = WheelSafeComboBox()
+        self.accounting_method.addItem("税込", JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED)
+        self.accounting_method.addItem("税抜", JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED)
+        self.taxation_method = WheelSafeComboBox()
+        self.taxation_method.addItem("本則課税", JdlTaxationMethod.STANDARD)
+        self.taxation_method.addItem("簡易課税", JdlTaxationMethod.SIMPLIFIED)
+        self.credit_method = WheelSafeComboBox()
+        self.credit_method.addItem("個別対応方式", JdlInputTaxCreditMethod.INDIVIDUAL)
+        self.business_category = WheelSafeComboBox()
+        for label, value in (
+            ("第一種事業", JdlSimplifiedBusinessCategory.FIRST),
+            ("第二種事業", JdlSimplifiedBusinessCategory.SECOND),
+            ("第三種事業", JdlSimplifiedBusinessCategory.THIRD),
+            ("第四種事業", JdlSimplifiedBusinessCategory.FOURTH),
+            ("第五種事業", JdlSimplifiedBusinessCategory.FIFTH),
+            ("第六種事業", JdlSimplifiedBusinessCategory.SIXTH),
+        ):
+            self.business_category.addItem(label, value)
+        self.credit_label = QLabel("仕入税額控除")
+        self.business_label = QLabel("主たる事業区分")
+        rows = (
+            (QLabel("消費税処理"), self.taxable_status),
+            (QLabel("経理処理"), self.accounting_method),
+            (QLabel("課税方式"), self.taxation_method),
+            (self.credit_label, self.credit_method),
+            (self.business_label, self.business_category),
         )
-        details.setObjectName("card")
-        layout.addWidget(details)
+        for row, (label, control) in enumerate(rows):
+            form.addWidget(label, row, 0)
+            form.addWidget(control, row, 1)
+        layout.addLayout(form)
         self.confirmed = QCheckBox("JDL側が上記の設定であることを確認しました")
         layout.addWidget(self.confirmed)
+        self.taxable_status.currentIndexChanged.connect(self._refresh_fields)
+        self.taxation_method.currentIndexChanged.connect(self._refresh_fields)
+        self._load_current_context()
+        self._refresh_fields()
         actions = QHBoxLayout()
         cancel = QPushButton("キャンセル")
         cancel.clicked.connect(self.reject)
@@ -2028,8 +2066,32 @@ class JdlTaxContextConfirmationDialog(QDialog):
     def _save(self) -> None:
         if not self.confirmed.isChecked():
             return
+        taxable = self.taxable_status.currentData() == "TAXABLE"
+        tax_mode = (
+            self.accounting_method.currentData()
+            if taxable
+            else JdlTaxProcessingMode.EXEMPT
+        )
+        taxation = (
+            self.taxation_method.currentData()
+            if taxable
+            else JdlTaxationMethod.UNCONFIRMED
+        )
         state = self.controller.confirm_company_tax_context(
-            self.company_setting_id, explicitly_confirmed=True
+            self.company_setting_id,
+            explicitly_confirmed=True,
+            tax_processing_mode=tax_mode,
+            taxation_method=taxation,
+            input_tax_credit_method=(
+                self.credit_method.currentData()
+                if taxation is JdlTaxationMethod.STANDARD
+                else JdlInputTaxCreditMethod.UNCONFIRMED
+            ),
+            simplified_business_category=(
+                self.business_category.currentData()
+                if taxation is JdlTaxationMethod.SIMPLIFIED
+                else None
+            ),
         )
         if state.user_message.startswith("JDL税設定を保存しました"):
             self.accept()
@@ -2039,6 +2101,40 @@ class JdlTaxContextConfirmationDialog(QDialog):
             "JDL税設定を保存できませんでした",
             state.user_message,
         )
+
+    def _refresh_fields(self) -> None:
+        taxable = self.taxable_status.currentData() == "TAXABLE"
+        simplified = (
+            taxable
+            and self.taxation_method.currentData() is JdlTaxationMethod.SIMPLIFIED
+        )
+        self.accounting_method.setVisible(taxable)
+        self.taxation_method.setVisible(taxable)
+        self.credit_label.setVisible(taxable and not simplified)
+        self.credit_method.setVisible(taxable and not simplified)
+        self.business_label.setVisible(simplified)
+        self.business_category.setVisible(simplified)
+        self.confirmed.setChecked(False)
+
+    def _load_current_context(self) -> None:
+        getter = getattr(self.controller, "company_tax_context", None)
+        context = getter(self.company_setting_id) if getter is not None else None
+        if context is None:
+            return
+        self.taxable_status.setCurrentIndex(
+            1 if context.tax_processing_mode is JdlTaxProcessingMode.EXEMPT else 0
+        )
+        if context.tax_processing_mode is JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED:
+            self.accounting_method.setCurrentIndex(1)
+        method_index = self.taxation_method.findData(context.effective_taxation_method)
+        if method_index >= 0:
+            self.taxation_method.setCurrentIndex(method_index)
+        if context.simplified_business_category is not None:
+            category_index = self.business_category.findData(
+                context.simplified_business_category
+            )
+            if category_index >= 0:
+                self.business_category.setCurrentIndex(category_index)
 
 
 class TaxMappingConfirmationDialog(QDialog):

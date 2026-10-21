@@ -10,6 +10,12 @@ from pathlib import Path
 from accounting_converter.application.company_tax_context_confirmation import (
     CompanyTaxContextConfirmationError,
     CompanyTaxContextConfirmationService,
+    JdlTaxContextSelection,
+)
+from accounting_converter.adapters.output.jdl import (
+    JdlInputTaxCreditMethod,
+    JdlSimplifiedBusinessCategory,
+    JdlTaxationMethod,
 )
 from accounting_converter.application.moneyforward_profile_setup import (
     MoneyForwardProfileSetupService,
@@ -209,10 +215,45 @@ class CompanyTaxContextConfirmationTests(unittest.TestCase):
             {item.source_value for item in review.items}, set(self.TAXES)
         )
 
-    def test_confirmation_is_not_repeatable_or_scope_extensible(self) -> None:
+    def test_reconfirmation_changes_only_tax_context_and_resets_tax_mapping(self) -> None:
         self.service.confirm_taxable_included("company-1", confirmed=True)
-        with self.assertRaises(CompanyTaxContextConfirmationError):
-            self.service.confirm_taxable_included("company-1", confirmed=True)
+        before_master = self.companies.target_master_identity_sha256("company-1")
+        context = self.service.confirm(
+            "company-1",
+            selection=JdlTaxContextSelection(
+                tax_processing_mode=JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED,
+                taxation_method=JdlTaxationMethod.SIMPLIFIED,
+                simplified_business_category=JdlSimplifiedBusinessCategory.FIRST,
+            ),
+            confirmed=True,
+        )
+        self.assertIs(context.taxation_method, JdlTaxationMethod.SIMPLIFIED)
+        self.assertIs(
+            context.simplified_business_category,
+            JdlSimplifiedBusinessCategory.FIRST,
+        )
+        reopened = JdlTargetContextLoader().load(
+            self.companies.context_path(self.companies.get("company-1"))
+        )
+        self.assertEqual(reopened, context)
+        self.assertEqual(
+            self.companies.target_master_identity_sha256("company-1"),
+            before_master,
+        )
+        setting = self.companies.get("company-1")
+        profile = self.profiles.get(setting.conversion_profile_id)
+        self.assertTrue(all(
+            value.status is MappingStatus.USER_CONFIRMED
+            for value in profile.account_mappings.values()
+        ))
+        self.assertTrue(all(
+            value.status is MappingStatus.USER_CONFIRMED
+            for value in profile.subaccount_context_mappings.values()
+        ))
+        self.assertTrue(all(
+            value.status is MappingStatus.UNRESOLVED
+            for value in profile.tax_mappings.values()
+        ))
 
     def test_printed_formal_name_and_short_name_remain_distinct(self) -> None:
         context = self.service.confirm_taxable_included(
@@ -265,7 +306,7 @@ class CompanyTaxContextConfirmationTests(unittest.TestCase):
         with (
             patch.object(
                 controller.company_tax_context_confirmation_service,
-                "confirm_taxable_included",
+                "confirm",
                 side_effect=failure,
             ),
             patch(

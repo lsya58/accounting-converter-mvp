@@ -77,7 +77,8 @@
 - printed account defaultだけではtarget tax contextやsource tax identity 3種類の互換性を確定できない。tax contextのHuman確認と未観測tax probeが完了するまでformal outputはBLOCKする。
 - 同じoperator-confirmed target masterに結び付けたsynthetic `1111` probesで、貸方`売二種 / 10%`と`売五種 / 10%`をそれぞれJDLへImportし、同一batch re-exportからdate/account/descriptionの複合identityで一意に照合した。両probeとも30列、CP932、BOMなし、CRLF、account/subaccount/amount/tax/description/balanceのstrict comparisonが差分0でPASSした。
 - Evidence IDsは`EVID-JDL-MIGRATION-TAX-SALES-SECOND-10-ROUNDTRIP-001`と`EVID-JDL-MIGRATION-TAX-SALES-FIFTH-10-ROUNDTRIP-001`。scopeはexact target master、`111`/`612`、1D1C、補助blank、貸方tax、反対側tax blankに限定し、他account・shape・tax contextへ一般化しない。
-- target税Context fingerprintとHuman tax mappingはまだ未確認である。Evidence registryは記録したがactivation fingerprintを空のまま保持し、migration preflightのverified tax keysへ接続しない。Evidence単独ではREADYにしない。
+- 上記2 Evidenceを取得したtarget会社のHuman確認済み税contextは課税・税込・簡易課税・第一種事業である。activationはcanonical master identityとこのtax context identityの両方の一致を必須とする。本則課税Evidence、他事業区分、他shapeへは一般化しない。未確認contextはBLOCKする。
+- Evidence registryは上記exact tax context identityを保持する。ただしCompanySettingで同じcontextをHuman確認し、tax mappingも確認されるまではmigration preflightのverified tax keysへ接続せず、Evidence単独ではREADYにしない。
 - source `非売上 / tax blank`は別route・別masterの既存Evidenceしかないため`REFERENCE_ONLY`を維持し、今回targetへの適用はBLOCKする。
 
 ### Human attestation

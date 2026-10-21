@@ -8,9 +8,19 @@ from accounting_converter.adapters.input.jdl import jdl_source_tax_key
 from accounting_converter.application.jdl_migration_tax_evidence import (
     JDL_TO_JDL_TARGET_MASTER_IDENTITY_SHA256,
     JDL_TO_JDL_TARGET_MASTER_SHA256,
+    SIMPLIFIED_FIRST_INCLUDED_CONTEXT_IDENTITY_SHA256,
     evidence_for,
     evidence_for_master_identity,
     verified_tax_keys_for_context,
+)
+from accounting_converter.adapters.output.jdl import (
+    JdlSimplifiedBusinessCategory,
+    JdlTargetContext,
+    JdlTaxationMethod,
+)
+from accounting_converter.profiles.jdl_official import JdlTaxProcessingMode
+from accounting_converter.application.jdl_migration_tax_evidence import (
+    tax_context_identity_sha256,
 )
 from accounting_converter.tools.generate_jdl_migration_tax_probes import (
     compare_in_reexport,
@@ -79,6 +89,25 @@ class JdlMigrationTaxEvidenceTests(unittest.TestCase):
             frozenset(),
         )
 
+    def test_evidence_activates_only_for_exact_simplified_first_context(self) -> None:
+        context = JdlTargetContext(
+            product="JDL IBEX 出納帳",
+            version="35.5",
+            accounts=frozenset(),
+            tax_processing_mode=JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED,
+            taxation_method=JdlTaxationMethod.SIMPLIFIED,
+            simplified_business_category=JdlSimplifiedBusinessCategory.FIRST,
+        )
+        identity = tax_context_identity_sha256(context)
+        self.assertEqual(identity, SIMPLIFIED_FIRST_INCLUDED_CONTEXT_IDENTITY_SHA256)
+        self.assertEqual(
+            len(verified_tax_keys_for_context(
+                JDL_TO_JDL_TARGET_MASTER_SHA256, identity
+            )),
+            2,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
+    SIMPLIFIED_FIRST_INCLUDED_CONTEXT_IDENTITY_SHA256,

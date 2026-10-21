@@ -23,7 +23,14 @@ from accounting_converter.application.company_mapping_update import (
 )
 from accounting_converter.application.company_tax_context_confirmation import (
     CompanyTaxContextConfirmationService,
+    JdlTaxContextSelection,
 )
+from accounting_converter.adapters.output.jdl import (
+    JdlInputTaxCreditMethod,
+    JdlSimplifiedBusinessCategory,
+    JdlTaxationMethod,
+)
+from accounting_converter.profiles.jdl_official import JdlTaxProcessingMode
 from accounting_converter.application.company_trade_partner_policy import (
     CompanyTradePartnerPolicyService,
 )
@@ -711,12 +718,31 @@ class AccountingConverterController:
         except Exception:
             return False
 
+    def company_tax_context(self, company_setting_id: str):
+        return self.company_tax_context_confirmation_service.current_context(
+            company_setting_id
+        )
+
     def confirm_company_tax_context(
-        self, company_setting_id: str, *, explicitly_confirmed: bool
+        self,
+        company_setting_id: str,
+        *,
+        explicitly_confirmed: bool,
+        tax_processing_mode: JdlTaxProcessingMode = JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED,
+        taxation_method: JdlTaxationMethod = JdlTaxationMethod.STANDARD,
+        input_tax_credit_method: JdlInputTaxCreditMethod = JdlInputTaxCreditMethod.INDIVIDUAL,
+        simplified_business_category: JdlSimplifiedBusinessCategory | None = None,
     ) -> AppState:
         try:
-            self.company_tax_context_confirmation_service.confirm_taxable_included(
-                company_setting_id, confirmed=explicitly_confirmed
+            self.company_tax_context_confirmation_service.confirm(
+                company_setting_id,
+                selection=JdlTaxContextSelection(
+                    tax_processing_mode=tax_processing_mode,
+                    taxation_method=taxation_method,
+                    input_tax_credit_method=input_tax_credit_method,
+                    simplified_business_category=simplified_business_category,
+                ),
+                confirmed=explicitly_confirmed,
             )
         except Exception as error:
             log_local_exception("company_tax_context_confirmation", error)

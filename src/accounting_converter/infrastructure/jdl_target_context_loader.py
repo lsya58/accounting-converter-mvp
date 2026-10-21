@@ -8,7 +8,10 @@ from accounting_converter.adapters.output.jdl import (
     JdlContextConfirmationState,
     JdlContextProvenance,
     JdlDepartmentIdentity,
+    JdlInputTaxCreditMethod,
+    JdlSimplifiedBusinessCategory,
     JdlSubaccountIdentity,
+    JdlTaxationMethod,
     JdlTargetContext,
     JdlTargetContextBuilder,
 )
@@ -25,7 +28,7 @@ class JdlTargetContextLoadError(ValueError):
 class JdlTargetContextLoader:
     """Loads an explicitly selected, local JDL target snapshot."""
 
-    SCHEMA_VERSION = "1"
+    SCHEMA_VERSION = "2"
 
     def to_json_text(self, context: JdlTargetContext) -> str:
         payload = {
@@ -49,6 +52,15 @@ class JdlTargetContextLoader:
             "individual_credit_method_confirmed": (
                 context.individual_credit_method_confirmed
             ),
+            "taxation_method": context.effective_taxation_method.value,
+            "input_tax_credit_method": (
+                context.effective_input_tax_credit_method.value
+            ),
+            "simplified_business_category": (
+                context.simplified_business_category.value
+                if context.simplified_business_category is not None
+                else None
+            ),
             "confirmation_state": context.confirmation_state.value,
             "provenance": context.provenance.value,
             "no_fuzzy_matching": context.no_fuzzy_matching,
@@ -59,8 +71,13 @@ class JdlTargetContextLoader:
     def load(self, path: Path) -> JdlTargetContext:
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
-            if payload.get("schema_version") != self.SCHEMA_VERSION:
+            schema_version = str(payload.get("schema_version", ""))
+            if schema_version not in {"1", self.SCHEMA_VERSION}:
                 raise JdlTargetContextLoadError("unsupported context schema version")
+            legacy_standard = bool(payload.get("standard_taxation_confirmed", False))
+            legacy_individual = bool(
+                payload.get("individual_credit_method_confirmed", False)
+            )
             result = JdlTargetContextBuilder().build(
                 target_format_identity=(
                     jdl_ibex_cashbook_official_journal_import_schema_definition().identity
@@ -88,11 +105,26 @@ class JdlTargetContextLoader:
                 department_processing_enabled=bool(
                     payload["department_processing_enabled"]
                 ),
-                standard_taxation_confirmed=bool(
-                    payload.get("standard_taxation_confirmed", False)
+                standard_taxation_confirmed=legacy_standard,
+                individual_credit_method_confirmed=legacy_individual,
+                taxation_method=JdlTaxationMethod(
+                    payload.get(
+                        "taxation_method",
+                        "STANDARD" if legacy_standard else "UNCONFIRMED",
+                    )
                 ),
-                individual_credit_method_confirmed=bool(
-                    payload.get("individual_credit_method_confirmed", False)
+                input_tax_credit_method=JdlInputTaxCreditMethod(
+                    payload.get(
+                        "input_tax_credit_method",
+                        "INDIVIDUAL" if legacy_individual else "UNCONFIRMED",
+                    )
+                ),
+                simplified_business_category=(
+                    JdlSimplifiedBusinessCategory(
+                        payload["simplified_business_category"]
+                    )
+                    if payload.get("simplified_business_category")
+                    else None
                 ),
                 confirmation_state=JdlContextConfirmationState(
                     payload["confirmation_state"]

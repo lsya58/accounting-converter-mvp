@@ -17,7 +17,10 @@ from .models import (
     JdlContextConfirmationState,
     JdlContextProvenance,
     JdlDepartmentIdentity,
+    JdlInputTaxCreditMethod,
+    JdlSimplifiedBusinessCategory,
     JdlSubaccountIdentity,
+    JdlTaxationMethod,
     JdlTargetContext,
 )
 
@@ -52,6 +55,9 @@ class JdlTargetContextBuilder:
         provenance: JdlContextProvenance,
         no_fuzzy_matching: bool,
         no_automatic_replacement: bool,
+        taxation_method: JdlTaxationMethod = JdlTaxationMethod.UNCONFIRMED,
+        input_tax_credit_method: JdlInputTaxCreditMethod = JdlInputTaxCreditMethod.UNCONFIRMED,
+        simplified_business_category: JdlSimplifiedBusinessCategory | None = None,
     ) -> JdlTargetContextBuildResult:
         accounts = tuple(account_master)
         context = JdlTargetContext(
@@ -66,6 +72,9 @@ class JdlTargetContextBuilder:
             department_processing_enabled=department_processing_enabled,
             standard_taxation_confirmed=standard_taxation_confirmed,
             individual_credit_method_confirmed=individual_credit_method_confirmed,
+            taxation_method=taxation_method,
+            input_tax_credit_method=input_tax_credit_method,
+            simplified_business_category=simplified_business_category,
             no_fuzzy_matching=no_fuzzy_matching,
             no_automatic_replacement=no_automatic_replacement,
             confirmation_state=confirmation_state,
@@ -138,6 +147,11 @@ class JdlTargetContextValidator:
             if (
                 context.standard_taxation_confirmed
                 or context.individual_credit_method_confirmed
+                or context.effective_taxation_method
+                is not JdlTaxationMethod.UNCONFIRMED
+                or context.effective_input_tax_credit_method
+                is not JdlInputTaxCreditMethod.UNCONFIRMED
+                or context.simplified_business_category is not None
             ):
                 errors.append(
                     self._error(
@@ -146,14 +160,45 @@ class JdlTargetContextValidator:
                         "tax_processing",
                     )
                 )
-        elif (
-            not context.standard_taxation_confirmed
-            or not context.individual_credit_method_confirmed
-        ):
+        elif context.effective_taxation_method is JdlTaxationMethod.STANDARD:
+            if context.effective_input_tax_credit_method is not JdlInputTaxCreditMethod.INDIVIDUAL:
+                errors.append(
+                    self._error(
+                        "JDL-CONTEXT-TAX-SETTING-MISSING",
+                        "本則課税contextには仕入税額控除方式の確認が必要です。",
+                        "tax_processing",
+                    )
+                )
+            if context.simplified_business_category is not None:
+                errors.append(
+                    self._error(
+                        "JDL-CONTEXT-TAX-SETTING-CONFLICT",
+                        "本則課税contextに簡易課税の事業区分は指定できません。",
+                        "tax_processing",
+                    )
+                )
+        elif context.effective_taxation_method is JdlTaxationMethod.SIMPLIFIED:
+            if context.simplified_business_category is None:
+                errors.append(
+                    self._error(
+                        "JDL-CONTEXT-TAX-SETTING-MISSING",
+                        "簡易課税contextには主たる事業区分の確認が必要です。",
+                        "tax_processing",
+                    )
+                )
+            if context.effective_input_tax_credit_method is not JdlInputTaxCreditMethod.UNCONFIRMED:
+                errors.append(
+                    self._error(
+                        "JDL-CONTEXT-TAX-SETTING-CONFLICT",
+                        "簡易課税contextに本則課税の仕入税額控除方式は指定できません。",
+                        "tax_processing",
+                    )
+                )
+        else:
             errors.append(
                 self._error(
                     "JDL-CONTEXT-TAX-SETTING-MISSING",
-                    "課税contextには原則課税・個別対応方式の確認が必要です。",
+                    "課税方式を明示確認してください。",
                     "tax_processing",
                 )
             )
