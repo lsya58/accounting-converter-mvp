@@ -118,3 +118,15 @@ def verified_tax_keys_for_context(
         and item.confirmed_context_fingerprint is not None
         and item.confirmed_context_fingerprint == context_fingerprint
     )
+
+
+def verified_tax_keys_for_master_identity(
+    target_master_identity_sha256: str, context_fingerprint: str
+) -> frozenset[str]:
+    if target_master_identity_sha256 != JDL_TO_JDL_TARGET_MASTER_IDENTITY_SHA256:
+        return frozenset()
+    return frozenset(
+        item.source_tax_key
+        for item in JDL_MIGRATION_TAX_EVIDENCE
+        if item.confirmed_context_fingerprint == context_fingerprint
+    )

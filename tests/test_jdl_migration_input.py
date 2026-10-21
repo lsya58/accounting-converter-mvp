@@ -129,13 +129,21 @@ class JdlMigrationInputTests(unittest.TestCase):
             with self.assertRaisesRegex(JdlMigrationInputAdapterError, "BOM"):
                 adapter.read(bom, self.input_profile)
 
-    def test_preflight_blocks_unconfirmed_account(self) -> None:
+    def test_preflight_reuses_exact_account_but_blocks_changed_identity(self) -> None:
         entry = self.parser.parse_text(self._text([self._row("1111")])).entries[0]
         result = JdlMigrationPreflight().evaluate(
             (entry,), self._profile({}), self._context()
         )
-        self.assertFalse(result.output_allowed)
-        self.assertIn("JDL-MIGRATION-ACCOUNT-UNRESOLVED", self._codes(result))
+        self.assertTrue(result.output_allowed)
+
+        changed = self._row("1111")
+        changed[5] = "変更された現金"
+        changed_entry = self.parser.parse_text(self._text([changed])).entries[0]
+        blocked = JdlMigrationPreflight().evaluate(
+            (changed_entry,), self._profile({}), self._context()
+        )
+        self.assertFalse(blocked.output_allowed)
+        self.assertIn("JDL-MIGRATION-ACCOUNT-UNRESOLVED", self._codes(blocked))
 
     def test_subaccount_requires_explicit_policy_and_parent_only_can_pass(self) -> None:
         row = self._row("1111")

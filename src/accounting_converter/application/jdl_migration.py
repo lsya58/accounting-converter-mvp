@@ -90,7 +90,23 @@ class JdlMigrationPreflight:
         for line in entry.lines:
             account_mapping = profile.account_mappings.get(line.account or "")
             target_parent = ""
-            if (
+            source_code = str(line.metadata.get("jdl_source_account_code", ""))
+            source_name = str(
+                line.metadata.get("jdl_source_account_formal_name", "")
+                or line.metadata.get("jdl_source_account_name", "")
+            )
+            exact_target = next(
+                (
+                    item
+                    for item in context.account_master
+                    if item.target_master_code == source_code
+                    and item.target_formal_name == source_name
+                ),
+                None,
+            )
+            if exact_target is not None:
+                target_parent = exact_target.mapping_value
+            elif (
                 account_mapping is None
                 or account_mapping.status is not MappingStatus.USER_CONFIRMED
                 or not account_mapping.target_value

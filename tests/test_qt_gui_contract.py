@@ -527,6 +527,19 @@ class QtGuiContractTests(unittest.TestCase):
         self.assertIn("self.controller.select_file(path)", main_window_source)
         self.assertIn("self._refresh_current_csv_readiness()", main_window_source)
 
+    def test_main_window_dispatches_selected_jdl_route_and_updates_header(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
+            encoding="utf-8"
+        )
+        main_window_source = source.split("class SettingsDialog", maxsplit=1)[0]
+        self.assertIn("RecognizedFormat.JDL", main_window_source)
+        self.assertIn("inspect_selected_jdl_migration", main_window_source)
+        self.assertIn("JdlMigrationHumanReviewDialog", main_window_source)
+        self.assertIn(
+            "JDLの仕訳データを別のJDL会社用CSVへ安全に移行します",
+            main_window_source,
+        )
+
     def test_subaccount_review_offers_explicit_parent_only_policy(self) -> None:
         source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(encoding="utf-8")
         dialog = source.split("class CompanyMappingUpdateDialog", maxsplit=1)[1]

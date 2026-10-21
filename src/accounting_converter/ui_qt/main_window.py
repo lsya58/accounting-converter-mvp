@@ -45,6 +45,7 @@ from accounting_converter.profiles.jdl_official import JdlTaxProcessingMode
 from accounting_converter.ui.controllers import AccountingConverterController
 from accounting_converter.ui.view_models import (
     AppState,
+    RecognizedFormat,
     present_main_screen,
     support_diagnostic_text,
 )
@@ -92,10 +93,10 @@ class AccountingConverterMainWindow(QMainWindow):
         titles = QVBoxLayout()
         title = QLabel("会計データ変換")
         title.setObjectName("title")
-        subtitle = QLabel("Money Forward / 弥生の仕訳データをJDL用CSVへ安全に変換します")
-        subtitle.setObjectName("subtitle")
+        self.subtitle = QLabel("Money Forward / 弥生の仕訳データをJDL用CSVへ安全に変換します")
+        self.subtitle.setObjectName("subtitle")
         titles.addWidget(title)
-        titles.addWidget(subtitle)
+        titles.addWidget(self.subtitle)
         self.settings_button = QPushButton("設定")
         self.settings_button.clicked.connect(self._open_settings)
         header.addLayout(titles, 1)
@@ -228,6 +229,26 @@ class AccountingConverterMainWindow(QMainWindow):
             return
         if path is None:
             return
+        if (
+            state.file_recognition is not None
+            and state.file_recognition.format is RecognizedFormat.JDL
+        ):
+            try:
+                review = self.controller.current_jdl_migration_review(company_id)
+            except Exception as exc:
+                log_local_exception("jdl_migration_review_load", exc)
+                QMessageBox.warning(
+                    self,
+                    "移行内容を確認できませんでした",
+                    exc.user_message
+                    if isinstance(exc, JdlMigrationReviewError)
+                    else "会社設定とJDL仕訳データを確認してください。",
+                )
+                return
+            dialog = JdlMigrationHumanReviewDialog(self.controller, review, self)
+            dialog.exec()
+            self._refresh_current_csv_readiness()
+            return
         try:
             review = self.controller.review_company_mapping_updates(company_id, path)
         except Exception:
@@ -281,12 +302,22 @@ class AccountingConverterMainWindow(QMainWindow):
         self._refresh_current_csv_readiness()
 
     def _refresh_current_csv_readiness(self) -> None:
-        state = self.controller.inspect_selected_moneyforward_confirmations()
+        recognition = self.controller.state.file_recognition
+        state = (
+            self.controller.inspect_selected_jdl_migration()
+            if recognition is not None
+            and recognition.format is RecognizedFormat.JDL
+            else self.controller.inspect_selected_moneyforward_confirmations()
+        )
         self._render(state)
-        if not (
-            state.pending_account_confirmations
-            or state.pending_subaccount_confirmations
-            or state.pending_tax_confirmations
+        if (
+            recognition is not None
+            and recognition.format is not RecognizedFormat.JDL
+            and not (
+                state.pending_account_confirmations
+                or state.pending_subaccount_confirmations
+                or state.pending_tax_confirmations
+            )
         ):
             self._prepare_if_complete()
 
@@ -384,6 +415,19 @@ class AccountingConverterMainWindow(QMainWindow):
 
     def _render(self, state: AppState) -> None:
         presentation = present_main_screen(state)
+        selected_company = next(
+            (
+                item
+                for item in state.companies
+                if item.company_setting_id == state.selected_company_setting_id
+            ),
+            None,
+        )
+        self.subtitle.setText(
+            "JDLの仕訳データを別のJDL会社用CSVへ安全に移行します"
+            if selected_company is not None and selected_company.source_label == "JDL"
+            else "Money Forward / 弥生の仕訳データをJDL用CSVへ安全に変換します"
+        )
         self.company_combo.blockSignals(True)
         self.company_combo.clear()
         for item in state.companies:

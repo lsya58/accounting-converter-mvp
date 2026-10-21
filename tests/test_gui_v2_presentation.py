@@ -97,6 +97,20 @@ class GuiV2PresentationTests(unittest.TestCase):
         self.assertIn("対応している仕訳形式ではありません", view.guidance)
         self.assertFalse(view.conversion_enabled)
 
+    def test_support_diagnostic_names_jdl_migration_input_without_values(self) -> None:
+        state = AppState(
+            selected_file=Path("synthetic.csv"),
+            file_recognition=FileRecognition(
+                RecognizedFormat.JDL,
+                "JDL IBEX 出納帳の仕訳データ",
+                12,
+            ),
+            preflight_status="REQUIRES_CONFIRMATION",
+        )
+        diagnostic = support_diagnostic_text(state, "test")
+        self.assertIn("JDL IBEX 出納帳 仕訳CSV（30項目）", diagnostic)
+        self.assertIn("仕訳数: 12", diagnostic)
+
     def test_ready_confirm_block_and_success_present_without_internal_codes(self) -> None:
         selected = Path("synthetic.csv")
         recognition = FileRecognition(RecognizedFormat.YAYOI, "弥生会計の仕訳データ", 2)

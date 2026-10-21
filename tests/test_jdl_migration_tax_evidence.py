@@ -12,6 +12,7 @@ from accounting_converter.application.jdl_migration_tax_evidence import (
     evidence_for,
     evidence_for_master_identity,
     verified_tax_keys_for_context,
+    verified_tax_keys_for_master_identity,
 )
 from accounting_converter.adapters.output.jdl import (
     JdlSimplifiedBusinessCategory,
@@ -79,6 +80,12 @@ class JdlMigrationTaxEvidenceTests(unittest.TestCase):
             evidence_for_master_identity(
                 jdl_source_tax_key("売二種", "10%", ""), "wrong-master"
             )
+        )
+        self.assertEqual(
+            verified_tax_keys_for_master_identity(
+                "wrong-master", SIMPLIFIED_FIRST_INCLUDED_CONTEXT_IDENTITY_SHA256
+            ),
+            frozenset(),
         )
 
     def test_evidence_does_not_activate_without_confirmed_context(self) -> None:

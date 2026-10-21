@@ -20,6 +20,7 @@ class DiagnosticStatus(str, Enum):
 
 class RecognizedFormat(str, Enum):
     NONE = "NONE"
+    JDL = "JDL"
     YAYOI = "YAYOI"
     MONEYFORWARD = "MONEYFORWARD"
     UNKNOWN = "UNKNOWN"
@@ -163,8 +164,7 @@ def present_main_screen(state: AppState) -> MainScreenPresentation:
             "変換できません",
             (
                 "このCSVは現在対応している仕訳形式ではありません。"
-                "認識できる形式はMoney Forwardの仕訳帳CSVと"
-                "弥生会計の仕訳データです。"
+                "選択した会社設定の入力元とCSV形式を確認してください。"
             ),
             recognition,
             False,
@@ -283,6 +283,7 @@ def support_diagnostic_text(state: AppState, app_version: str) -> str:
         else "なし"
     )
     source_format = {
+        RecognizedFormat.JDL: "JDL IBEX 出納帳 仕訳CSV（30項目）",
         RecognizedFormat.MONEYFORWARD: "Money Forward 仕訳帳CSV（19項目）",
         RecognizedFormat.YAYOI: "弥生 仕訳データ",
         RecognizedFormat.UNKNOWN: "未対応CSV",

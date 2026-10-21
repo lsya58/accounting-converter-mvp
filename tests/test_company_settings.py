@@ -15,6 +15,7 @@ from accounting_converter.infrastructure.application_preferences import (
     ApplicationPreferencesStore,
 )
 from accounting_converter.ui.controllers import AccountingConverterController
+from accounting_converter.ui.view_models import RecognizedFormat
 from accounting_converter.infrastructure.company_setting_store import (
     CompanySettingStore,
     CorruptCompanySettingError,
@@ -312,6 +313,37 @@ class CompanySettingStoreTests(unittest.TestCase):
         self.assertEqual(reopened.source_format_identity, profile.source_format_identity)
         self.assertEqual(reopened.target_format_identity, profile.target_format_identity)
         self.assertFalse(state.conversion_available)
+
+        source = Path("tests/fixtures/jdl/padded_diagnostic.csv")
+        recognized = controller.select_file(source)
+        self.assertIs(recognized.file_recognition.format, RecognizedFormat.JDL)
+        self.assertEqual(recognized.file_recognition.journal_count, 1)
+        inspected = controller.inspect_selected_jdl_migration()
+        self.assertIn(
+            inspected.preflight_status,
+            {"REQUIRES_CONFIRMATION", "BLOCKED", "ADAPTER_UNAVAILABLE"},
+        )
+        self.assertFalse(inspected.conversion_available)
+
+        malformed = controller.select_file(
+            Path("tests/fixtures/jdl/malformed_columns.csv")
+        )
+        self.assertIs(malformed.file_recognition.format, RecognizedFormat.UNKNOWN)
+
+    def test_jdl_input_is_not_dispatched_for_moneyforward_company(self) -> None:
+        setting = self._create()
+        controller = AccountingConverterController(
+            profile_store=self.profile_store,
+            company_store=self.company_store,
+            preferences_store=ApplicationPreferencesStore(
+                self.root / "preferences.json"
+            ),
+        )
+        controller.load_profiles()
+        controller.load_company_settings()
+        controller.select_company_setting(setting.company_setting_id)
+        state = controller.select_file(Path("tests/fixtures/jdl/valid_simple.csv"))
+        self.assertIs(state.file_recognition.format, RecognizedFormat.UNKNOWN)
 
     def _create(self):
         return self.company_store.create(

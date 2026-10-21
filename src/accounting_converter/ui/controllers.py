@@ -60,7 +60,13 @@ from accounting_converter.application.conversion_preparation import (
 from accounting_converter.diagnostics.jdl_csv import JdlCsvStructuralAnalyzer
 from accounting_converter.diagnostics.yayoi_csv import YayoiCsvAnalyzer
 from accounting_converter.adapters.input.moneyforward import MoneyForwardInputAdapter
+from accounting_converter.adapters.input.jdl import JdlMigrationInputAdapter
 from accounting_converter.adapters.input.yayoi import YayoiInputAdapter
+from accounting_converter.application.jdl_migration import JdlMigrationPreflight
+from accounting_converter.application.jdl_migration_tax_evidence import (
+    tax_context_identity_sha256,
+    verified_tax_keys_for_master_identity,
+)
 from accounting_converter.domain.conversion_profile import (
     ConversionProfile,
     FormatIdentityMatchStatus,
@@ -535,6 +541,94 @@ class AccountingConverterController:
                 optional_field_blocker_count=review.optional_field_blocker_count,
                 messages=(),
             )
+        return self.state
+
+    def inspect_selected_jdl_migration(self) -> AppState:
+        state = self.state
+        if (
+            state.file_recognition is None
+            or state.file_recognition.format is not RecognizedFormat.JDL
+            or state.selected_file is None
+            or state.selected_company_setting_id is None
+        ):
+            return state
+        resolved = self.company_setting_service.resolve_for_source(
+            state.selected_company_setting_id,
+            jdl_ibex_cashbook_migration_input_schema_definition().identity.stable_key,
+        )
+        if not resolved.available or resolved.profile is None or resolved.context is None:
+            return self._fail_state(
+                resolved.user_message or "JDL移行の会社設定を確認してください。",
+                JdlMigrationReviewError(
+                    "JDL-MIGRATION-COMPANY-UNAVAILABLE",
+                    "JDL移行の会社設定を確認してください。",
+                ),
+            )
+        try:
+            review = self.jdl_migration_review_service.derive(
+                state.selected_company_setting_id, state.selected_file
+            )
+            profile = FormatProfile(
+                software="JDL",
+                product="JDL IBEX 出納帳",
+                version="35.5",
+                format_id=(
+                    jdl_ibex_cashbook_migration_input_schema_definition()
+                    .identity.stable_key
+                ),
+                encoding="cp932",
+            )
+            entries = JdlMigrationInputAdapter().read(state.selected_file, profile)
+            verified_tax_keys = verified_tax_keys_for_master_identity(
+                self.company_store.target_master_identity_sha256(
+                    state.selected_company_setting_id
+                ),
+                tax_context_identity_sha256(resolved.context),
+            )
+            preflight = JdlMigrationPreflight().evaluate(
+                entries,
+                resolved.profile,
+                resolved.context,
+                company_status=resolved.status,
+                verified_tax_keys=verified_tax_keys,
+            )
+        except Exception as error:
+            log_local_exception("jdl_migration_main_workflow", error)
+            return self._fail_state(
+                "JDL仕訳データを安全に確認できませんでした。",
+                error,
+            )
+        pending = bool(review.accounts or review.subaccounts or review.taxes)
+        blocker_messages = tuple(
+            dict.fromkeys(item.message for item in preflight.validation_results)
+        )
+        if pending:
+            status = "REQUIRES_CONFIRMATION"
+            message = "JDL移行内容の確認が必要です。"
+        elif not preflight.output_allowed:
+            status = "BLOCKED"
+            message = "現在このJDL仕訳の一部は安全に変換できません。"
+        else:
+            status = "ADAPTER_UNAVAILABLE"
+            message = "JDL移行の確認は完了しましたが、正式出力はまだ有効化されていません。"
+        self._prepared = None
+        self.state = replace(
+            self.state,
+            preflight_status=status,
+            conversion_available=False,
+            conversion_summary=None,
+            pending_account_confirmations=len(review.accounts),
+            pending_subaccount_confirmations=len(review.subaccounts),
+            pending_tax_confirmations=len(review.taxes),
+            unsupported_shape_count=sum(
+                item.rule_id == "JDL-MIGRATION-FLAGS"
+                for item in preflight.validation_results
+            ),
+            optional_field_blocker_count=len(review.descriptions),
+            messages=blocker_messages,
+            user_message=message,
+            developer_error=None,
+        )
         return self.state
 
     @staticmethod
@@ -1341,6 +1435,8 @@ class AccountingConverterController:
         recognition = self.state.file_recognition
         if recognition is None:
             return None
+        if recognition.format is RecognizedFormat.JDL:
+            return jdl_ibex_cashbook_migration_input_schema_definition().identity.stable_key
         if recognition.format is RecognizedFormat.YAYOI:
             return yayoi_ae19_direct_export_observed_schema().identity.stable_key
         if recognition.format is RecognizedFormat.MONEYFORWARD:
@@ -1392,26 +1488,53 @@ class AccountingConverterController:
         return yayoi_desktop_import_25_documented_schema().identity
 
     def _recognize_file(self, path: Path) -> FileRecognition:
-        candidates = (
-            (
-                RecognizedFormat.MONEYFORWARD,
-                "Money Forwardの仕訳帳CSV",
-                MoneyForwardInputAdapter(),
-                moneyforward_cloud_journal_export_observed_schema(),
-                "Money Forward",
-                "Money Forward クラウド会計",
-                "UNKNOWN",
-            ),
-            (
-                RecognizedFormat.YAYOI,
-                "弥生会計の仕訳データ",
-                YayoiInputAdapter(),
-                yayoi_ae19_direct_export_observed_schema(),
-                "Yayoi",
-                "Yayoi Accounting AE 19",
-                "19",
-            ),
+        jdl_source_key = (
+            jdl_ibex_cashbook_migration_input_schema_definition().identity.stable_key
         )
+        selected_setting = None
+        if self.state.selected_company_setting_id is not None:
+            try:
+                selected_setting = self.company_store.get(
+                    self.state.selected_company_setting_id
+                )
+            except CompanySettingStoreError:
+                selected_setting = None
+        if (
+            selected_setting is not None
+            and selected_setting.expected_source_format_key == jdl_source_key
+        ):
+            candidates = (
+                (
+                    RecognizedFormat.JDL,
+                    "JDL IBEX 出納帳の仕訳データ",
+                    JdlMigrationInputAdapter(),
+                    jdl_ibex_cashbook_migration_input_schema_definition(),
+                    "JDL",
+                    "JDL IBEX 出納帳",
+                    "35.5",
+                ),
+            )
+        else:
+            candidates = (
+                (
+                    RecognizedFormat.MONEYFORWARD,
+                    "Money Forwardの仕訳帳CSV",
+                    MoneyForwardInputAdapter(),
+                    moneyforward_cloud_journal_export_observed_schema(),
+                    "Money Forward",
+                    "Money Forward クラウド会計",
+                    "UNKNOWN",
+                ),
+                (
+                    RecognizedFormat.YAYOI,
+                    "弥生会計の仕訳データ",
+                    YayoiInputAdapter(),
+                    yayoi_ae19_direct_export_observed_schema(),
+                    "Yayoi",
+                    "Yayoi Accounting AE 19",
+                    "19",
+                ),
+            )
         for kind, label, adapter, schema, software, product, version in candidates:
             profile = FormatProfile(
                 software=software,
