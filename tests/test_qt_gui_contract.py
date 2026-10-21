@@ -294,7 +294,7 @@ class QtGuiContractTests(unittest.TestCase):
             'QPushButton("JDL税設定を確認")',
             "class JdlTaxContextConfirmationDialog",
             'self.taxable_status.addItem("課税"',
-            'self.accounting_method.addItem("税込"',
+            '"税込", JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED.value',
             "本則課税",
             "簡易課税",
             "第一種事業",

@@ -5,6 +5,13 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from accounting_converter.adapters.output.jdl import (
+    JdlInputTaxCreditMethod,
+    JdlSimplifiedBusinessCategory,
+    JdlTaxationMethod,
+)
+from accounting_converter.profiles.jdl_official import JdlTaxProcessingMode
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:
@@ -20,14 +27,17 @@ except ModuleNotFoundError:
 
 
 class _Controller:
-    def __init__(self, *, succeeds: bool) -> None:
+    def __init__(self, *, succeeds: bool, context=None) -> None:
         self.succeeds = succeeds
         self.calls = 0
+        self.context = context
+        self.selection = None
 
     def confirm_company_tax_context(
         self, company_setting_id: str, *, explicitly_confirmed: bool, **selection
     ):
         self.calls += 1
+        self.selection = selection
         assert company_setting_id == "company-1"
         assert explicitly_confirmed
         return SimpleNamespace(
@@ -40,7 +50,7 @@ class _Controller:
         )
 
     def company_tax_context(self, company_setting_id: str):
-        return None
+        return self.context
 
 
 @unittest.skipUnless(PYSIDE6_AVAILABLE, "PySide6 is not installed")
@@ -67,13 +77,50 @@ class JdlTaxContextConfirmationDialogTests(unittest.TestCase):
     def test_simplified_first_category_is_submitted_explicitly(self) -> None:
         controller = _Controller(succeeds=True)
         dialog = JdlTaxContextConfirmationDialog(controller, "company-1")
+        self.assertFalse(dialog.credit_method.isHidden())
+        self.assertTrue(dialog.business_category.isHidden())
         dialog.taxation_method.setCurrentIndex(1)
-        self.assertFalse(dialog.credit_method.isVisible())
+        self.assertTrue(dialog.credit_method.isHidden())
+        self.assertFalse(dialog.credit_method.isEnabled())
+        self.assertFalse(dialog.business_category.isHidden())
+        self.assertTrue(dialog.business_category.isEnabled())
         self.assertFalse(dialog.confirmed.isChecked())
         dialog.business_category.setCurrentIndex(0)
         dialog.confirmed.setChecked(True)
         dialog.save_button.click()
         self.assertEqual(controller.calls, 1)
+        self.assertIs(
+            controller.selection["taxation_method"],
+            JdlTaxationMethod.SIMPLIFIED,
+        )
+        self.assertIs(
+            controller.selection["input_tax_credit_method"],
+            JdlInputTaxCreditMethod.UNCONFIRMED,
+        )
+        self.assertIs(
+            controller.selection["simplified_business_category"],
+            JdlSimplifiedBusinessCategory.FIRST,
+        )
+
+    def test_switching_back_to_standard_removes_hidden_business_category(self) -> None:
+        controller = _Controller(succeeds=True)
+        dialog = JdlTaxContextConfirmationDialog(controller, "company-1")
+        dialog.taxation_method.setCurrentIndex(1)
+        dialog.business_category.setCurrentIndex(4)
+        dialog.taxation_method.setCurrentIndex(0)
+        self.assertFalse(dialog.credit_method.isHidden())
+        self.assertTrue(dialog.business_category.isHidden())
+        dialog.confirmed.setChecked(True)
+        dialog.save_button.click()
+        self.assertIs(
+            controller.selection["taxation_method"],
+            JdlTaxationMethod.STANDARD,
+        )
+        self.assertIs(
+            controller.selection["input_tax_credit_method"],
+            JdlInputTaxCreditMethod.INDIVIDUAL,
+        )
+        self.assertIsNone(controller.selection["simplified_business_category"])
 
     def test_persistence_failure_stays_open_and_shows_error(self) -> None:
         controller = _Controller(succeeds=False)

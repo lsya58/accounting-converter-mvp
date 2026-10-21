@@ -266,6 +266,30 @@ class CompanyTaxContextConfirmationTests(unittest.TestCase):
         self.assertTrue(identity.target_name)
         self.assertLessEqual(len(identity.target_name), 4)
 
+    def test_contradictory_taxation_specific_fields_are_blocked(self) -> None:
+        with self.assertRaises(CompanyTaxContextConfirmationError):
+            self.service.confirm(
+                "company-1",
+                selection=JdlTaxContextSelection(
+                    tax_processing_mode=JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED,
+                    taxation_method=JdlTaxationMethod.SIMPLIFIED,
+                    input_tax_credit_method=JdlInputTaxCreditMethod.INDIVIDUAL,
+                    simplified_business_category=JdlSimplifiedBusinessCategory.FIRST,
+                ),
+                confirmed=True,
+            )
+        with self.assertRaises(CompanyTaxContextConfirmationError):
+            self.service.confirm(
+                "company-1",
+                selection=JdlTaxContextSelection(
+                    tax_processing_mode=JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED,
+                    taxation_method=JdlTaxationMethod.STANDARD,
+                    input_tax_credit_method=JdlInputTaxCreditMethod.INDIVIDUAL,
+                    simplified_business_category=JdlSimplifiedBusinessCategory.FIRST,
+                ),
+                confirmed=True,
+            )
+
     def test_controller_exposes_six_candidates_then_saves_user_confirmed(self) -> None:
         self.service.confirm_taxable_included("company-1", confirmed=True)
         controller = AccountingConverterController(

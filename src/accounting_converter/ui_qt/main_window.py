@@ -2014,13 +2014,19 @@ class JdlTaxContextConfirmationDialog(QDialog):
         self.taxable_status.addItem("課税", "TAXABLE")
         self.taxable_status.addItem("免税", "EXEMPT")
         self.accounting_method = WheelSafeComboBox()
-        self.accounting_method.addItem("税込", JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED)
-        self.accounting_method.addItem("税抜", JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED)
+        self.accounting_method.addItem(
+            "税込", JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED.value
+        )
+        self.accounting_method.addItem(
+            "税抜", JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED.value
+        )
         self.taxation_method = WheelSafeComboBox()
-        self.taxation_method.addItem("本則課税", JdlTaxationMethod.STANDARD)
-        self.taxation_method.addItem("簡易課税", JdlTaxationMethod.SIMPLIFIED)
+        self.taxation_method.addItem("本則課税", JdlTaxationMethod.STANDARD.value)
+        self.taxation_method.addItem("簡易課税", JdlTaxationMethod.SIMPLIFIED.value)
         self.credit_method = WheelSafeComboBox()
-        self.credit_method.addItem("個別対応方式", JdlInputTaxCreditMethod.INDIVIDUAL)
+        self.credit_method.addItem(
+            "個別対応方式", JdlInputTaxCreditMethod.INDIVIDUAL.value
+        )
         self.business_category = WheelSafeComboBox()
         for label, value in (
             ("第一種事業", JdlSimplifiedBusinessCategory.FIRST),
@@ -2030,7 +2036,7 @@ class JdlTaxContextConfirmationDialog(QDialog):
             ("第五種事業", JdlSimplifiedBusinessCategory.FIFTH),
             ("第六種事業", JdlSimplifiedBusinessCategory.SIXTH),
         ):
-            self.business_category.addItem(label, value)
+            self.business_category.addItem(label, value.value)
         self.credit_label = QLabel("仕入税額控除")
         self.business_label = QLabel("主たる事業区分")
         rows = (
@@ -2068,12 +2074,12 @@ class JdlTaxContextConfirmationDialog(QDialog):
             return
         taxable = self.taxable_status.currentData() == "TAXABLE"
         tax_mode = (
-            self.accounting_method.currentData()
+            JdlTaxProcessingMode(str(self.accounting_method.currentData()))
             if taxable
             else JdlTaxProcessingMode.EXEMPT
         )
         taxation = (
-            self.taxation_method.currentData()
+            JdlTaxationMethod(str(self.taxation_method.currentData()))
             if taxable
             else JdlTaxationMethod.UNCONFIRMED
         )
@@ -2083,12 +2089,14 @@ class JdlTaxContextConfirmationDialog(QDialog):
             tax_processing_mode=tax_mode,
             taxation_method=taxation,
             input_tax_credit_method=(
-                self.credit_method.currentData()
+                JdlInputTaxCreditMethod(str(self.credit_method.currentData()))
                 if taxation is JdlTaxationMethod.STANDARD
                 else JdlInputTaxCreditMethod.UNCONFIRMED
             ),
             simplified_business_category=(
-                self.business_category.currentData()
+                JdlSimplifiedBusinessCategory(
+                    str(self.business_category.currentData())
+                )
                 if taxation is JdlTaxationMethod.SIMPLIFIED
                 else None
             ),
@@ -2106,14 +2114,19 @@ class JdlTaxContextConfirmationDialog(QDialog):
         taxable = self.taxable_status.currentData() == "TAXABLE"
         simplified = (
             taxable
-            and self.taxation_method.currentData() is JdlTaxationMethod.SIMPLIFIED
+            and self.taxation_method.currentData()
+            == JdlTaxationMethod.SIMPLIFIED.value
         )
         self.accounting_method.setVisible(taxable)
+        self.accounting_method.setEnabled(taxable)
         self.taxation_method.setVisible(taxable)
+        self.taxation_method.setEnabled(taxable)
         self.credit_label.setVisible(taxable and not simplified)
         self.credit_method.setVisible(taxable and not simplified)
+        self.credit_method.setEnabled(taxable and not simplified)
         self.business_label.setVisible(simplified)
         self.business_category.setVisible(simplified)
+        self.business_category.setEnabled(simplified)
         self.confirmed.setChecked(False)
 
     def _load_current_context(self) -> None:
@@ -2126,12 +2139,14 @@ class JdlTaxContextConfirmationDialog(QDialog):
         )
         if context.tax_processing_mode is JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED:
             self.accounting_method.setCurrentIndex(1)
-        method_index = self.taxation_method.findData(context.effective_taxation_method)
+        method_index = self.taxation_method.findData(
+            context.effective_taxation_method.value
+        )
         if method_index >= 0:
             self.taxation_method.setCurrentIndex(method_index)
         if context.simplified_business_category is not None:
             category_index = self.business_category.findData(
-                context.simplified_business_category
+                context.simplified_business_category.value
             )
             if category_index >= 0:
                 self.business_category.setCurrentIndex(category_index)
