@@ -275,6 +275,31 @@ class JdlMigrationHumanReviewTests(unittest.TestCase):
         self.assertEqual(reopened.reused_account_count, 1)
         self.assertNotIn(item.source_code, {row.source_code for row in reopened.accounts})
 
+    def test_partial_save_reuses_only_confirmed_items_and_keeps_remainder(self):
+        source = Path("tests/fixtures/jdl/valid_simple.csv")
+        review = self.service.derive("company-a", source)
+        selected_items = review.accounts[:2]
+
+        self.service.save(
+            review,
+            {item.key: item.targets[0] for item in selected_items},
+            {item.key for item in selected_items},
+            {},
+            set(),
+        )
+        reopened = self.service.derive("company-a", source)
+
+        self.assertEqual(reopened.reused_account_count, 2)
+        self.assertEqual(len(reopened.accounts), len(review.accounts) - 2)
+        profile = self.profile_store.get(
+            self.company_store.setting.conversion_profile_id
+        )
+        self.assertEqual(len(profile.account_mappings), 2)
+        self.assertTrue(all(
+            value.status is MappingStatus.USER_CONFIRMED
+            for value in profile.account_mappings.values()
+        ))
+
     def test_derived_review_blocks_save_after_master_changes(self):
         review = self.service.derive(
             "company-a", Path("tests/fixtures/jdl/valid_simple.csv")

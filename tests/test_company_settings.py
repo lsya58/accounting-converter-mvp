@@ -323,6 +323,9 @@ class CompanySettingStoreTests(unittest.TestCase):
             inspected.preflight_status,
             {"REQUIRES_CONFIRMATION", "BLOCKED", "ADAPTER_UNAVAILABLE"},
         )
+        if inspected.preflight_status == "REQUIRES_CONFIRMATION":
+            self.assertIn("JDL移行内容を確認", inspected.user_message)
+            self.assertNotIn("0件の", inspected.user_message)
         self.assertFalse(inspected.conversion_available)
 
         malformed = controller.select_file(

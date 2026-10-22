@@ -20,11 +20,35 @@ class QtGuiContractTests(unittest.TestCase):
             "class JdlMigrationHumanReviewDialog", maxsplit=1
         )[1].split("class TradePartnerPolicyDialog", maxsplit=1)[0]
         for contract in (
-            "QScrollArea()", "確認結果を保存", "jdl_migration_review_save",
+            "QScrollArea()", "確認済み0件を保存", "jdl_migration_review_save",
             "QMessageBox.warning", "実機確認が不足しているため変換できません",
             "32文字を超えるため変換できません",
+            'content.setObjectName("page")',
+            'setObjectName("sectionTitle")',
+            "推奨候補がない科目があります。",
+            "補助情報は引き継がれません。",
+            "この画面で確認済み:",
+            "確認済み{confirmed}件を保存",
+            "未確認{remaining_count}件が残っています。",
+            "self.save_button.setEnabled(confirmed > 0)",
         ):
             self.assertIn(contract, dialog)
+
+    def test_jdl_migration_partial_save_failure_resets_visible_confirmation(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
+            encoding="utf-8"
+        )
+        dialog = source.split(
+            "class JdlMigrationHumanReviewDialog", maxsplit=1
+        )[1].split("class TradePartnerPolicyDialog", maxsplit=1)[0]
+        failure = dialog.split("except Exception as exc:", maxsplit=1)[1]
+        self.assertIn('log_local_exception("jdl_migration_review_save", exc)', failure)
+        self.assertIn("check.setChecked(False)", failure)
+        self.assertIn("QMessageBox.warning", failure)
+
+    def test_scroll_area_corner_uses_light_application_surface(self) -> None:
+        self.assertIn("QAbstractScrollArea::corner", APP_STYLE_SHEET)
+        self.assertIn(COLORS["page"], APP_STYLE_SHEET)
 
     def test_jdl_migration_review_uses_current_state_without_json_picker(self) -> None:
         source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(

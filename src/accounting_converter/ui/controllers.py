@@ -604,7 +604,20 @@ class AccountingConverterController:
         )
         if pending:
             status = "REQUIRES_CONFIRMATION"
-            message = "JDL移行内容の確認が必要です。"
+            pending_labels = tuple(
+                label
+                for label, count in (
+                    (f"{len(review.accounts)}件の科目", len(review.accounts)),
+                    (f"{len(review.subaccounts)}件の補助科目", len(review.subaccounts)),
+                    (f"{len(review.taxes)}件の税区分", len(review.taxes)),
+                )
+                if count
+            )
+            message = (
+                "会社設定の「JDL移行内容を確認」で、"
+                + "、".join(pending_labels)
+                + "を確認してください。"
+            )
         elif not preflight.output_allowed:
             status = "BLOCKED"
             message = "現在このJDL仕訳の一部は安全に変換できません。"

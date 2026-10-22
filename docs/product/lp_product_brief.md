@@ -306,6 +306,25 @@ LPでは代表者向けの「時間・安全・属人化解消」と、担当者
 
 新しい会計ソフト対応や大規模な汎用化より、まずこの1本の実務フローを繰り返し成功させることを優先します。
 
+### 2026-10-22 実運用監査
+
+MF→JDLの現状を、既存Evidenceと実装状態に基づいて次のように整理します。
+
+| 分類 | 現在地 |
+|---|---|
+| A. 完了済み | MF 19列入力、会社別科目・補助・税mapping、取引先の限定確認済み方針、限定compound、formal preflight、atomic出力、上書き防止、privacy-safe診断、Windows build |
+| B. 実装済み・実運用未確認 | 実会社でのREADY-only batch、翌月の保存済みmapping再利用、失敗後のretry、Windows配布物での反復運用 |
+| C. Human/Evidence待ち | 実会社固有mapping、未確認の仕訳構造・税・optional field、JDL Import後の再Export比較 |
+| D. 実装が必要 | pilot向け1ページ操作手順、backup/retry/support手順の固定、配布・更新・問い合わせ運用 |
+
+父親のHuman判断を待たずに進められる優先作業は、利用者向けエラー案内、変換前後の件数・貸借確認、診断情報のコピー、backup/retry手順、1ページ操作手順、配布物の再現確認です。新しい会計形式やEvidence未確認の変換規則は追加しません。
+
+### Pilot開始条件
+
+開始前のMUSTは、元データとJDL会社のbackup、READY/BLOCKED preflight、上書き防止、atomic出力、privacy-safe診断、retry手順、Import前の件数・貸借確認、Import後の件数確認と再Export検証、問い合わせ時の情報収集手順です。実会社mappingとEvidence不足項目はHuman確認なしに解除しません。
+
+pilot中またはLATERでよいものは、高度なanalytics、自動更新、事務所横断recommendation、追加vendor、高度な管理画面、無人変換です。
+
 ## 16. LP公開前チェック
 
 - 実顧客の会社名、科目、摘要、金額、ファイル名が画像や文章に含まれていない

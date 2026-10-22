@@ -856,14 +856,21 @@ class JdlMigrationHumanReviewDialog(QDialog):
         )
         summary.setWordWrap(True)
         outer.addWidget(summary)
+        self.progress_label = QLabel()
+        self.progress_label.setObjectName("muted")
+        outer.addWidget(self.progress_label)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         content = QWidget()
+        content.setObjectName("page")
         layout = QVBoxLayout(content)
+        layout.setSpacing(14)
 
-        layout.addWidget(QLabel(f"科目の確認（{len(review.accounts)}件）"))
+        account_title = QLabel(f"科目の確認（{len(review.accounts)}件）")
+        account_title.setObjectName("sectionTitle")
+        layout.addWidget(account_title)
         account_table = QTableWidget(len(review.accounts), 6)
         account_table.setHorizontalHeaderLabels(
             ("入力元コード", "入力元科目", "差異", "影響", "JDLの科目", "確認")
@@ -911,7 +918,7 @@ class JdlMigrationHumanReviewDialog(QDialog):
                 )
             elif not item.recommended_targets:
                 combo.setToolTip(
-                    "推奨候補はありません。現在のJDL科目一覧から対応先を選択してください。"
+                    "変換先で自動的に対応できる科目が見つかりません。現在のJDL科目一覧から対応先を選択してください。"
                 )
             if item.disabled_name_match:
                 combo.setToolTip(
@@ -923,8 +930,10 @@ class JdlMigrationHumanReviewDialog(QDialog):
                 lambda _index, box=combo, check=confirmed: (
                     check.setChecked(False),
                     check.setEnabled(box.currentData() is not None),
+                    self._refresh_save_state(),
                 )
             )
+            confirmed.toggled.connect(self._refresh_save_state)
             account_table.setCellWidget(row, 4, combo)
             account_table.setCellWidget(row, 5, confirmed)
             self.account_controls[item.key] = (combo, confirmed)
@@ -937,8 +946,18 @@ class JdlMigrationHumanReviewDialog(QDialog):
             )
             unavailable.setWordWrap(True)
             layout.addWidget(unavailable)
+        elif any(not item.recommended_targets for item in review.accounts):
+            no_recommendation = QLabel(
+                "推奨候補がない科目があります。下の一覧から変換先科目を選ぶか、"
+                "JDL側で科目を追加した後に「JDL科目一覧を更新」してください。"
+            )
+            no_recommendation.setObjectName("muted")
+            no_recommendation.setWordWrap(True)
+            layout.addWidget(no_recommendation)
 
-        layout.addWidget(QLabel(f"補助科目の確認（{len(review.subaccounts)}件）"))
+        subaccount_title = QLabel(f"補助科目の確認（{len(review.subaccounts)}件）")
+        subaccount_title.setObjectName("sectionTitle")
+        layout.addWidget(subaccount_title)
         sub_table = QTableWidget(len(review.subaccounts), 4)
         sub_table.setHorizontalHeaderLabels(("親科目", "入力元補助", "処理方法", "確認"))
         sub_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
@@ -970,8 +989,10 @@ class JdlMigrationHumanReviewDialog(QDialog):
                 lambda _index, box=combo, check=confirmed: (
                     check.setChecked(False),
                     check.setEnabled(box.currentData() is not None),
+                    self._refresh_save_state(),
                 )
             )
+            confirmed.toggled.connect(self._refresh_save_state)
             sub_table.setCellWidget(row, 2, combo)
             sub_table.setCellWidget(row, 3, confirmed)
             self.subaccount_controls[item.key] = (combo, confirmed)
@@ -980,12 +1001,17 @@ class JdlMigrationHumanReviewDialog(QDialog):
         layout.addWidget(sub_table)
         if any(not item.targets for item in review.subaccounts):
             subaccount_note = QLabel(
-                "補助科目を保持するには、JDL側で対象の親科目に補助科目を作成してから「JDL科目一覧を更新」してください。親科目のみで変換する場合は、補助情報が引き継がれないことを確認して明示選択してください。"
+                "変換先JDLにはこの補助科目がありません。補助科目を保持する場合は、"
+                "JDL側で対象の親科目に補助科目を作成してから「JDL科目一覧を更新」してください。"
+                "親科目のみで変換する場合、補助情報は引き継がれません。"
             )
+            subaccount_note.setObjectName("muted")
             subaccount_note.setWordWrap(True)
             layout.addWidget(subaccount_note)
 
-        layout.addWidget(QLabel("税設定"))
+        tax_title = QLabel(f"税設定（{len(review.taxes)}件）")
+        tax_title.setObjectName("sectionTitle")
+        layout.addWidget(tax_title)
         tax_context = QLabel(
             "JDL Version / 課税事業者・免税 / 税込・税抜 / 課税方式 / 対応方式を"
             "既存の「JDL税設定を確認」から確認してください。"
@@ -1005,7 +1031,9 @@ class JdlMigrationHumanReviewDialog(QDialog):
             label.setWordWrap(True)
             layout.addWidget(label)
 
-        layout.addWidget(QLabel("摘要の確認"))
+        description_title = QLabel(f"摘要の確認（{len(review.descriptions)}件）")
+        description_title.setObjectName("sectionTitle")
+        layout.addWidget(description_title)
         for item in review.descriptions:
             length_text = (
                 f"{item.current_length}文字"
@@ -1033,13 +1061,32 @@ class JdlMigrationHumanReviewDialog(QDialog):
         actions = QHBoxLayout()
         cancel = QPushButton("キャンセル")
         cancel.clicked.connect(self.reject)
-        save = QPushButton("確認結果を保存")
-        save.setObjectName("primaryButton")
-        save.clicked.connect(self._save)
+        self.save_button = QPushButton("確認済み0件を保存")
+        self.save_button.setObjectName("primaryButton")
+        self.save_button.clicked.connect(self._save)
         actions.addStretch(1)
         actions.addWidget(cancel)
-        actions.addWidget(save)
+        actions.addWidget(self.save_button)
         outer.addLayout(actions)
+        self._refresh_save_state()
+
+    def _confirmed_count(self) -> int:
+        return sum(
+            check.isChecked() and combo.currentData() is not None
+            for combo, check in (
+                *self.account_controls.values(),
+                *self.subaccount_controls.values(),
+            )
+        )
+
+    def _refresh_save_state(self, _checked=None) -> None:
+        confirmed = self._confirmed_count()
+        total = len(self.account_controls) + len(self.subaccount_controls)
+        self.progress_label.setText(
+            f"この画面で確認済み: {confirmed}件 / 未確認: {total - confirmed}件"
+        )
+        self.save_button.setText(f"確認済み{confirmed}件を保存")
+        self.save_button.setEnabled(confirmed > 0)
 
     def _save(self) -> None:
         account_selections = {
@@ -1060,6 +1107,12 @@ class JdlMigrationHumanReviewDialog(QDialog):
             key for key, (_combo, check) in self.subaccount_controls.items()
             if check.isChecked()
         }
+        saved_count = len(account_confirmed) + len(subaccount_confirmed)
+        remaining_count = (
+            len(self.account_controls)
+            + len(self.subaccount_controls)
+            - saved_count
+        )
         try:
             self.controller.save_jdl_migration_review(
                 self.review, account_selections, account_confirmed,
@@ -1067,12 +1120,22 @@ class JdlMigrationHumanReviewDialog(QDialog):
             )
         except Exception as exc:
             log_local_exception("jdl_migration_review_save", exc)
+            for _combo, check in (
+                *self.account_controls.values(),
+                *self.subaccount_controls.values(),
+            ):
+                check.setChecked(False)
             self.status_label.setText("確認結果を保存できませんでした。設定を確認してください。")
             QMessageBox.warning(
                 self, "確認結果を保存できませんでした",
                 "選択内容と会社設定を確認してください。",
             )
             return
+        QMessageBox.information(
+            self,
+            "確認結果を保存しました",
+            f"{saved_count}件を保存しました。未確認{remaining_count}件が残っています。",
+        )
         self.accept()
 
 

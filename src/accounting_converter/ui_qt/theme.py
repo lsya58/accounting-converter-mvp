@@ -147,6 +147,9 @@ QTableWidget {{
     selection-background-color: #DCECF8;
     selection-color: {COLORS['text']};
 }}
+QAbstractScrollArea::corner {{
+    background: {COLORS['page']};
+}}
 QHeaderView::section {{
     color: {COLORS['text']};
     background: #EAF0F5;
