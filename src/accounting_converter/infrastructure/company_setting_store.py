@@ -255,8 +255,12 @@ class CompanySettingStore:
                 jdl_ibex_35_5_output_profile(), profile, context
             )
             if not runtime.resolved:
+                rule_ids = ",".join(
+                    item.rule_id for item in runtime.validation_results
+                )
                 raise CompanySettingStoreError(
                     "updated profile and saved JDL setting are incompatible"
+                    + (f" [{rule_ids}]" if rule_ids else "")
                 )
         if (
             profile.source_format_identity.stable_key

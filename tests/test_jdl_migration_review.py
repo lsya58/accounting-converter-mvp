@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import tempfile
 import unittest
@@ -69,6 +70,7 @@ class _CompanyStore:
         self.master_hash = "b" * 64
         self.status = CompanySettingStatus.AVAILABLE
         self.context = None
+        self.target_count = 5
 
     def get(self, company_id):
         if company_id not in {"company-a", "company-b"}:
@@ -93,7 +95,7 @@ class _CompanyStore:
                     target_master_code=f"{8000 + index}",
                     target_formal_name=f"出力科目{index}",
                 )
-                for index in range(5)
+                for index in range(self.target_count)
             ),
             (),
             frozenset(),
@@ -306,6 +308,60 @@ class JdlMigrationHumanReviewTests(unittest.TestCase):
         )
         self.assertEqual(len(profile.account_mappings), 2)
         self.assertTrue(all(
+            value.metadata.get("target_formal_name")
+            for value in profile.account_mappings.values()
+        ))
+        self.assertTrue(all(
+            value.status is MappingStatus.USER_CONFIRMED
+            for value in profile.account_mappings.values()
+        ))
+
+    def test_nine_items_can_save_eight_and_reopen_with_one(self):
+        self.company_store.target_count = 12
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "nine-accounts.csv"
+            fixture_rows = list(csv.reader(
+                Path("tests/fixtures/jdl/valid_simple.csv").read_text(
+                    encoding="cp932"
+                ).splitlines()
+            ))
+            header = fixture_rows[0]
+            rows = []
+            for index in range(9):
+                row = [""] * 30
+                row[0] = "1111"
+                row[1] = str(index + 1)
+                row[2] = "20260821"
+                row[3:6] = [f"{9000 + index}", f"入力科目{index}", f"入力科目{index}"]
+                row[11] = "100"
+                row[13:16] = ["9000", "入力科目0", "入力科目0"]
+                row[21] = "100"
+                row[23] = f"SYNTHETIC-{index}"
+                rows.append(row)
+            with source.open("w", encoding="cp932", newline="") as handle:
+                writer = csv.writer(handle, lineterminator="\r\n")
+                writer.writerow(header)
+                writer.writerows(rows)
+
+            review = self.service.derive("company-a", source)
+            confirmed = review.accounts[:8]
+            self.service.save(
+                review,
+                {item.key: item.targets[0] for item in confirmed},
+                {item.key for item in confirmed},
+                {},
+                set(),
+            )
+            reopened = self.service.derive("company-a", source)
+
+        self.assertEqual(len(review.accounts), 9)
+        self.assertEqual(reopened.reused_account_count, 8)
+        self.assertEqual(len(reopened.accounts), 1)
+        profile = self.profile_store.get(
+            self.company_store.setting.conversion_profile_id
+        )
+        self.assertEqual(len(profile.account_mappings), 8)
+        self.assertTrue(all(
             value.status is MappingStatus.USER_CONFIRMED
             for value in profile.account_mappings.values()
         ))
@@ -346,6 +402,25 @@ class JdlMigrationHumanReviewTests(unittest.TestCase):
         fifth = next(item for item in review.taxes if item.label == "売五種 / 10%")
         self.assertEqual(fifth.evidence_status, "VERIFIED_CONTEXT_MISMATCH")
         self.assertEqual(fifth.status, "CONTEXT_CONFIRMATION_REQUIRED")
+        self.assertTrue(fifth.evidence_id)
+
+    def test_known_evidence_with_wrong_master_remains_blocked_with_clear_reason(self):
+        self.company_store.context = JdlTargetContext(
+            product="JDL IBEX 出納帳",
+            version="35.5",
+            accounts=frozenset(),
+            tax_processing_mode=JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED,
+            taxation_method=JdlTaxationMethod.SIMPLIFIED,
+            simplified_business_category=JdlSimplifiedBusinessCategory.FIRST,
+        )
+
+        review = self.service.derive(
+            "company-a", Path("tests/fixtures/jdl/valid_simple.csv")
+        )
+
+        fifth = next(item for item in review.taxes if item.label == "売五種 / 10%")
+        self.assertEqual(fifth.evidence_status, "VERIFIED_MASTER_MISMATCH")
+        self.assertEqual(fifth.status, "TARGET_MASTER_CONFIRMATION_REQUIRED")
         self.assertTrue(fifth.evidence_id)
 
     def test_derived_review_blocks_save_after_master_changes(self):

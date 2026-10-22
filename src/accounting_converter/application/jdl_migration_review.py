@@ -18,6 +18,7 @@ from accounting_converter.application.profile_revision import revised_profile_id
 from accounting_converter.application.company_settings import CompanySettingStatus
 from accounting_converter.application.jdl_migration_tax_evidence import (
     evidence_for_master_identity,
+    evidence_for_source_tax_key,
     tax_context_identity_sha256,
 )
 from accounting_converter.domain.mapping import (
@@ -258,6 +259,7 @@ class JdlMigrationHumanReviewService:
                 reused_taxes += 1
                 continue
             evidence = evidence_for_master_identity(key, target_master_identity)
+            known_evidence = evidence_for_source_tax_key(key)
             evidence_active = (
                 evidence is not None
                 and context_identity is not None
@@ -268,6 +270,8 @@ class JdlMigrationHumanReviewService:
                 if evidence_active
                 else "VERIFIED_CONTEXT_MISMATCH"
                 if evidence is not None
+                else "VERIFIED_MASTER_MISMATCH"
+                if known_evidence is not None
                 else "UNVERIFIED"
             )
             taxes.append(JdlMigrationTaxReview(
@@ -277,9 +281,17 @@ class JdlMigrationHumanReviewService:
                 if evidence_active
                 else "CONTEXT_CONFIRMATION_REQUIRED"
                 if evidence is not None
+                else "TARGET_MASTER_CONFIRMATION_REQUIRED"
+                if known_evidence is not None
                 else "EVIDENCE_AND_HUMAN_CONFIRMATION_REQUIRED",
                 evidence_status,
-                evidence.evidence_id if evidence is not None else "",
+                (
+                    evidence.evidence_id
+                    if evidence is not None
+                    else known_evidence.evidence_id
+                    if known_evidence is not None
+                    else ""
+                ),
             ))
 
         tax_context_requirements = [
@@ -471,7 +483,11 @@ class JdlMigrationHumanReviewService:
                 jdl_source_account_key(item.source_code, item.source_name),
                 target_name,
                 MappingStatus.USER_CONFIRMED,
-                metadata={"target_code": target_code, "target_printed_name": target_name},
+                metadata={
+                    "target_code": target_code,
+                    "target_formal_name": target_name,
+                    "target_printed_name": target_name,
+                },
             )
 
         for item in review.subaccounts:
@@ -542,9 +558,12 @@ class JdlMigrationHumanReviewService:
         self.profile_store.create(updated)
         try:
             self.company_store.replace_profile(review.company_setting_id, updated.profile_id)
-        except Exception:
+        except Exception as exc:
             self.profile_store.delete(updated.profile_id)
-            raise
+            raise JdlMigrationReviewError(
+                "JDL-MIGRATION-REVIEW-PERSISTENCE-FAILED",
+                "会社設定を保存できませんでした。設定を開き直して再試行してください。",
+            ) from exc
 
     def _validated_setting(self, company_setting_id: str):
         setting = self.company_store.get(company_setting_id)

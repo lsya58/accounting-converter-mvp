@@ -11,6 +11,7 @@ from accounting_converter.application.jdl_migration_tax_evidence import (
     SIMPLIFIED_FIRST_INCLUDED_CONTEXT_IDENTITY_SHA256,
     evidence_for,
     evidence_for_master_identity,
+    evidence_for_source_tax_key,
     verified_tax_keys_for_context,
     verified_tax_keys_for_master_identity,
 )
@@ -86,6 +87,14 @@ class JdlMigrationTaxEvidenceTests(unittest.TestCase):
                 "wrong-master", SIMPLIFIED_FIRST_INCLUDED_CONTEXT_IDENTITY_SHA256
             ),
             frozenset(),
+        )
+        known = evidence_for_source_tax_key(
+            jdl_source_tax_key("売二種", "10%", "")
+        )
+        self.assertIsNotNone(known)
+        self.assertEqual(
+            known.evidence_id,
+            "EVID-JDL-MIGRATION-TAX-SALES-SECOND-10-ROUNDTRIP-001",
         )
 
     def test_evidence_does_not_activate_without_confirmed_context(self) -> None:

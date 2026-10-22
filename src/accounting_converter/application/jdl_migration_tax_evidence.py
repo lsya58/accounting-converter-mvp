@@ -77,6 +77,20 @@ JDL_MIGRATION_TAX_EVIDENCE = (
 )
 
 
+def evidence_for_source_tax_key(
+    source_tax_key: str,
+) -> JdlMigrationTaxEvidence | None:
+    """Return known Evidence without activating it for any target master."""
+    return next(
+        (
+            item
+            for item in JDL_MIGRATION_TAX_EVIDENCE
+            if item.source_tax_key == source_tax_key
+        ),
+        None,
+    )
+
+
 def evidence_for(
     source_tax_key: str, target_master_sha256: str
 ) -> JdlMigrationTaxEvidence | None:

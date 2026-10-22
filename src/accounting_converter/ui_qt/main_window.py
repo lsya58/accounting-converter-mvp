@@ -1057,6 +1057,8 @@ class JdlMigrationHumanReviewDialog(QDialog):
                 if item.evidence_status == "VERIFIED_BY_REAL_IMPORT"
                 else "実機確認済みですが、現在のJDL税設定と一致しません"
                 if item.evidence_status == "VERIFIED_CONTEXT_MISMATCH"
+                else "実機確認済みですが、現在のJDL科目一覧と一致しません"
+                if item.evidence_status == "VERIFIED_MASTER_MISMATCH"
                 else "実機確認が不足しているため変換できません"
             )
             label = QLabel(

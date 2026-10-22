@@ -91,6 +91,27 @@ class CompanySettingStoreTests(unittest.TestCase):
         self.assertIsNotNone(resolved.profile)
         self.assertIsNotNone(resolved.context)
 
+    def test_replace_profile_allows_unresolved_tax_while_confirmed_mapping_matches(self) -> None:
+        setting = self._create()
+        old = self.profile_store.get(setting.conversion_profile_id)
+        partial = replace(
+            old,
+            profile_id="profile-partial-review",
+            tax_mappings={
+                "unresolved-tax": MappingValue(
+                    "unresolved-tax", None, MappingStatus.UNRESOLVED
+                )
+            },
+        )
+        self.profile_store.create(partial)
+
+        updated = self.company_store.replace_profile(
+            setting.company_setting_id, partial.profile_id
+        )
+
+        self.assertEqual(updated.conversion_profile_id, partial.profile_id)
+        self.assertTrue(self.company_store.resolve(setting.company_setting_id).available)
+
     def test_missing_profile_or_context_is_stale(self) -> None:
         setting = self._create()
         self.profile_store.delete(setting.conversion_profile_id)

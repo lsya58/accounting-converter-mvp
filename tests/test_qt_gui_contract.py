@@ -23,6 +23,7 @@ class QtGuiContractTests(unittest.TestCase):
             "QScrollArea()", "確認済み0件を保存", "jdl_migration_review_save",
             "QMessageBox.warning", "実機確認が不足しているため変換できません",
             "実機確認済みですが、現在のJDL税設定と一致しません",
+            "実機確認済みですが、現在のJDL科目一覧と一致しません",
             "32文字を超えるため変換できません",
             'content.setObjectName("page")',
             'setObjectName("sectionTitle")',
