@@ -17,8 +17,9 @@ from accounting_converter.adapters.input.jdl import (
 from accounting_converter.application.profile_revision import revised_profile_id
 from accounting_converter.application.company_settings import CompanySettingStatus
 from accounting_converter.application.jdl_migration_tax_evidence import (
-    evidence_for_master_identity,
+    evidence_for_target_context,
     evidence_for_source_tax_key,
+    target_master_dependencies_match,
     tax_context_identity_sha256,
 )
 from accounting_converter.domain.mapping import (
@@ -258,8 +259,19 @@ class JdlMigrationHumanReviewService:
             if saved is not None and saved.status is MappingStatus.USER_CONFIRMED:
                 reused_taxes += 1
                 continue
-            evidence = evidence_for_master_identity(key, target_master_identity)
+            evidence = (
+                evidence_for_target_context(key, target_context)
+                if target_context is not None
+                else None
+            )
             known_evidence = evidence_for_source_tax_key(key)
+            master_dependencies_match = (
+                known_evidence is not None
+                and target_context is not None
+                and target_master_dependencies_match(
+                    known_evidence, target_context
+                )
+            )
             evidence_active = (
                 evidence is not None
                 and context_identity is not None
@@ -269,7 +281,7 @@ class JdlMigrationHumanReviewService:
                 "VERIFIED_BY_REAL_IMPORT"
                 if evidence_active
                 else "VERIFIED_CONTEXT_MISMATCH"
-                if evidence is not None
+                if master_dependencies_match
                 else "VERIFIED_MASTER_MISMATCH"
                 if known_evidence is not None
                 else "UNVERIFIED"
@@ -280,7 +292,7 @@ class JdlMigrationHumanReviewService:
                 "HUMAN_CONFIRMATION_REQUIRED"
                 if evidence_active
                 else "CONTEXT_CONFIRMATION_REQUIRED"
-                if evidence is not None
+                if master_dependencies_match
                 else "TARGET_MASTER_CONFIRMATION_REQUIRED"
                 if known_evidence is not None
                 else "EVIDENCE_AND_HUMAN_CONFIRMATION_REQUIRED",
@@ -501,13 +513,32 @@ class JdlMigrationHumanReviewService:
                     review.company_setting_id
                 )
             )
-            exact_parent = any(
-                target.target_master_code == item.parent_code
-                and target.target_formal_name == item.parent_name
-                for target in target_accounts
+            exact_parent_identity = next(
+                (
+                    target
+                    for target in target_accounts
+                    if target.target_master_code == item.parent_code
+                    and target.target_formal_name == item.parent_name
+                ),
+                None,
             )
+            # Exact source/target account identities are intentionally omitted
+            # from the review table. Persist that exact parent identity when a
+            # confirmed child mapping needs it for runtime parent scoping.
+            if exact_parent_identity and parent is None:
+                parent = MappingValue(
+                    parent_key,
+                    item.parent_name,
+                    MappingStatus.USER_CONFIRMED,
+                    metadata={
+                        "target_code": item.parent_code,
+                        "target_formal_name": item.parent_name,
+                        "target_printed_name": item.parent_name,
+                    },
+                )
+                accounts[parent_key] = parent
             if (
-                not exact_parent
+                not exact_parent_identity
                 and (parent is None or parent.status is not MappingStatus.USER_CONFIRMED)
             ):
                 raise JdlMigrationReviewError(

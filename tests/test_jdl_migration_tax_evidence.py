@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 import hashlib
+import csv
+import io
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
-from accounting_converter.adapters.input.jdl import jdl_source_tax_key
+from accounting_converter.adapters.input.jdl import (
+    JdlMigrationParser,
+    jdl_source_tax_key,
+)
 from accounting_converter.application.jdl_migration_tax_evidence import (
     JDL_TO_JDL_TARGET_MASTER_IDENTITY_SHA256,
     JDL_TO_JDL_TARGET_MASTER_SHA256,
@@ -12,11 +18,16 @@ from accounting_converter.application.jdl_migration_tax_evidence import (
     evidence_for,
     evidence_for_master_identity,
     evidence_for_source_tax_key,
+    evidence_for_target_context,
+    evidence_supports_occurrence,
     verified_tax_keys_for_context,
     verified_tax_keys_for_master_identity,
+    verified_tax_keys_for_target_context,
 )
 from accounting_converter.adapters.output.jdl import (
+    JdlAccountIdentity,
     JdlSimplifiedBusinessCategory,
+    JdlSubaccountIdentity,
     JdlTargetContext,
     JdlTaxationMethod,
 )
@@ -26,6 +37,9 @@ from accounting_converter.application.jdl_migration_tax_evidence import (
 )
 from accounting_converter.tools.generate_jdl_migration_tax_probes import (
     compare_in_reexport,
+)
+from accounting_converter.profiles.jdl_official import (
+    jdl_ibex_cashbook_official_journal_import_spec,
 )
 
 
@@ -106,14 +120,7 @@ class JdlMigrationTaxEvidenceTests(unittest.TestCase):
         )
 
     def test_evidence_activates_only_for_exact_simplified_first_context(self) -> None:
-        context = JdlTargetContext(
-            product="JDL IBEX 出納帳",
-            version="35.5",
-            accounts=frozenset(),
-            tax_processing_mode=JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED,
-            taxation_method=JdlTaxationMethod.SIMPLIFIED,
-            simplified_business_category=JdlSimplifiedBusinessCategory.FIRST,
-        )
+        context = self._context()
         identity = tax_context_identity_sha256(context)
         self.assertEqual(identity, SIMPLIFIED_FIRST_INCLUDED_CONTEXT_IDENTITY_SHA256)
         self.assertEqual(
@@ -121,6 +128,104 @@ class JdlMigrationTaxEvidenceTests(unittest.TestCase):
                 JDL_TO_JDL_TARGET_MASTER_SHA256, identity
             )),
             2,
+        )
+
+    def test_unrelated_account_and_subaccount_changes_preserve_evidence(self) -> None:
+        context = self._context(
+            extra_accounts=(JdlAccountIdentity("衛生費", "7742", "衛生費", "衛生費"),),
+            extra_subaccounts=(self._subaccount("152", "売掛金"),),
+        )
+
+        self.assertIsNotNone(evidence_for_target_context(
+            jdl_source_tax_key("売二種", "10%", ""), context
+        ))
+        self.assertEqual(len(verified_tax_keys_for_target_context(context)), 2)
+
+    def test_relevant_account_change_blocks_evidence(self) -> None:
+        context = self._context(sales_name="変更後売上")
+
+        self.assertIsNone(evidence_for_target_context(
+            jdl_source_tax_key("売二種", "10%", ""), context
+        ))
+
+    def test_relevant_subaccount_requirement_blocks_evidence(self) -> None:
+        context = self._context(
+            extra_subaccounts=(self._subaccount("612", "売上高"),)
+        )
+
+        self.assertEqual(verified_tax_keys_for_target_context(context), frozenset())
+
+    def test_context_change_blocks_relevant_master(self) -> None:
+        context = self._context(taxation_method=JdlTaxationMethod.STANDARD)
+
+        self.assertEqual(verified_tax_keys_for_target_context(context), frozenset())
+
+    def test_occurrence_requires_exact_verified_route_and_shape(self) -> None:
+        row = [""] * 30
+        row[0:6] = ["1111", "1", "20261201", "111", "現金", "現金"]
+        row[11:16] = ["1100", "0", "612", "売上高", "売上高"]
+        row[18:21] = ["売二種", "10%", ""]
+        row[21:24] = ["1100", "0", "SYNTHETIC-TAX"]
+        stream = io.StringIO(newline="")
+        writer = csv.writer(stream, lineterminator="\r\n")
+        writer.writerow(jdl_ibex_cashbook_official_journal_import_spec().column_names)
+        writer.writerow(row)
+        entry = JdlMigrationParser().parse_text(stream.getvalue()).entries[0]
+        taxed_line = next(line for line in entry.lines if line.tax_info is not None)
+        key = jdl_source_tax_key("売二種", "10%", "")
+
+        self.assertTrue(evidence_supports_occurrence(
+            key, entry, taxed_line, self._context()
+        ))
+        changed = dict(taxed_line.metadata)
+        changed["jdl_source_account_code"] = "613"
+        changed_line = replace(taxed_line, metadata=changed)
+        changed_entry = replace(
+            entry,
+            lines=[
+                changed_line if line is taxed_line else line
+                for line in entry.lines
+            ],
+        )
+        self.assertFalse(evidence_supports_occurrence(
+            key, changed_entry, changed_line, self._context()
+        ))
+
+    @staticmethod
+    def _context(
+        *,
+        sales_name: str = "売上高",
+        taxation_method: JdlTaxationMethod = JdlTaxationMethod.SIMPLIFIED,
+        extra_accounts=(),
+        extra_subaccounts=(),
+    ) -> JdlTargetContext:
+        accounts = (
+            JdlAccountIdentity("現金", "111", "現金", "現金"),
+            JdlAccountIdentity(sales_name, "612", sales_name, sales_name),
+            *extra_accounts,
+        )
+        return JdlTargetContext(
+            product="JDL IBEX 出納帳",
+            version="35.5",
+            accounts=frozenset(item.mapping_value for item in accounts),
+            tax_processing_mode=JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED,
+            taxation_method=taxation_method,
+            simplified_business_category=JdlSimplifiedBusinessCategory.FIRST,
+            account_master=accounts,
+            subaccounts=tuple(extra_subaccounts),
+        )
+
+    @staticmethod
+    def _subaccount(parent_code: str, parent_name: str) -> JdlSubaccountIdentity:
+        return JdlSubaccountIdentity(
+            parent_account=parent_name,
+            mapping_value="合成補助",
+            target_master_code="0001",
+            output_code="0001",
+            output_name="合成補助",
+            output_representation_confirmed=True,
+            parent_account_code=parent_code,
+            target_name="合成補助",
         )
 
 

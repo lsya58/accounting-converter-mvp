@@ -59,6 +59,8 @@ class JdlMigrationTaxEvidence:
     source_tax_key: str
     target_master_sha256: str
     confirmed_context_fingerprint: str | None = None
+    required_account_identities: tuple[tuple[str, str], ...] = ()
+    required_blank_subaccount_parent_codes: tuple[str, ...] = ()
 
 
 JDL_MIGRATION_TAX_EVIDENCE = (
@@ -67,12 +69,16 @@ JDL_MIGRATION_TAX_EVIDENCE = (
         jdl_source_tax_key("売二種", "10%", ""),
         JDL_TO_JDL_TARGET_MASTER_SHA256,
         SIMPLIFIED_FIRST_INCLUDED_CONTEXT_IDENTITY_SHA256,
+        (("111", "現金"), ("612", "売上高")),
+        ("111", "612"),
     ),
     JdlMigrationTaxEvidence(
         "EVID-JDL-MIGRATION-TAX-SALES-FIFTH-10-ROUNDTRIP-001",
         jdl_source_tax_key("売五種", "10%", ""),
         JDL_TO_JDL_TARGET_MASTER_SHA256,
         SIMPLIFIED_FIRST_INCLUDED_CONTEXT_IDENTITY_SHA256,
+        (("111", "現金"), ("612", "売上高")),
+        ("111", "612"),
     ),
 )
 
@@ -118,6 +124,95 @@ def evidence_for_master_identity(
             and item.target_master_sha256 == JDL_TO_JDL_TARGET_MASTER_SHA256
         ),
         None,
+    )
+
+
+def evidence_for_target_context(
+    source_tax_key: str, context: JdlTargetContext
+) -> JdlMigrationTaxEvidence | None:
+    """Activate Evidence only for the master identities used by its probe."""
+    evidence = evidence_for_source_tax_key(source_tax_key)
+    if evidence is None:
+        return None
+    if evidence.confirmed_context_fingerprint != tax_context_identity_sha256(context):
+        return None
+    if not target_master_dependencies_match(evidence, context):
+        return None
+    return evidence
+
+
+def target_master_dependencies_match(
+    evidence: JdlMigrationTaxEvidence, context: JdlTargetContext
+) -> bool:
+    """Check only target-master identities that the Evidence actually used."""
+    identities = {
+        (item.target_master_code, item.target_formal_name)
+        for item in context.account_master
+    }
+    if not all(
+        identity in identities for identity in evidence.required_account_identities
+    ):
+        return False
+    if any(
+        item.parent_account_code
+        in evidence.required_blank_subaccount_parent_codes
+        for item in context.subaccounts
+    ):
+        return False
+    return True
+
+
+def verified_tax_keys_for_target_context(
+    context: JdlTargetContext,
+) -> frozenset[str]:
+    return frozenset(
+        item.source_tax_key
+        for item in JDL_MIGRATION_TAX_EVIDENCE
+        if evidence_for_target_context(item.source_tax_key, context) is not None
+    )
+
+
+def evidence_supports_occurrence(
+    source_tax_key: str,
+    entry,
+    taxed_line,
+    context: JdlTargetContext,
+) -> bool:
+    """Match the route, shape, accounts and optional fields used by the probe."""
+    evidence = evidence_for_target_context(source_tax_key, context)
+    if evidence is None:
+        return False
+    if entry.metadata.get("source") != "jdl_30_column_migration_input":
+        return False
+    if tuple(entry.metadata.get("identifier_flags", ())) != ("1111",):
+        return False
+    if len(entry.metadata.get("physical_rows", ())) != 1 or len(entry.lines) != 2:
+        return False
+    debit = next((line for line in entry.lines if line.side.value == "DEBIT"), None)
+    credit = next((line for line in entry.lines if line.side.value == "CREDIT"), None)
+    if debit is None or credit is None or taxed_line is not credit:
+        return False
+    if (
+        str(debit.metadata.get("jdl_source_account_code", "")),
+        str(debit.metadata.get("jdl_source_account_formal_name", "")),
+    ) != ("111", "現金"):
+        return False
+    if (
+        str(credit.metadata.get("jdl_source_account_code", "")),
+        str(credit.metadata.get("jdl_source_account_formal_name", "")),
+    ) != ("612", "売上高"):
+        return False
+    if any(
+        line.sub_account or line.department
+        for line in (debit, credit)
+    ):
+        return False
+    if debit.tax_info is not None:
+        return False
+    return bool(
+        credit.tax_info is not None
+        and credit.tax_info.category == source_tax_key
+        and not credit.tax_info.tax_amount
     )
 
 

@@ -64,8 +64,7 @@ from accounting_converter.adapters.input.jdl import JdlMigrationInputAdapter
 from accounting_converter.adapters.input.yayoi import YayoiInputAdapter
 from accounting_converter.application.jdl_migration import JdlMigrationPreflight
 from accounting_converter.application.jdl_migration_tax_evidence import (
-    tax_context_identity_sha256,
-    verified_tax_keys_for_master_identity,
+    verified_tax_keys_for_target_context,
 )
 from accounting_converter.domain.conversion_profile import (
     ConversionProfile,
@@ -579,11 +578,8 @@ class AccountingConverterController:
                 encoding="cp932",
             )
             entries = JdlMigrationInputAdapter().read(state.selected_file, profile)
-            verified_tax_keys = verified_tax_keys_for_master_identity(
-                self.company_store.target_master_identity_sha256(
-                    state.selected_company_setting_id
-                ),
-                tax_context_identity_sha256(resolved.context),
+            verified_tax_keys = verified_tax_keys_for_target_context(
+                resolved.context
             )
             preflight = JdlMigrationPreflight().evaluate(
                 entries,

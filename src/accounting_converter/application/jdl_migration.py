@@ -19,6 +19,7 @@ from accounting_converter.domain.mapping import (
 from accounting_converter.domain.validation import Severity, ValidationResult
 
 from .company_settings import CompanySettingStatus
+from .jdl_migration_tax_evidence import evidence_supports_occurrence
 from .journal_route import JournalRouteResult
 
 
@@ -126,6 +127,15 @@ class JdlMigrationPreflight:
                     or tax_mapping.target_value is None
                 ):
                     errors.append(self._entry_error("JDL-MIGRATION-TAX-UNVERIFIED", "税表現のHuman確認と実機Evidenceが必要です。", "tax", entry))
+                elif not evidence_supports_occurrence(
+                    tax_key, entry, line, context
+                ):
+                    errors.append(self._entry_error(
+                        "JDL-MIGRATION-TAX-EVIDENCE-SCOPE",
+                        "税表現が実機確認済みの仕訳条件と一致しません。",
+                        "tax",
+                        entry,
+                    ))
 
     def _validate_subaccount(
         self,

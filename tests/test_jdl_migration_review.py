@@ -16,6 +16,7 @@ from accounting_converter.application.jdl_migration_tax_evidence import (
     JDL_TO_JDL_TARGET_MASTER_IDENTITY_SHA256,
 )
 from accounting_converter.adapters.output.jdl import (
+    JdlAccountIdentity,
     JdlSimplifiedBusinessCategory,
     JdlTargetContext,
     JdlTaxationMethod,
@@ -71,6 +72,8 @@ class _CompanyStore:
         self.status = CompanySettingStatus.AVAILABLE
         self.context = None
         self.target_count = 5
+        self.target_accounts_override = None
+        self.target_subaccounts = ()
 
     def get(self, company_id):
         if company_id not in {"company-a", "company-b"}:
@@ -90,14 +93,14 @@ class _CompanyStore:
     def target_master_inventory(self, company_id):
         self.get(company_id)
         return (
-            tuple(
+            self.target_accounts_override or tuple(
                 SimpleNamespace(
                     target_master_code=f"{8000 + index}",
                     target_formal_name=f"出力科目{index}",
                 )
                 for index in range(self.target_count)
             ),
-            (),
+            self.target_subaccounts,
             frozenset(),
         )
 
@@ -168,6 +171,51 @@ class JdlMigrationHumanReviewTests(unittest.TestCase):
                 {subaccount.key},
             )
 
+    def test_exact_parent_is_persisted_for_confirmed_subaccount_mapping(self):
+        self.company_store.target_accounts_override = (
+            SimpleNamespace(
+                target_master_code="8000",
+                target_formal_name="入力科目0",
+            ),
+        )
+        self.company_store.target_subaccounts = (
+            SimpleNamespace(
+                parent_account_code="8000",
+                target_master_code="0001",
+                target_name="出力補助",
+                output_name="出力補助",
+            ),
+        )
+        payload = self._payload()
+        payload["subaccounts"][0]["target_candidates"] = [
+            {"code": "0001", "name": "出力補助"}
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            review = self.service.load(
+                "company-a", self._write(Path(directory), payload)
+            )
+        subaccount = review.subaccounts[0]
+
+        self.service.save(
+            review,
+            {},
+            set(),
+            {subaccount.key: ("0001", "出力補助")},
+            {subaccount.key},
+        )
+
+        profile = self.profile_store.get(
+            self.company_store.setting.conversion_profile_id
+        )
+        parent_key = jdl_source_account_key("8000", "入力科目0")
+        self.assertEqual(
+            profile.account_mappings[parent_key].status,
+            MappingStatus.USER_CONFIRMED,
+        )
+        self.assertEqual(
+            profile.account_mappings[parent_key].metadata["target_code"],
+            "8000",
+        )
     def test_same_case_and_master_can_open_for_another_company_id(self):
         with tempfile.TemporaryDirectory() as directory:
             path = self._write(Path(directory), self._payload())
@@ -371,10 +419,11 @@ class JdlMigrationHumanReviewTests(unittest.TestCase):
         self.company_store.context = JdlTargetContext(
             product="JDL IBEX 出納帳",
             version="35.5",
-            accounts=frozenset(),
+            accounts=frozenset({"現金", "売上高"}),
             tax_processing_mode=JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED,
             taxation_method=JdlTaxationMethod.SIMPLIFIED,
             simplified_business_category=JdlSimplifiedBusinessCategory.FIRST,
+            account_master=self._tax_evidence_accounts(),
         )
 
         review = self.service.derive(
@@ -390,9 +439,10 @@ class JdlMigrationHumanReviewTests(unittest.TestCase):
         self.company_store.context = JdlTargetContext(
             product="JDL IBEX 出納帳",
             version="35.5",
-            accounts=frozenset(),
+            accounts=frozenset({"現金", "売上高"}),
             tax_processing_mode=JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED,
             taxation_method=JdlTaxationMethod.STANDARD,
+            account_master=self._tax_evidence_accounts(),
         )
 
         review = self.service.derive(
@@ -435,6 +485,13 @@ class JdlMigrationHumanReviewTests(unittest.TestCase):
         self.assertEqual(
             caught.exception.code,
             "JDL-MIGRATION-REVIEW-TARGET-MASTER-CHANGED",
+        )
+
+    @staticmethod
+    def _tax_evidence_accounts():
+        return (
+            JdlAccountIdentity("現金", "111", "現金", "現金"),
+            JdlAccountIdentity("売上高", "612", "売上高", "売上高"),
         )
 
     @staticmethod
