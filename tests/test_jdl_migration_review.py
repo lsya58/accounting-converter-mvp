@@ -11,6 +11,14 @@ from accounting_converter.application.jdl_migration_review import (
     JdlMigrationHumanReviewService,
     JdlMigrationReviewError,
 )
+from accounting_converter.application.jdl_migration_tax_evidence import (
+    JDL_TO_JDL_TARGET_MASTER_IDENTITY_SHA256,
+)
+from accounting_converter.adapters.output.jdl import (
+    JdlSimplifiedBusinessCategory,
+    JdlTargetContext,
+    JdlTaxationMethod,
+)
 from accounting_converter.application.company_settings import (
     CompanySettingStatus,
     ResolvedCompanySetting,
@@ -26,6 +34,7 @@ from accounting_converter.profiles.known_formats import (
     jdl_ibex_cashbook_migration_input_schema_definition,
     jdl_ibex_cashbook_official_journal_import_schema_definition,
 )
+from accounting_converter.profiles.jdl_official import JdlTaxProcessingMode
 
 
 class _Setting:
@@ -59,6 +68,7 @@ class _CompanyStore:
         self.setting = _Setting()
         self.master_hash = "b" * 64
         self.status = CompanySettingStatus.AVAILABLE
+        self.context = None
 
     def get(self, company_id):
         if company_id not in {"company-a", "company-b"}:
@@ -68,7 +78,7 @@ class _CompanyStore:
     def resolve(self, company_id):
         return ResolvedCompanySetting(
             self.get(company_id), self.status,
-            profile=None, context=None,
+            profile=None, context=self.context,
         )
 
     def target_master_identity_sha256(self, company_id):
@@ -299,6 +309,44 @@ class JdlMigrationHumanReviewTests(unittest.TestCase):
             value.status is MappingStatus.USER_CONFIRMED
             for value in profile.account_mappings.values()
         ))
+
+    def test_exact_master_and_simplified_first_context_activate_sales_evidence(self):
+        self.company_store.master_hash = JDL_TO_JDL_TARGET_MASTER_IDENTITY_SHA256
+        self.company_store.context = JdlTargetContext(
+            product="JDL IBEX 出納帳",
+            version="35.5",
+            accounts=frozenset(),
+            tax_processing_mode=JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED,
+            taxation_method=JdlTaxationMethod.SIMPLIFIED,
+            simplified_business_category=JdlSimplifiedBusinessCategory.FIRST,
+        )
+
+        review = self.service.derive(
+            "company-a", Path("tests/fixtures/jdl/valid_simple.csv")
+        )
+
+        fifth = next(item for item in review.taxes if item.label == "売五種 / 10%")
+        self.assertEqual(fifth.evidence_status, "VERIFIED_BY_REAL_IMPORT")
+        self.assertEqual(fifth.status, "HUMAN_CONFIRMATION_REQUIRED")
+
+    def test_known_evidence_with_wrong_context_remains_blocked_with_clear_reason(self):
+        self.company_store.master_hash = JDL_TO_JDL_TARGET_MASTER_IDENTITY_SHA256
+        self.company_store.context = JdlTargetContext(
+            product="JDL IBEX 出納帳",
+            version="35.5",
+            accounts=frozenset(),
+            tax_processing_mode=JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED,
+            taxation_method=JdlTaxationMethod.STANDARD,
+        )
+
+        review = self.service.derive(
+            "company-a", Path("tests/fixtures/jdl/valid_simple.csv")
+        )
+
+        fifth = next(item for item in review.taxes if item.label == "売五種 / 10%")
+        self.assertEqual(fifth.evidence_status, "VERIFIED_CONTEXT_MISMATCH")
+        self.assertEqual(fifth.status, "CONTEXT_CONFIRMATION_REQUIRED")
+        self.assertTrue(fifth.evidence_id)
 
     def test_derived_review_blocks_save_after_master_changes(self):
         review = self.service.derive(

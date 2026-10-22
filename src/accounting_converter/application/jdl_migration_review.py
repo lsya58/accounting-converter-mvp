@@ -263,14 +263,23 @@ class JdlMigrationHumanReviewService:
                 and context_identity is not None
                 and evidence.confirmed_context_fingerprint == context_identity
             )
+            evidence_status = (
+                "VERIFIED_BY_REAL_IMPORT"
+                if evidence_active
+                else "VERIFIED_CONTEXT_MISMATCH"
+                if evidence is not None
+                else "UNVERIFIED"
+            )
             taxes.append(JdlMigrationTaxReview(
                 " / ".join(filter(None, (scope, category, input_method))),
                 count,
                 "HUMAN_CONFIRMATION_REQUIRED"
                 if evidence_active
+                else "CONTEXT_CONFIRMATION_REQUIRED"
+                if evidence is not None
                 else "EVIDENCE_AND_HUMAN_CONFIRMATION_REQUIRED",
-                "VERIFIED_BY_REAL_IMPORT" if evidence_active else "UNVERIFIED",
-                evidence.evidence_id if evidence_active else "",
+                evidence_status,
+                evidence.evidence_id if evidence is not None else "",
             ))
 
         tax_context_requirements = [

@@ -516,7 +516,7 @@ class SettingsDialog(QDialog):
         confirm_tax.clicked.connect(self._review_settings)
         refresh_master = QPushButton("JDL科目一覧を更新")
         refresh_master.clicked.connect(self._refresh_master)
-        self.tax_context_button = QPushButton("JDL税設定を確認")
+        self.tax_context_button = QPushButton("JDL税設定を確認・変更")
         self.tax_context_button.clicked.connect(self._confirm_tax_context)
         trade_partner_button = QPushButton("取引先情報の扱い")
         trade_partner_button.clicked.connect(self._confirm_trade_partner_policy)
@@ -575,6 +575,9 @@ class SettingsDialog(QDialog):
         self.environment_label = QLabel()
         self.environment_label.setWordWrap(True)
         layout.addWidget(self.environment_label)
+        self.tax_context_label = QLabel()
+        self.tax_context_label.setWordWrap(True)
+        layout.addWidget(self.tax_context_label)
         note = QLabel("科目構成が変わった場合は「JDL科目一覧を更新」を使用してください。")
         note.setObjectName("muted")
         note.setWordWrap(True)
@@ -806,11 +809,14 @@ class SettingsDialog(QDialog):
                 )
             )
         )
-        pending_tax_context = bool(
-            company_id
-            and self.controller.company_tax_context_pending(company_id)
-        )
-        self.tax_context_button.setVisible(pending_tax_context)
+        self.tax_context_button.setVisible(bool(company_id))
+        context = None
+        if company_id:
+            try:
+                context = self.controller.company_tax_context(company_id)
+            except Exception:
+                context = None
+        self.tax_context_label.setText(self._tax_context_summary(context))
         if state.selected_profile_id in self.profile_ids:
             self.profile_combo.blockSignals(True)
             self.profile_combo.setCurrentIndex(
@@ -822,6 +828,33 @@ class SettingsDialog(QDialog):
             if company_id
             else state.user_message
         )
+
+    @staticmethod
+    def _tax_context_summary(context) -> str:
+        if context is None:
+            return "JDL税設定: 確認が必要です"
+        if context.tax_processing_mode is JdlTaxProcessingMode.EXEMPT:
+            return "JDL税設定: 免税 / 確認済み"
+        processing = (
+            "税抜"
+            if context.tax_processing_mode
+            is JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED
+            else "税込"
+        )
+        if context.effective_taxation_method is JdlTaxationMethod.SIMPLIFIED:
+            category_labels = {
+                JdlSimplifiedBusinessCategory.FIRST: "第一種事業",
+                JdlSimplifiedBusinessCategory.SECOND: "第二種事業",
+                JdlSimplifiedBusinessCategory.THIRD: "第三種事業",
+                JdlSimplifiedBusinessCategory.FOURTH: "第四種事業",
+                JdlSimplifiedBusinessCategory.FIFTH: "第五種事業",
+                JdlSimplifiedBusinessCategory.SIXTH: "第六種事業",
+            }
+            category = category_labels.get(
+                context.simplified_business_category, "事業区分未確認"
+            )
+            return f"JDL税設定: 課税 / {processing} / 簡易課税 / {category} / 確認済み"
+        return f"JDL税設定: 課税 / {processing} / 本則課税 / 個別対応方式 / 確認済み"
 
 
 class JdlMigrationHumanReviewDialog(QDialog):
@@ -1022,6 +1055,8 @@ class JdlMigrationHumanReviewDialog(QDialog):
             tax_state = (
                 "実機確認済み・会社設定の確認が必要"
                 if item.evidence_status == "VERIFIED_BY_REAL_IMPORT"
+                else "実機確認済みですが、現在のJDL税設定と一致しません"
+                if item.evidence_status == "VERIFIED_CONTEXT_MISMATCH"
                 else "実機確認が不足しているため変換できません"
             )
             label = QLabel(
@@ -1060,9 +1095,12 @@ class JdlMigrationHumanReviewDialog(QDialog):
         outer.addWidget(self.status_label)
         actions = QHBoxLayout()
         cancel = QPushButton("キャンセル")
+        cancel.setAutoDefault(False)
         cancel.clicked.connect(self.reject)
         self.save_button = QPushButton("確認済み0件を保存")
         self.save_button.setObjectName("primaryButton")
+        self.save_button.setAutoDefault(False)
+        self.save_button.setDefault(False)
         self.save_button.clicked.connect(self._save)
         actions.addStretch(1)
         actions.addWidget(cancel)
@@ -1120,15 +1158,15 @@ class JdlMigrationHumanReviewDialog(QDialog):
             )
         except Exception as exc:
             log_local_exception("jdl_migration_review_save", exc)
-            for _combo, check in (
-                *self.account_controls.values(),
-                *self.subaccount_controls.values(),
-            ):
-                check.setChecked(False)
-            self.status_label.setText("確認結果を保存できませんでした。設定を確認してください。")
+            reason = (
+                exc.user_message
+                if isinstance(exc, JdlMigrationReviewError)
+                else "会社設定の保存に失敗しました。再試行してください。"
+            )
+            self.status_label.setText(f"確認結果を保存できませんでした。{reason}")
             QMessageBox.warning(
                 self, "確認結果を保存できませんでした",
-                "選択内容と会社設定を確認してください。",
+                reason,
             )
             return
         QMessageBox.information(

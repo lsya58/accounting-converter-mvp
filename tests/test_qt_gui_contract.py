@@ -22,6 +22,7 @@ class QtGuiContractTests(unittest.TestCase):
         for contract in (
             "QScrollArea()", "確認済み0件を保存", "jdl_migration_review_save",
             "QMessageBox.warning", "実機確認が不足しているため変換できません",
+            "実機確認済みですが、現在のJDL税設定と一致しません",
             "32文字を超えるため変換できません",
             'content.setObjectName("page")',
             'setObjectName("sectionTitle")',
@@ -34,7 +35,7 @@ class QtGuiContractTests(unittest.TestCase):
         ):
             self.assertIn(contract, dialog)
 
-    def test_jdl_migration_partial_save_failure_resets_visible_confirmation(self) -> None:
+    def test_jdl_migration_partial_save_failure_keeps_visible_confirmation(self) -> None:
         source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
             encoding="utf-8"
         )
@@ -43,8 +44,22 @@ class QtGuiContractTests(unittest.TestCase):
         )[1].split("class TradePartnerPolicyDialog", maxsplit=1)[0]
         failure = dialog.split("except Exception as exc:", maxsplit=1)[1]
         self.assertIn('log_local_exception("jdl_migration_review_save", exc)', failure)
-        self.assertIn("check.setChecked(False)", failure)
+        self.assertNotIn("check.setChecked(False)", failure)
+        self.assertIn("exc.user_message", failure)
         self.assertIn("QMessageBox.warning", failure)
+
+    def test_jdl_migration_checkbox_does_not_trigger_persistence(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
+            encoding="utf-8"
+        )
+        dialog = source.split(
+            "class JdlMigrationHumanReviewDialog", maxsplit=1
+        )[1].split("class TradePartnerPolicyDialog", maxsplit=1)[0]
+        self.assertIn("confirmed.toggled.connect(self._refresh_save_state)", dialog)
+        self.assertNotIn("confirmed.toggled.connect(self._save)", dialog)
+        self.assertIn("self.save_button.setAutoDefault(False)", dialog)
+        self.assertIn("self.save_button.setDefault(False)", dialog)
+        self.assertIn("self.save_button.clicked.connect(self._save)", dialog)
 
     def test_scroll_area_corner_uses_light_application_surface(self) -> None:
         self.assertIn("QAbstractScrollArea::corner", APP_STYLE_SHEET)
@@ -315,7 +330,7 @@ class QtGuiContractTests(unittest.TestCase):
             encoding="utf-8"
         )
         for text in (
-            'QPushButton("JDL税設定を確認")',
+            'QPushButton("JDL税設定を確認・変更")',
             "class JdlTaxContextConfirmationDialog",
             'self.taxable_status.addItem("課税"',
             '"税込", JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED.value',
@@ -325,6 +340,7 @@ class QtGuiContractTests(unittest.TestCase):
             "個別対応方式",
             "JDL側が上記の設定であることを確認しました",
             "この画面からJDL本体の設定を変更することはありません。",
+            "JDL税設定: 課税 / {processing} / 簡易課税 / {category} / 確認済み",
             "税区分を確認するには、この会社のJDL税設定の登録が必要です。",
         ):
             self.assertIn(text, source)
