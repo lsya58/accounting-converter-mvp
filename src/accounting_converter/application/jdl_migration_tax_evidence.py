@@ -145,21 +145,39 @@ def target_master_dependencies_match(
     evidence: JdlMigrationTaxEvidence, context: JdlTargetContext
 ) -> bool:
     """Check only target-master identities that the Evidence actually used."""
-    identities = {
-        (item.target_master_code, item.target_formal_name)
-        for item in context.account_master
-    }
-    if not all(
-        identity in identities for identity in evidence.required_account_identities
-    ):
-        return False
-    if any(
-        item.parent_account_code
-        in evidence.required_blank_subaccount_parent_codes
-        for item in context.subaccounts
-    ):
-        return False
-    return True
+    return target_master_inventory_dependencies_match(
+        evidence, context.account_master, context.subaccounts
+    )
+
+
+def target_master_inventory_dependencies_match(
+    evidence: JdlMigrationTaxEvidence,
+    accounts,
+    subaccounts,
+) -> bool:
+    """Evaluate relevant master dependencies before tax context confirmation."""
+    return not target_master_dependency_mismatches(
+        evidence, accounts, subaccounts
+    )
+
+
+def target_master_dependency_mismatches(
+    evidence: JdlMigrationTaxEvidence,
+    accounts,
+    subaccounts,
+) -> tuple[str, ...]:
+    by_code = {item.target_master_code: item for item in accounts}
+    reasons: list[str] = []
+    for code, formal_name in evidence.required_account_identities:
+        account = by_code.get(code)
+        if account is None:
+            reasons.append(f"RELEVANT_ACCOUNT_CODE_MISSING:{code}")
+        elif account.target_formal_name != formal_name:
+            reasons.append(f"RELEVANT_ACCOUNT_NAME_MISMATCH:{code}")
+    for code in evidence.required_blank_subaccount_parent_codes:
+        if any(item.parent_account_code == code for item in subaccounts):
+            reasons.append(f"RELEVANT_SUBACCOUNT_REQUIREMENT_CHANGED:{code}")
+    return tuple(reasons)
 
 
 def verified_tax_keys_for_target_context(

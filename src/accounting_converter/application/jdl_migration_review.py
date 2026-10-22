@@ -19,7 +19,8 @@ from accounting_converter.application.company_settings import CompanySettingStat
 from accounting_converter.application.jdl_migration_tax_evidence import (
     evidence_for_target_context,
     evidence_for_source_tax_key,
-    target_master_dependencies_match,
+    target_master_inventory_dependencies_match,
+    target_master_dependency_mismatches,
     tax_context_identity_sha256,
 )
 from accounting_converter.domain.mapping import (
@@ -71,6 +72,7 @@ class JdlMigrationTaxReview:
     status: str
     evidence_status: str
     evidence_id: str
+    dependency_detail: str = ""
 
 
 @dataclass(frozen=True)
@@ -267,13 +269,22 @@ class JdlMigrationHumanReviewService:
             known_evidence = evidence_for_source_tax_key(key)
             master_dependencies_match = (
                 known_evidence is not None
-                and target_context is not None
-                and target_master_dependencies_match(
-                    known_evidence, target_context
+                and target_master_inventory_dependencies_match(
+                    known_evidence,
+                    target_accounts,
+                    target_subaccounts,
                 )
+            )
+            dependency_mismatches = (
+                target_master_dependency_mismatches(
+                    known_evidence, target_accounts, target_subaccounts
+                )
+                if known_evidence is not None
+                else ()
             )
             evidence_active = (
                 evidence is not None
+                and master_dependencies_match
                 and context_identity is not None
                 and evidence.confirmed_context_fingerprint == context_identity
             )
@@ -303,6 +314,11 @@ class JdlMigrationHumanReviewService:
                     else known_evidence.evidence_id
                     if known_evidence is not None
                     else ""
+                ),
+                self._tax_dependency_detail(
+                    dependency_mismatches,
+                    target_context is None,
+                    master_dependencies_match and not evidence_active,
                 ),
             ))
 
@@ -412,6 +428,7 @@ class JdlMigrationHumanReviewService:
                 str(item.get("decision", "EVIDENCE_REQUIRED")),
                 str(item.get("evidence_status", "UNVERIFIED")),
                 str(item.get("reference_evidence_id", "")),
+                "",
             )
             for item in tax.get("source_identities", ())
         )
@@ -480,6 +497,7 @@ class JdlMigrationHumanReviewService:
                 )
         accounts = dict(old.account_mappings)
         subs = dict(old.subaccount_context_mappings)
+        setup_context_sha256 = setting.context_fingerprint
 
         for item in review.accounts:
             if item.key not in account_confirmed:
@@ -499,6 +517,7 @@ class JdlMigrationHumanReviewService:
                     "target_code": target_code,
                     "target_formal_name": target_name,
                     "target_printed_name": target_name,
+                    "setup_context_sha256": setup_context_sha256,
                 },
             )
 
@@ -534,6 +553,7 @@ class JdlMigrationHumanReviewService:
                         "target_code": item.parent_code,
                         "target_formal_name": item.parent_name,
                         "target_printed_name": item.parent_name,
+                        "setup_context_sha256": setup_context_sha256,
                     },
                 )
                 accounts[parent_key] = parent
@@ -559,7 +579,10 @@ class JdlMigrationHumanReviewService:
                 subs[key] = MappingValue(
                     key.source_value, "", MappingStatus.USER_CONFIRMED,
                     parent_account=parent_key,
-                    metadata={"subaccount_policy": SubaccountPolicy.PARENT_ONLY_CONFIRMED.value},
+                    metadata={
+                        "subaccount_policy": SubaccountPolicy.PARENT_ONLY_CONFIRMED.value,
+                        "setup_context_sha256": setup_context_sha256,
+                    },
                 )
             elif isinstance(selected, tuple) and selected in item.targets:
                 target_code, target_name = selected
@@ -571,6 +594,7 @@ class JdlMigrationHumanReviewService:
                         "output_code": target_code,
                         "output_name": target_name,
                         "subaccount_policy": SubaccountPolicy.PRESERVE_SUBACCOUNT.value,
+                        "setup_context_sha256": setup_context_sha256,
                     },
                 )
             else:
@@ -610,6 +634,27 @@ class JdlMigrationHumanReviewService:
                 "会社設定が古くなっています。JDL科目一覧と対応内容を確認してください。",
             )
         return setting, profile
+
+    @staticmethod
+    def _tax_dependency_detail(
+        mismatches: tuple[str, ...],
+        context_unconfirmed: bool,
+        context_mismatch: bool,
+    ) -> str:
+        labels = []
+        for reason in mismatches:
+            kind, _, code = reason.partition(":")
+            if kind == "RELEVANT_ACCOUNT_CODE_MISSING":
+                labels.append(f"確認対象の科目コード {code} がありません")
+            elif kind == "RELEVANT_ACCOUNT_NAME_MISMATCH":
+                labels.append(f"確認対象の科目コード {code} の正式名称が異なります")
+            elif kind == "RELEVANT_SUBACCOUNT_REQUIREMENT_CHANGED":
+                labels.append(f"確認対象の科目コード {code} に補助科目が設定されています")
+        if context_unconfirmed:
+            labels.append("最新の科目一覧に対するJDL税設定の再確認が必要です")
+        elif context_mismatch:
+            labels.append("JDL税設定が実機確認時の条件と異なります")
+        return " / ".join(labels)
 
     @staticmethod
     def _account(item, all_targets=()) -> JdlMigrationAccountReview:

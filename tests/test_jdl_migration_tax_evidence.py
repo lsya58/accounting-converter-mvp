@@ -20,6 +20,7 @@ from accounting_converter.application.jdl_migration_tax_evidence import (
     evidence_for_source_tax_key,
     evidence_for_target_context,
     evidence_supports_occurrence,
+    target_master_dependency_mismatches,
     verified_tax_keys_for_context,
     verified_tax_keys_for_master_identity,
     verified_tax_keys_for_target_context,
@@ -147,6 +148,15 @@ class JdlMigrationTaxEvidenceTests(unittest.TestCase):
         self.assertIsNone(evidence_for_target_context(
             jdl_source_tax_key("売二種", "10%", ""), context
         ))
+        evidence = evidence_for_source_tax_key(
+            jdl_source_tax_key("売二種", "10%", "")
+        )
+        self.assertEqual(
+            target_master_dependency_mismatches(
+                evidence, context.account_master, context.subaccounts
+            ),
+            ("RELEVANT_ACCOUNT_NAME_MISMATCH:612",),
+        )
 
     def test_relevant_subaccount_requirement_blocks_evidence(self) -> None:
         context = self._context(
@@ -154,6 +164,33 @@ class JdlMigrationTaxEvidenceTests(unittest.TestCase):
         )
 
         self.assertEqual(verified_tax_keys_for_target_context(context), frozenset())
+        evidence = evidence_for_source_tax_key(
+            jdl_source_tax_key("売五種", "10%", "")
+        )
+        self.assertEqual(
+            target_master_dependency_mismatches(
+                evidence, context.account_master, context.subaccounts
+            ),
+            ("RELEVANT_SUBACCOUNT_REQUIREMENT_CHANGED:612",),
+        )
+
+    def test_missing_relevant_account_reports_code_mismatch(self) -> None:
+        context = self._context()
+        evidence = evidence_for_source_tax_key(
+            jdl_source_tax_key("売二種", "10%", "")
+        )
+
+        self.assertEqual(
+            target_master_dependency_mismatches(
+                evidence,
+                tuple(
+                    item for item in context.account_master
+                    if item.target_master_code != "111"
+                ),
+                context.subaccounts,
+            ),
+            ("RELEVANT_ACCOUNT_CODE_MISSING:111",),
+        )
 
     def test_context_change_blocks_relevant_master(self) -> None:
         context = self._context(taxation_method=JdlTaxationMethod.STANDARD)

@@ -42,6 +42,7 @@ from accounting_converter.profiles.jdl_official import JdlTaxProcessingMode
 class _Setting:
     def __init__(self, profile_id="profile-initial"):
         self.conversion_profile_id = profile_id
+        self.context_fingerprint = "d" * 64
         self.expected_source_format_key = (
             jdl_ibex_cashbook_migration_input_schema_definition().identity.stable_key
         )
@@ -216,6 +217,10 @@ class JdlMigrationHumanReviewTests(unittest.TestCase):
             profile.account_mappings[parent_key].metadata["target_code"],
             "8000",
         )
+        self.assertEqual(
+            profile.account_mappings[parent_key].metadata["setup_context_sha256"],
+            "d" * 64,
+        )
     def test_same_case_and_master_can_open_for_another_company_id(self):
         with tempfile.TemporaryDirectory() as directory:
             path = self._write(Path(directory), self._payload())
@@ -360,6 +365,10 @@ class JdlMigrationHumanReviewTests(unittest.TestCase):
             for value in profile.account_mappings.values()
         ))
         self.assertTrue(all(
+            value.metadata.get("setup_context_sha256") == "d" * 64
+            for value in profile.account_mappings.values()
+        ))
+        self.assertTrue(all(
             value.status is MappingStatus.USER_CONFIRMED
             for value in profile.account_mappings.values()
         ))
@@ -416,6 +425,10 @@ class JdlMigrationHumanReviewTests(unittest.TestCase):
 
     def test_exact_master_and_simplified_first_context_activate_sales_evidence(self):
         self.company_store.master_hash = JDL_TO_JDL_TARGET_MASTER_IDENTITY_SHA256
+        self.company_store.target_accounts_override = (
+            SimpleNamespace(target_master_code="111", target_formal_name="現金"),
+            SimpleNamespace(target_master_code="612", target_formal_name="売上高"),
+        )
         self.company_store.context = JdlTargetContext(
             product="JDL IBEX 出納帳",
             version="35.5",
@@ -436,6 +449,10 @@ class JdlMigrationHumanReviewTests(unittest.TestCase):
 
     def test_known_evidence_with_wrong_context_remains_blocked_with_clear_reason(self):
         self.company_store.master_hash = JDL_TO_JDL_TARGET_MASTER_IDENTITY_SHA256
+        self.company_store.target_accounts_override = (
+            SimpleNamespace(target_master_code="111", target_formal_name="現金"),
+            SimpleNamespace(target_master_code="612", target_formal_name="売上高"),
+        )
         self.company_store.context = JdlTargetContext(
             product="JDL IBEX 出納帳",
             version="35.5",
@@ -452,7 +469,24 @@ class JdlMigrationHumanReviewTests(unittest.TestCase):
         fifth = next(item for item in review.taxes if item.label == "売五種 / 10%")
         self.assertEqual(fifth.evidence_status, "VERIFIED_CONTEXT_MISMATCH")
         self.assertEqual(fifth.status, "CONTEXT_CONFIRMATION_REQUIRED")
+        self.assertIn("JDL税設定が実機確認時の条件と異なります", fifth.dependency_detail)
         self.assertTrue(fifth.evidence_id)
+
+    def test_relevant_master_with_unconfirmed_context_reports_context_mismatch(self):
+        self.company_store.target_accounts_override = (
+            SimpleNamespace(target_master_code="111", target_formal_name="現金"),
+            SimpleNamespace(target_master_code="612", target_formal_name="売上高"),
+        )
+        self.company_store.context = None
+
+        review = self.service.derive(
+            "company-a", Path("tests/fixtures/jdl/valid_simple.csv")
+        )
+
+        fifth = next(item for item in review.taxes if item.label == "売五種 / 10%")
+        self.assertEqual(fifth.evidence_status, "VERIFIED_CONTEXT_MISMATCH")
+        self.assertEqual(fifth.status, "CONTEXT_CONFIRMATION_REQUIRED")
+        self.assertIn("JDL税設定の再確認", fifth.dependency_detail)
 
     def test_known_evidence_with_wrong_master_remains_blocked_with_clear_reason(self):
         self.company_store.context = JdlTargetContext(

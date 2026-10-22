@@ -1064,6 +1064,7 @@ class JdlMigrationHumanReviewDialog(QDialog):
             label = QLabel(
                 f"{item.label or '税区分'}: {item.row_count}行 / "
                 f"{tax_state}"
+                + (f"（{item.dependency_detail}）" if item.dependency_detail else "")
             )
             label.setWordWrap(True)
             layout.addWidget(label)
