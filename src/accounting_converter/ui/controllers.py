@@ -1086,6 +1086,14 @@ class AccountingConverterController:
     def prepare_conversion(self) -> AppState:
         if (
             self.state.file_recognition is not None
+            and self.state.file_recognition.format is RecognizedFormat.JDL
+        ):
+            # JDL migration has its own strict parser and fail-closed preflight.
+            # The first-release workflow is the Yayoi route and must not be used
+            # as a fallback for a recognized JDL source.
+            return self.inspect_selected_jdl_migration()
+        if (
+            self.state.file_recognition is not None
             and self.state.file_recognition.format is RecognizedFormat.MONEYFORWARD
         ):
             inspected = self.inspect_selected_moneyforward_confirmations()

@@ -87,7 +87,17 @@ class CompanyMasterRefreshTests(unittest.TestCase):
         self.service.apply(plan, {}, set())
         refreshed = self.companies.get("company-a")
         self.assertNotEqual(refreshed.conversion_profile_id, "profile-1")
-        self.assertTrue(all(m.status is MappingStatus.USER_CONFIRMED for m in self.profiles.get(refreshed.conversion_profile_id).account_mappings.values()))
+        refreshed_profile = self.profiles.get(refreshed.conversion_profile_id)
+        self.assertTrue(all(m.status is MappingStatus.USER_CONFIRMED for m in refreshed_profile.account_mappings.values()))
+        original_profile = self.profiles.get("profile-1")
+        self.assertEqual(
+            refreshed_profile.source_format_identity,
+            original_profile.source_format_identity,
+        )
+        self.assertEqual(
+            refreshed_profile.target_format_identity,
+            original_profile.target_format_identity,
+        )
 
     def test_removed_code_changed_and_name_changed_require_confirmation(self) -> None:
         cases = (

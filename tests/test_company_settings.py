@@ -349,6 +349,15 @@ class CompanySettingStoreTests(unittest.TestCase):
             self.assertNotIn("0件の", inspected.user_message)
         self.assertFalse(inspected.conversion_available)
 
+        prepared = controller.prepare_conversion()
+        self.assertNotEqual(prepared.preflight_status, "FORMAT_MISMATCH")
+        self.assertNotIn("形式が一致しません", prepared.user_message)
+        self.assertIn(
+            prepared.preflight_status,
+            {"REQUIRES_CONFIRMATION", "BLOCKED", "ADAPTER_UNAVAILABLE"},
+        )
+        self.assertFalse(prepared.conversion_available)
+
         malformed = controller.select_file(
             Path("tests/fixtures/jdl/malformed_columns.csv")
         )

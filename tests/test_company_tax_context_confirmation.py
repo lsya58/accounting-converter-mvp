@@ -182,6 +182,15 @@ class CompanyTaxContextConfirmationTests(unittest.TestCase):
         self.assertTrue(saved_context.individual_credit_method_confirmed)
 
         profile = self.profiles.get(updated_setting.conversion_profile_id)
+        original_profile = self.profiles.get("profile-1")
+        self.assertEqual(
+            profile.source_format_identity,
+            original_profile.source_format_identity,
+        )
+        self.assertEqual(
+            profile.target_format_identity,
+            original_profile.target_format_identity,
+        )
         self.assertTrue(
             all(
                 value.status is MappingStatus.USER_CONFIRMED

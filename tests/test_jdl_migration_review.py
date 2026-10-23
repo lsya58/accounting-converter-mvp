@@ -150,6 +150,14 @@ class JdlMigrationHumanReviewTests(unittest.TestCase):
         profile = self.profile_store.get(
             self.company_store.setting.conversion_profile_id
         )
+        self.assertEqual(
+            profile.source_format_identity,
+            jdl_ibex_cashbook_migration_input_schema_definition().identity,
+        )
+        self.assertEqual(
+            profile.target_format_identity,
+            jdl_ibex_cashbook_official_journal_import_schema_definition().identity,
+        )
         self.assertEqual(len(profile.account_mappings), 1)
         self.assertEqual(len(profile.subaccount_context_mappings), 1)
         self.assertTrue(all(
