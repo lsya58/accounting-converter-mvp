@@ -1,12 +1,12 @@
 # 会計データ変換 Product / LP Brief
 
-最終更新: 2026-10-15
+最終更新: 2026-10-24
 
 この文書は、Accounting Converter MVPのLP、営業説明、pilot募集、紹介資料を作るための基礎資料です。研究用語や内部IDではなく、利用者に提供する価値と、現在安全に提供できる範囲を整理します。
 
 ## 1. 製品概要
 
-Money Forwardや弥生から出力した仕訳データを、税理士事務所が利用するJDL向けCSVへ安全に変換するWindowsデスクトップアプリです。
+Money Forward、JDL、限定的な弥生形式から出力した仕訳データを、税理士事務所が利用するJDL向けCSVへ安全に変換するWindowsデスクトップアプリです。
 
 単なるCSV列の並べ替えではありません。会社ごとのJDL科目・補助科目・税区分を確認し、未確認項目や変換できない情報があれば出力前に停止します。一度確認した対応は会社設定として保存し、翌月以降に再利用できます。
 
@@ -16,12 +16,12 @@ Money Forwardや弥生から出力した仕訳データを、税理士事務所�
 
 ### 現在の中心対象
 
-- 入力: Money Forward クラウド会計の仕訳帳CSV
+- 入力: JDL IBEX 出納帳の仕訳CSV、Money Forward クラウド会計の仕訳帳CSV
 - 出力: JDL IBEX 出納帳35.5の仕訳データCSV
 - 利用者: 税理士、会計事務所職員、記帳・決算業務担当者
 - 動作形態: Windowsデスクトップアプリ、ローカル処理
 
-弥生入力にも対応基盤と限定的な検証実績がありますが、最初の実務MVPはMoney ForwardからJDLへの変換を優先します。
+JDL→JDLは実案件Import成功routeを回帰維持し、次の実務E2EはMoney Forward→JDLを優先します。弥生入力にも対応基盤と限定的な検証実績がありますが、対応拡大は後順位です。
 
 ## 2. 解決する課題
 
@@ -266,11 +266,11 @@ LPでは代表者向けの「時間・安全・属人化解消」と、担当者
 | 到達点 | 現在 | 主な残作業 |
 |---|---:|---|
 | 技術基盤・安全性 | 99% | pilot中に判明する境界条件の最終確認 |
-| 父親事務所向け限定MVP | 96% | 実会社mapping完了、formal E2E、父親PC確認 |
-| 日常運用可能性 | 91% | 翌月反復運用、失敗時手順、取引先方針 |
-| 外部有料pilot | 76% | 別事務所再現性、導入支援、配布・更新・契約 |
-| 一般販売可能性 | 58% | 複数環境検証、サポート、法務、運用、署名・配布 |
-| 汎用製品化 | 45% | 対応製品拡大、設定簡略化、継続的な互換性検証 |
+| 父親事務所向け限定MVP | 97% | MF READY-only実案件E2E、翌月反復確認 |
+| 日常運用可能性 | 93% | backup/retry/support手順の反復、会計レビュー |
+| 外部有料pilot | 79% | 別事務所再現性、導入支援、配布・更新・契約 |
+| 一般販売可能性 | 60% | 複数環境検証、法務、運用、署名・配布 |
+| 汎用製品化 | 46% | 対応製品拡大、設定簡略化、継続的な互換性検証 |
 
 ### 次の5%を上げる作業
 
@@ -324,6 +324,50 @@ MF→JDLの現状を、既存Evidenceと実装状態に基づいて次のよう�
 開始前のMUSTは、元データとJDL会社のbackup、READY/BLOCKED preflight、上書き防止、atomic出力、privacy-safe診断、retry手順、Import前の件数・貸借確認、Import後の件数確認と再Export検証、問い合わせ時の情報収集手順です。実会社mappingとEvidence不足項目はHuman確認なしに解除しません。
 
 pilot中またはLATERでよいものは、高度なanalytics、自動更新、事務所横断recommendation、追加vendor、高度な管理画面、無人変換です。
+
+### 2026-10-24 JDL-to-JDL安定点とMF優先順位
+
+JDL-to-JDL実案件では、1,158 logical journals / 1,271 physical rowsが
+formal preflight、GUI出力、privacy-safe全差分監査、strict reparse、実JDL
+Importまで成功した。システム・形式Evidenceは
+`EVID-JDL-TO-JDL-REAL-BATCH-1158-IMPORT-001`として
+`VERIFIED_BY_REAL_IMPORT`に固定する。一方、Humanが選択した科目・税処理の
+会計的妥当性は別責務であり、父親確認完了までは
+`HUMAN_ACCOUNTING_REVIEW_PENDING`とする。実JDL Import成功を会計判断の
+正しさへ一般化しない。
+
+JDL-to-JDLはここで機能拡張を凍結する。今後は実利用で見つかったbug、狭い
+UX改善、回帰防止、operator/support文書だけを扱い、vendor追加や一般化は
+MF-to-JDLの父親事務所内反復運用後まで行わない。
+
+#### MF-to-JDLの現在地
+
+| 分類 | 現在地 |
+|---|---|
+| A. 実装済み・Evidence済み | strict MF 19列入力、4日付variantとLF/CRLF、会社別account/subaccount/tax確認、6税区分の限定Evidence、default target subaccount、1D1C取引先摘要、2D2C taxableと取引先組合せ、atomic/no-overwrite出力、No.4 real Import + byte-identical re-export、482件中458件（95.02%）のEvidence-backed scope |
+| B. 実装済み・Windows実運用確認待ち | 父親事務所の正式CompanySettingでのREADY-only batch生成、実JDL Import/re-export、保存済みmappingの翌月再利用、失敗後retry、Windows配布物での反復操作 |
+| C. Human/Evidence待ち | 482件の残り24 unsupported journals、完全482件を1回で変換するための追加shape Evidence、会社固有の科目・税判断、1,953件側のinvoice/tag/memo等の保持方針 |
+| D. 未実装 | pilot用1ページ手順の完成版、backup/restore/retry/support運用の固定、配布更新方針、pilot契約・問い合わせ・障害受付の運用 |
+
+次の実案件E2Eは482件側を優先する。父親事務所の実運用対象であり、既に
+95.02%のEvidence-backed scopeがあるため、1,953件側より少ないHuman作業で
+収益化に直結する。atomic設計上、未対応24件を黙って除外して482件全体を
+出力してはいけない。保存済みCompanySettingでBLOCK=0となるREADY-only期間
+または正式な入力単位を1つ選び、MF source、formal JDL output、実JDL Import、
+同期間re-export、strict comparisonを完走する。
+
+#### 収益化Stage
+
+| Stage | 必須条件 | Go / No-Go |
+|---|---|---|
+| 1. 父親事務所内で反復利用 | 正式CompanySetting、READY-only batch E2E、JDL backup、atomic BLOCK、retry用別path、privacy-safe診断、1ページ操作手順、翌月mapping再利用、父親の会計確認 | 同じ手順を2回以上再現し、件数・貸借・主要項目・再Export比較が一致すればGo。手修正やsilent skipが必要ならNo-Go |
+| 2. 1～3社の有料pilot | 対象CSV事前診断、会社別master/context設定、導入チェックリスト、対応外条件、価格・契約・免責、問い合わせ窓口、ログ収集、配布/更新/rollback手順 | 各社で初回E2Eと次回再利用が成功し、support負荷と復旧手順を測定できればGo。未知形式を推測変換する必要があればNo-Go |
+| 3. 一般販売 | 複数事務所・複数会社で再現性、installer/code signing、自動または管理された更新、version compatibility、利用規約・privacy・価格、障害対応SLA、公開対応範囲 | 公開scope内の代表環境で回帰と運用が再現し、問い合わせ・更新・rollbackを継続提供できればGo |
+
+Stage 1のpilot前MUSTは、backup、READY-only判定、atomic output、Import前後の
+件数・貸借確認、同期間re-export比較、retry、1ページ操作手順、support診断で
+ある。高度analytics、自動mapping推薦、追加vendor、office-wide管理、一般向け
+self-service onboardingはpilot中またはLATERとする。
 
 ## 16. LP公開前チェック
 

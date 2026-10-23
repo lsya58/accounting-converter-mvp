@@ -2,10 +2,11 @@
 
 会計ソフト間の仕訳データ変換・取込支援システムのMVP実装です。
 
-製品説明、LP制作、pilot募集、収益化検討の基礎資料は
-[会計データ変換 Product / LP Brief](docs/product/lp_product_brief.md)を参照してください。
+一般向けの製品説明、操作、pilot、サポート資料は
+[ドキュメント案内](docs/README.md)を参照してください。LP制作・収益化検討の詳細は
+[会計データ変換 Product / LP Brief](docs/product/lp_product_brief.md)にまとめています。
 
-製品全体は弥生専用ではなく、Input Adapter、Common Journal Model、Mapping / Validation、Output Adapterを分離したvendor-neutralな構造で拡張できるようにします。現在のMVP対象は、弥生会計の仕訳データを共通仕訳モデルへ正規化し、JDL取込形式へ安全に変換することです。
+製品全体は特定vendor専用ではなく、Input Adapter、Common Journal Model、Mapping / Validation、Output Adapterを分離した構造です。現在のMVPはJDL→JDLの回帰維持と、Money Forward→JDLの実案件E2Eを優先しています。弥生→JDLは限定routeを維持し、対応拡大は後順位です。
 
 最終的な利用価値は、他社会計ソフトに存在する日々の全仕訳を、税理士事務所が普段使用しているJDLへ取り込み、JDL上で仕訳・元帳・補助元帳等を確認できるようにすることです。
 

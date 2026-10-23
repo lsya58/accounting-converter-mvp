@@ -1,0 +1,32 @@
+{
+  "account_mapping_distinct_count": 5,
+  "account_mapping_occurrence_count": 18,
+  "accounting_review_status": "HUMAN_ACCOUNTING_REVIEW_PENDING",
+  "canonical_normalization_count": 8,
+  "date_range_end": "2026-07-08",
+  "date_range_start": "2025-12-01",
+  "description_replacement_count": 2,
+  "evidence_id": "EVID-JDL-TO-JDL-REAL-BATCH-1158-IMPORT-001",
+  "formal_output_audit": "PASS",
+  "generated_output_sha256": "37e6f6b4f1fd6174b6c3b2f25d4ff32e873c31236f61dff0c90df507666c21d1",
+  "human_jdl_import": "PASS",
+  "human_screen_observation": "NO_SYSTEM_FORMAT_PROBLEM_REPORTED",
+  "logical_journal_count": 1158,
+  "observation_date": "2026-10-24",
+  "physical_row_count": 1271,
+  "raw_customer_data_tracked": false,
+  "schema_version": "1",
+  "silent_loss_count": 0,
+  "source_sha256": "d9e8564ff2ef0e0028d82ac4ff1c62303038aeaeb67bf9e102a367cb784af427",
+  "strict_reparse": "PASS",
+  "subaccount_mapping_distinct_count": 4,
+  "subaccount_mapping_occurrence_count": 476,
+  "system_evidence_status": "VERIFIED_BY_REAL_IMPORT",
+  "tax_row_counts": {
+    "non_taxable_sales_blank_rate": 8,
+    "sales_fifth_10": 535,
+    "sales_second_10": 1,
+    "total": 544
+  },
+  "unexpected_diff_count": 0
+}
