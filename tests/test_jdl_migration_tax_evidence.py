@@ -57,6 +57,11 @@ class JdlMigrationTaxEvidenceTests(unittest.TestCase):
             "売五種",
             "EVID-JDL-MIGRATION-TAX-SALES-FIFTH-10-ROUNDTRIP-001",
         ),
+        (
+            "jdl_migration_tax_non_taxable_sales",
+            "非売上",
+            "EVID-JDL-MIGRATION-TAX-NON-TAXABLE-SALES-ROUNDTRIP-001",
+        ),
     )
 
     def test_hashes_and_strict_roundtrips(self) -> None:
@@ -79,14 +84,15 @@ class JdlMigrationTaxEvidenceTests(unittest.TestCase):
             )
             self.assertTrue(result["comparison_pass"])
             self.assertEqual(result["mismatched_fields"], [])
+            category = "" if scope == "非売上" else "10%"
             evidence = evidence_for(
-                jdl_source_tax_key(scope, "10%", ""),
+                jdl_source_tax_key(scope, category, ""),
                 JDL_TO_JDL_TARGET_MASTER_SHA256,
             )
             self.assertIsNotNone(evidence)
             self.assertEqual(evidence.evidence_id, evidence_id)
             by_identity = evidence_for_master_identity(
-                jdl_source_tax_key(scope, "10%", ""),
+                jdl_source_tax_key(scope, category, ""),
                 JDL_TO_JDL_TARGET_MASTER_IDENTITY_SHA256,
             )
             self.assertEqual(by_identity, evidence)
@@ -128,7 +134,7 @@ class JdlMigrationTaxEvidenceTests(unittest.TestCase):
             len(verified_tax_keys_for_context(
                 JDL_TO_JDL_TARGET_MASTER_SHA256, identity
             )),
-            2,
+            3,
         )
 
     def test_unrelated_account_and_subaccount_changes_preserve_evidence(self) -> None:
@@ -140,7 +146,37 @@ class JdlMigrationTaxEvidenceTests(unittest.TestCase):
         self.assertIsNotNone(evidence_for_target_context(
             jdl_source_tax_key("売二種", "10%", ""), context
         ))
-        self.assertEqual(len(verified_tax_keys_for_target_context(context)), 2)
+        self.assertEqual(len(verified_tax_keys_for_target_context(context)), 3)
+
+    def test_non_taxable_sales_requires_exact_verified_route_and_shape(self) -> None:
+        row = [""] * 30
+        row[0:6] = ["1111", "1", "20260329", "111", "現金", "現金"]
+        row[11:16] = ["1100", "0", "612", "売上高", "売上高"]
+        row[18] = "非売上"
+        row[21:24] = ["1100", "0", "JDL-MIG-TAX-NONTAX-SALES"]
+        stream = io.StringIO(newline="")
+        writer = csv.writer(stream, lineterminator="\r\n")
+        writer.writerow(jdl_ibex_cashbook_official_journal_import_spec().column_names)
+        writer.writerow(row)
+        entry = JdlMigrationParser().parse_text(stream.getvalue()).entries[0]
+        taxed_line = next(line for line in entry.lines if line.tax_info is not None)
+        key = jdl_source_tax_key("非売上", "", "")
+
+        self.assertTrue(evidence_supports_occurrence(
+            key, entry, taxed_line, self._context()
+        ))
+        changed = dict(taxed_line.metadata)
+        changed["jdl_source_account_code"] = "613"
+        changed_line = replace(taxed_line, metadata=changed)
+        changed_entry = replace(
+            entry,
+            lines=tuple(
+                changed_line if line is taxed_line else line for line in entry.lines
+            ),
+        )
+        self.assertFalse(evidence_supports_occurrence(
+            key, changed_entry, changed_line, self._context()
+        ))
 
     def test_relevant_account_change_blocks_evidence(self) -> None:
         context = self._context(sales_name="変更後売上")

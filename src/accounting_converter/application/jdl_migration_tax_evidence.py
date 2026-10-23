@@ -80,6 +80,14 @@ JDL_MIGRATION_TAX_EVIDENCE = (
         (("111", "現金"), ("612", "売上高")),
         ("111", "612"),
     ),
+    JdlMigrationTaxEvidence(
+        "EVID-JDL-MIGRATION-TAX-NON-TAXABLE-SALES-ROUNDTRIP-001",
+        jdl_source_tax_key("非売上", "", ""),
+        JDL_TO_JDL_TARGET_MASTER_SHA256,
+        SIMPLIFIED_FIRST_INCLUDED_CONTEXT_IDENTITY_SHA256,
+        (("111", "現金"), ("612", "売上高")),
+        ("111", "612"),
+    ),
 )
 
 

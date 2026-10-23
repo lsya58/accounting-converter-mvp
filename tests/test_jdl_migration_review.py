@@ -502,6 +502,46 @@ class JdlMigrationHumanReviewTests(unittest.TestCase):
             changed_fifth.evidence_status, "VERIFIED_CONTEXT_MISMATCH"
         )
 
+    def test_non_taxable_sales_requires_confirmation_then_is_reused(self):
+        self.company_store.target_accounts_override = (
+            SimpleNamespace(target_master_code="111", target_formal_name="現金"),
+            SimpleNamespace(target_master_code="612", target_formal_name="売上高"),
+        )
+        self.company_store.context = JdlTargetContext(
+            product="JDL IBEX 出納帳",
+            version="35.5",
+            accounts=frozenset({"現金", "売上高"}),
+            tax_processing_mode=JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED,
+            taxation_method=JdlTaxationMethod.SIMPLIFIED,
+            simplified_business_category=JdlSimplifiedBusinessCategory.FIRST,
+            account_master=self._tax_evidence_accounts(),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "non-taxable-sales.csv"
+            raw = Path("tests/fixtures/jdl/valid_simple.csv").read_bytes()
+            source.write_bytes(
+                raw.replace("売五種".encode("cp932"), "非売上".encode("cp932"))
+                .replace(b",10%,", b",,", 1)
+            )
+            review = self.service.derive("company-a", source)
+            item = next(row for row in review.taxes if row.label == "非売上")
+
+            self.assertEqual(item.evidence_status, "VERIFIED_BY_REAL_IMPORT")
+            self.assertEqual(item.status, "HUMAN_CONFIRMATION_REQUIRED")
+            self.service.save(review, {}, set(), {}, set(), {item.source_key})
+            reopened = self.service.derive("company-a", source)
+
+        self.assertEqual(reopened.reused_tax_count, 1)
+        self.assertNotIn(item.source_key, {row.source_key for row in reopened.taxes})
+        saved = self.profile_store.get(
+            self.company_store.setting.conversion_profile_id
+        ).tax_mappings[item.source_key]
+        self.assertIs(saved.status, MappingStatus.USER_CONFIRMED)
+        self.assertEqual(
+            saved.metadata["jdl_evidence_id"],
+            "EVID-JDL-MIGRATION-TAX-NON-TAXABLE-SALES-ROUNDTRIP-001",
+        )
+
     def test_tax_without_evidence_cannot_be_confirmed(self):
         review = self.service.derive(
             "company-a", Path("tests/fixtures/jdl/valid_simple.csv")
