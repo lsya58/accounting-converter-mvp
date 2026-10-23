@@ -1,0 +1,20 @@
+{
+  "NOT_FOR_PRODUCTION": true,
+  "candidate_journals": 6,
+  "candidate_physical_rows": 12,
+  "candidate_sha256": "0e90d126f81d865ea23be7d11ba73ccc4fe6891b5d2f02691dee44d269431bf7",
+  "canonical_normalizations": [
+    {
+      "evidence_id": "EVID-JDL-MIGRATION-NON-TAXABLE-1000-TO-1111-CANONICALIZATION-001",
+      "raw_mismatch": "1000 -> 1111",
+      "semantic_classification": "KNOWN_JDL_CANONICAL_NORMALIZATION"
+    }
+  ],
+  "comparison_pass_cases": 6,
+  "comparison_failed_cases": 0,
+  "failed_case_mismatches": [],
+  "jdl_reexport_sha256": "732e89d2d9fcc0a4eb3ceb14e3584c6605feb32aafcd19c5e89fbe2c7e924d0d",
+  "production_allowed": false,
+  "raw_files_tracked": false,
+  "schema_version": "1"
+}

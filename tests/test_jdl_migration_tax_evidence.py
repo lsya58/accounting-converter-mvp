@@ -14,12 +14,15 @@ from accounting_converter.adapters.input.jdl import (
 from accounting_converter.application.jdl_migration_tax_evidence import (
     JDL_TO_JDL_TARGET_MASTER_IDENTITY_SHA256,
     JDL_TO_JDL_TARGET_MASTER_SHA256,
+    JDL_MIGRATION_TAX_OCCURRENCE_EVIDENCE,
     SIMPLIFIED_FIRST_INCLUDED_CONTEXT_IDENTITY_SHA256,
     evidence_for,
     evidence_for_master_identity,
     evidence_for_source_tax_key,
     evidence_for_target_context,
+    evidence_occurrence_mismatches,
     evidence_supports_occurrence,
+    canonical_flag_normalization_evidence,
     target_master_dependency_mismatches,
     verified_tax_keys_for_context,
     verified_tax_keys_for_master_identity,
@@ -177,6 +180,60 @@ class JdlMigrationTaxEvidenceTests(unittest.TestCase):
         self.assertFalse(evidence_supports_occurrence(
             key, changed_entry, changed_line, self._context()
         ))
+        self.assertEqual(
+            evidence_occurrence_mismatches(
+                key, changed_entry, changed_line, self._context()
+            ),
+            ("ACCOUNT_SCOPE_MISMATCH",),
+        )
+
+    def test_occurrence_reports_independent_scope_mismatches(self) -> None:
+        row = [""] * 30
+        row[0:6] = ["1000", "1", "20260329", "111", "現金", "現金"]
+        row[11:16] = ["1100", "0", "612", "売上高", "売上高"]
+        row[18] = "非売上"
+        row[21:24] = ["1100", "0", "SYNTHETIC"]
+        row[26:30] = ["001", "部門", "001", "部門"]
+        stream = io.StringIO(newline="")
+        writer = csv.writer(stream, lineterminator="\r\n")
+        writer.writerow(jdl_ibex_cashbook_official_journal_import_spec().column_names)
+        writer.writerow(row)
+        entry = JdlMigrationParser().parse_text(stream.getvalue()).entries[0]
+        taxed_line = next(line for line in entry.lines if line.tax_info is not None)
+
+        self.assertEqual(
+            evidence_occurrence_mismatches(
+                jdl_source_tax_key("非売上", "", ""),
+                entry,
+                taxed_line,
+                self._context(),
+            ),
+            ("SHAPE_MISMATCH", "OPTIONAL_FIELD_MISMATCH"),
+        )
+
+    def test_canonical_flag_normalization_is_exact_and_not_general(self) -> None:
+        evidence = next(
+            item
+            for item in JDL_MIGRATION_TAX_OCCURRENCE_EVIDENCE
+            if item.evidence_id
+            == "EVID-JDL-MIGRATION-NON-TAXABLE-1000-TO-1111-CANONICALIZATION-001"
+        )
+        self.assertEqual(evidence.canonical_flag_sequence, ("1111",))
+
+        row = [""] * 30
+        row[0:6] = ["1000", "1", "20260329", "111", "現金", "現金"]
+        row[11:16] = ["1100", "0", "612", "売上高", "売上高"]
+        row[18] = "非売上"
+        row[21:24] = ["1100", "0", "SYNTHETIC"]
+        stream = io.StringIO(newline="")
+        writer = csv.writer(stream, lineterminator="\r\n")
+        writer.writerow(jdl_ibex_cashbook_official_journal_import_spec().column_names)
+        writer.writerow(row)
+        entry = JdlMigrationParser().parse_text(stream.getvalue()).entries[0]
+
+        self.assertIsNone(
+            canonical_flag_normalization_evidence(entry, ("1111",))
+        )
 
     def test_relevant_account_change_blocks_evidence(self) -> None:
         context = self._context(sales_name="変更後売上")

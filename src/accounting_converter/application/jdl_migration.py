@@ -20,7 +20,7 @@ from accounting_converter.domain.mapping import (
 from accounting_converter.domain.validation import Severity, ValidationResult
 
 from .company_settings import CompanySettingStatus
-from .jdl_migration_tax_evidence import evidence_supports_occurrence
+from .jdl_migration_tax_evidence import evidence_occurrence_mismatches
 from .jdl_migration_review import jdl_description_replacement_key
 from .journal_route import JournalRouteResult
 
@@ -139,15 +139,17 @@ class JdlMigrationPreflight:
                     or tax_mapping.target_value is None
                 ):
                     errors.append(self._entry_error("JDL-MIGRATION-TAX-UNVERIFIED", "税表現のHuman確認と実機Evidenceが必要です。", "tax", entry))
-                elif not evidence_supports_occurrence(
-                    tax_key, entry, line, context
-                ):
-                    errors.append(self._entry_error(
-                        "JDL-MIGRATION-TAX-EVIDENCE-SCOPE",
-                        "税表現が実機確認済みの仕訳条件と一致しません。",
-                        "tax",
-                        entry,
-                    ))
+                else:
+                    mismatches = evidence_occurrence_mismatches(
+                        tax_key, entry, line, context
+                    )
+                    for mismatch in mismatches:
+                        errors.append(self._entry_error(
+                            f"JDL-MIGRATION-TAX-EVIDENCE-{mismatch}",
+                            self._tax_evidence_mismatch_message(mismatch),
+                            "tax",
+                            entry,
+                        ))
 
     @staticmethod
     def _description_replacement_valid(
@@ -179,6 +181,21 @@ class JdlMigrationPreflight:
         except UnicodeEncodeError:
             return False
         return True
+
+    @staticmethod
+    def _tax_evidence_mismatch_message(reason: str) -> str:
+        messages = {
+            "ROUTE_MISMATCH": "税表現の入力経路が実機確認済み条件と一致しません。",
+            "SHAPE_MISMATCH": "税表現の仕訳構成が実機確認済み条件と一致しません。",
+            "SIDE_MISMATCH": "税表現の借貸位置が実機確認済み条件と一致しません。",
+            "ACCOUNT_SCOPE_MISMATCH": "税表現に使用する科目条件が実機確認済み範囲外です。",
+            "SUBACCOUNT_SCOPE_MISMATCH": "税表現と補助科目の組合せが実機確認されていません。",
+            "OPTIONAL_FIELD_MISMATCH": "税表現と追加項目の組合せが実機確認されていません。",
+            "OPPOSITE_TAX_MISMATCH": "反対側の税表現が実機確認済み条件と一致しません。",
+            "TAX_SEMANTICS_MISMATCH": "税区分・税率・入力区分が実機確認済み条件と一致しません。",
+            "CONTEXT_MISMATCH": "JDL税設定が実機確認済み条件と一致しません。",
+        }
+        return messages.get(reason, "税表現が実機確認済み条件と一致しません。")
 
     def _validate_subaccount(
         self,

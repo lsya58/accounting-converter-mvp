@@ -22,7 +22,9 @@ from accounting_converter.adapters.output.jdl import (
     JdlAccountIdentity,
     JdlContextConfirmationState,
     JdlContextProvenance,
+    JdlSimplifiedBusinessCategory,
     JdlTargetContext,
+    JdlTaxationMethod,
 )
 from accounting_converter.application.conversion import (
     ConversionRequest,
@@ -225,6 +227,43 @@ class JdlMigrationInputTests(unittest.TestCase):
             (bad_entry,), self._profile(self._account_mappings(bad_entry)), self._context()
         )
         self.assertIn("JDL-MIGRATION-CP932", self._codes(bad_result))
+
+    def test_tax_evidence_scope_reports_stable_predicate_codes(self) -> None:
+        row = self._row("1111")
+        row[3:6] = ["111", "現金", "現金"]
+        row[13:16] = ["612", "売上高", "売上高"]
+        row[18:20] = ["非売上", ""]
+        row[26:30] = ["001", "合成部門", "001", "合成部門"]
+        entry = self.parser.parse_text(self._text([row])).entries[0]
+        tax_key = next(line.tax_info.category for line in entry.lines if line.tax_info)
+        profile = replace(
+            self._profile(self._account_mappings(entry)),
+            tax_mappings={
+                tax_key: MappingValue(
+                    tax_key, tax_key, MappingStatus.USER_CONFIRMED
+                )
+            },
+        )
+        context = JdlTargetContext(
+            product="JDL IBEX 出納帳",
+            version="35.5",
+            accounts=frozenset({"現金", "売上高"}),
+            tax_processing_mode=JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED,
+            taxation_method=JdlTaxationMethod.SIMPLIFIED,
+            simplified_business_category=JdlSimplifiedBusinessCategory.FIRST,
+            account_master=(
+                JdlAccountIdentity("現金", "111", "現金", "現金"),
+                JdlAccountIdentity("売上高", "612", "売上高", "売上高"),
+            ),
+        )
+        result = JdlMigrationPreflight().evaluate(
+            (entry,), profile, context, verified_tax_keys=frozenset({tax_key})
+        )
+
+        self.assertIn(
+            "JDL-MIGRATION-TAX-EVIDENCE-OPTIONAL_FIELD_MISMATCH",
+            self._codes(result),
+        )
 
     def test_synthetic_jdl_to_jdl_route_is_atomic_and_round_trips(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
