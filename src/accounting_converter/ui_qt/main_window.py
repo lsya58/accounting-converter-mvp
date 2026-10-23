@@ -866,6 +866,7 @@ class JdlMigrationHumanReviewDialog(QDialog):
         self.review = review
         self.account_controls = {}
         self.subaccount_controls = {}
+        self.tax_controls = {}
         self.setWindowTitle("JDL移行内容を確認")
         self.resize(920, 680)
         self.setMinimumSize(700, 480)
@@ -1055,7 +1056,7 @@ class JdlMigrationHumanReviewDialog(QDialog):
         layout.addWidget(tax_context)
         for item in review.taxes:
             tax_state = (
-                "実機確認済み・会社設定の確認が必要"
+                "実機確認済み・この税区分の確認が必要"
                 if item.evidence_status == "VERIFIED_BY_REAL_IMPORT"
                 else "実機確認済みですが、現在のJDL税設定と一致しません"
                 if item.evidence_status == "VERIFIED_CONTEXT_MISMATCH"
@@ -1070,6 +1071,14 @@ class JdlMigrationHumanReviewDialog(QDialog):
             )
             label.setWordWrap(True)
             layout.addWidget(label)
+            if (
+                item.evidence_status == "VERIFIED_BY_REAL_IMPORT"
+                and item.status == "HUMAN_CONFIRMATION_REQUIRED"
+            ):
+                confirmation = QCheckBox("この税区分を確認しました")
+                confirmation.toggled.connect(self._refresh_save_state)
+                layout.addWidget(confirmation)
+                self.tax_controls[item.source_key] = confirmation
 
         description_title = QLabel(f"摘要の確認（{len(review.descriptions)}件）")
         description_title.setObjectName("sectionTitle")
@@ -1120,11 +1129,15 @@ class JdlMigrationHumanReviewDialog(QDialog):
                 *self.account_controls.values(),
                 *self.subaccount_controls.values(),
             )
-        )
+        ) + sum(check.isChecked() for check in self.tax_controls.values())
 
     def _refresh_save_state(self, _checked=None) -> None:
         confirmed = self._confirmed_count()
-        total = len(self.account_controls) + len(self.subaccount_controls)
+        total = (
+            len(self.account_controls)
+            + len(self.subaccount_controls)
+            + len(self.tax_controls)
+        )
         self.progress_label.setText(
             f"この画面で確認済み: {confirmed}件 / 未確認: {total - confirmed}件"
         )
@@ -1150,16 +1163,22 @@ class JdlMigrationHumanReviewDialog(QDialog):
             key for key, (_combo, check) in self.subaccount_controls.items()
             if check.isChecked()
         }
-        saved_count = len(account_confirmed) + len(subaccount_confirmed)
+        tax_confirmed = {
+            key for key, check in self.tax_controls.items() if check.isChecked()
+        }
+        saved_count = (
+            len(account_confirmed) + len(subaccount_confirmed) + len(tax_confirmed)
+        )
         remaining_count = (
             len(self.account_controls)
             + len(self.subaccount_controls)
+            + len(self.tax_controls)
             - saved_count
         )
         try:
             self.controller.save_jdl_migration_review(
                 self.review, account_selections, account_confirmed,
-                subaccount_selections, subaccount_confirmed,
+                subaccount_selections, subaccount_confirmed, tax_confirmed,
             )
         except Exception as exc:
             log_local_exception("jdl_migration_review_save", exc)

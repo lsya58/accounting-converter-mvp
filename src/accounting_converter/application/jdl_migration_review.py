@@ -73,6 +73,7 @@ class JdlMigrationTaxReview:
     evidence_status: str
     evidence_id: str
     dependency_detail: str = ""
+    source_key: str = ""
 
 
 @dataclass(frozen=True)
@@ -258,9 +259,6 @@ class JdlMigrationHumanReviewService:
         for (scope, category, input_method), count in sorted(tax_counts.items()):
             key = jdl_source_tax_key(scope, category, input_method)
             saved = profile.tax_mappings.get(key)
-            if saved is not None and saved.status is MappingStatus.USER_CONFIRMED:
-                reused_taxes += 1
-                continue
             evidence = (
                 evidence_for_target_context(key, target_context)
                 if target_context is not None
@@ -288,6 +286,17 @@ class JdlMigrationHumanReviewService:
                 and context_identity is not None
                 and evidence.confirmed_context_fingerprint == context_identity
             )
+            reusable_tax = (
+                saved is not None
+                and saved.status is MappingStatus.USER_CONFIRMED
+                and evidence_active
+                and saved.metadata.get("jdl_evidence_id") == evidence.evidence_id
+                and saved.metadata.get("tax_context_identity_sha256")
+                == context_identity
+            )
+            if reusable_tax:
+                reused_taxes += 1
+                continue
             evidence_status = (
                 "VERIFIED_BY_REAL_IMPORT"
                 if evidence_active
@@ -320,6 +329,7 @@ class JdlMigrationHumanReviewService:
                     target_context is None,
                     master_dependencies_match and not evidence_active,
                 ),
+                key,
             ))
 
         tax_context_requirements = [
@@ -429,6 +439,11 @@ class JdlMigrationHumanReviewService:
                 str(item.get("evidence_status", "UNVERIFIED")),
                 str(item.get("reference_evidence_id", "")),
                 "",
+                jdl_source_tax_key(
+                    str(item.get("scope", "")),
+                    str(item.get("category", "")),
+                    str(item.get("input_method", "")),
+                ),
             )
             for item in tax.get("source_identities", ())
         )
@@ -460,6 +475,7 @@ class JdlMigrationHumanReviewService:
         account_confirmed: set[str],
         subaccount_selections: Mapping[str, tuple[str, str] | str],
         subaccount_confirmed: set[str],
+        tax_confirmed: set[str] | None = None,
     ) -> None:
         setting, old = self._validated_setting(review.company_setting_id)
         if (
@@ -498,6 +514,7 @@ class JdlMigrationHumanReviewService:
         accounts = dict(old.account_mappings)
         subs = dict(old.subaccount_context_mappings)
         setup_context_sha256 = setting.context_fingerprint
+        tax_confirmed = tax_confirmed or set()
 
         for item in review.accounts:
             if item.key not in account_confirmed:
@@ -603,11 +620,43 @@ class JdlMigrationHumanReviewService:
                     "補助科目の処理方法を確認してください。",
                 )
 
+        taxes = dict(old.tax_mappings)
+        tax_items = {item.source_key: item for item in review.taxes}
+        resolved_context = self.company_store.resolve(
+            review.company_setting_id
+        ).context
+        for source_key in tax_confirmed:
+            item = tax_items.get(source_key)
+            if (
+                item is None
+                or item.evidence_status != "VERIFIED_BY_REAL_IMPORT"
+                or item.status != "HUMAN_CONFIRMATION_REQUIRED"
+                or not item.evidence_id
+                or resolved_context is None
+            ):
+                raise JdlMigrationReviewError(
+                    "JDL-MIGRATION-REVIEW-TAX-EVIDENCE-REQUIRED",
+                    "実機確認済みの税区分だけ確認結果を保存できます。",
+                )
+            taxes[source_key] = MappingValue(
+                source_key,
+                source_key,
+                MappingStatus.USER_CONFIRMED,
+                metadata={
+                    "jdl_evidence_id": item.evidence_id,
+                    "tax_context_identity_sha256": tax_context_identity_sha256(
+                        resolved_context
+                    ),
+                    "setup_context_sha256": setup_context_sha256,
+                },
+            )
+
         updated = replace(
             old,
             profile_id=revised_profile_id(old.profile_id, "jdl-review"),
             account_mappings=accounts,
             subaccount_context_mappings=subs,
+            tax_mappings=taxes,
             updated_at=datetime.now(timezone.utc),
         )
         self.profile_store.create(updated)

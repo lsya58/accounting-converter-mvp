@@ -692,11 +692,11 @@ class AccountingConverterController:
 
     def save_jdl_migration_review(
         self, review, account_selections, account_confirmed,
-        subaccount_selections, subaccount_confirmed,
+        subaccount_selections, subaccount_confirmed, tax_confirmed=None,
     ) -> AppState:
         self.jdl_migration_review_service.save(
             review, account_selections, account_confirmed,
-            subaccount_selections, subaccount_confirmed,
+            subaccount_selections, subaccount_confirmed, tax_confirmed,
         )
         self.load_profiles()
         self.load_company_settings()

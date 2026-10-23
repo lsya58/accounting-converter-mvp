@@ -455,6 +455,67 @@ class JdlMigrationHumanReviewTests(unittest.TestCase):
         self.assertEqual(fifth.evidence_status, "VERIFIED_BY_REAL_IMPORT")
         self.assertEqual(fifth.status, "HUMAN_CONFIRMATION_REQUIRED")
 
+    def test_evidence_backed_tax_requires_confirmation_then_is_reused(self):
+        self.company_store.target_accounts_override = (
+            SimpleNamespace(target_master_code="111", target_formal_name="現金"),
+            SimpleNamespace(target_master_code="612", target_formal_name="売上高"),
+        )
+        self.company_store.context = JdlTargetContext(
+            product="JDL IBEX 出納帳",
+            version="35.5",
+            accounts=frozenset({"現金", "売上高"}),
+            tax_processing_mode=JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED,
+            taxation_method=JdlTaxationMethod.SIMPLIFIED,
+            simplified_business_category=JdlSimplifiedBusinessCategory.FIRST,
+            account_master=self._tax_evidence_accounts(),
+        )
+        source = Path("tests/fixtures/jdl/valid_simple.csv")
+        review = self.service.derive("company-a", source)
+        fifth = next(item for item in review.taxes if item.label == "売五種 / 10%")
+
+        self.service.save(
+            review, {}, set(), {}, set(), {fifth.source_key}
+        )
+        reopened = self.service.derive("company-a", source)
+
+        self.assertEqual(reopened.reused_tax_count, 1)
+        self.assertNotIn(
+            fifth.source_key, {item.source_key for item in reopened.taxes}
+        )
+        saved = self.profile_store.get(
+            self.company_store.setting.conversion_profile_id
+        ).tax_mappings[fifth.source_key]
+        self.assertIs(saved.status, MappingStatus.USER_CONFIRMED)
+        self.assertEqual(saved.metadata["jdl_evidence_id"], fifth.evidence_id)
+        self.assertEqual(saved.metadata["setup_context_sha256"], "d" * 64)
+
+        self.company_store.context = replace(
+            self.company_store.context,
+            taxation_method=JdlTaxationMethod.STANDARD,
+            simplified_business_category=None,
+        )
+        changed = self.service.derive("company-a", source)
+        changed_fifth = next(
+            item for item in changed.taxes if item.source_key == fifth.source_key
+        )
+        self.assertEqual(
+            changed_fifth.evidence_status, "VERIFIED_CONTEXT_MISMATCH"
+        )
+
+    def test_tax_without_evidence_cannot_be_confirmed(self):
+        review = self.service.derive(
+            "company-a", Path("tests/fixtures/jdl/valid_simple.csv")
+        )
+        with self.assertRaises(JdlMigrationReviewError) as caught:
+            self.service.save(
+                review, {}, set(), {}, set(), {"unverified-tax-key"}
+            )
+
+        self.assertEqual(
+            caught.exception.code,
+            "JDL-MIGRATION-REVIEW-TAX-EVIDENCE-REQUIRED",
+        )
+
     def test_known_evidence_with_wrong_context_remains_blocked_with_clear_reason(self):
         self.company_store.master_hash = JDL_TO_JDL_TARGET_MASTER_IDENTITY_SHA256
         self.company_store.target_accounts_override = (
