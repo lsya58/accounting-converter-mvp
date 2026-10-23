@@ -37,6 +37,8 @@ from accounting_converter.application.jdl_migration_review import (
 )
 from accounting_converter.domain.mapping import SubaccountPolicy
 from accounting_converter.adapters.output.jdl import (
+    JdlContextConfirmationState,
+    JdlContextProvenance,
     JdlInputTaxCreditMethod,
     JdlSimplifiedBusinessCategory,
     JdlTaxationMethod,
@@ -2139,6 +2141,8 @@ class JdlTaxContextConfirmationDialog(QDialog):
         super().__init__(parent)
         self.controller = controller
         self.company_setting_id = company_setting_id
+        self._loading_context = True
+        self._loaded_context_confirmed = False
         self.setWindowTitle("JDL税設定を確認")
         self.setMinimumWidth(520)
         layout = QVBoxLayout(self)
@@ -2201,7 +2205,10 @@ class JdlTaxContextConfirmationDialog(QDialog):
         self.confirmed = QCheckBox("JDL側が上記の設定であることを確認しました")
         layout.addWidget(self.confirmed)
         self.taxable_status.currentIndexChanged.connect(self._refresh_fields)
+        self.accounting_method.currentIndexChanged.connect(self._refresh_fields)
         self.taxation_method.currentIndexChanged.connect(self._refresh_fields)
+        self.credit_method.currentIndexChanged.connect(self._refresh_fields)
+        self.business_category.currentIndexChanged.connect(self._refresh_fields)
         self._load_current_context()
         self._refresh_fields()
         actions = QHBoxLayout()
@@ -2216,6 +2223,8 @@ class JdlTaxContextConfirmationDialog(QDialog):
         actions.addWidget(cancel)
         actions.addWidget(self.save_button)
         layout.addLayout(actions)
+        self._loading_context = False
+        self.confirmed.setChecked(self._loaded_context_confirmed)
 
     def _save(self) -> None:
         if not self.confirmed.isChecked():
@@ -2275,13 +2284,19 @@ class JdlTaxContextConfirmationDialog(QDialog):
         self.business_label.setVisible(simplified)
         self.business_category.setVisible(simplified)
         self.business_category.setEnabled(simplified)
-        self.confirmed.setChecked(False)
+        if not self._loading_context:
+            self.confirmed.setChecked(False)
 
     def _load_current_context(self) -> None:
         getter = getattr(self.controller, "company_tax_context", None)
         context = getter(self.company_setting_id) if getter is not None else None
         if context is None:
             return
+        self._loaded_context_confirmed = (
+            context.confirmation_state is JdlContextConfirmationState.CONFIRMED
+            and context.provenance
+            is JdlContextProvenance.USER_CONFIRMED_RUNTIME_SNAPSHOT
+        )
         self.taxable_status.setCurrentIndex(
             1 if context.tax_processing_mode is JdlTaxProcessingMode.EXEMPT else 0
         )

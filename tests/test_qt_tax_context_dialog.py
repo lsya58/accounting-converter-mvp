@@ -6,6 +6,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from accounting_converter.adapters.output.jdl import (
+    JdlContextConfirmationState,
+    JdlContextProvenance,
     JdlInputTaxCreditMethod,
     JdlSimplifiedBusinessCategory,
     JdlTaxationMethod,
@@ -101,6 +103,48 @@ class JdlTaxContextConfirmationDialogTests(unittest.TestCase):
             controller.selection["simplified_business_category"],
             JdlSimplifiedBusinessCategory.FIRST,
         )
+
+    def test_confirmed_context_reopens_checked_and_change_resets_confirmation(self) -> None:
+        context = SimpleNamespace(
+            tax_processing_mode=JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED,
+            effective_taxation_method=JdlTaxationMethod.SIMPLIFIED,
+            simplified_business_category=JdlSimplifiedBusinessCategory.FIRST,
+            confirmation_state=JdlContextConfirmationState.CONFIRMED,
+            provenance=JdlContextProvenance.USER_CONFIRMED_RUNTIME_SNAPSHOT,
+        )
+        dialog = JdlTaxContextConfirmationDialog(
+            _Controller(succeeds=True, context=context), "company-1"
+        )
+
+        self.assertTrue(dialog.confirmed.isChecked())
+        self.assertTrue(dialog.save_button.isEnabled())
+        self.assertEqual(
+            dialog.taxation_method.currentData(),
+            JdlTaxationMethod.SIMPLIFIED.value,
+        )
+        self.assertEqual(
+            dialog.business_category.currentData(),
+            JdlSimplifiedBusinessCategory.FIRST.value,
+        )
+
+        dialog.business_category.setCurrentIndex(1)
+        self.assertFalse(dialog.confirmed.isChecked())
+        self.assertFalse(dialog.save_button.isEnabled())
+
+    def test_unconfirmed_context_reopens_unchecked(self) -> None:
+        context = SimpleNamespace(
+            tax_processing_mode=JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED,
+            effective_taxation_method=JdlTaxationMethod.SIMPLIFIED,
+            simplified_business_category=JdlSimplifiedBusinessCategory.FIRST,
+            confirmation_state=JdlContextConfirmationState.UNCONFIRMED,
+            provenance=JdlContextProvenance.UNCONFIRMED,
+        )
+        dialog = JdlTaxContextConfirmationDialog(
+            _Controller(succeeds=True, context=context), "company-1"
+        )
+
+        self.assertFalse(dialog.confirmed.isChecked())
+        self.assertFalse(dialog.save_button.isEnabled())
 
     def test_switching_back_to_standard_removes_hidden_business_category(self) -> None:
         controller = _Controller(succeeds=True)

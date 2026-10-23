@@ -9,6 +9,10 @@ from pathlib import Path
 
 from accounting_converter.application.company_settings import CompanySettingStatus
 from accounting_converter.domain.conversion_profile import ConversionProfile
+from accounting_converter.adapters.output.jdl import (
+    JdlContextConfirmationState,
+    JdlContextProvenance,
+)
 from accounting_converter.domain.mapping import MappingStatus, MappingValue
 from accounting_converter.infrastructure.application_preferences import (
     ApplicationPreferences,
@@ -110,7 +114,16 @@ class CompanySettingStoreTests(unittest.TestCase):
         )
 
         self.assertEqual(updated.conversion_profile_id, partial.profile_id)
-        self.assertTrue(self.company_store.resolve(setting.company_setting_id).available)
+        resolved = self.company_store.resolve(setting.company_setting_id)
+        self.assertTrue(resolved.available)
+        self.assertIs(
+            resolved.context.confirmation_state,
+            JdlContextConfirmationState.CONFIRMED,
+        )
+        self.assertIs(
+            resolved.context.provenance,
+            JdlContextProvenance.USER_CONFIRMED_RUNTIME_SNAPSHOT,
+        )
 
     def test_missing_profile_or_context_is_stale(self) -> None:
         setting = self._create()
