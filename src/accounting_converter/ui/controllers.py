@@ -64,6 +64,9 @@ from accounting_converter.adapters.input.moneyforward import MoneyForwardInputAd
 from accounting_converter.adapters.input.jdl import JdlMigrationInputAdapter
 from accounting_converter.adapters.input.yayoi import YayoiInputAdapter
 from accounting_converter.application.jdl_migration import JdlMigrationPreflight
+from accounting_converter.application.jdl_migration_workflow import (
+    JdlMigrationFormalWorkflow,
+)
 from accounting_converter.application.jdl_migration_tax_evidence import (
     verified_tax_keys_for_target_context,
 )
@@ -170,6 +173,7 @@ class AccountingConverterController:
         self.moneyforward_conversion_workflow = (
             moneyforward_conversion_workflow or MoneyForwardConversionWorkflow()
         )
+        self.jdl_migration_workflow = JdlMigrationFormalWorkflow()
         self._active_conversion_workflow = self.conversion_workflow
         self.context_loader = context_loader or JdlTargetContextLoader()
         self.company_store = company_store or CompanySettingStore(
@@ -622,14 +626,41 @@ class AccountingConverterController:
             status = "BLOCKED"
             message = "現在このJDL仕訳の一部は安全に変換できません。"
         else:
-            status = "ADAPTER_UNAVAILABLE"
-            message = "JDL移行の確認は完了しましたが、正式出力はまだ有効化されていません。"
-        self._prepared = None
+            prepared = self.jdl_migration_workflow.prepare(
+                input_path=state.selected_file,
+                output_path=state.selected_output_file,
+                profile=resolved.profile,
+                context=resolved.context,
+                company_status=resolved.status,
+                verified_tax_keys=verified_tax_keys,
+            )
+            if state.selected_output_file is None:
+                status = "READY"
+                message = "確認が完了しました。JDL用CSVの保存先を選択してください。"
+                self._prepared = None
+            elif prepared.summary.readiness.value == "READY":
+                status = "READY"
+                message = "変換を実行できます。内容を確認してください。"
+                self._prepared = prepared
+                self._active_conversion_workflow = self.jdl_migration_workflow
+            else:
+                status = "BLOCKED"
+                message = prepared.summary.blocking_reasons[0]
+                blocker_messages = prepared.summary.blocking_reasons
+                self._prepared = None
+        if pending or not preflight.output_allowed:
+            self._prepared = None
         self.state = replace(
             self.state,
             preflight_status=status,
-            conversion_available=False,
-            conversion_summary=None,
+            conversion_available=(
+                status == "READY"
+                and state.selected_output_file is not None
+                and self._prepared is not None
+            ),
+            conversion_summary=(
+                self._prepared.summary if self._prepared is not None else None
+            ),
             pending_account_confirmations=len(review.accounts),
             pending_subaccount_confirmations=len(review.subaccounts),
             pending_tax_confirmations=len(review.taxes),
@@ -1175,6 +1206,16 @@ class AccountingConverterController:
         if not confirmed:
             self.state = replace(self.state, user_message="変換をキャンセルしました。")
             return self.state
+        if (
+            self.state.file_recognition is not None
+            and self.state.file_recognition.format is RecognizedFormat.JDL
+        ):
+            # Re-resolve the current CompanySetting/Profile/master immediately
+            # before writing. A prepared migration must never outlive a source,
+            # mapping, tax-context, or target-master change.
+            refreshed = self.inspect_selected_jdl_migration()
+            if not refreshed.conversion_available:
+                return refreshed
         if self._prepared is None or not self.state.conversion_available:
             self.state = replace(
                 self.state,

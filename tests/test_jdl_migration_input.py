@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 from accounting_converter.adapters.input.jdl import (
     JdlMigrationInputAdapter,
@@ -23,6 +24,7 @@ from accounting_converter.adapters.output.jdl import (
     JdlContextConfirmationState,
     JdlContextProvenance,
     JdlSimplifiedBusinessCategory,
+    JdlSubaccountIdentity,
     JdlTargetContext,
     JdlTaxationMethod,
 )
@@ -35,6 +37,10 @@ from accounting_converter.application.jdl_migration import (
     JdlMigrationPreflight,
     JdlMigrationSyntheticRoutePolicy,
 )
+from accounting_converter.application.jdl_migration_workflow import (
+    JdlMigrationFormalWorkflow,
+)
+from accounting_converter.application.company_settings import CompanySettingStatus
 from accounting_converter.application.mapping_engine import MappingEngine, MappingRuleSet
 from accounting_converter.application.validation_pipeline import ValidationPipeline
 from accounting_converter.domain.conversion_profile import ConversionProfile
@@ -320,6 +326,205 @@ class JdlMigrationInputTests(unittest.TestCase):
             )
             self.assertEqual(result.status, ConversionStatus.BLOCKED_BY_MAPPING)
             self.assertFalse(output.exists())
+
+    def test_formal_workflow_preserves_rows_and_excludes_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.csv"
+            output = root / "output.csv"
+            diagnostic = ["// privacy-safe diagnostic"] + [""] * 29
+            source.write_bytes(
+                self._text([self._row("1111"), diagnostic]).encode("cp932")
+            )
+            workflow = JdlMigrationFormalWorkflow()
+            prepared = workflow.prepare(
+                input_path=source,
+                output_path=output,
+                profile=self._profile({}),
+                context=self._context(),
+                company_status=CompanySettingStatus.AVAILABLE,
+                verified_tax_keys=frozenset(),
+            )
+
+            self.assertEqual(prepared.summary.readiness.value, "READY")
+            result = workflow.execute(prepared)
+
+            self.assertIsNotNone(result)
+            self.assertEqual(result.status, ConversionStatus.SUCCESS)
+            self.assertEqual(result.input_journal_count, 1)
+            self.assertEqual(result.output_record_count, 1)
+            raw = output.read_bytes()
+            self.assertFalse(raw.startswith(b"\xef\xbb\xbf"))
+            self.assertNotIn(b"\n", raw.replace(b"\r\n", b""))
+            reparsed = self.parser.parse_path(output)
+            self.assertEqual(len(reparsed.entries), 1)
+            self.assertEqual(len(reparsed.diagnostic_rows), 0)
+
+    def test_formal_workflow_applies_confirmed_account_and_description(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.csv"
+            output = root / "output.csv"
+            row = self._row("1111", description="A" * 33)
+            row[3:6] = ["9999", "旧現金", "旧現金"]
+            source.write_bytes(self._text([row]).encode("cp932"))
+            entry = self.parser.parse_path(source).entries[0]
+            source_sha = hashlib.sha256(source.read_bytes()).hexdigest()
+            account = MappingValue(
+                entry.lines[0].account,
+                "現金",
+                MappingStatus.USER_CONFIRMED,
+                metadata={"target_code": "1111", "target_formal_name": "現金"},
+            )
+            replacement_key = "jdl_description_replacement|jdl:2|row-1"
+            replacement = MappingValue(
+                replacement_key,
+                "確認済み摘要",
+                MappingStatus.USER_CONFIRMED,
+                metadata={
+                    "policy": "HUMAN_CONFIRMED_DESCRIPTION_REPLACEMENT",
+                    "source_sha256": source_sha,
+                    "original_description_sha256": hashlib.sha256(("A" * 33).encode()).hexdigest(),
+                },
+            )
+            profile = replace(
+                self._profile({entry.lines[0].account: account}),
+                loss_policy_mappings={replacement_key: replacement},
+            )
+            workflow = JdlMigrationFormalWorkflow()
+            prepared = workflow.prepare(
+                input_path=source, output_path=output, profile=profile,
+                context=self._context(), company_status=CompanySettingStatus.AVAILABLE,
+                verified_tax_keys=frozenset(),
+            )
+            result = workflow.execute(prepared)
+
+            self.assertEqual(result.status, ConversionStatus.SUCCESS)
+            parsed = list(csv.reader(io.StringIO(output.read_bytes().decode("cp932"))))
+            self.assertEqual(parsed[1][3:6], ["1111", "現金", "現金"])
+            self.assertEqual(parsed[1][23], "確認済み摘要")
+
+    def test_formal_workflow_blocks_unresolved_and_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.csv"
+            output = root / "output.csv"
+            row = self._row("1111")
+            row[3:6] = ["9999", "未確認", "未確認"]
+            source.write_bytes(self._text([row]).encode("cp932"))
+            workflow = JdlMigrationFormalWorkflow()
+            blocked = workflow.prepare(
+                input_path=source, output_path=output, profile=self._profile({}),
+                context=self._context(), company_status=CompanySettingStatus.AVAILABLE,
+                verified_tax_keys=frozenset(),
+            )
+            self.assertEqual(blocked.summary.readiness.value, "BLOCKED")
+            self.assertFalse(output.exists())
+
+            output.write_text("existing", encoding="ascii")
+            overwrite = workflow.prepare(
+                input_path=source, output_path=output, profile=self._profile({}),
+                context=self._context(), company_status=CompanySettingStatus.AVAILABLE,
+                verified_tax_keys=frozenset(),
+            )
+            self.assertEqual(overwrite.summary.readiness.value, "BLOCKED")
+            self.assertEqual(output.read_text(encoding="ascii"), "existing")
+
+    def test_formal_workflow_applies_preserve_and_parent_only_subaccount(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.csv"
+            row = self._row("1111")
+            row[6:8] = ["0001", "旧補助"]
+            source.write_bytes(self._text([row]).encode("cp932"))
+            entry = self.parser.parse_path(source).entries[0]
+            key = MappingKey(MappingType.SUBACCOUNT, entry.lines[0].sub_account, entry.lines[0].account)
+            preserved = MappingValue(
+                key.source_value, "新補助", MappingStatus.USER_CONFIRMED,
+                parent_account=key.parent_account,
+                metadata={
+                    "subaccount_policy": SubaccountPolicy.PRESERVE_SUBACCOUNT.value,
+                    "output_code": "0099", "output_name": "新補助",
+                },
+            )
+            context = replace(
+                self._context(),
+                subaccounts=(JdlSubaccountIdentity("現金", "新補助", "0099", "0099", "新補助", True, "1111", "新補助"),),
+            )
+            workflow = JdlMigrationFormalWorkflow()
+            output = root / "preserve.csv"
+            prepared = workflow.prepare(
+                input_path=source, output_path=output,
+                profile=self._profile({}, {key: preserved}), context=context,
+                company_status=CompanySettingStatus.AVAILABLE,
+                verified_tax_keys=frozenset(),
+            )
+            self.assertEqual(workflow.execute(prepared).status, ConversionStatus.SUCCESS)
+            rows = list(csv.reader(io.StringIO(output.read_bytes().decode("cp932"))))
+            self.assertEqual(rows[1][6:8], ["0099", "新補助"])
+
+            parent_only = replace(
+                preserved, target_value="",
+                metadata={"subaccount_policy": SubaccountPolicy.PARENT_ONLY_CONFIRMED.value},
+            )
+            parent_output = root / "parent.csv"
+            parent_prepared = workflow.prepare(
+                input_path=source, output_path=parent_output,
+                profile=self._profile({}, {key: parent_only}), context=self._context(),
+                company_status=CompanySettingStatus.AVAILABLE,
+                verified_tax_keys=frozenset(),
+            )
+            self.assertEqual(workflow.execute(parent_prepared).status, ConversionStatus.SUCCESS)
+            parent_rows = list(csv.reader(io.StringIO(parent_output.read_bytes().decode("cp932"))))
+            self.assertEqual(parent_rows[1][6:8], ["", ""])
+
+    def test_formal_workflow_applies_only_evidenced_flag_normalization(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.csv"
+            output = root / "output.csv"
+            source.write_bytes(self._text([self._row("1000")]).encode("cp932"))
+            evidence = type("Evidence", (), {
+                "canonical_flag_sequence": ("1111",),
+                "evidence_id": "EVID-EXACT-SCOPE",
+            })()
+            workflow = JdlMigrationFormalWorkflow()
+            with patch(
+                "accounting_converter.application.jdl_migration_workflow.canonical_flag_normalization_evidence",
+                return_value=evidence,
+            ):
+                prepared = workflow.prepare(
+                    input_path=source, output_path=output, profile=self._profile({}),
+                    context=self._context(), company_status=CompanySettingStatus.AVAILABLE,
+                    verified_tax_keys=frozenset(),
+                )
+            result = workflow.execute(prepared)
+            self.assertEqual(result.status, ConversionStatus.SUCCESS)
+            self.assertIn("EVID-EXACT-SCOPE", result.verification_report)
+            rows = list(csv.reader(io.StringIO(output.read_bytes().decode("cp932"))))
+            self.assertEqual(rows[1][0], "1111")
+
+    def test_formal_workflow_rolls_back_when_atomic_publish_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.csv"
+            output = root / "output.csv"
+            source.write_bytes(self._text([self._row("1111")]).encode("cp932"))
+            workflow = JdlMigrationFormalWorkflow()
+            prepared = workflow.prepare(
+                input_path=source, output_path=output, profile=self._profile({}),
+                context=self._context(), company_status=CompanySettingStatus.AVAILABLE,
+                verified_tax_keys=frozenset(),
+            )
+            with patch(
+                "accounting_converter.application.jdl_migration_workflow.os.link",
+                side_effect=OSError("synthetic publish failure"),
+            ):
+                result = workflow.execute(prepared)
+
+            self.assertEqual(result.status, ConversionStatus.SYSTEM_ERROR)
+            self.assertFalse(output.exists())
+            self.assertEqual(list(root.glob(".*.tmp")), [])
 
     def _profile(self, accounts, subs=None) -> ConversionProfile:
         return ConversionProfile(
