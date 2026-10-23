@@ -360,6 +360,20 @@ class QtGuiContractTests(unittest.TestCase):
             source,
         )
 
+    def test_jdl_migration_description_replacement_is_explicit_and_bounded(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
+            encoding="utf-8"
+        )
+        for text in (
+            "現在の摘要:",
+            "置換後の摘要（1〜32文字）",
+            "この摘要への置換を確認しました",
+            "_valid_description_replacement",
+            'value.encode("cp932", errors="strict")',
+            "description_confirmed",
+        ):
+            self.assertIn(text, source)
+
     def test_master_refresh_failure_is_logged_and_user_visible(self) -> None:
         source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
             encoding="utf-8"

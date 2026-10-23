@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import tempfile
 import unittest
@@ -190,6 +191,33 @@ class JdlMigrationInputTests(unittest.TestCase):
             (long_entry,), self._profile(self._account_mappings(long_entry)), self._context()
         )
         self.assertIn("JDL-MIGRATION-DESCRIPTION-LENGTH", self._codes(long_result))
+
+        source_sha = "a" * 64
+        original_sha = hashlib.sha256(("A" * 33).encode("utf-8")).hexdigest()
+        replacement = MappingValue(
+            "jdl_description_replacement|jdl:2|row-1",
+            "Human confirmed replacement",
+            MappingStatus.USER_CONFIRMED,
+            metadata={
+                "policy": "HUMAN_CONFIRMED_DESCRIPTION_REPLACEMENT",
+                "source_sha256": source_sha,
+                "original_description_sha256": original_sha,
+            },
+        )
+        replacement_profile = replace(
+            self._profile(self._account_mappings(long_entry)),
+            loss_policy_mappings={replacement.source_value: replacement},
+        )
+        replaced = JdlMigrationPreflight().evaluate(
+            (long_entry,), replacement_profile, self._context(),
+            source_sha256=source_sha,
+        )
+        self.assertNotIn("JDL-MIGRATION-DESCRIPTION-LENGTH", self._codes(replaced))
+        stale = JdlMigrationPreflight().evaluate(
+            (long_entry,), replacement_profile, self._context(),
+            source_sha256="b" * 64,
+        )
+        self.assertIn("JDL-MIGRATION-DESCRIPTION-LENGTH", self._codes(stale))
 
         bad_encoding = self._row("1111", description="𠀋")
         bad_entry = self.parser.parse_text(self._text([bad_encoding])).entries[0]

@@ -80,6 +80,9 @@ class JdlMigrationTaxReview:
 class JdlMigrationDescriptionReview:
     journal_identifier: str
     current_length: int
+    row_key: str = ""
+    current_description: str = ""
+    original_description_sha256: str = ""
 
 
 @dataclass(frozen=True)
@@ -99,6 +102,10 @@ class JdlMigrationHumanReview:
     reused_subaccount_count: int = 0
     reused_tax_count: int = 0
     derived_state: bool = False
+
+
+def jdl_description_replacement_key(entry_id: str, row_index: int) -> str:
+    return f"jdl_description_replacement|{entry_id}|row-{row_index}"
 
 
 class JdlMigrationHumanReviewService:
@@ -145,8 +152,30 @@ class JdlMigrationHumanReviewService:
             for row_index, row in enumerate(entry.metadata.get("physical_rows", ()), 1):
                 length = len(str(row.get("description", "")))
                 if length > 32:
+                    description = str(row.get("description", ""))
+                    row_key = jdl_description_replacement_key(entry.id, row_index)
+                    saved_replacement = profile.loss_policy_mappings.get(row_key)
+                    original_sha256 = hashlib.sha256(
+                        description.encode("utf-8")
+                    ).hexdigest()
+                    if (
+                        saved_replacement is not None
+                        and saved_replacement.status is MappingStatus.USER_CONFIRMED
+                        and saved_replacement.metadata.get("source_sha256")
+                        == source_sha256
+                        and saved_replacement.metadata.get(
+                            "original_description_sha256"
+                        ) == original_sha256
+                        and saved_replacement.target_value
+                        and 1 <= len(saved_replacement.target_value) <= 32
+                    ):
+                        continue
                     overflow.append(JdlMigrationDescriptionReview(
-                        f"{entry.id}:row-{row_index}", length
+                        f"{entry.id}:row-{row_index}",
+                        length,
+                        row_key,
+                        description,
+                        original_sha256,
                     ))
             for line in entry.lines:
                 metadata = line.metadata
@@ -476,6 +505,8 @@ class JdlMigrationHumanReviewService:
         subaccount_selections: Mapping[str, tuple[str, str] | str],
         subaccount_confirmed: set[str],
         tax_confirmed: set[str] | None = None,
+        description_replacements: Mapping[str, str] | None = None,
+        description_confirmed: set[str] | None = None,
     ) -> None:
         setting, old = self._validated_setting(review.company_setting_id)
         if (
@@ -515,6 +546,8 @@ class JdlMigrationHumanReviewService:
         subs = dict(old.subaccount_context_mappings)
         setup_context_sha256 = setting.context_fingerprint
         tax_confirmed = tax_confirmed or set()
+        description_replacements = description_replacements or {}
+        description_confirmed = description_confirmed or set()
 
         for item in review.accounts:
             if item.key not in account_confirmed:
@@ -651,12 +684,44 @@ class JdlMigrationHumanReviewService:
                 },
             )
 
+        loss_policies = dict(old.loss_policy_mappings)
+        description_items = {item.row_key: item for item in review.descriptions}
+        for row_key in description_confirmed:
+            item = description_items.get(row_key)
+            replacement = description_replacements.get(row_key, "")
+            try:
+                replacement.encode("cp932", errors="strict")
+            except UnicodeEncodeError as exc:
+                raise JdlMigrationReviewError(
+                    "JDL-MIGRATION-REVIEW-DESCRIPTION-CP932",
+                    "置換後の摘要にJDLで表現できない文字があります。",
+                ) from exc
+            if item is None or not 1 <= len(replacement) <= 32:
+                raise JdlMigrationReviewError(
+                    "JDL-MIGRATION-REVIEW-DESCRIPTION-INVALID",
+                    "置換後の摘要は1文字以上32文字以内で入力してください。",
+                )
+            loss_policies[row_key] = MappingValue(
+                row_key,
+                replacement,
+                MappingStatus.USER_CONFIRMED,
+                metadata={
+                    "policy": "HUMAN_CONFIRMED_DESCRIPTION_REPLACEMENT",
+                    "source_sha256": review.source_sha256,
+                    "original_description_sha256": (
+                        item.original_description_sha256
+                    ),
+                    "setup_context_sha256": setup_context_sha256,
+                },
+            )
+
         updated = replace(
             old,
             profile_id=revised_profile_id(old.profile_id, "jdl-review"),
             account_mappings=accounts,
             subaccount_context_mappings=subs,
             tax_mappings=taxes,
+            loss_policy_mappings=loss_policies,
             updated_at=datetime.now(timezone.utc),
         )
         self.profile_store.create(updated)

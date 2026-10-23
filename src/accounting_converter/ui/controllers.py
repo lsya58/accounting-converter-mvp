@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -587,6 +588,9 @@ class AccountingConverterController:
                 resolved.context,
                 company_status=resolved.status,
                 verified_tax_keys=verified_tax_keys,
+                source_sha256=hashlib.sha256(
+                    state.selected_file.read_bytes()
+                ).hexdigest(),
             )
         except Exception as error:
             log_local_exception("jdl_migration_main_workflow", error)
@@ -693,10 +697,12 @@ class AccountingConverterController:
     def save_jdl_migration_review(
         self, review, account_selections, account_confirmed,
         subaccount_selections, subaccount_confirmed, tax_confirmed=None,
+        description_replacements=None, description_confirmed=None,
     ) -> AppState:
         self.jdl_migration_review_service.save(
             review, account_selections, account_confirmed,
             subaccount_selections, subaccount_confirmed, tax_confirmed,
+            description_replacements, description_confirmed,
         )
         self.load_profiles()
         self.load_company_settings()

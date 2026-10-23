@@ -96,6 +96,70 @@ def generate(
     return tuple(written)
 
 
+def generate_non_taxable_sales(
+    output_dir: Path,
+    private_root: Path,
+    *,
+    journal_date: str = "20260329",
+    target_master_sha256: str = "",
+) -> tuple[Path, ...]:
+    """Generate one gated non-taxable-sales probe for the verified target accounts."""
+    output_dir = output_dir.resolve()
+    private_root = private_root.resolve()
+    if output_dir != private_root and private_root not in output_dir.parents:
+        raise ValueError("probe output must stay under data/private")
+    candidate = output_dir / "non_taxable_sales.csv"
+    manifest = output_dir / "non_taxable_sales.manifest.json"
+    result = output_dir / "non_taxable_sales.result.json"
+    if any(path.exists() for path in (candidate, manifest, result)):
+        raise FileExistsError("probe output already exists")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    candidate.write_bytes(_candidate_bytes(
+        journal_date,
+        "非売上",
+        "JDL-MIG-TAX-NONTAX-SALES",
+        period_start=journal_date,
+        period_end=journal_date,
+        debit_account=("111", "現金"),
+        credit_account=("612", "売上高"),
+        tax_category="",
+    ))
+    parsed = JdlMigrationParser().parse_path(candidate)
+    if len(parsed.entries) != 1 or parsed.journal_record_count != 1:
+        raise RuntimeError("generated probe structure is invalid")
+    manifest.write_text(json.dumps({
+        "schema_version": "1",
+        "probe_case": "non_taxable_sales",
+        "semantic_scope": "非売上",
+        "tax_category": "",
+        "journal_date": journal_date,
+        "header_output_period_start": journal_date,
+        "header_output_period_end": journal_date,
+        "candidate_sha256": _sha256(candidate),
+        "target_master_sha256": target_master_sha256,
+        "journal_count": 1,
+        "physical_rows": 1,
+        "official_columns": 30,
+        "encoding": "CP932",
+        "bom": False,
+        "line_ending": "CRLF",
+        "expected_preflight_blockers": ["JDL-MIGRATION-TAX-UNVERIFIED"],
+        "mapping_promotion_allowed": False,
+        "production_allowed": False,
+        "NOT_FOR_PRODUCTION": True,
+    }, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    result.write_text(json.dumps({
+        "schema_version": "1",
+        "probe_case": "non_taxable_sales",
+        "result_status": "UNTESTED",
+        "comparison_pass": None,
+        "mapping_promotion_allowed": False,
+        "production_allowed": False,
+        "NOT_FOR_PRODUCTION": True,
+    }, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return candidate, manifest, result
+
+
 def compare(candidate: Path, reexport: Path) -> dict[str, object]:
     header, expected_rows = _read_rows(candidate, require_header_first=False)
     actual_header, actual_rows = _read_rows(reexport, require_header_first=False)
@@ -163,6 +227,7 @@ def _candidate_bytes(
     period_end: str,
     debit_account: tuple[str, str],
     credit_account: tuple[str, str],
+    tax_category: str = "10%",
 ) -> bytes:
     _validate_period((journal_date,), period_start, period_end)
     header = jdl_ibex_cashbook_official_journal_import_spec().column_names
@@ -170,7 +235,7 @@ def _candidate_bytes(
     row[0], row[2] = "1111", journal_date
     row[3], row[4], row[11] = debit_account[0], debit_account[1], "1100"
     row[13], row[14], row[18], row[19], row[21] = (
-        credit_account[0], credit_account[1], scope, "10%", "1100"
+        credit_account[0], credit_account[1], scope, tax_category, "1100"
     )
     row[23] = description
     stream = io.StringIO(newline="")

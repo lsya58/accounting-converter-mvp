@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, replace
 from typing import Sequence
 
@@ -20,6 +21,7 @@ from accounting_converter.domain.validation import Severity, ValidationResult
 
 from .company_settings import CompanySettingStatus
 from .jdl_migration_tax_evidence import evidence_supports_occurrence
+from .jdl_migration_review import jdl_description_replacement_key
 from .journal_route import JournalRouteResult
 
 
@@ -48,6 +50,7 @@ class JdlMigrationPreflight:
         *,
         company_status: CompanySettingStatus = CompanySettingStatus.AVAILABLE,
         verified_tax_keys: frozenset[str] = frozenset(),
+        source_sha256: str | None = None,
     ) -> JdlMigrationPreflightResult:
         errors: list[ValidationResult] = []
         if company_status is not CompanySettingStatus.AVAILABLE:
@@ -56,7 +59,9 @@ class JdlMigrationPreflight:
             errors.append(self._error("JDL-MIGRATION-EMPTY", "仕訳がありません。", "entries"))
 
         for entry in entries:
-            self._validate_entry(entry, profile, context, verified_tax_keys, errors)
+            self._validate_entry(
+                entry, profile, context, verified_tax_keys, errors, source_sha256
+            )
         return JdlMigrationPreflightResult(
             validation_results=tuple(errors),
             journal_count=len(entries),
@@ -72,6 +77,7 @@ class JdlMigrationPreflight:
         context: JdlTargetContext,
         verified_tax_keys: frozenset[str],
         errors: list[ValidationResult],
+        source_sha256: str | None,
     ) -> None:
         if not entry.is_balanced():
             errors.append(self._entry_error("JDL-MIGRATION-BALANCE", "貸借が一致しません。", "amount", entry))
@@ -79,9 +85,15 @@ class JdlMigrationPreflight:
         flags = tuple(entry.metadata.get("identifier_flags", ()))
         if len(rows) != len(flags) or not self._valid_flags(flags):
             errors.append(self._entry_error("JDL-MIGRATION-FLAGS", "仕訳のflag sequenceを安全に保持できません。", "identifier_flag", entry))
-        for row in rows:
+        for row_index, row in enumerate(rows, 1):
             description = str(row.get("description", ""))
-            if len(description) > 32:
+            if len(description) > 32 and not self._description_replacement_valid(
+                profile,
+                entry.id,
+                row_index,
+                description,
+                source_sha256,
+            ):
                 errors.append(self._entry_error("JDL-MIGRATION-DESCRIPTION-LENGTH", "摘要が32文字を超えています。", "description", entry))
             try:
                 description.encode("cp932", errors="strict")
@@ -136,6 +148,37 @@ class JdlMigrationPreflight:
                         "tax",
                         entry,
                     ))
+
+    @staticmethod
+    def _description_replacement_valid(
+        profile: ConversionProfile,
+        entry_id: str,
+        row_index: int,
+        original: str,
+        source_sha256: str | None,
+    ) -> bool:
+        if source_sha256 is None:
+            return False
+        mapping = profile.loss_policy_mappings.get(
+            jdl_description_replacement_key(entry_id, row_index)
+        )
+        if (
+            mapping is None
+            or mapping.status is not MappingStatus.USER_CONFIRMED
+            or mapping.metadata.get("policy")
+            != "HUMAN_CONFIRMED_DESCRIPTION_REPLACEMENT"
+            or mapping.metadata.get("source_sha256") != source_sha256
+            or mapping.metadata.get("original_description_sha256")
+            != hashlib.sha256(original.encode("utf-8")).hexdigest()
+            or not mapping.target_value
+            or not 1 <= len(mapping.target_value) <= 32
+        ):
+            return False
+        try:
+            mapping.target_value.encode("cp932", errors="strict")
+        except UnicodeEncodeError:
+            return False
+        return True
 
     def _validate_subaccount(
         self,

@@ -516,6 +516,64 @@ class JdlMigrationHumanReviewTests(unittest.TestCase):
             "JDL-MIGRATION-REVIEW-TAX-EVIDENCE-REQUIRED",
         )
 
+    def test_description_replacement_partial_save_and_source_staleness(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "long-description.csv"
+            raw = Path("tests/fixtures/jdl/valid_simple.csv").read_bytes()
+            raw = raw.replace("架空デモ売上".encode("cp932"), b"A" * 33)
+            source.write_bytes(raw)
+            review = self.service.derive("company-a", source)
+            item = review.descriptions[0]
+
+            self.service.save(
+                review,
+                {},
+                set(),
+                {},
+                set(),
+                set(),
+                {item.row_key: "Human replacement"},
+                {item.row_key},
+            )
+            reopened = self.service.derive("company-a", source)
+            self.assertEqual(reopened.descriptions, ())
+            mapping = self.profile_store.get(
+                self.company_store.setting.conversion_profile_id
+            ).loss_policy_mappings[item.row_key]
+            self.assertIs(mapping.status, MappingStatus.USER_CONFIRMED)
+            self.assertEqual(
+                mapping.metadata["original_description_sha256"],
+                item.original_description_sha256,
+            )
+
+            source.write_bytes(raw.replace(b"A" * 33, b"B" * 33))
+            changed = self.service.derive("company-a", source)
+            self.assertEqual(len(changed.descriptions), 1)
+
+    def test_description_replacement_rejects_length_and_cp932(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "long-description.csv"
+            source.write_bytes(
+                Path("tests/fixtures/jdl/valid_simple.csv").read_bytes().replace(
+                    "架空デモ売上".encode("cp932"), b"A" * 33
+                )
+            )
+            review = self.service.derive("company-a", source)
+            item = review.descriptions[0]
+            for replacement, code in (
+                ("", "JDL-MIGRATION-REVIEW-DESCRIPTION-INVALID"),
+                ("A" * 33, "JDL-MIGRATION-REVIEW-DESCRIPTION-INVALID"),
+                ("𠀋", "JDL-MIGRATION-REVIEW-DESCRIPTION-CP932"),
+            ):
+                with self.subTest(replacement=replacement), self.assertRaises(
+                    JdlMigrationReviewError
+                ) as caught:
+                    self.service.save(
+                        review, {}, set(), {}, set(), set(),
+                        {item.row_key: replacement}, {item.row_key},
+                    )
+                self.assertEqual(caught.exception.code, code)
+
     def test_known_evidence_with_wrong_context_remains_blocked_with_clear_reason(self):
         self.company_store.master_hash = JDL_TO_JDL_TARGET_MASTER_IDENTITY_SHA256
         self.company_store.target_accounts_override = (

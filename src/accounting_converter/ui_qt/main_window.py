@@ -867,6 +867,7 @@ class JdlMigrationHumanReviewDialog(QDialog):
         self.account_controls = {}
         self.subaccount_controls = {}
         self.tax_controls = {}
+        self.description_controls = {}
         self.setWindowTitle("JDL移行内容を確認")
         self.resize(920, 680)
         self.setMinimumSize(700, 480)
@@ -1093,6 +1094,27 @@ class JdlMigrationHumanReviewDialog(QDialog):
                 f"{item.journal_identifier}: {length_text} / "
                 "32文字を超えるため変換できません。"
             ))
+            current = QLabel(f"現在の摘要: {item.current_description}")
+            current.setWordWrap(True)
+            layout.addWidget(current)
+            replacement = QLineEdit()
+            replacement.setPlaceholderText("置換後の摘要（1〜32文字）")
+            confirmation = QCheckBox("この摘要への置換を確認しました")
+            confirmation.setEnabled(False)
+            replacement.textChanged.connect(
+                lambda text, field=replacement, check=confirmation: (
+                    check.setChecked(False),
+                    check.setEnabled(self._valid_description_replacement(text)),
+                    self._refresh_save_state(),
+                )
+            )
+            confirmation.toggled.connect(self._refresh_save_state)
+            layout.addWidget(replacement)
+            layout.addWidget(confirmation)
+            self.description_controls[item.row_key] = (
+                replacement,
+                confirmation,
+            )
         description_note = QLabel(
             "切り捨ては行いません。変換するには、確認済みの置換ルールが必要です。"
         )
@@ -1129,7 +1151,12 @@ class JdlMigrationHumanReviewDialog(QDialog):
                 *self.account_controls.values(),
                 *self.subaccount_controls.values(),
             )
-        ) + sum(check.isChecked() for check in self.tax_controls.values())
+        ) + sum(
+            check.isChecked() for check in self.tax_controls.values()
+        ) + sum(
+            check.isChecked() and self._valid_description_replacement(field.text())
+            for field, check in self.description_controls.values()
+        )
 
     def _refresh_save_state(self, _checked=None) -> None:
         confirmed = self._confirmed_count()
@@ -1137,6 +1164,7 @@ class JdlMigrationHumanReviewDialog(QDialog):
             len(self.account_controls)
             + len(self.subaccount_controls)
             + len(self.tax_controls)
+            + len(self.description_controls)
         )
         self.progress_label.setText(
             f"この画面で確認済み: {confirmed}件 / 未確認: {total - confirmed}件"
@@ -1166,19 +1194,34 @@ class JdlMigrationHumanReviewDialog(QDialog):
         tax_confirmed = {
             key for key, check in self.tax_controls.items() if check.isChecked()
         }
+        description_replacements = {
+            key: field.text()
+            for key, (field, _check) in self.description_controls.items()
+            if field.text()
+        }
+        description_confirmed = {
+            key
+            for key, (_field, check) in self.description_controls.items()
+            if check.isChecked()
+        }
         saved_count = (
-            len(account_confirmed) + len(subaccount_confirmed) + len(tax_confirmed)
+            len(account_confirmed)
+            + len(subaccount_confirmed)
+            + len(tax_confirmed)
+            + len(description_confirmed)
         )
         remaining_count = (
             len(self.account_controls)
             + len(self.subaccount_controls)
             + len(self.tax_controls)
+            + len(self.description_controls)
             - saved_count
         )
         try:
             self.controller.save_jdl_migration_review(
                 self.review, account_selections, account_confirmed,
                 subaccount_selections, subaccount_confirmed, tax_confirmed,
+                description_replacements, description_confirmed,
             )
         except Exception as exc:
             log_local_exception("jdl_migration_review_save", exc)
@@ -1199,6 +1242,16 @@ class JdlMigrationHumanReviewDialog(QDialog):
             f"{saved_count}件を保存しました。未確認{remaining_count}件が残っています。",
         )
         self.accept()
+
+    @staticmethod
+    def _valid_description_replacement(value: str) -> bool:
+        if not 1 <= len(value) <= 32:
+            return False
+        try:
+            value.encode("cp932", errors="strict")
+        except UnicodeEncodeError:
+            return False
+        return True
 
 
 class TradePartnerPolicyDialog(QDialog):

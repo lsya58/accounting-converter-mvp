@@ -11,11 +11,34 @@ from accounting_converter.tools.generate_jdl_migration_tax_probes import (
     compare,
     compare_in_reexport,
     generate,
+    generate_non_taxable_sales,
     _validate_period,
 )
 
 
 class JdlMigrationTaxProbeTests(unittest.TestCase):
+    def test_generates_non_taxable_sales_probe_with_blank_tax_category(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            candidate, manifest_path, result_path = generate_non_taxable_sales(
+                root / "probe", root
+            )
+            raw = candidate.read_bytes()
+            self.assertFalse(raw.startswith(b"\xef\xbb\xbf"))
+            self.assertTrue(raw.endswith(b"\r\n"))
+            self.assertNotIn(b"\n", raw.replace(b"\r\n", b""))
+            text = raw.decode("cp932")
+            self.assertIn("非売上,,", text)
+            self.assertIn("20260329", text)
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+            self.assertTrue(manifest["NOT_FOR_PRODUCTION"])
+            self.assertFalse(manifest["production_allowed"])
+            self.assertEqual(manifest["tax_category"], "")
+            self.assertEqual(result["result_status"], "UNTESTED")
+            with self.assertRaises(FileExistsError):
+                generate_non_taxable_sales(root / "probe", root)
+
     def test_generates_two_strict_private_probes(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
