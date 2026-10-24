@@ -10,6 +10,7 @@ Accounting Converterの資料を、読む目的ごとに案内します。製品
 - [操作ガイド](product/操作ガイド.md): 初回設定からJDL Import後確認まで
 - [よくある質問](product/よくある質問.md): 実際の運用で迷いやすい点
 - [制限事項と対応外条件](product/制限事項と対応外条件.md): BLOCKになる条件と非対応範囲
+- [開発ロードマップ](product/開発ロードマップ.md): 実案件E2E、pilot、対応拡大の優先順位
 
 ## Pilot・サポート
 
