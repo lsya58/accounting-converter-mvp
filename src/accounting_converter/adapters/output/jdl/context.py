@@ -161,11 +161,14 @@ class JdlTargetContextValidator:
                     )
                 )
         elif context.effective_taxation_method is JdlTaxationMethod.STANDARD:
-            if context.effective_input_tax_credit_method is not JdlInputTaxCreditMethod.INDIVIDUAL:
+            if context.effective_input_tax_credit_method not in {
+                JdlInputTaxCreditMethod.INDIVIDUAL,
+                JdlInputTaxCreditMethod.PROPORTIONAL,
+            }:
                 errors.append(
                     self._error(
                         "JDL-CONTEXT-TAX-SETTING-MISSING",
-                        "本則課税contextには仕入税額控除方式の確認が必要です。",
+                        "原則課税contextには仕入税額控除方式の確認が必要です。",
                         "tax_processing",
                     )
                 )
@@ -173,7 +176,7 @@ class JdlTargetContextValidator:
                 errors.append(
                     self._error(
                         "JDL-CONTEXT-TAX-SETTING-CONFLICT",
-                        "本則課税contextに簡易課税の事業区分は指定できません。",
+                        "原則課税contextに簡易課税の事業区分は指定できません。",
                         "tax_processing",
                     )
                 )
@@ -190,7 +193,7 @@ class JdlTargetContextValidator:
                 errors.append(
                     self._error(
                         "JDL-CONTEXT-TAX-SETTING-CONFLICT",
-                        "簡易課税contextに本則課税の仕入税額控除方式は指定できません。",
+                        "簡易課税contextに原則課税の仕入税額控除方式は指定できません。",
                         "tax_processing",
                     )
                 )

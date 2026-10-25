@@ -34,6 +34,12 @@ from accounting_converter.application.moneyforward_trade_partner import (
     TRADE_PARTNER_2D2C_TAXABLE_EVIDENCE_ID,
     TRADE_PARTNER_2D2C_TAXABLE_NO_SUBACCOUNT_EVIDENCE_ID,
 )
+from accounting_converter.application.moneyforward_tax_excluded_evidence import (
+    BATCH_EVIDENCE_ID as TAX_EXCLUDED_PROPORTIONAL_BATCH_EVIDENCE_ID,
+    apply_verified_tax_semantics,
+    context_is_verified as tax_excluded_proportional_context_verified,
+    evidence_for_occurrence as tax_excluded_proportional_evidence_for,
+)
 from accounting_converter.application.profile_preflight import mapping_rule_set_from_profile
 from accounting_converter.application.validation_pipeline import ValidationPipeline
 from accounting_converter.domain.conversion_profile import (
@@ -195,9 +201,13 @@ class MoneyForwardConversionWorkflow:
         )
         mapping_engine = MappingEngine(mapping_rule_set_from_profile(profile))
         mapping_result = mapping_engine.apply(entries)
+        mapped_entries = tuple(
+            apply_verified_tax_semantics(source, mapped, context)
+            for source, mapped in zip(entries, mapping_result.entries, strict=True)
+        )
         assignments, route_reasons, unsupported_journals = self._route_assignments(
             entries,
-            mapping_result.entries,
+            mapped_entries,
             profile,
             context,
             company_setting_validated=company_setting_validated,
@@ -218,7 +228,7 @@ class MoneyForwardConversionWorkflow:
             if mapping_result.unresolved_count or mapping_result.validation_results:
                 reasons.append("会社設定に未確認の対応があります。")
             else:
-                route_result = route.apply(mapping_result.entries)
+                route_result = route.apply(mapped_entries)
                 if route_result.validation_results:
                     reasons.append("未検証の仕訳構成が含まれています。")
                 else:
@@ -309,6 +319,32 @@ class MoneyForwardConversionWorkflow:
             JdlTargetContextLoader().to_json_text(context).encode("utf-8")
         ).hexdigest()
         for entry, mapped_entry in zip(entries, mapped_entries, strict=True):
+            proportional_evidence = tax_excluded_proportional_evidence_for(
+                entry, mapped_entry, context
+            )
+            if tax_excluded_proportional_context_verified(context):
+                mappings = tuple(
+                    profile.tax_mappings.get(line.tax_info.category)
+                    for line in entry.lines
+                    if line.tax_info and line.tax_info.category
+                )
+                if (
+                    proportional_evidence is None
+                    or not mappings
+                    or any(
+                        item is None
+                        or item.status is not MappingStatus.USER_CONFIRMED
+                        or item.metadata.get("jdl_evidence_id")
+                        != TAX_EXCLUDED_PROPORTIONAL_BATCH_EVIDENCE_ID
+                        or item.metadata.get("jdl_context_sha256") != context_sha256
+                        for item in mappings
+                    )
+                ):
+                    reasons.append("この税抜仕訳は実機確認済み範囲外です。")
+                    unsupported.add(entry.id)
+                else:
+                    assignments[entry.id] = proportional_evidence.profile
+                continue
             debit_count = sum(line.side is Side.DEBIT for line in entry.lines)
             credit_count = sum(line.side is Side.CREDIT for line in entry.lines)
             shape = (debit_count, credit_count)

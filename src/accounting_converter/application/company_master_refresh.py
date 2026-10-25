@@ -7,6 +7,9 @@ from pathlib import Path
 from typing import Mapping
 
 from accounting_converter.application.profile_revision import revised_profile_id
+from accounting_converter.application.jdl_master_identity import (
+    observed_master_identity_sha256,
+)
 from accounting_converter.domain.conversion_profile import ConversionProfile
 from accounting_converter.domain.mapping import (
     MappingKey,
@@ -33,6 +36,7 @@ class AccountMasterRefreshPlan:
     new_context_path: Path
     new_context_sha256: str
     items: tuple[AccountMasterRefreshItem, ...]
+    master_identity_unchanged: bool = False
 
     @property
     def reconfirmation_count(self) -> int:
@@ -74,6 +78,10 @@ class CompanyMasterRefreshService:
             new_context_path=new_context_path,
             new_context_sha256=hashlib.sha256(new_context_path.read_bytes()).hexdigest(),
             items=tuple(items),
+            master_identity_unchanged=(
+                self.company_store.target_master_identity_sha256(company_setting_id)
+                == observed_master_identity_sha256(draft.observation)
+            ),
         )
 
     def apply(
@@ -82,6 +90,8 @@ class CompanyMasterRefreshService:
         selections: Mapping[str, str],
         explicitly_confirmed: set[str],
     ) -> int:
+        if plan.master_identity_unchanged:
+            return 0
         setting = self.company_store.get(plan.company_setting_id)
         old_profile = self.profile_store.get(setting.conversion_profile_id)
         draft = self.drafts.load(plan.new_context_path)

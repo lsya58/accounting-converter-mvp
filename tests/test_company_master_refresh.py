@@ -84,9 +84,10 @@ class CompanyMasterRefreshTests(unittest.TestCase):
         new = self._draft("same", (("1001", "架空科目A"), ("1002", "架空科目B")))
         plan = self.service.plan("company-a", new)
         self.assertEqual(plan.reconfirmation_count, 0)
+        self.assertTrue(plan.master_identity_unchanged)
         self.service.apply(plan, {}, set())
         refreshed = self.companies.get("company-a")
-        self.assertNotEqual(refreshed.conversion_profile_id, "profile-1")
+        self.assertEqual(refreshed.conversion_profile_id, "profile-1")
         refreshed_profile = self.profiles.get(refreshed.conversion_profile_id)
         self.assertTrue(all(m.status is MappingStatus.USER_CONFIRMED for m in refreshed_profile.account_mappings.values()))
         original_profile = self.profiles.get("profile-1")
@@ -98,6 +99,15 @@ class CompanyMasterRefreshTests(unittest.TestCase):
             refreshed_profile.target_format_identity,
             original_profile.target_format_identity,
         )
+
+    def test_changed_master_identity_is_not_treated_as_noop(self) -> None:
+        changed = self._draft(
+            "changed",
+            (("1001", "架空科目A"), ("1002", "変更後科目")),
+        )
+        plan = self.service.plan("company-a", changed)
+        self.assertFalse(plan.master_identity_unchanged)
+        self.assertEqual(plan.reconfirmation_count, 1)
 
     def test_removed_code_changed_and_name_changed_require_confirmation(self) -> None:
         cases = (
@@ -159,10 +169,14 @@ class CompanyMasterRefreshTests(unittest.TestCase):
 
         new = self._draft(
             "long-id-refresh",
-            (("1001", "架空科目A"), ("1002", "架空科目B")),
+            (("1001", "架空科目A"), ("1002", "変更後科目")),
         )
         plan = self.service.plan("company-a", new)
-        self.service.apply(plan, {}, set())
+        self.service.apply(
+            plan,
+            {"入力科目B": "変更後科目"},
+            {"入力科目B"},
+        )
 
         refreshed = self.companies.get("company-a")
         self.assertLessEqual(

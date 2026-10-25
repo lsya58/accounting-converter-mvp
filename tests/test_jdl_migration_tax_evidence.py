@@ -30,6 +30,7 @@ from accounting_converter.application.jdl_migration_tax_evidence import (
 )
 from accounting_converter.adapters.output.jdl import (
     JdlAccountIdentity,
+    JdlInputTaxCreditMethod,
     JdlSimplifiedBusinessCategory,
     JdlSubaccountIdentity,
     JdlTargetContext,
@@ -138,6 +139,33 @@ class JdlMigrationTaxEvidenceTests(unittest.TestCase):
                 JDL_TO_JDL_TARGET_MASTER_SHA256, identity
             )),
             3,
+        )
+
+    def test_standard_proportional_context_does_not_activate_simplified_evidence(self) -> None:
+        context = self._context()
+        proportional = replace(
+            context,
+            tax_processing_mode=JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED,
+            taxation_method=JdlTaxationMethod.STANDARD,
+            input_tax_credit_method=JdlInputTaxCreditMethod.PROPORTIONAL,
+            simplified_business_category=None,
+        )
+        individual = replace(
+            proportional,
+            input_tax_credit_method=JdlInputTaxCreditMethod.INDIVIDUAL,
+        )
+        self.assertNotEqual(
+            tax_context_identity_sha256(proportional),
+            tax_context_identity_sha256(individual),
+        )
+        self.assertNotEqual(
+            tax_context_identity_sha256(proportional),
+            tax_context_identity_sha256(context),
+        )
+        self.assertIsNone(
+            evidence_for_target_context(
+                jdl_source_tax_key("売二種", "10%", ""), proportional
+            )
         )
 
     def test_unrelated_account_and_subaccount_changes_preserve_evidence(self) -> None:

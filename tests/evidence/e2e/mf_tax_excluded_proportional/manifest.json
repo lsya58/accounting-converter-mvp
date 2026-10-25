@@ -1,0 +1,35 @@
+{
+  "schema_version": "1",
+  "status": "VERIFIED_BY_REAL_IMPORT_AND_REEXPORT",
+  "route": "MF_TO_JDL",
+  "product": "JDL IBEX 出納帳",
+  "version": "35.5",
+  "tax_context": {
+    "tax_processing": "課税",
+    "accounting": "税抜",
+    "taxation_method": "原則課税",
+    "input_tax_credit_method": "一括比例配分方式"
+  },
+  "journal_count": 7,
+  "physical_row_count": 8,
+  "unexpected_change_count": 0,
+  "candidate_sha256": "a6582ccc0b29c3e33cfde820ac5548dcaa7e04d7b908a66d64ab5774fa734717",
+  "reexport_sha256": "ecd1f0f948be6bf7d862c1cbb45ea0afe6f972afd3acf86344e0cb4bd0f19a15",
+  "evidence_ids": [
+    "EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P01-2D2C-PURCHASE-10-001",
+    "EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P02-OUT-3231-1311-SUB-001",
+    "EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P03-OUT-3241-1311-SUB-001",
+    "EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P04-PARTNER-001",
+    "EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P05-8471-3181-001",
+    "EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P06-OUT-1311-SUB-3161-001",
+    "EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P07-8481-3181-001"
+  ],
+  "normalizations": [
+    "blank voucher to zero",
+    "blank department code to zero",
+    "blank opposite tax amount to zero",
+    "target-master account abbreviation",
+    "numeric subaccount code leading-zero suppression"
+  ],
+  "raw_private_data_in_repository": false
+}

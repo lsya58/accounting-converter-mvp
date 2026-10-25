@@ -247,3 +247,13 @@ Money Forward実機の仕訳帳Exportでは、通常の1D1Cでも借貸両側に
 MF source literalとJDL target semanticsは区別する。`対象外`は文字列一致だけで無視せず、exact JDL Contextに対するUSER_CONFIRMED mapping、専用Evidence ID、Context hashが一致する場合だけtarget tax category/scope blankへ変換できる。JDL側の限定round-trip Evidenceは、課税sideだけにtax fieldsを出力し、opposite sideをblankにする表現を支持する。
 
 旧formal workflowのsource-side `tax_lines == 1`条件は、反対側blankのsynthetic test helperとJDL probe形状に由来し、MF実機Export Evidenceとは不整合だった。formal routeは全source tax mappingを検証した後、MappingEngine適用後のtarget semantic shapeを評価する。実効taxが複数、unknown/unconfirmed/stale mapping、Context hashまたはEvidence scope不一致は引き続きBLOCKする。
+
+## Tax-excluded proportional-allocation probe plan (2026-10-25)
+
+privateの13-journal READY-only候補を、顧客値をtracked documentへ記録せず構造監査した。正式ContextはJDL IBEX 出納帳35.5、課税、税抜、原則課税、一括比例配分方式である。既存の税込・個別対応方式Evidenceは流用しない。
+
+13 journals / 14 physical rowsは、shape、tax side、target account/subaccount構造、取引先摘要との共存をexact dependencyとして7 patternへ集約した。7 journalsを1回でImportするprivate batch probeを用意する。real JDL Import・同期間re-export・strict comparisonが完了するまではEvidence登録もformal READY化も行わない。
+
+予定Evidence dependencyは、route、JDL製品/version、Tax Context identity、source tax identity、target tax fields、side、rate、shape、relevant account/subaccount、optional coexistence、opposite-side blank semanticsである。既知でないflag・grouping・税額・税入力方法の正規化は許容しない。
+
+同probeは正式target会社へのreal Importと同期間re-exportに成功した。7 journals / 8 physical rowsについてmissing/extraおよびunexpected semantic changeは0だった。これにより、課税・税抜・原則課税・一括比例配分方式のP01～P07 exact scopeを`VERIFIED_BY_REAL_IMPORT_AND_REEXPORT`とした。JDLによる略称、数値補助コードのzero抑制、blank数値fieldの0補完はraw差分として保持し、このscope内だけcanonical normalizationとして扱う。

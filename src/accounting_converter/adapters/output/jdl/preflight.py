@@ -74,6 +74,12 @@ EVIDENCE_IDS = {
     JdlEvidenceProfile.TAX_EXCLUDED_1111: (
         "EVID-JDL-GENERATOR-1111-TAX-EXCLUSIVE-001"
     ),
+    JdlEvidenceProfile.MF_TAX_EXCLUDED_PROPORTIONAL_1111: (
+        "EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-BATCH-001"
+    ),
+    JdlEvidenceProfile.MF_NO_TAX_PROPORTIONAL_1111: (
+        "EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-BATCH-001"
+    ),
     JdlEvidenceProfile.COMPOUND_1D3C: (
         "EVID-JDL-GENERATOR-COMPOUND-1110-1100-1101-001"
     ),
@@ -89,6 +95,9 @@ EVIDENCE_IDS = {
     JdlEvidenceProfile.COMPOUND_2D2C_PURCHASE_10_TAXABLE_NO_SUBACCOUNT: (
         "EVID-JDL-COMPOUND-2D2C-PURCHASE-10-TAXABLE-"
         "NO-SUBACCOUNT-ROUNDTRIP-001"
+    ),
+    JdlEvidenceProfile.MF_COMPOUND_2D2C_TAX_EXCLUDED_PROPORTIONAL: (
+        "EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P01-2D2C-PURCHASE-10-001"
     ),
     JdlEvidenceProfile.COMPOUND_2D1C_LINE_DESCRIPTIONS: (
         "EVID-JDL-COMPOUND-2D1C-PER-ROW-DESCRIPTION-001"
@@ -110,6 +119,16 @@ MULTIGROUP_EVIDENCE_ID = "EVID-JDL-GENERATOR-MULTIGROUP-SIMPLE-COMPOUND-001"
 SIMPLE_PLUS_SIMPLE_EVIDENCE_ID = "EVID-JDL-SIMPLE-PLUS-SIMPLE-RUNTIME-001"
 MIXED_BATCH_EVIDENCE_ID = "EVID-JDL-MIXED-BATCH-RUNTIME-001"
 SIX_TAX_BATCH_EVIDENCE_ID = "EVID-JDL-MF-SIX-TAX-BATCH-FORMAL-E2E-001"
+MF_TAX_EXCLUDED_PROPORTIONAL_13_SEQUENCE = (
+    JdlEvidenceProfile.MF_COMPOUND_2D2C_TAX_EXCLUDED_PROPORTIONAL,
+    JdlEvidenceProfile.MF_NO_TAX_PROPORTIONAL_1111,
+    JdlEvidenceProfile.MF_NO_TAX_PROPORTIONAL_1111,
+    JdlEvidenceProfile.MF_TAX_EXCLUDED_PROPORTIONAL_1111,
+    *(JdlEvidenceProfile.MF_TAX_EXCLUDED_PROPORTIONAL_1111 for _ in range(3)),
+    JdlEvidenceProfile.MF_NO_TAX_PROPORTIONAL_1111,
+    JdlEvidenceProfile.MF_NO_TAX_PROPORTIONAL_1111,
+    *(JdlEvidenceProfile.MF_TAX_EXCLUDED_PROPORTIONAL_1111 for _ in range(4)),
+)
 MIXED_BATCH_PROFILE_SEQUENCE = (
     JdlEvidenceProfile.BASIC_1111,
     JdlEvidenceProfile.BASIC_1111,
@@ -282,6 +301,7 @@ class JdlOutputPreflight:
             JdlEvidenceProfile.COMPOUND_2D2C_LINE_DESCRIPTIONS,
             JdlEvidenceProfile.COMPOUND_2D2C_PURCHASE_10_TAXABLE,
             JdlEvidenceProfile.COMPOUND_2D2C_PURCHASE_10_TAXABLE_NO_SUBACCOUNT,
+            JdlEvidenceProfile.MF_COMPOUND_2D2C_TAX_EXCLUDED_PROPORTIONAL,
             JdlEvidenceProfile.COMPOUND_2D1C_LINE_DESCRIPTIONS,
             JdlEvidenceProfile.COMPOUND_2D3C_LINE_DESCRIPTIONS,
             JdlEvidenceProfile.COMPOUND_4D6C_LINE_DESCRIPTIONS,
@@ -331,6 +351,7 @@ class JdlOutputPreflight:
             JdlEvidenceProfile.COMPOUND_2D2C_LINE_DESCRIPTIONS,
             JdlEvidenceProfile.COMPOUND_2D2C_PURCHASE_10_TAXABLE,
             JdlEvidenceProfile.COMPOUND_2D2C_PURCHASE_10_TAXABLE_NO_SUBACCOUNT,
+            JdlEvidenceProfile.MF_COMPOUND_2D2C_TAX_EXCLUDED_PROPORTIONAL,
             JdlEvidenceProfile.COMPOUND_2D1C_LINE_DESCRIPTIONS,
             JdlEvidenceProfile.COMPOUND_2D3C_LINE_DESCRIPTIONS,
             JdlEvidenceProfile.COMPOUND_4D6C_LINE_DESCRIPTIONS,
@@ -342,6 +363,7 @@ class JdlOutputPreflight:
             JdlEvidenceProfile.COMPOUND_2D2C_LINE_DESCRIPTIONS: (2, 2, 2),
             JdlEvidenceProfile.COMPOUND_2D2C_PURCHASE_10_TAXABLE: (2, 2, 2),
             JdlEvidenceProfile.COMPOUND_2D2C_PURCHASE_10_TAXABLE_NO_SUBACCOUNT: (2, 2, 2),
+            JdlEvidenceProfile.MF_COMPOUND_2D2C_TAX_EXCLUDED_PROPORTIONAL: (2, 2, 2),
             JdlEvidenceProfile.COMPOUND_2D1C_LINE_DESCRIPTIONS: (2, 1, 2),
             JdlEvidenceProfile.COMPOUND_2D3C_LINE_DESCRIPTIONS: (2, 3, 3),
             JdlEvidenceProfile.COMPOUND_4D6C_LINE_DESCRIPTIONS: (4, 6, 6),
@@ -369,7 +391,25 @@ class JdlOutputPreflight:
         for line in entry.lines:
             self._validate_account(line, entry, errors)
             self._validate_amount(line.amount, entry, errors)
-        if evidence in {
+        if evidence is JdlEvidenceProfile.MF_COMPOUND_2D2C_TAX_EXCLUDED_PROPORTIONAL:
+            assert physical_rows is not None
+            taxed_rows = tuple(
+                row for row in physical_rows
+                if row.debit is not None and self._nonempty_tax(row.debit.tax_info)
+            )
+            if len(taxed_rows) != 1 or taxed_rows[0].credit is None:
+                errors.append(self._error("JDL-OUT-COMPOUND-TAX-ROW", "課税対象行がEvidenceと一致しません。", "tax", entry))
+            else:
+                self._validate_tax(
+                    taxed_rows[0].debit, taxed_rows[0].credit, entry,
+                    included=False, errors=errors,
+                    allow_opposite_subaccount=True,
+                    expected_credit_method="PROPORTIONAL",
+                )
+            for row in physical_rows:
+                self._validate_optional_subaccount(row.debit, entry, errors)
+                self._validate_optional_subaccount(row.credit, entry, errors)
+        elif evidence in {
             JdlEvidenceProfile.COMPOUND_2D2C_PURCHASE_10_TAXABLE,
             JdlEvidenceProfile.COMPOUND_2D2C_PURCHASE_10_TAXABLE_NO_SUBACCOUNT,
         }:
@@ -474,6 +514,22 @@ class JdlOutputPreflight:
             self._validate_department(debit, credit, entry, errors)
         elif evidence is JdlEvidenceProfile.TAX_INCLUDED_1111:
             self._validate_tax(debit, credit, entry, included=True, errors=errors)
+        elif evidence is JdlEvidenceProfile.MF_TAX_EXCLUDED_PROPORTIONAL_1111:
+            self._validate_tax(
+                debit, credit, entry, included=False, errors=errors,
+                allow_opposite_subaccount=True,
+                expected_credit_method="PROPORTIONAL",
+            )
+            self._validate_optional_subaccount(debit, entry, errors)
+            self._validate_optional_subaccount(credit, entry, errors)
+        elif evidence is JdlEvidenceProfile.MF_NO_TAX_PROPORTIONAL_1111:
+            self._require_tax_mode(JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED, entry, errors)
+            if self.context.effective_input_tax_credit_method.value != "PROPORTIONAL":
+                errors.append(self._error("JDL-OUT-TAX-COMPANY-PROFILE", "一括比例配分方式の確認が必要です。", "tax_processing", entry))
+            if self._nonempty_tax(debit.tax_info) or self._nonempty_tax(credit.tax_info):
+                errors.append(self._error("JDL-OUT-OPPOSITE-TAX", "対象外mapping後の税fieldはblankである必要があります。", "tax", entry))
+            self._validate_optional_subaccount(debit, entry, errors)
+            self._validate_optional_subaccount(credit, entry, errors)
         elif evidence is JdlEvidenceProfile.TAX_PURCHASE_10_SUBACCOUNT_INCLUDED_1111:
             self._validate_tax(
                 debit,
@@ -632,6 +688,8 @@ class JdlOutputPreflight:
         expected_category: str = TAX_CATEGORY_TEN_PERCENT,
         expected_reduced_rate: bool = False,
         allow_tax_side_subaccount: bool = False,
+        allow_opposite_subaccount: bool = False,
+        expected_credit_method: str = "INDIVIDUAL",
         expected_mapping_evidence_id: str | None = None,
     ) -> None:
         expected_mode = (
@@ -640,14 +698,17 @@ class JdlOutputPreflight:
             else JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED
         )
         self._require_tax_mode(expected_mode, entry, errors)
-        if not self.context.standard_taxation_confirmed or not self.context.individual_credit_method_confirmed:
-            errors.append(self._error("JDL-OUT-TAX-COMPANY-PROFILE", "原則課税・個別対応方式の確認が必要です。", "tax_processing", entry))
+        if (
+            not self.context.standard_taxation_confirmed
+            or self.context.effective_input_tax_credit_method.value != expected_credit_method
+        ):
+            errors.append(self._error("JDL-OUT-TAX-COMPANY-PROFILE", "原則課税の仕入税額控除方式がEvidenceと一致しません。", "tax_processing", entry))
         tax_line = debit if tax_side is Side.DEBIT else credit
         opposite_line = credit if tax_side is Side.DEBIT else debit
         if (
             debit.department
             or credit.department
-            or opposite_line.sub_account
+            or (opposite_line.sub_account and not allow_opposite_subaccount)
             or (tax_line.sub_account and not allow_tax_side_subaccount)
         ):
             errors.append(self._error("JDL-OUT-TAX-COMBINATION", "検証済み税profileに補助・部門を併用できません。", "evidence_profile", entry))
@@ -747,6 +808,8 @@ class JdlOutputPreflight:
             and len({entry.date for entry in entries}) == len(entries)
         )
         if experimental_six_tax_batch:
+            return
+        if profiles == MF_TAX_EXCLUDED_PROPORTIONAL_13_SEQUENCE:
             return
         if len(profiles) == 1:
             return
@@ -862,6 +925,12 @@ class JdlOutputPreflight:
             ),
             None,
         )
+
+    def _validate_optional_subaccount(
+        self, line: JournalLine | None, entry: JournalEntry, errors: list[ValidationResult]
+    ) -> None:
+        if line is not None and line.sub_account and self._subaccount_identity(line) is None:
+            errors.append(self._error("JDL-OUT-SUBACCOUNT-MASTER", "補助科目が確認済みmasterと一致しません。", "sub_account", entry))
 
     def _department_identity(self, value: str | None) -> JdlDepartmentIdentity | None:
         if not value:

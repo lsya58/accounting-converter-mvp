@@ -856,7 +856,14 @@ class SettingsDialog(QDialog):
                 context.simplified_business_category, "事業区分未確認"
             )
             return f"JDL税設定: 課税 / {processing} / 簡易課税 / {category} / 確認済み"
-        return f"JDL税設定: 課税 / {processing} / 本則課税 / 個別対応方式 / 確認済み"
+        credit_labels = {
+            JdlInputTaxCreditMethod.INDIVIDUAL: "個別対応方式",
+            JdlInputTaxCreditMethod.PROPORTIONAL: "一括比例配分方式",
+        }
+        credit_method = credit_labels.get(
+            context.effective_input_tax_credit_method, "控除方式未確認"
+        )
+        return f"JDL税設定: 課税 / {processing} / 原則課税 / {credit_method} / 確認済み"
 
 
 class JdlMigrationHumanReviewDialog(QDialog):
@@ -2245,11 +2252,14 @@ class JdlTaxContextConfirmationDialog(QDialog):
             "税抜", JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED.value
         )
         self.taxation_method = WheelSafeComboBox()
-        self.taxation_method.addItem("本則課税", JdlTaxationMethod.STANDARD.value)
+        self.taxation_method.addItem("原則課税", JdlTaxationMethod.STANDARD.value)
         self.taxation_method.addItem("簡易課税", JdlTaxationMethod.SIMPLIFIED.value)
         self.credit_method = WheelSafeComboBox()
         self.credit_method.addItem(
             "個別対応方式", JdlInputTaxCreditMethod.INDIVIDUAL.value
+        )
+        self.credit_method.addItem(
+            "一括比例配分方式", JdlInputTaxCreditMethod.PROPORTIONAL.value
         )
         self.business_category = WheelSafeComboBox()
         for label, value in (
@@ -2379,6 +2389,11 @@ class JdlTaxContextConfirmationDialog(QDialog):
         )
         if method_index >= 0:
             self.taxation_method.setCurrentIndex(method_index)
+        credit_index = self.credit_method.findData(
+            context.effective_input_tax_credit_method.value
+        )
+        if credit_index >= 0:
+            self.credit_method.setCurrentIndex(credit_index)
         if context.simplified_business_category is not None:
             category_index = self.business_category.findData(
                 context.simplified_business_category.value

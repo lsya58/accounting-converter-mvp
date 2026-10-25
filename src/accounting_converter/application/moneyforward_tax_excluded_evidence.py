@@ -1,0 +1,127 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, replace
+from decimal import Decimal, ROUND_DOWN
+
+from accounting_converter.adapters.output.jdl import (
+    JdlContextConfirmationState,
+    JdlContextProvenance,
+    JdlEvidenceProfile,
+    JdlInputTaxCreditMethod,
+    JdlTargetContext,
+    JdlTaxationMethod,
+)
+from accounting_converter.domain.journal import JournalEntry, Side
+from accounting_converter.profiles.jdl_official import JdlTaxProcessingMode
+
+
+BATCH_EVIDENCE_ID = "EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-BATCH-001"
+
+
+@dataclass(frozen=True)
+class MfTaxExcludedPatternEvidence:
+    evidence_id: str
+    account_signature: tuple[tuple[str, str, str, str], ...]
+    profile: JdlEvidenceProfile
+    trade_partner: bool = False
+
+
+EVIDENCE = (
+    MfTaxExcludedPatternEvidence("EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P01-2D2C-PURCHASE-10-001", (("DEBIT","3231","","対象外"),("CREDIT","1311","0002","対象外"),("DEBIT","8681","","課税仕入 10%"),("CREDIT","1311","0002","対象外")), JdlEvidenceProfile.MF_COMPOUND_2D2C_TAX_EXCLUDED_PROPORTIONAL),
+    MfTaxExcludedPatternEvidence("EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P02-OUT-3231-1311-SUB-001", (("DEBIT","3231","","対象外"),("CREDIT","1311","0002","対象外")), JdlEvidenceProfile.MF_NO_TAX_PROPORTIONAL_1111),
+    MfTaxExcludedPatternEvidence("EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P03-OUT-3241-1311-SUB-001", (("DEBIT","3241","","対象外"),("CREDIT","1311","0002","対象外")), JdlEvidenceProfile.MF_NO_TAX_PROPORTIONAL_1111),
+    MfTaxExcludedPatternEvidence("EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P04-PARTNER-001", (("DEBIT","8691","","課税仕入 10%"),("CREDIT","1311","0002","対象外")), JdlEvidenceProfile.MF_TAX_EXCLUDED_PROPORTIONAL_1111, True),
+    MfTaxExcludedPatternEvidence("EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P05-8471-3181-001", (("DEBIT","8471","","課税仕入 10%"),("CREDIT","3181","","対象外")), JdlEvidenceProfile.MF_TAX_EXCLUDED_PROPORTIONAL_1111),
+    MfTaxExcludedPatternEvidence("EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P06-OUT-1311-SUB-3161-001", (("DEBIT","1311","0002","対象外"),("CREDIT","3161","","対象外")), JdlEvidenceProfile.MF_NO_TAX_PROPORTIONAL_1111),
+    MfTaxExcludedPatternEvidence("EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P07-8481-3181-001", (("DEBIT","8481","","課税仕入 10%"),("CREDIT","3181","","対象外")), JdlEvidenceProfile.MF_TAX_EXCLUDED_PROPORTIONAL_1111),
+)
+
+
+def context_is_verified(context: JdlTargetContext) -> bool:
+    return bool(
+        context.product == "JDL IBEX 出納帳"
+        and context.version == "35.5"
+        and context.tax_processing_mode is JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED
+        and context.effective_taxation_method is JdlTaxationMethod.STANDARD
+        and context.effective_input_tax_credit_method is JdlInputTaxCreditMethod.PROPORTIONAL
+        and context.confirmation_state is JdlContextConfirmationState.CONFIRMED
+        and context.provenance is JdlContextProvenance.USER_CONFIRMED_RUNTIME_SNAPSHOT
+    )
+
+
+def evidence_for_occurrence(
+    source: JournalEntry, mapped: JournalEntry, context: JdlTargetContext
+) -> MfTaxExcludedPatternEvidence | None:
+    if not context_is_verified(context):
+        return None
+    signature = tuple(
+        (
+            source_line.side.value,
+            _account_code(mapped_line.account, context),
+            _subaccount_code(mapped_line.account, mapped_line.sub_account, context),
+            source_line.tax_info.category if source_line.tax_info else "",
+        )
+        for source_line, mapped_line in zip(source.lines, mapped.lines, strict=True)
+    )
+    has_partner = any(
+        bool(line.metadata.get("moneyforward_trade_partner")) for line in source.lines
+    )
+    return next(
+        (
+            item for item in EVIDENCE
+            if item.account_signature == signature and item.trade_partner == has_partner
+        ),
+        None,
+    )
+
+
+def apply_verified_tax_semantics(
+    source: JournalEntry,
+    mapped: JournalEntry,
+    context: JdlTargetContext,
+) -> JournalEntry:
+    evidence = evidence_for_occurrence(source, mapped, context)
+    if evidence is None:
+        return mapped
+    lines = []
+    for source_line, mapped_line in zip(source.lines, mapped.lines, strict=True):
+        if source_line.tax_info and source_line.tax_info.category == "課税仕入 10%":
+            info = replace(
+                mapped_line.tax_info,
+                category="10%",
+                rate=Decimal("10"),
+                tax_inclusion="INCLUDED",
+                tax_amount=(mapped_line.amount * Decimal("10") / Decimal("110")).quantize(
+                    Decimal("1"), rounding=ROUND_DOWN
+                ),
+                metadata={
+                    **mapped_line.tax_info.metadata,
+                    "jdl_tax_scope": "仕　入",
+                    "jdl_tax_input_method": "内税",
+                    "jdl_evidence_id": evidence.evidence_id,
+                },
+            )
+            lines.append(replace(mapped_line, tax_info=info))
+        else:
+            lines.append(replace(mapped_line, tax_info=None))
+    return replace(mapped, lines=lines)
+
+
+def _account_code(value: str | None, context: JdlTargetContext) -> str:
+    item = next((item for item in context.account_master if item.mapping_value == value), None)
+    return item.target_master_code if item else ""
+
+
+def _subaccount_code(
+    account: str | None, value: str | None, context: JdlTargetContext
+) -> str:
+    if not value:
+        return ""
+    item = next(
+        (
+            item for item in context.subaccounts
+            if item.parent_account == account and item.mapping_value == value
+        ),
+        None,
+    )
+    return item.output_code.zfill(4) if item else ""

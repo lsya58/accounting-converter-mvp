@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -11,6 +12,9 @@ from accounting_converter.application.company_tax_context_confirmation import (
     CompanyTaxContextConfirmationError,
     CompanyTaxContextConfirmationService,
     JdlTaxContextSelection,
+)
+from accounting_converter.application.company_master_refresh import (
+    CompanyMasterRefreshService,
 )
 from accounting_converter.adapters.output.jdl import (
     JdlInputTaxCreditMethod,
@@ -263,6 +267,82 @@ class CompanyTaxContextConfirmationTests(unittest.TestCase):
             value.status is MappingStatus.UNRESOLVED
             for value in profile.tax_mappings.values()
         ))
+
+    def test_tax_excluded_standard_proportional_context_persists(self) -> None:
+        context = self.service.confirm(
+            "company-1",
+            selection=JdlTaxContextSelection(
+                tax_processing_mode=JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED,
+                taxation_method=JdlTaxationMethod.STANDARD,
+                input_tax_credit_method=JdlInputTaxCreditMethod.PROPORTIONAL,
+            ),
+            confirmed=True,
+        )
+        reopened = JdlTargetContextLoader().load(
+            self.companies.context_path(self.companies.get("company-1"))
+        )
+
+        self.assertEqual(reopened, context)
+        self.assertIs(
+            reopened.tax_processing_mode,
+            JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED,
+        )
+        self.assertIs(
+            reopened.effective_input_tax_credit_method,
+            JdlInputTaxCreditMethod.PROPORTIONAL,
+        )
+        self.assertTrue(reopened.standard_taxation_confirmed)
+        self.assertFalse(reopened.individual_credit_method_confirmed)
+        self.assertIsNone(reopened.simplified_business_category)
+
+    def test_legacy_context_without_explicit_enums_loads_as_individual(self) -> None:
+        context = self.service.confirm_taxable_included(
+            "company-1", confirmed=True
+        )
+        path = self.companies.context_path(self.companies.get("company-1"))
+        payload = json.loads(JdlTargetContextLoader().to_json_text(context))
+        payload["schema_version"] = "1"
+        payload.pop("taxation_method")
+        payload.pop("input_tax_credit_method")
+        payload.pop("simplified_business_category")
+        path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+        reopened = JdlTargetContextLoader().load(path)
+        self.assertIs(
+            reopened.effective_taxation_method, JdlTaxationMethod.STANDARD
+        )
+        self.assertIs(
+            reopened.effective_input_tax_credit_method,
+            JdlInputTaxCreditMethod.INDIVIDUAL,
+        )
+
+    def test_same_canonical_master_refresh_preserves_confirmed_tax_context(self) -> None:
+        confirmed = self.service.confirm(
+            "company-1",
+            selection=JdlTaxContextSelection(
+                tax_processing_mode=JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED,
+                taxation_method=JdlTaxationMethod.STANDARD,
+                input_tax_credit_method=JdlInputTaxCreditMethod.PROPORTIONAL,
+            ),
+            confirmed=True,
+        )
+        before = self.companies.get("company-1")
+        plan = CompanyMasterRefreshService(
+            self.companies, self.profiles
+        ).plan("company-1", self.draft)
+        self.assertTrue(plan.master_identity_unchanged)
+
+        count = CompanyMasterRefreshService(
+            self.companies, self.profiles
+        ).apply(plan, {}, set())
+        after = self.companies.get("company-1")
+        reopened = JdlTargetContextLoader().load(
+            self.companies.context_path(after)
+        )
+        self.assertEqual(count, 0)
+        self.assertEqual(after.conversion_profile_id, before.conversion_profile_id)
+        self.assertEqual(after.context_fingerprint, before.context_fingerprint)
+        self.assertEqual(reopened, confirmed)
 
     def test_printed_formal_name_and_short_name_remain_distinct(self) -> None:
         context = self.service.confirm_taxable_included(

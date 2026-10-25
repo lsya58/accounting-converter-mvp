@@ -104,10 +104,45 @@ class JdlTaxContextConfirmationDialogTests(unittest.TestCase):
             JdlSimplifiedBusinessCategory.FIRST,
         )
 
+    def test_standard_proportional_method_is_visible_and_submitted(self) -> None:
+        controller = _Controller(succeeds=True)
+        dialog = JdlTaxContextConfirmationDialog(controller, "company-1")
+        proportional = dialog.credit_method.findData(
+            JdlInputTaxCreditMethod.PROPORTIONAL.value
+        )
+        self.assertGreaterEqual(proportional, 0)
+        dialog.accounting_method.setCurrentIndex(1)
+        dialog.credit_method.setCurrentIndex(proportional)
+        dialog.confirmed.setChecked(True)
+        dialog.save_button.click()
+
+        self.assertIs(
+            controller.selection["tax_processing_mode"],
+            JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED,
+        )
+        self.assertIs(
+            controller.selection["taxation_method"],
+            JdlTaxationMethod.STANDARD,
+        )
+        self.assertIs(
+            controller.selection["input_tax_credit_method"],
+            JdlInputTaxCreditMethod.PROPORTIONAL,
+        )
+
+    def test_changing_credit_method_resets_confirmation(self) -> None:
+        dialog = JdlTaxContextConfirmationDialog(
+            _Controller(succeeds=True), "company-1"
+        )
+        dialog.confirmed.setChecked(True)
+        dialog.credit_method.setCurrentIndex(1)
+        self.assertFalse(dialog.confirmed.isChecked())
+        self.assertFalse(dialog.save_button.isEnabled())
+
     def test_confirmed_context_reopens_checked_and_change_resets_confirmation(self) -> None:
         context = SimpleNamespace(
             tax_processing_mode=JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED,
             effective_taxation_method=JdlTaxationMethod.SIMPLIFIED,
+            effective_input_tax_credit_method=JdlInputTaxCreditMethod.UNCONFIRMED,
             simplified_business_category=JdlSimplifiedBusinessCategory.FIRST,
             confirmation_state=JdlContextConfirmationState.CONFIRMED,
             provenance=JdlContextProvenance.USER_CONFIRMED_RUNTIME_SNAPSHOT,
@@ -135,6 +170,7 @@ class JdlTaxContextConfirmationDialogTests(unittest.TestCase):
         context = SimpleNamespace(
             tax_processing_mode=JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED,
             effective_taxation_method=JdlTaxationMethod.SIMPLIFIED,
+            effective_input_tax_credit_method=JdlInputTaxCreditMethod.UNCONFIRMED,
             simplified_business_category=JdlSimplifiedBusinessCategory.FIRST,
             confirmation_state=JdlContextConfirmationState.UNCONFIRMED,
             provenance=JdlContextProvenance.UNCONFIRMED,

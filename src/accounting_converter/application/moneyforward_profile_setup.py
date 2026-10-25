@@ -22,6 +22,10 @@ from accounting_converter.application.jdl_master_observation import (
     JdlMasterObservationService,
     JdlPrintedAccount,
 )
+from accounting_converter.application.moneyforward_tax_excluded_evidence import (
+    BATCH_EVIDENCE_ID as TAX_EXCLUDED_PROPORTIONAL_BATCH_EVIDENCE_ID,
+    context_is_verified as tax_excluded_proportional_context_verified,
+)
 from accounting_converter.domain.conversion_profile import ConversionProfile
 from accounting_converter.domain.mapping import (
     MappingKey,
@@ -374,7 +378,9 @@ class MoneyForwardProfileSetupService:
                     profile_id,
                     MappingKey(MappingType.TAX_CATEGORY, source_value),
                     item.target_value,
-                    metadata=self._tax_mapping_metadata(item, tax_context_sha256),
+                    metadata=self._tax_mapping_metadata(
+                        item, tax_context_sha256, analysis.context
+                    ),
                 )
             saved = self.profile_store.get(profile_id)
             runtime = (
@@ -455,7 +461,7 @@ class MoneyForwardProfileSetupService:
             profile_id,
             MappingKey(MappingType.TAX_CATEGORY, source_value),
             item.target_value,
-            metadata=self._tax_mapping_metadata(item, context_sha256),
+            metadata=self._tax_mapping_metadata(item, context_sha256, context),
             allow_empty_tax_target=True,
         )
 
@@ -472,7 +478,7 @@ class MoneyForwardProfileSetupService:
     def _tax_context_compatible(context: JdlTargetContext) -> bool:
         from accounting_converter.profiles.jdl_official import JdlTaxProcessingMode
 
-        return bool(
+        return tax_excluded_proportional_context_verified(context) or bool(
             context.product == "JDL IBEX 出納帳"
             and context.version == "35.5"
             and context.tax_processing_mode
@@ -491,15 +497,26 @@ class MoneyForwardProfileSetupService:
     ) -> tuple[TaxMappingSetupItem, ...]:
         if not cls._tax_context_compatible(context):
             return ()
-        specs = {
+        if tax_excluded_proportional_context_verified(context):
+            specs = {
+                MF_PURCHASE_TAX_10: (
+                    "10%", "仕入 / 10%（税抜）", "仕　入",
+                    TAX_EXCLUDED_PROPORTIONAL_BATCH_EVIDENCE_ID,
+                ),
+                "対象外": (
+                    "", "対象外", "", TAX_EXCLUDED_PROPORTIONAL_BATCH_EVIDENCE_ID,
+                ),
+            }
+        else:
+            specs = {
             MF_PURCHASE_TAX_10: ("10%", "仕入 / 10%", "仕　入", EVIDENCE_ID_MF_JDL_PURCHASE_10_ROUNDTRIP),
             "課税売上 10%": ("10%", "売上 / 10%", "売一種", "EVID-JDL-MF-TAX-SALES-10-SUBACCOUNT-ROUNDTRIP-001"),
             "課税仕入 (軽)8%": ("軽減8%", "仕入 / 軽減8%", "仕　入", "EVID-JDL-MF-TAX-PURCHASE-REDUCED-8-SUBACCOUNT-ROUNDTRIP-001"),
             "課税売上 (軽)8%": ("軽減8%", "売上 / 軽減8%", "売一種", "EVID-JDL-MF-TAX-SALES-REDUCED-8-SUBACCOUNT-ROUNDTRIP-001"),
             "非課税仕入": ("", "非課税仕入", "非仕入", "EVID-JDL-MF-TAX-NONTAXABLE-PURCHASE-SUBACCOUNT-ROUNDTRIP-001"),
             "非課税売上": ("", "非課税売上", "非売上", "EVID-JDL-MF-TAX-NONTAXABLE-SALES-SUBACCOUNT-ROUNDTRIP-001"),
-            "対象外": ("", "対象外", "", "EVID-JDL-MF-TAX-OUT-OF-SCOPE-SUBACCOUNT-ROUNDTRIP-001"),
-        }
+                "対象外": ("", "対象外", "", "EVID-JDL-MF-TAX-OUT-OF-SCOPE-SUBACCOUNT-ROUNDTRIP-001"),
+            }
         return tuple(
             TaxMappingSetupItem(source, target, display, scope, evidence)
             for source in source_values
@@ -524,11 +541,15 @@ class MoneyForwardProfileSetupService:
     def _tax_mapping_metadata(
         item: TaxMappingSetupItem,
         context_sha256: str | None = None,
+        context: JdlTargetContext | None = None,
     ) -> dict[str, str]:
         return {
             "jdl_tax_scope": item.target_scope,
             "jdl_evidence_id": item.evidence_id,
-            "jdl_tax_processing_mode": "TAXABLE_TAX_INCLUDED",
+            "jdl_tax_processing_mode": (
+                context.tax_processing_mode.value
+                if context is not None else "TAXABLE_TAX_INCLUDED"
+            ),
             **(
                 {
                     "setup_context_sha256": context_sha256,
