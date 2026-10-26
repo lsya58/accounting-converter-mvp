@@ -202,7 +202,7 @@ class MoneyForwardConversionWorkflow:
         mapping_engine = MappingEngine(mapping_rule_set_from_profile(profile))
         mapping_result = mapping_engine.apply(entries)
         mapped_entries = tuple(
-            apply_verified_tax_semantics(source, mapped, context)
+            apply_verified_tax_semantics(source, mapped, context, profile)
             for source, mapped in zip(entries, mapping_result.entries, strict=True)
         )
         (
@@ -327,7 +327,7 @@ class MoneyForwardConversionWorkflow:
         ).hexdigest()
         for entry, mapped_entry in zip(entries, mapped_entries, strict=True):
             proportional_evidence = tax_excluded_proportional_evidence_for(
-                entry, mapped_entry, context
+                entry, mapped_entry, context, profile
             )
             if tax_excluded_proportional_context_verified(context):
                 mappings = tuple(

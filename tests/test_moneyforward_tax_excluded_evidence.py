@@ -116,6 +116,33 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
 
         self.assertIsNone(evidence_for_occurrence(source, mapped, context))
 
+    def test_production_matcher_uses_confirmed_profile_target_codes(self) -> None:
+        source, mapped = self._p05()
+        context = self._context()
+        mapped.lines[0].account = "旅費交通費"
+        mapped.lines[1].account = "未払金"
+        profile = SimpleNamespace(
+            account_mappings={
+                "旅費交通費": MappingValue(
+                    "旅費交通費", "旅費交通費", MappingStatus.USER_CONFIRMED,
+                    metadata={"target_code": "8471"},
+                ),
+                "未払金": MappingValue(
+                    "未払金", "未払金", MappingStatus.USER_CONFIRMED,
+                    metadata={"target_code": "3181"},
+                ),
+            },
+            subaccount_context_mappings={},
+        )
+
+        evidence = evidence_for_occurrence(source, mapped, context, profile)
+
+        self.assertIsNotNone(evidence)
+        self.assertEqual(
+            evidence.evidence_id,
+            "EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P05-8471-3181-001",
+        )
+
     def test_batch_evidence_id_is_stable(self) -> None:
         self.assertEqual(
             BATCH_EVIDENCE_ID,
@@ -232,7 +259,9 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
             },
         )
         profile = SimpleNamespace(
-            tax_mappings={"課税仕入 10%": mapping, "対象外": mapping}
+            tax_mappings={"課税仕入 10%": mapping, "対象外": mapping},
+            account_mappings={},
+            subaccount_context_mappings={},
         )
 
         _assignments, _reasons, shapes, tax_evidence = (

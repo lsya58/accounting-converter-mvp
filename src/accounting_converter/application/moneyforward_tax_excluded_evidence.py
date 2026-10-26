@@ -14,7 +14,13 @@ from accounting_converter.adapters.output.jdl import (
     JdlTaxationMethod,
 )
 from accounting_converter.domain.journal import JournalEntry, Side
-from accounting_converter.domain.mapping import MappingStatus, MappingValue
+from accounting_converter.domain.conversion_profile import ConversionProfile
+from accounting_converter.domain.mapping import (
+    MappingKey,
+    MappingStatus,
+    MappingType,
+    MappingValue,
+)
 from accounting_converter.profiles.jdl_official import JdlTaxProcessingMode
 
 
@@ -126,15 +132,28 @@ def confirmed_mapping_mismatch_fields(
 
 
 def evidence_for_occurrence(
-    source: JournalEntry, mapped: JournalEntry, context: JdlTargetContext
+    source: JournalEntry,
+    mapped: JournalEntry,
+    context: JdlTargetContext,
+    profile: ConversionProfile | None = None,
 ) -> MfTaxExcludedPatternEvidence | None:
     if not context_is_verified(context):
         return None
     signature = tuple(
         (
             source_line.side.value,
-            _account_code(mapped_line.account, context),
-            _subaccount_code(mapped_line.account, mapped_line.sub_account, context),
+            _account_code(
+                source_line.account, mapped_line.account, context, profile
+            ),
+            _subaccount_code(
+                source_line.account,
+                source_line.sub_account,
+                source_line.side.value,
+                mapped_line.account,
+                mapped_line.sub_account,
+                context,
+                profile,
+            ),
             source_line.tax_info.category if source_line.tax_info else "",
         )
         for source_line, mapped_line in zip(source.lines, mapped.lines, strict=True)
@@ -155,8 +174,9 @@ def apply_verified_tax_semantics(
     source: JournalEntry,
     mapped: JournalEntry,
     context: JdlTargetContext,
+    profile: ConversionProfile | None = None,
 ) -> JournalEntry:
-    evidence = evidence_for_occurrence(source, mapped, context)
+    evidence = evidence_for_occurrence(source, mapped, context, profile)
     if evidence is None:
         return mapped
     lines = []
@@ -183,11 +203,34 @@ def apply_verified_tax_semantics(
     return replace(mapped, lines=lines)
 
 
-def _account_code(value: str | None, context: JdlTargetContext) -> str:
+def _account_code(
+    source_value: str | None,
+    mapped_value: str | None,
+    context: JdlTargetContext,
+    profile: ConversionProfile | None,
+) -> str:
+    mapping = (
+        profile.account_mappings.get(source_value or "")
+        if profile is not None else None
+    )
+    if mapping is not None and mapping.status is MappingStatus.USER_CONFIRMED:
+        code = mapping.metadata.get("target_code", "")
+        matches = tuple(
+            item for item in context.account_master
+            if item.target_master_code == code
+            and mapping.target_value in {
+                item.mapping_value, item.target_name, item.target_formal_name,
+            }
+            and mapped_value in {
+                item.mapping_value, item.target_name, item.target_formal_name,
+            }
+        )
+        if len(matches) == 1:
+            return code
     matches = tuple(
         item
         for item in context.account_master
-        if value in {
+        if mapped_value in {
             item.mapping_value,
             item.target_name,
             item.target_formal_name,
@@ -197,18 +240,50 @@ def _account_code(value: str | None, context: JdlTargetContext) -> str:
 
 
 def _subaccount_code(
-    account: str | None, value: str | None, context: JdlTargetContext
+    source_account: str | None,
+    source_value: str | None,
+    side: str,
+    mapped_account: str | None,
+    mapped_value: str | None,
+    context: JdlTargetContext,
+    profile: ConversionProfile | None,
 ) -> str:
-    if not value:
+    if not mapped_value:
         return ""
-    parent_code = _account_code(account, context)
+    parent_code = _account_code(
+        source_account, mapped_account, context, profile
+    )
+    mapping = None
+    if profile is not None and source_value:
+        mapping = profile.subaccount_context_mappings.get(
+            MappingKey(
+                MappingType.SUBACCOUNT, source_value, source_account, side
+            )
+        )
+    if mapping is not None and mapping.status is MappingStatus.USER_CONFIRMED:
+        code = mapping.metadata.get("output_code") or mapping.metadata.get(
+            "target_code", ""
+        )
+        matches = tuple(
+            item for item in context.subaccounts
+            if item.parent_account_code == parent_code
+            and item.output_code.zfill(4) == code.zfill(4)
+            and mapping.target_value in {
+                item.mapping_value, item.target_name, item.output_name,
+            }
+            and mapped_value in {
+                item.mapping_value, item.target_name, item.output_name,
+            }
+        )
+        if len(matches) == 1:
+            return code.zfill(4)
     matches = tuple(
         item for item in context.subaccounts
         if (
             item.parent_account_code == parent_code
-            or item.parent_account == account
+            or item.parent_account == mapped_account
         )
-        and value in {
+        and mapped_value in {
             item.mapping_value,
             item.target_name,
             item.output_name,
