@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from decimal import Decimal, ROUND_DOWN
+import hashlib
+import json
 
 from accounting_converter.adapters.output.jdl import (
     JdlContextConfirmationState,
@@ -17,6 +19,20 @@ from accounting_converter.profiles.jdl_official import JdlTaxProcessingMode
 
 
 BATCH_EVIDENCE_ID = "EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-BATCH-001"
+
+
+def tax_context_identity_sha256(context: JdlTargetContext) -> str:
+    payload = {
+        "product": context.product,
+        "version": context.version,
+        "tax_processing_mode": context.tax_processing_mode.value,
+        "taxation_method": context.effective_taxation_method.value,
+        "input_tax_credit_method": context.effective_input_tax_credit_method.value,
+    }
+    encoded = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -70,7 +86,43 @@ def confirmed_mapping_is_in_scope(
         and mapping.metadata.get("jdl_tax_processing_mode")
         == context.tax_processing_mode.value
         and context_is_verified(context)
+        and mapping.metadata.get("jdl_tax_context_identity_sha256")
+        == tax_context_identity_sha256(context)
     )
+
+
+def confirmed_mapping_mismatch_fields(
+    source_tax_category: str,
+    mapping: MappingValue | None,
+    context: JdlTargetContext,
+) -> tuple[str, ...]:
+    expected = {
+        "課税仕入 10%": ("10%", "仕　入"),
+        "対象外": ("", ""),
+    }.get(source_tax_category)
+    mismatches: list[str] = []
+    if not context_is_verified(context):
+        mismatches.append("TAX_CONTEXT")
+    if mapping is None or mapping.status is not MappingStatus.USER_CONFIRMED:
+        return (*mismatches, "HUMAN_CONFIRMATION")
+    if expected is None:
+        mismatches.append("SOURCE_TAX_IDENTITY")
+    else:
+        if mapping.target_value != expected[0]:
+            mismatches.append("TARGET_TAX_IDENTITY")
+        if mapping.metadata.get("jdl_tax_scope", "") != expected[1]:
+            mismatches.append("TARGET_TAX_SCOPE")
+    if mapping.metadata.get("jdl_evidence_id") != BATCH_EVIDENCE_ID:
+        mismatches.append("EVIDENCE_ID")
+    if (
+        mapping.metadata.get("jdl_tax_processing_mode")
+        != context.tax_processing_mode.value
+    ):
+        mismatches.append("TAX_PROCESSING_MODE")
+    saved_identity = mapping.metadata.get("jdl_tax_context_identity_sha256")
+    if saved_identity != tax_context_identity_sha256(context):
+        mismatches.append("TAX_CONTEXT_IDENTITY")
+    return tuple(dict.fromkeys(mismatches))
 
 
 def evidence_for_occurrence(

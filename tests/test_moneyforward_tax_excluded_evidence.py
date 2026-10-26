@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import unittest
 from datetime import date
+from datetime import datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
+from pathlib import Path
+import tempfile
 
 from accounting_converter.adapters.output.jdl import (
     JdlAccountIdentity,
@@ -16,10 +19,13 @@ from accounting_converter.adapters.output.jdl import (
 )
 from accounting_converter.application.moneyforward_tax_excluded_evidence import (
     BATCH_EVIDENCE_ID,
+    EVIDENCE,
     apply_verified_tax_semantics,
     confirmed_mapping_is_in_scope,
+    confirmed_mapping_mismatch_fields,
     context_is_verified,
     evidence_for_occurrence,
+    tax_context_identity_sha256,
 )
 from accounting_converter.application.moneyforward_conversion_workflow import (
     MoneyForwardConversionWorkflow,
@@ -27,6 +33,7 @@ from accounting_converter.application.moneyforward_conversion_workflow import (
 from accounting_converter.application.moneyforward_profile_setup import (
     MoneyForwardProfileSetupService,
 )
+from accounting_converter.domain.conversion_profile import ConversionProfile
 from accounting_converter.domain.journal import (
     JournalEntry,
     JournalLine,
@@ -35,7 +42,14 @@ from accounting_converter.domain.journal import (
     TaxInfo,
 )
 from accounting_converter.domain.mapping import MappingStatus, MappingValue
+from accounting_converter.infrastructure.conversion_profile_store import (
+    ConversionProfileStore,
+)
 from accounting_converter.profiles.jdl_official import JdlTaxProcessingMode
+from accounting_converter.profiles.known_formats import (
+    jdl_ibex_cashbook_official_journal_import_schema_definition,
+    moneyforward_cloud_journal_export_observed_schema,
+)
 
 
 class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
@@ -68,6 +82,64 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
             "EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-BATCH-001",
         )
 
+    def test_all_p01_to_p07_exact_occurrence_signatures_match(self) -> None:
+        for index, expected in enumerate(EVIDENCE, start=1):
+            with self.subTest(pattern=index):
+                codes = {item[1] for item in expected.account_signature}
+                accounts = tuple(
+                    JdlAccountIdentity(f"A{code}", code, f"A{code}", f"A{code}")
+                    for code in sorted(codes)
+                )
+                sub_keys = {
+                    (item[1], item[2])
+                    for item in expected.account_signature if item[2]
+                }
+                subs = tuple(
+                    JdlSubaccountIdentity(
+                        f"A{parent}", f"S{parent}-{code}", code, code,
+                        f"S{parent}-{code}", True, parent, f"S{parent}-{code}",
+                    )
+                    for parent, code in sorted(sub_keys)
+                )
+                base = self._context()
+                context = JdlTargetContext(
+                    **{
+                        **base.__dict__,
+                        "accounts": frozenset(item.mapping_value for item in accounts),
+                        "account_master": accounts,
+                        "subaccounts": subs,
+                    }
+                )
+                ref = SourceReference("synthetic.csv", index + 1, str(index))
+                source_lines = []
+                mapped_lines = []
+                for side, account, subaccount, tax in expected.account_signature:
+                    metadata = (
+                        {"moneyforward_trade_partner": "SYNTHETIC-PARTNER"}
+                        if expected.trade_partner and not source_lines else {}
+                    )
+                    source_lines.append(JournalLine(
+                        Side(side), f"SRC-{account}", Decimal("100"), ref,
+                        tax_info=TaxInfo(tax), metadata=metadata,
+                    ))
+                    mapped_lines.append(JournalLine(
+                        Side(side), f"A{account}", Decimal("100"), ref,
+                        sub_account=(f"S{account}-{subaccount}" if subaccount else None),
+                        tax_info=TaxInfo(tax), metadata=metadata,
+                    ))
+                source = JournalEntry(
+                    f"j{index}", ref, date(2026, 4, 19 + index), source_lines,
+                    "SYNTHETIC",
+                )
+                mapped = JournalEntry(
+                    f"j{index}", ref, source.date, mapped_lines, "SYNTHETIC",
+                )
+
+                actual = evidence_for_occurrence(source, mapped, context)
+
+                self.assertIsNotNone(actual)
+                self.assertEqual(actual.evidence_id, expected.evidence_id)
+
     def test_tax_review_is_available_only_for_exact_verified_context(self) -> None:
         items = MoneyForwardProfileSetupService._tax_items(
             ("課税仕入 10%", "対象外"), self._context()
@@ -90,6 +162,9 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
                 "jdl_evidence_id": BATCH_EVIDENCE_ID,
                 "jdl_tax_processing_mode": "TAXABLE_TAX_EXCLUDED",
                 "jdl_tax_scope": "仕　入",
+                "jdl_tax_context_identity_sha256": (
+                    tax_context_identity_sha256(context)
+                ),
                 "jdl_context_sha256": "older-full-context-hash",
             },
         )
@@ -128,6 +203,45 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
 
         self.assertEqual(shapes, set())
         self.assertEqual(tax_evidence, {"j1"})
+
+    def test_old_mapping_is_reviewed_and_human_reconfirmation_updates_metadata(self) -> None:
+        context = self._context()
+        old = MappingValue(
+            "課税仕入 10%", "10%", MappingStatus.USER_CONFIRMED,
+            metadata={
+                "jdl_evidence_id": "EVID-JDL-MF-TAX-PURCHASE-10-ROUNDTRIP-001",
+                "jdl_tax_processing_mode": "TAXABLE_TAX_EXCLUDED",
+                "jdl_tax_scope": "仕　入",
+            },
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConversionProfileStore(Path(directory))
+            now = datetime.now(timezone.utc)
+            profile = ConversionProfile(
+                "profile", "profile",
+                moneyforward_cloud_journal_export_observed_schema().identity,
+                jdl_ibex_cashbook_official_journal_import_schema_definition().identity,
+                tax_mappings={"課税仕入 10%": old},
+                created_at=now, updated_at=now,
+            )
+            store.create(profile)
+            service = MoneyForwardProfileSetupService(store)
+
+            review = service.tax_mapping_review(profile, context)
+            self.assertEqual(review.stale_source_values, ("課税仕入 10%",))
+            self.assertIn("再確認", review.user_message)
+            service.confirm_evidence_backed_tax_mapping(
+                profile_id="profile", context=context,
+                source_value="課税仕入 10%",
+            )
+            saved = store.get("profile").tax_mappings["課税仕入 10%"]
+
+        self.assertEqual(saved.metadata["jdl_evidence_id"], BATCH_EVIDENCE_ID)
+        self.assertIn("jdl_tax_context_identity_sha256", saved.metadata)
+        self.assertEqual(
+            confirmed_mapping_mismatch_fields("課税仕入 10%", saved, context),
+            (),
+        )
 
     @staticmethod
     def _context(

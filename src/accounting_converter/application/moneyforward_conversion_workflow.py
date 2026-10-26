@@ -36,7 +36,7 @@ from accounting_converter.application.moneyforward_trade_partner import (
 )
 from accounting_converter.application.moneyforward_tax_excluded_evidence import (
     apply_verified_tax_semantics,
-    confirmed_mapping_is_in_scope as tax_excluded_mapping_is_in_scope,
+    confirmed_mapping_mismatch_fields as tax_excluded_mapping_mismatch_fields,
     context_is_verified as tax_excluded_proportional_context_verified,
     evidence_for_occurrence as tax_excluded_proportional_evidence_for,
 )
@@ -338,15 +338,16 @@ class MoneyForwardConversionWorkflow:
                     for line in entry.lines
                     if line.tax_info and line.tax_info.category
                 )
-                if (
-                    proportional_evidence is None
-                    or not mappings
-                    or any(
-                        not tax_excluded_mapping_is_in_scope(category, item, context)
-                        for category, item in mappings
+                stale_mapping = bool(mappings) and any(
+                    tax_excluded_mapping_mismatch_fields(category, item, context)
+                    for category, item in mappings
+                )
+                if proportional_evidence is None or not mappings or stale_mapping:
+                    reasons.append(
+                        "税区分の確認内容が更新されています。再確認してください。"
+                        if proportional_evidence is not None and stale_mapping
+                        else "この税抜仕訳は実機確認済み範囲外です。"
                     )
-                ):
-                    reasons.append("この税抜仕訳は実機確認済み範囲外です。")
                     tax_evidence_blocked.add(entry.id)
                 else:
                     assignments[entry.id] = proportional_evidence.profile

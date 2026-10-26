@@ -17,6 +17,10 @@ from accounting_converter.application.jdl_master_observation import (
 )
 from accounting_converter.application.mapping_review import MappingRequirementExtractor
 from accounting_converter.application.moneyforward_jdl_loss import MoneyForwardToJdlLossRule
+from accounting_converter.application.moneyforward_tax_excluded_evidence import (
+    confirmed_mapping_is_in_scope as tax_excluded_mapping_is_in_scope,
+    context_is_verified as tax_excluded_proportional_context_verified,
+)
 from accounting_converter.application.profile_revision import revised_profile_id
 from accounting_converter.application.validation_pipeline import ValidationPipeline
 from accounting_converter.domain.journal import Side
@@ -279,6 +283,15 @@ class CompanyMappingUpdateService:
                 item.source_value
                 for item in requirements.tax_categories
                 if item.requires_confirmation
+                or (
+                    runtime_context is not None
+                    and tax_excluded_proportional_context_verified(runtime_context)
+                    and not tax_excluded_mapping_is_in_scope(
+                        item.source_value,
+                        profile.tax_mappings.get(item.source_value),
+                        runtime_context,
+                    )
+                )
             ),
             unsupported_shape_count,
             len({item.journal_id for item in loss_results if item.journal_id}),

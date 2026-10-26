@@ -24,7 +24,9 @@ from accounting_converter.application.jdl_master_observation import (
 )
 from accounting_converter.application.moneyforward_tax_excluded_evidence import (
     BATCH_EVIDENCE_ID as TAX_EXCLUDED_PROPORTIONAL_BATCH_EVIDENCE_ID,
+    confirmed_mapping_is_in_scope as tax_excluded_mapping_is_in_scope,
     context_is_verified as tax_excluded_proportional_context_verified,
+    tax_context_identity_sha256 as tax_excluded_context_identity_sha256,
 )
 from accounting_converter.domain.conversion_profile import ConversionProfile
 from accounting_converter.domain.mapping import (
@@ -79,6 +81,7 @@ class TaxMappingSetupReview:
     items: tuple[TaxMappingSetupItem, ...] = ()
     context_compatible: bool = False
     user_message: str = ""
+    stale_source_values: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -419,10 +422,20 @@ class MoneyForwardProfileSetupService:
                     "税区分を含むMoney Forward CSVから対応設定を作成してください。"
                 ),
             )
+        stale = tuple(
+            source_value
+            for source_value, mapping in profile.tax_mappings.items()
+            if mapping.is_resolved
+            and tax_excluded_proportional_context_verified(context)
+            and not tax_excluded_mapping_is_in_scope(
+                source_value, mapping, context
+            )
+        )
         unresolved = tuple(
             source_value
             for source_value, mapping in profile.tax_mappings.items()
             if not mapping.is_resolved
+            or source_value in stale
         )
         if not unresolved:
             return TaxMappingSetupReview(
@@ -434,7 +447,12 @@ class MoneyForwardProfileSetupService:
         return TaxMappingSetupReview(
             items=items,
             context_compatible=compatible,
-            user_message=self._tax_context_message(unresolved, context),
+            user_message=(
+                "税区分の確認内容が更新されています。再確認してください。"
+                if stale
+                else self._tax_context_message(unresolved, context)
+            ),
+            stale_source_values=stale,
         )
 
     def confirm_evidence_backed_tax_mapping(
@@ -549,6 +567,16 @@ class MoneyForwardProfileSetupService:
             "jdl_tax_processing_mode": (
                 context.tax_processing_mode.value
                 if context is not None else "TAXABLE_TAX_INCLUDED"
+            ),
+            **(
+                {
+                    "jdl_tax_context_identity_sha256": (
+                        tax_excluded_context_identity_sha256(context)
+                    )
+                }
+                if context is not None
+                and tax_excluded_proportional_context_verified(context)
+                else {}
             ),
             **(
                 {
