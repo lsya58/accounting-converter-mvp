@@ -76,6 +76,46 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
         mapped.lines[0].account = "通信費"
         self.assertIsNone(evidence_for_occurrence(source, mapped, self._context()))
 
+    def test_exact_formal_name_alias_resolves_to_same_account_code(self) -> None:
+        source, mapped = self._p05()
+        context = self._context()
+        formal_accounts = tuple(
+            JdlAccountIdentity(
+                item.mapping_value,
+                item.target_master_code,
+                item.target_name,
+                f"正式-{item.target_formal_name}",
+            )
+            for item in context.account_master
+        )
+        context = JdlTargetContext(
+            **{
+                **context.__dict__,
+                "account_master": formal_accounts,
+            }
+        )
+        mapped.lines[0].account = "正式-旅費交通費"
+        mapped.lines[1].account = "正式-未払金"
+
+        evidence = evidence_for_occurrence(source, mapped, context)
+
+        self.assertIsNotNone(evidence)
+
+    def test_ambiguous_account_alias_remains_blocked(self) -> None:
+        source, mapped = self._p05()
+        context = self._context()
+        duplicate = JdlAccountIdentity(
+            "別科目", "9999", "別科目", "旅費交通費"
+        )
+        context = JdlTargetContext(
+            **{
+                **context.__dict__,
+                "account_master": (*context.account_master, duplicate),
+            }
+        )
+
+        self.assertIsNone(evidence_for_occurrence(source, mapped, context))
+
     def test_batch_evidence_id_is_stable(self) -> None:
         self.assertEqual(
             BATCH_EVIDENCE_ID,

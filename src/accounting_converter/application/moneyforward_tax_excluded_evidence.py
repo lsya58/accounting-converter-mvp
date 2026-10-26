@@ -184,8 +184,16 @@ def apply_verified_tax_semantics(
 
 
 def _account_code(value: str | None, context: JdlTargetContext) -> str:
-    item = next((item for item in context.account_master if item.mapping_value == value), None)
-    return item.target_master_code if item else ""
+    matches = tuple(
+        item
+        for item in context.account_master
+        if value in {
+            item.mapping_value,
+            item.target_name,
+            item.target_formal_name,
+        }
+    )
+    return matches[0].target_master_code if len(matches) == 1 else ""
 
 
 def _subaccount_code(
@@ -193,11 +201,17 @@ def _subaccount_code(
 ) -> str:
     if not value:
         return ""
-    item = next(
-        (
-            item for item in context.subaccounts
-            if item.parent_account == account and item.mapping_value == value
-        ),
-        None,
+    parent_code = _account_code(account, context)
+    matches = tuple(
+        item for item in context.subaccounts
+        if (
+            item.parent_account_code == parent_code
+            or item.parent_account == account
+        )
+        and value in {
+            item.mapping_value,
+            item.target_name,
+            item.output_name,
+        }
     )
-    return item.output_code.zfill(4) if item else ""
+    return matches[0].output_code.zfill(4) if len(matches) == 1 else ""
