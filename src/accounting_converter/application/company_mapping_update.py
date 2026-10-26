@@ -31,6 +31,7 @@ from accounting_converter.domain.mapping import (
     MappingType,
     MappingValue,
     SubaccountPolicy,
+    is_confirmed_parent_only,
 )
 from accounting_converter.domain.profile import FormatProfile
 from accounting_converter.infrastructure.jdl_account_pdf_draft import JdlAccountPdfDraftStore
@@ -174,10 +175,7 @@ class CompanyMappingUpdateService:
             mapping = profile.subaccount_context_mappings.get(requirement.key)
             parent_only = bool(
                 mapping
-                and mapping.status is MappingStatus.USER_CONFIRMED
-                and mapping.metadata.get("subaccount_policy")
-                == SubaccountPolicy.PARENT_ONLY_CONFIRMED.value
-                and mapping.target_value == ""
+                and is_confirmed_parent_only(mapping)
                 and not parent_subaccounts
             )
             preserve = bool(
@@ -354,10 +352,7 @@ class CompanyMappingUpdateService:
                 == SubaccountPolicy.DEFAULT_TARGET_SUBACCOUNT.value
             )
             parent_only = bool(
-                mapping.status is MappingStatus.USER_CONFIRMED
-                and mapping.metadata.get("subaccount_policy")
-                == SubaccountPolicy.PARENT_ONLY_CONFIRMED.value
-                and mapping.target_value == ""
+                is_confirmed_parent_only(mapping)
                 and not parent_subaccounts
             )
             items.append(

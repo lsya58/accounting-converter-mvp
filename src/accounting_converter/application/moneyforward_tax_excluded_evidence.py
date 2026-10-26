@@ -16,6 +16,9 @@ from accounting_converter.adapters.output.jdl import (
 from accounting_converter.domain.journal import JournalEntry, Side
 from accounting_converter.domain.conversion_profile import ConversionProfile
 from accounting_converter.domain.mapping import (
+    PARENT_ONLY_CANONICAL_SUBACCOUNT,
+    canonical_subaccount_target,
+    is_confirmed_parent_only,
     MappingKey,
     MappingStatus,
     MappingType,
@@ -72,9 +75,9 @@ EVIDENCE = (
     MfTaxExcludedPatternEvidence("EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P02-OUT-3231-1311-SUB-001", (("DEBIT","3231","","対象外"),("CREDIT","1311","0002","対象外")), JdlEvidenceProfile.MF_NO_TAX_PROPORTIONAL_1111),
     MfTaxExcludedPatternEvidence("EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P03-OUT-3241-1311-SUB-001", (("DEBIT","3241","","対象外"),("CREDIT","1311","0002","対象外")), JdlEvidenceProfile.MF_NO_TAX_PROPORTIONAL_1111),
     MfTaxExcludedPatternEvidence("EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P04-PARTNER-001", (("DEBIT","8691","","課税仕入 10%"),("CREDIT","1311","0002","対象外")), JdlEvidenceProfile.MF_TAX_EXCLUDED_PROPORTIONAL_1111, True),
-    MfTaxExcludedPatternEvidence("EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P05-8471-3181-001", (("DEBIT","8471","","課税仕入 10%"),("CREDIT","3181","","対象外")), JdlEvidenceProfile.MF_TAX_EXCLUDED_PROPORTIONAL_1111),
+    MfTaxExcludedPatternEvidence("EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P05-8471-3181-001", (("DEBIT","8471","","課税仕入 10%"),("CREDIT","3181",PARENT_ONLY_CANONICAL_SUBACCOUNT,"対象外")), JdlEvidenceProfile.MF_TAX_EXCLUDED_PROPORTIONAL_1111),
     MfTaxExcludedPatternEvidence("EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P06-OUT-1311-SUB-3161-001", (("DEBIT","1311","0002","対象外"),("CREDIT","3161","","対象外")), JdlEvidenceProfile.MF_NO_TAX_PROPORTIONAL_1111),
-    MfTaxExcludedPatternEvidence("EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P07-8481-3181-001", (("DEBIT","8481","","課税仕入 10%"),("CREDIT","3181","","対象外")), JdlEvidenceProfile.MF_TAX_EXCLUDED_PROPORTIONAL_1111),
+    MfTaxExcludedPatternEvidence("EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P07-8481-3181-001", (("DEBIT","8481","","課税仕入 10%"),("CREDIT","3181",PARENT_ONLY_CANONICAL_SUBACCOUNT,"対象外")), JdlEvidenceProfile.MF_TAX_EXCLUDED_PROPORTIONAL_1111),
 )
 
 
@@ -399,12 +402,14 @@ def _subaccount_code(
                 MappingType.SUBACCOUNT, source_value, source_account, side
             )
         )
-    if mapping is not None and mapping.status is MappingStatus.USER_CONFIRMED:
-        policy = mapping.metadata.get("subaccount_policy")
-        if policy == SubaccountPolicy.PARENT_ONLY_CONFIRMED.value:
-            if mapping.target_value != "" or mapped_value not in {None, ""}:
-                return "", ("PARENT_ONLY_REPRESENTATION_MISMATCH",)
-            return "", ()
+    if is_confirmed_parent_only(mapping):
+        if (
+            canonical_subaccount_target(mapping)
+            != PARENT_ONLY_CANONICAL_SUBACCOUNT
+            or mapped_value not in {None, PARENT_ONLY_CANONICAL_SUBACCOUNT}
+        ):
+            return "", ("PARENT_ONLY_REPRESENTATION_MISMATCH",)
+        return PARENT_ONLY_CANONICAL_SUBACCOUNT, ()
     if not mapped_value:
         return "", ()
     if mapping is not None and mapping.status is MappingStatus.USER_CONFIRMED:

@@ -218,6 +218,49 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
         self.assertEqual(result.actual_signature[1][2], "")
         self.assertEqual(result.mismatch_fields, ())
 
+    def test_parent_only_saved_representations_share_one_canonical_value(self) -> None:
+        for raw_value in ("", "0", "0000", "__PARENT_ONLY_CONFIRMED__"):
+            with self.subTest(raw_value=raw_value):
+                source, mapped = self._p05()
+                source.lines[1].sub_account = "入力元カード"
+                profile = SimpleNamespace(
+                    account_mappings={
+                        "旅費交通費": MappingValue(
+                            "旅費交通費", "旅費交通費", MappingStatus.USER_CONFIRMED,
+                            metadata={"target_code": "8471", "target_printed_name": "旅費交通費"},
+                        ),
+                        "未払金": MappingValue(
+                            "未払金", "未払金", MappingStatus.USER_CONFIRMED,
+                            metadata={"target_code": "3181", "target_printed_name": "未払金"},
+                        ),
+                    },
+                    subaccount_context_mappings={
+                        MappingKey(MappingType.SUBACCOUNT, "入力元カード", "未払金"):
+                            MappingValue(
+                                "入力元カード", raw_value, MappingStatus.USER_CONFIRMED,
+                                parent_account="未払金",
+                                metadata={
+                                    "subaccount_policy": SubaccountPolicy.PARENT_ONLY_CONFIRMED.value,
+                                },
+                            )
+                    },
+                    subaccount_mappings={},
+                    department_mappings={},
+                    tax_mappings={},
+                )
+
+                mapped_entry = MappingEngine(
+                    mapping_rule_set_from_profile(profile)
+                ).apply((source,)).entries[0]
+                result = match_evidence_for_occurrence(
+                    source, mapped_entry, self._context(), profile
+                )
+
+                self.assertEqual(mapped_entry.lines[1].sub_account, "")
+                self.assertIsNotNone(result.evidence)
+                self.assertEqual(result.actual_signature[1][2], "")
+                self.assertEqual(result.mismatch_fields, ())
+
     def test_parent_only_nonblank_runtime_value_has_field_level_diagnostic(self) -> None:
         source, mapped = self._p05()
         source.lines[1].sub_account = "入力元カード"
@@ -373,7 +416,7 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
             MappingKey(
                 MappingType.SUBACCOUNT, parent_only_source, "SOURCE-3181"
             ): MappingValue(
-                parent_only_source, "", MappingStatus.USER_CONFIRMED,
+                parent_only_source, "__PARENT_ONLY_CONFIRMED__", MappingStatus.USER_CONFIRMED,
                 parent_account="SOURCE-3181",
                 metadata={
                     "subaccount_policy": SubaccountPolicy.PARENT_ONLY_CONFIRMED.value,

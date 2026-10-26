@@ -23,6 +23,7 @@ class SubaccountPolicy(str, Enum):
 
 
 DEFAULT_SUBACCOUNT_SOURCE_VALUE = "__SOURCE_SUBACCOUNT_EMPTY__"
+PARENT_ONLY_CANONICAL_SUBACCOUNT = ""
 
 
 @dataclass(frozen=True)
@@ -57,3 +58,20 @@ class MappingValue:
             MappingStatus.RESOLVED,
             MappingStatus.USER_CONFIRMED,
         } and self.target_value is not None
+
+
+def is_confirmed_parent_only(mapping: MappingValue | None) -> bool:
+    """Return whether Human explicitly confirmed dropping the target subaccount."""
+    return bool(
+        mapping is not None
+        and mapping.status is MappingStatus.USER_CONFIRMED
+        and mapping.metadata.get("subaccount_policy")
+        == SubaccountPolicy.PARENT_ONLY_CONFIRMED.value
+    )
+
+
+def canonical_subaccount_target(mapping: MappingValue) -> str | None:
+    """Normalize only an explicitly confirmed parent-only mapping to JDL blank."""
+    if is_confirmed_parent_only(mapping):
+        return PARENT_ONLY_CANONICAL_SUBACCOUNT
+    return mapping.target_value

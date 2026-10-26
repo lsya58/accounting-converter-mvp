@@ -5,6 +5,7 @@ from typing import Sequence
 
 from accounting_converter.domain.journal import JournalEntry, JournalLine, TaxInfo
 from accounting_converter.domain.mapping import (
+    canonical_subaccount_target,
     DEFAULT_SUBACCOUNT_SOURCE_VALUE,
     MappingKey,
     MappingStatus,
@@ -134,7 +135,7 @@ class MappingEngine:
         if mapping is not None:
             mapping_values.append(mapping)
             if mapping.is_resolved:
-                return mapping.target_value
+                return canonical_subaccount_target(mapping)
             validation_results.append(
                 self._unresolved_result(source, field, entry)
             )
