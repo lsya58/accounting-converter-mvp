@@ -358,8 +358,15 @@ class CompanyMappingUpdateTests(unittest.TestCase):
         )
         review = self.service.review("company-parent-only", source)
         item = next(i for i in review.items if i.mapping_type == "SUBACCOUNT")
+        self.assertFalse(
+            any(i.mapping_type == "DEFAULT_SUBACCOUNT" for i in review.items)
+        )
         self.assertTrue(item.parent_only_available)
         self.assertEqual(item.available_targets, ())
+        self.assertEqual(
+            item.blocker_code,
+            "MF-SUBACCOUNT-USER-CONFIRMATION-REQUIRED",
+        )
         with self.assertRaises(ValueError):
             self.service.apply(review, {item.key: PARENT_ONLY_SELECTION}, set())
 
@@ -452,6 +459,48 @@ class CompanyMappingUpdateTests(unittest.TestCase):
             mapping.metadata["subaccount_policy"],
             SubaccountPolicy.DEFAULT_TARGET_SUBACCOUNT.value,
         )
+
+    def test_blank_source_needs_no_review_when_confirmed_target_has_no_subaccounts(self):
+        pdf = self.root / "blank-no-sub.pdf"
+        pdf.write_bytes(b"synthetic")
+        draft = self.root / "blank-no-sub.json"
+        JdlAccountPdfDraftStore(_NoSubaccountExtractor()).import_pdf(pdf, draft)
+        context_hash = hashlib.sha256(draft.read_bytes()).hexdigest()
+        now = datetime(2026, 10, 14, tzinfo=timezone.utc)
+        self.profiles.create(ConversionProfile(
+            "profile-blank-no-sub", "補助なしの架空設定",
+            moneyforward_cloud_journal_export_observed_schema().identity,
+            jdl_ibex_cashbook_official_journal_import_schema_definition().identity,
+            account_mappings={
+                "入力科目A": MappingValue(
+                    "入力科目A", "架空科目A", MappingStatus.USER_CONFIRMED,
+                    metadata={
+                        "target_code": "1001",
+                        "target_printed_name": "架空科目A",
+                        "setup_context_sha256": context_hash,
+                    },
+                )
+            },
+            created_at=now,
+            updated_at=now,
+        ))
+        self.companies.create(
+            company_setting_id="company-blank-no-sub",
+            display_name="補助なしの架空会社",
+            conversion_profile_id="profile-blank-no-sub",
+            context_source=draft,
+        )
+        source = self.root / "blank-no-sub.csv"
+        self._write(
+            source,
+            debit_account="入力科目A",
+            debit_sub="",
+            credit_account="入力科目A",
+        )
+
+        review = self.service.review("company-blank-no-sub", source)
+
+        self.assertFalse(review.items)
 
     def test_blank_source_default_coexists_with_explicit_source_mapping(self):
         source = self.root / "mixed-subaccounts.csv"

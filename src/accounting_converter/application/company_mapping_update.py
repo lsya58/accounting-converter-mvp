@@ -46,6 +46,9 @@ class CompanyMappingUpdateItem:
     subaccount_targets_by_parent: tuple[tuple[str, tuple[str, ...]], ...] = ()
     confirmed_parent_target: str | None = None
     recommended_reason: str | None = None
+    blocker_reason: str | None = None
+    blocker_code: str | None = None
+    parent_only_targets: tuple[str, ...] = ()
 
     def subaccount_targets_for(self, parent_target: str) -> tuple[str, ...]:
         return next(
@@ -62,6 +65,9 @@ class CompanyMappingUpdateItem:
             target == parent_target
             for target, _targets in self.subaccount_targets_by_parent
         )
+
+    def allows_parent_only_for(self, parent_target: str) -> bool:
+        return parent_target in self.parent_only_targets
 
 
 PARENT_ONLY_SELECTION = "__PARENT_ONLY_CONFIRMED__"
@@ -156,8 +162,9 @@ class CompanyMappingUpdateService:
                 requirement.parent_account or ""
             )
             parent_code = account_codes.get(requirement.parent_account or "", "")
+            parent_subaccounts = tuple(targets.get(parent_code, ()))
             candidates = tuple(
-                item for item in targets.get(parent_code, ())
+                item for item in parent_subaccounts
                 if (item.parent_account_code, item.code, item.name) not in ambiguous
             )
             mapping = profile.subaccount_context_mappings.get(requirement.key)
@@ -167,7 +174,7 @@ class CompanyMappingUpdateService:
                 and mapping.metadata.get("subaccount_policy")
                 == SubaccountPolicy.PARENT_ONLY_CONFIRMED.value
                 and mapping.target_value == ""
-                and not candidates
+                and not parent_subaccounts
             )
             preserve = bool(
                 mapping
@@ -208,9 +215,14 @@ class CompanyMappingUpdateService:
                         if preserve and mapping is not None
                         else exact[0].name if len(exact) == 1 else None
                     ),
-                    parent_only_available=bool(parent_code) and not candidates,
+                    parent_only_available=(
+                        bool(parent_code) and not parent_subaccounts
+                    ),
                     subaccount_targets_by_parent=self._subaccount_options_by_parent(
                         parent_targets, targets, ambiguous
+                    ),
+                    parent_only_targets=self._parent_only_targets(
+                        parent_targets, targets
                     ),
                     confirmed_parent_target=(
                         confirmed_parent_mapping.target_value
@@ -218,6 +230,20 @@ class CompanyMappingUpdateService:
                         and confirmed_parent_mapping.status
                         is MappingStatus.USER_CONFIRMED
                         else None
+                    ),
+                    blocker_reason=(
+                        "JDL側の補助科目を一意に確認できません。科目一覧を再確認してください。"
+                        if parent_subaccounts and not candidates
+                        else "先に親科目を確認してください。"
+                        if not parent_code
+                        else None
+                    ),
+                    blocker_code=(
+                        "MF-SUBACCOUNT-TARGET-IDENTITY-CONFLICT"
+                        if parent_subaccounts and not candidates
+                        else "MF-SUBACCOUNT-PARENT-UNRESOLVED"
+                        if not parent_code
+                        else "MF-SUBACCOUNT-USER-CONFIRMATION-REQUIRED"
                     ),
                 )
             )
@@ -302,9 +328,10 @@ class CompanyMappingUpdateService:
             confirmed_parent_mapping = profile.account_mappings.get(
                 key.parent_account or ""
             )
+            parent_subaccounts = tuple(sub_targets.get(parent_code, ()))
             candidates = tuple(
                 item
-                for item in sub_targets.get(parent_code, ())
+                for item in parent_subaccounts
                 if (item.parent_account_code, item.code, item.name) not in ambiguous
             )
             names = tuple(item.name for item in candidates)
@@ -318,7 +345,7 @@ class CompanyMappingUpdateService:
                 and mapping.metadata.get("subaccount_policy")
                 == SubaccountPolicy.PARENT_ONLY_CONFIRMED.value
                 and mapping.target_value == ""
-                and not candidates
+                and not parent_subaccounts
             )
             items.append(
                 CompanyMappingUpdateItem(
@@ -334,9 +361,14 @@ class CompanyMappingUpdateService:
                         if mapping.target_value in names
                         else None
                     ),
-                    parent_only_available=bool(parent_code) and not candidates,
+                    parent_only_available=(
+                        bool(parent_code) and not parent_subaccounts
+                    ),
                     subaccount_targets_by_parent=self._subaccount_options_by_parent(
                         printed_account_targets, sub_targets, ambiguous
+                    ),
+                    parent_only_targets=self._parent_only_targets(
+                        printed_account_targets, sub_targets
                     ),
                     confirmed_parent_target=(
                         confirmed_parent_mapping.target_value
@@ -344,6 +376,20 @@ class CompanyMappingUpdateService:
                         and confirmed_parent_mapping.status
                         is MappingStatus.USER_CONFIRMED
                         else None
+                    ),
+                    blocker_reason=(
+                        "JDL側の補助科目を一意に確認できません。科目一覧を再確認してください。"
+                        if parent_subaccounts and not candidates
+                        else "先に親科目を確認してください。"
+                        if not parent_code
+                        else None
+                    ),
+                    blocker_code=(
+                        "MF-SUBACCOUNT-TARGET-IDENTITY-CONFLICT"
+                        if parent_subaccounts and not candidates
+                        else "MF-SUBACCOUNT-PARENT-UNRESOLVED"
+                        if not parent_code
+                        else "MF-SUBACCOUNT-USER-CONFIRMATION-REQUIRED"
                     ),
                 )
             )
@@ -585,8 +631,12 @@ class CompanyMappingUpdateService:
             )
             parent_review = account_review_by_source.get(source_account)
             parent_targets = parent_review.selectable_targets if parent_review else ()
-            has_possible_target = bool(candidates) or any(
-                targets.get(item.code) for item in parent_targets
+            parent_is_confirmed = bool(parent_code)
+            parent_has_subaccounts = bool(targets.get(parent_code, ()))
+            has_possible_target = (
+                parent_has_subaccounts
+                if parent_is_confirmed
+                else any(targets.get(item.code) for item in parent_targets)
             )
             if not has_possible_target and mapping is None:
                 continue
@@ -604,11 +654,28 @@ class CompanyMappingUpdateService:
                 subaccount_targets_by_parent=CompanyMappingUpdateService._subaccount_options_by_parent(
                     parent_targets, targets, ambiguous
                 ),
+                parent_only_targets=CompanyMappingUpdateService._parent_only_targets(
+                    parent_targets, targets
+                ),
                 confirmed_parent_target=(
                     parent_mapping.target_value
                     if parent_mapping is not None
                     and parent_mapping.status is MappingStatus.USER_CONFIRMED
                     else None
+                ),
+                blocker_reason=(
+                    "JDL側の補助科目を一意に確認できません。科目一覧を再確認してください。"
+                    if parent_has_subaccounts and not candidates
+                    else "先に親科目を確認してください。"
+                    if not parent_is_confirmed
+                    else None
+                ),
+                blocker_code=(
+                    "MF-DEFAULT-SUBACCOUNT-TARGET-IDENTITY-CONFLICT"
+                    if parent_has_subaccounts and not candidates
+                    else "MF-DEFAULT-SUBACCOUNT-PARENT-UNRESOLVED"
+                    if not parent_is_confirmed
+                    else "MF-DEFAULT-SUBACCOUNT-USER-CONFIRMATION-REQUIRED"
                 ),
             ))
 
@@ -721,6 +788,14 @@ class CompanyMappingUpdateService:
             )
             options.append((account.name, names))
         return tuple(options)
+
+    @staticmethod
+    def _parent_only_targets(account_targets, sub_targets):
+        return tuple(
+            account.name
+            for account in account_targets
+            if not sub_targets.get(account.code)
+        )
 
     @staticmethod
     def _entries(path: Path):

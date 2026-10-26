@@ -31,7 +31,11 @@ class CompanyMappingUpdateDialogTests(unittest.TestCase):
             mapping_type="ACCOUNT",
             source_value="source-parent",
             parent_account=None,
-            available_targets=("target-parent-a", "target-parent-b"),
+            available_targets=(
+                "target-parent-a",
+                "target-parent-b",
+                "target-parent-no-sub",
+            ),
         )
         subaccount = CompanyMappingUpdateItem(
             key="SUBACCOUNT:source-sub:source-parent",
@@ -42,7 +46,9 @@ class CompanyMappingUpdateDialogTests(unittest.TestCase):
             subaccount_targets_by_parent=(
                 ("target-parent-a", ("target-sub-a1", "target-sub-a2")),
                 ("target-parent-b", ("target-sub-b1",)),
+                ("target-parent-no-sub", ()),
             ),
+            parent_only_targets=("target-parent-no-sub",),
         )
         self.review = CompanyMappingUpdateReview(
             company_setting_id="company-a",
@@ -83,6 +89,19 @@ class CompanyMappingUpdateDialogTests(unittest.TestCase):
         )
         self.assertIsNone(subaccount.currentData())
         self.assertFalse(subaccount_confirmed.isChecked())
+
+    def test_confirmed_parent_without_target_subaccounts_offers_parent_only(self) -> None:
+        dialog = CompanyMappingUpdateDialog(object(), self.review)
+        parent, parent_confirmed = dialog.account_controls["source-parent"]
+        _item, subaccount, _subaccount_confirmed = dialog.subaccount_controls[0]
+
+        parent.setCurrentIndex(parent.findData("target-parent-no-sub"))
+        parent_confirmed.setChecked(True)
+
+        self.assertEqual(
+            [subaccount.itemData(index) for index in range(subaccount.count())],
+            [None, "__PARENT_ONLY_CONFIRMED__"],
+        )
 
     def test_confirmed_subset_enables_partial_save(self) -> None:
         dialog = CompanyMappingUpdateDialog(object(), self.review)

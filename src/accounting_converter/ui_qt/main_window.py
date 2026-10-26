@@ -1486,6 +1486,11 @@ class CompanyMappingUpdateDialog(QDialog):
                 )
             if item.mapping_type == "SUBACCOUNT" and item.parent_only_available:
                 target.addItem("親科目のみで変換する", PARENT_ONLY_SELECTION)
+            if (
+                target.count() == 1
+                and item.blocker_reason
+            ):
+                target.addItem(item.blocker_reason, None)
             if item.exact_candidate in item.available_targets:
                 target.setCurrentIndex(target.findData(item.exact_candidate))
             elif item.exact_candidate == PARENT_ONLY_SELECTION:
@@ -1557,11 +1562,15 @@ class CompanyMappingUpdateDialog(QDialog):
                     combo.addItem(f"JDL補助科目へ対応: {value}", value)
                 if (
                     item.mapping_type == "SUBACCOUNT"
-                    and item.has_parent_target(str(parent_target))
-                    and not targets
+                    and item.allows_parent_only_for(str(parent_target))
                 ):
                     combo.addItem(
                         "親科目のみで変換する", PARENT_ONLY_SELECTION
+                    )
+                elif not targets:
+                    combo.addItem(
+                        "候補を生成できません。科目一覧を再確認してください。",
+                        None,
                     )
             restore_saved_selection = (
                 parent_is_confirmed

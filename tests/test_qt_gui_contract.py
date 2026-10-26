@@ -611,10 +611,12 @@ class QtGuiContractTests(unittest.TestCase):
         self.assertIn("self._refresh_subaccounts", dialog)
         self.assertIn("account_confirmed.isChecked()", dialog)
         self.assertIn("item.subaccount_targets_for", dialog)
+        self.assertIn("item.allows_parent_only_for", dialog)
         self.assertIn("item.confirmed_parent_target", dialog)
         self.assertIn("combo.clear()", dialog)
         self.assertIn('combo.addItem("未選択", None)', dialog)
         self.assertIn("checkbox.setChecked(False)", dialog)
+        self.assertIn("候補を生成できません。科目一覧を再確認してください。", dialog)
 
     def test_moneyforward_review_exposes_recommendations_and_partial_save(self) -> None:
         source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
