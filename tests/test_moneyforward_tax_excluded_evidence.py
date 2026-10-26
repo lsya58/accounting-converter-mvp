@@ -7,6 +7,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 from pathlib import Path
 import tempfile
+from unittest.mock import patch
 
 from accounting_converter.adapters.output.jdl import (
     JdlAccountIdentity,
@@ -441,7 +442,7 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
             apply_verified_tax_semantics(source, target, context, profile)
             for source, target in zip(entries, mapped.entries, strict=True)
         )
-        assignments, reasons, shapes, tax_evidence = (
+        assignments, reasons, shapes, tax_evidence, diagnostics = (
             MoneyForwardConversionWorkflow()._route_assignments(
                 tuple(entries), transformed, profile, context,
                 company_setting_validated=True,
@@ -452,6 +453,7 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
         self.assertEqual(reasons, [])
         self.assertEqual(shapes, set())
         self.assertEqual(tax_evidence, set())
+        self.assertEqual(diagnostics, ())
         actual_ids = [
             match_evidence_for_occurrence(source, target, context, profile)
             .evidence.evidence_id
@@ -503,6 +505,7 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
     def test_evidence_failure_is_not_reported_as_shape_failure(self) -> None:
         context = self._context()
         source, mapped = self._p05()
+        mapped.lines[1].account = "EVIDENCE-MISMATCH"
         mapping = MappingValue(
             "課税仕入 10%", "10%", MappingStatus.USER_CONFIRMED,
             metadata={
@@ -516,14 +519,80 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
             subaccount_context_mappings={},
         )
 
-        _assignments, _reasons, shapes, tax_evidence = (
-            MoneyForwardConversionWorkflow()._route_assignments(
-                (source,), (mapped,), profile, context
+        with patch(
+            "accounting_converter.application.moneyforward_conversion_workflow."
+            "log_local_event"
+        ) as log_event:
+            _assignments, _reasons, shapes, tax_evidence, diagnostics = (
+                MoneyForwardConversionWorkflow()._route_assignments(
+                    (source,), (mapped,), profile, context
+                )
             )
-        )
 
         self.assertEqual(shapes, set())
         self.assertEqual(tax_evidence, {"j1"})
+        self.assertTrue(diagnostics)
+        log_event.assert_called_once()
+        self.assertEqual(
+            log_event.call_args.args[0],
+            "MF-JDL-TAX-EVIDENCE-CONDITION-MISMATCH",
+        )
+        payload = log_event.call_args.args[1]
+        self.assertNotIn("amount", payload)
+        self.assertIn("expected_signature", payload)
+        self.assertIn("actual_signature", payload)
+        self.assertIn("mismatch_fields", payload)
+
+    def test_p05_p07_normal_block_diagnostics_are_aggregated(self) -> None:
+        base = self._context()
+        context = JdlTargetContext(**{
+            **base.__dict__,
+            "accounts": frozenset((*base.accounts, "通信費")),
+            "account_master": (
+                *base.account_master,
+                JdlAccountIdentity("通信費", "8481", "通信費", "通信費"),
+            ),
+        })
+        entries = []
+        mapped_entries = []
+        for index in range(7):
+            source, mapped = self._p05()
+            source.id = mapped.id = f"privacy-safe-{index}"
+            if index >= 5:
+                source.lines[0].account = "通信費"
+                mapped.lines[0].account = "通信費"
+            mapped.lines[1].account = "MISMATCH"
+            entries.append(source)
+            mapped_entries.append(mapped)
+        mapping = MappingValue(
+            "課税仕入 10%", "10%", MappingStatus.USER_CONFIRMED,
+            metadata={"jdl_evidence_id": "WRONG"},
+        )
+        profile = SimpleNamespace(
+            tax_mappings={"課税仕入 10%": mapping, "対象外": mapping},
+            account_mappings={},
+            subaccount_context_mappings={},
+        )
+
+        with patch(
+            "accounting_converter.application.moneyforward_conversion_workflow."
+            "log_local_event"
+        ) as log_event:
+            _a, _r, _s, blocked, diagnostics = (
+                MoneyForwardConversionWorkflow()._route_assignments(
+                    tuple(entries), tuple(mapped_entries), profile, context
+                )
+            )
+
+        self.assertEqual(len(blocked), 7)
+        self.assertEqual(log_event.call_count, 7)
+        self.assertEqual(
+            diagnostics,
+            (
+                "Pattern P05: ACCOUNT_CODE_MISMATCH x5",
+                "Pattern P07: ACCOUNT_CODE_MISMATCH x2",
+            ),
+        )
 
     def test_old_mapping_is_reviewed_and_human_reconfirmation_updates_metadata(self) -> None:
         context = self._context()

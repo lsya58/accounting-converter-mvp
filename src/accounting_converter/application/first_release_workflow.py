@@ -68,6 +68,7 @@ class FirstReleaseSummary:
     unsupported_shape_count: int = 0
     tax_evidence_blocker_count: int = 0
     optional_field_blocker_count: int = 0
+    tax_evidence_mismatch_details: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

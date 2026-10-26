@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from accounting_converter.infrastructure.local_diagnostic_log import (
     default_diagnostic_log_path,
+    log_local_event,
     log_local_exception,
 )
 
@@ -49,6 +50,26 @@ class LocalDiagnosticLogTests(unittest.TestCase):
                 log_path=unwritable_target,
             )
             self.assertIsNone(result)
+
+    def test_normal_block_event_is_written_without_private_values(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "application.log"
+            result = log_local_event(
+                "MF-JDL-TAX-EVIDENCE-CONDITION-MISMATCH",
+                {
+                    "journal_sha256": "a" * 64,
+                    "pattern_id": "P05",
+                    "mismatch_fields": ("ACCOUNT_CODE_MISMATCH",),
+                },
+                log_path=path,
+            )
+
+            content = path.read_text(encoding="utf-8")
+            self.assertEqual(result, path)
+            self.assertIn("MF-JDL-TAX-EVIDENCE-CONDITION-MISMATCH", content)
+            self.assertIn("ACCOUNT_CODE_MISMATCH", content)
+            self.assertNotIn("摘要", content)
+            self.assertNotIn("金額", content)
 
 
 if __name__ == "__main__":

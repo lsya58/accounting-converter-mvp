@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-import json
-import logging
+from collections import Counter
 from pathlib import Path
 
 from accounting_converter.adapters.input.moneyforward import (
@@ -61,6 +60,7 @@ from accounting_converter.infrastructure.adapter_registry import (
 from accounting_converter.infrastructure.jdl_target_context_loader import (
     JdlTargetContextLoader,
 )
+from accounting_converter.infrastructure.local_diagnostic_log import log_local_event
 from accounting_converter.profiles.jdl_official import JdlTaxProcessingMode
 from accounting_converter.profiles.known_formats import (
     jdl_ibex_cashbook_official_journal_import_schema_definition,
@@ -78,8 +78,6 @@ _COMPOUND_PROFILES = {
     (5, 8): JdlEvidenceProfile.COMPOUND_5D8C_LINE_DESCRIPTIONS,
 }
 
-
-logger = logging.getLogger(__name__)
 
 _TAX_ROUTES = {
     (Side.DEBIT, "課税仕入 10%", True): (
@@ -215,6 +213,7 @@ class MoneyForwardConversionWorkflow:
             route_reasons,
             unsupported_journals,
             tax_evidence_journals,
+            tax_evidence_diagnostics,
         ) = self._route_assignments(
             entries,
             mapped_entries,
@@ -261,6 +260,7 @@ class MoneyForwardConversionWorkflow:
             optional_field_blocker_count=len(
                 {item.journal_id for item in loss_results if item.journal_id}
             ),
+            tax_evidence_mismatch_details=tax_evidence_diagnostics,
         )
         if reasons:
             return FirstReleasePreparedConversion(summary)
@@ -327,6 +327,7 @@ class MoneyForwardConversionWorkflow:
         reasons: list[str] = []
         unsupported: set[str] = set()
         tax_evidence_blocked: set[str] = set()
+        tax_evidence_diagnostics: list[tuple[str, str]] = []
         context_sha256 = hashlib.sha256(
             JdlTargetContextLoader().to_json_text(context).encode("utf-8")
         ).hexdigest()
@@ -350,26 +351,33 @@ class MoneyForwardConversionWorkflow:
                 )
                 if proportional_evidence is None or not mappings or stale_mapping:
                     if proportional_evidence is None:
-                        logger.warning(
-                            "MF-JDL-TAX-EVIDENCE-CONDITION-MISMATCH %s",
-                            json.dumps(
-                                {
-                                    "journal_sha256": hashlib.sha256(
-                                        entry.id.encode("utf-8")
-                                    ).hexdigest(),
-                                    "expected_signature": (
-                                        proportional_match.expected_signature
-                                    ),
-                                    "actual_signature": (
-                                        proportional_match.actual_signature
-                                    ),
-                                    "mismatch_fields": (
-                                        proportional_match.mismatch_fields
-                                    ),
-                                },
-                                ensure_ascii=False,
-                                sort_keys=True,
-                            ),
+                        pattern_id = (
+                            proportional_match.expected_pattern_id or "UNKNOWN"
+                        )
+                        mismatch_fields = proportional_match.mismatch_fields or (
+                            "TAX_EVIDENCE_CONDITION_MISMATCH",
+                        )
+                        tax_evidence_diagnostics.extend(
+                            (pattern_id, field) for field in mismatch_fields
+                        )
+                        log_local_event(
+                            "MF-JDL-TAX-EVIDENCE-CONDITION-MISMATCH",
+                            {
+                                "journal_sha256": hashlib.sha256(
+                                    entry.id.encode("utf-8")
+                                ).hexdigest(),
+                                "pattern_id": pattern_id,
+                                "expected_evidence_id": (
+                                    proportional_match.expected_evidence_id
+                                ),
+                                "expected_signature": (
+                                    proportional_match.expected_signature
+                                ),
+                                "actual_signature": (
+                                    proportional_match.actual_signature
+                                ),
+                                "mismatch_fields": mismatch_fields,
+                            },
                         )
                     reasons.append(
                         "税区分の確認内容が更新されています。再確認してください。"
@@ -539,7 +547,18 @@ class MoneyForwardConversionWorkflow:
                 reasons.append("税区分確認が必要です。「税区分を確認」から設定してください。")
                 continue
             assignments[entry.id] = route[0]
-        return assignments, reasons, unsupported, tax_evidence_blocked
+        diagnostic_counts = Counter(tax_evidence_diagnostics)
+        diagnostic_summary = tuple(
+            f"Pattern {pattern}: {field} x{count}"
+            for (pattern, field), count in sorted(diagnostic_counts.items())
+        )
+        return (
+            assignments,
+            reasons,
+            unsupported,
+            tax_evidence_blocked,
+            diagnostic_summary,
+        )
 
     @staticmethod
     def _has_target_tax_semantics(line: JournalLine) -> bool:
@@ -635,6 +654,7 @@ class MoneyForwardConversionWorkflow:
         unsupported_shape_count=0,
         tax_evidence_blocker_count=0,
         optional_field_blocker_count=0,
+        tax_evidence_mismatch_details=(),
     ):
         return FirstReleaseSummary(
             readiness=FirstReleaseReadiness.BLOCKED if reasons else FirstReleaseReadiness.READY,
@@ -656,6 +676,7 @@ class MoneyForwardConversionWorkflow:
             unsupported_shape_count=unsupported_shape_count,
             tax_evidence_blocker_count=tax_evidence_blocker_count,
             optional_field_blocker_count=optional_field_blocker_count,
+            tax_evidence_mismatch_details=tax_evidence_mismatch_details,
         )
 
 

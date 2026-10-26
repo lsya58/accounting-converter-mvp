@@ -18,6 +18,10 @@ from accounting_converter.ui.view_models import (
     support_diagnostic_text,
 )
 from accounting_converter.adapters.input.moneyforward import MONEYFORWARD_OBSERVED_HEADER
+from accounting_converter.application.first_release_workflow import (
+    FirstReleaseReadiness,
+    FirstReleaseSummary,
+)
 from accounting_converter.infrastructure.conversion_profile_store import ConversionProfileStore
 from accounting_converter.ui.app import GUI_PALETTE, status_visual
 
@@ -266,6 +270,25 @@ class GuiV2PresentationTests(unittest.TestCase):
             "顧客名", "秘密.csv", "/private", "架空の内部メッセージ"
         ):
             self.assertNotIn(private_value, text)
+
+    def test_support_diagnostics_aggregates_evidence_mismatch_details(self) -> None:
+        state = AppState(
+            conversion_summary=FirstReleaseSummary(
+                readiness=FirstReleaseReadiness.BLOCKED,
+                blocking_reasons=("この税抜仕訳は実機確認済み範囲外です。",),
+                tax_evidence_blocker_count=7,
+                tax_evidence_mismatch_details=(
+                    "Pattern P05: ACCOUNT_CODE_MISMATCH x5",
+                    "Pattern P07: ACCOUNT_CODE_MISMATCH x2",
+                ),
+            ),
+        )
+
+        text = support_diagnostic_text(state, "0.1.0")
+
+        self.assertIn("Evidence mismatch詳細:", text)
+        self.assertIn("Pattern P05: ACCOUNT_CODE_MISMATCH x5", text)
+        self.assertIn("Pattern P07: ACCOUNT_CODE_MISMATCH x2", text)
 
     @staticmethod
     def _assert_no_internal_terms(text: str) -> None:

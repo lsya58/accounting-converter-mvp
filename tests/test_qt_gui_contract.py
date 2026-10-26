@@ -442,6 +442,12 @@ class QtGuiContractTests(unittest.TestCase):
         self.assertIn("CompanyMappingUpdateDialog", main_window)
         self.assertIn("TaxMappingConfirmationDialog", main_window)
         self.assertNotIn("新しい科目を確認", workflow)
+        self.assertIn("log_local_event(", workflow)
+        self.assertIn("MF-JDL-TAX-EVIDENCE-CONDITION-MISMATCH", workflow)
+
+    def test_packaged_build_collects_runtime_diagnostic_module(self) -> None:
+        build = Path("scripts/build_windows.ps1").read_text(encoding="utf-8")
+        self.assertIn('--collect-submodules "accounting_converter"', build)
 
     def test_pilot_support_and_jdl_environment_controls_are_visible(self) -> None:
         source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(

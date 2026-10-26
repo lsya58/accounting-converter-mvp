@@ -56,6 +56,8 @@ class MfTaxEvidenceMatchResult:
     actual_signature: tuple[tuple[str, str, str, str], ...]
     expected_signature: tuple[tuple[str, str, str, str], ...] | None
     mismatch_fields: tuple[str, ...]
+    expected_evidence_id: str | None = None
+    expected_pattern_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -210,6 +212,8 @@ def match_evidence_for_occurrence(
             signature,
             exact.account_signature,
             (),
+            exact.evidence_id,
+            _pattern_id(exact),
         )
 
     candidates = tuple(
@@ -254,7 +258,16 @@ def match_evidence_for_occurrence(
         signature,
         expected.account_signature if expected is not None else None,
         tuple(dict.fromkeys(mismatches)),
+        expected.evidence_id if expected is not None else None,
+        _pattern_id(expected) if expected is not None else None,
     )
+
+
+def _pattern_id(evidence: MfTaxExcludedPatternEvidence) -> str:
+    for part in evidence.evidence_id.split("-"):
+        if len(part) == 3 and part.startswith("P") and part[1:].isdigit():
+            return part
+    return "UNKNOWN"
 
 
 def canonical_target_identity(

@@ -312,6 +312,11 @@ def support_diagnostic_text(
         ("最終状態", readiness),
         ("分類", error_category),
     )
+    details = (
+        ("Evidence mismatch詳細:", *summary.tax_evidence_mismatch_details)
+        if summary and summary.tax_evidence_mismatch_details
+        else ()
+    )
     return "会計データ変換 サポート診断\n" + "\n".join(
         f"{label}: {value}" for label, value in rows
-    )
+    ) + ("\n" + "\n".join(details) if details else "")
