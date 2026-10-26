@@ -35,8 +35,8 @@ from accounting_converter.application.moneyforward_trade_partner import (
     TRADE_PARTNER_2D2C_TAXABLE_NO_SUBACCOUNT_EVIDENCE_ID,
 )
 from accounting_converter.application.moneyforward_tax_excluded_evidence import (
-    BATCH_EVIDENCE_ID as TAX_EXCLUDED_PROPORTIONAL_BATCH_EVIDENCE_ID,
     apply_verified_tax_semantics,
+    confirmed_mapping_is_in_scope as tax_excluded_mapping_is_in_scope,
     context_is_verified as tax_excluded_proportional_context_verified,
     evidence_for_occurrence as tax_excluded_proportional_evidence_for,
 )
@@ -205,7 +205,12 @@ class MoneyForwardConversionWorkflow:
             apply_verified_tax_semantics(source, mapped, context)
             for source, mapped in zip(entries, mapping_result.entries, strict=True)
         )
-        assignments, route_reasons, unsupported_journals = self._route_assignments(
+        (
+            assignments,
+            route_reasons,
+            unsupported_journals,
+            tax_evidence_journals,
+        ) = self._route_assignments(
             entries,
             mapped_entries,
             profile,
@@ -247,6 +252,7 @@ class MoneyForwardConversionWorkflow:
             input_path, output_path, profile, context, tuple(dict.fromkeys(reasons)),
             len(requirements.all_requirements()), unconfirmed_count, entries,
             unsupported_shape_count=len(unsupported_journals),
+            tax_evidence_blocker_count=len(tax_evidence_journals),
             optional_field_blocker_count=len(
                 {item.journal_id for item in loss_results if item.journal_id}
             ),
@@ -315,6 +321,7 @@ class MoneyForwardConversionWorkflow:
         assignments: dict[str, JdlEvidenceProfile] = {}
         reasons: list[str] = []
         unsupported: set[str] = set()
+        tax_evidence_blocked: set[str] = set()
         context_sha256 = hashlib.sha256(
             JdlTargetContextLoader().to_json_text(context).encode("utf-8")
         ).hexdigest()
@@ -324,7 +331,10 @@ class MoneyForwardConversionWorkflow:
             )
             if tax_excluded_proportional_context_verified(context):
                 mappings = tuple(
-                    profile.tax_mappings.get(line.tax_info.category)
+                    (
+                        line.tax_info.category,
+                        profile.tax_mappings.get(line.tax_info.category),
+                    )
                     for line in entry.lines
                     if line.tax_info and line.tax_info.category
                 )
@@ -332,16 +342,12 @@ class MoneyForwardConversionWorkflow:
                     proportional_evidence is None
                     or not mappings
                     or any(
-                        item is None
-                        or item.status is not MappingStatus.USER_CONFIRMED
-                        or item.metadata.get("jdl_evidence_id")
-                        != TAX_EXCLUDED_PROPORTIONAL_BATCH_EVIDENCE_ID
-                        or item.metadata.get("jdl_context_sha256") != context_sha256
-                        for item in mappings
+                        not tax_excluded_mapping_is_in_scope(category, item, context)
+                        for category, item in mappings
                     )
                 ):
                     reasons.append("この税抜仕訳は実機確認済み範囲外です。")
-                    unsupported.add(entry.id)
+                    tax_evidence_blocked.add(entry.id)
                 else:
                     assignments[entry.id] = proportional_evidence.profile
                 continue
@@ -504,7 +510,7 @@ class MoneyForwardConversionWorkflow:
                 reasons.append("税区分確認が必要です。「税区分を確認」から設定してください。")
                 continue
             assignments[entry.id] = route[0]
-        return assignments, reasons, unsupported
+        return assignments, reasons, unsupported, tax_evidence_blocked
 
     @staticmethod
     def _has_target_tax_semantics(line: JournalLine) -> bool:
@@ -544,7 +550,10 @@ class MoneyForwardConversionWorkflow:
     @staticmethod
     def _trade_partner_reason(rule_id: str) -> str:
         if rule_id == "MF-JDL-PARTNER-POLICY":
-            return "取引先情報の扱いを会社設定で確認してください。"
+            return (
+                "会社設定の「取引先情報の扱い」で「取引先名を摘要に引き継ぐ」"
+                "を確認してください。"
+            )
         if rule_id == "MF-JDL-PARTNER-DESCRIPTION-LENGTH":
             return "取引先を含む摘要がJDLの32文字制限を超えています。"
         if rule_id == "MF-JDL-PARTNER-DESCRIPTION-CP932":
@@ -595,6 +604,7 @@ class MoneyForwardConversionWorkflow:
         entries,
         *,
         unsupported_shape_count=0,
+        tax_evidence_blocker_count=0,
         optional_field_blocker_count=0,
     ):
         return FirstReleaseSummary(
@@ -615,6 +625,7 @@ class MoneyForwardConversionWorkflow:
             compound_journal_count=sum(entry.is_compound() for entry in entries),
             output_path=output_path,
             unsupported_shape_count=unsupported_shape_count,
+            tax_evidence_blocker_count=tax_evidence_blocker_count,
             optional_field_blocker_count=optional_field_blocker_count,
         )
 

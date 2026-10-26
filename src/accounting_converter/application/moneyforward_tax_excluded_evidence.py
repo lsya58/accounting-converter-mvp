@@ -12,6 +12,7 @@ from accounting_converter.adapters.output.jdl import (
     JdlTaxationMethod,
 )
 from accounting_converter.domain.journal import JournalEntry, Side
+from accounting_converter.domain.mapping import MappingStatus, MappingValue
 from accounting_converter.profiles.jdl_official import JdlTaxProcessingMode
 
 
@@ -46,6 +47,29 @@ def context_is_verified(context: JdlTargetContext) -> bool:
         and context.effective_input_tax_credit_method is JdlInputTaxCreditMethod.PROPORTIONAL
         and context.confirmation_state is JdlContextConfirmationState.CONFIRMED
         and context.provenance is JdlContextProvenance.USER_CONFIRMED_RUNTIME_SNAPSHOT
+    )
+
+
+def confirmed_mapping_is_in_scope(
+    source_tax_category: str,
+    mapping: MappingValue | None,
+    context: JdlTargetContext,
+) -> bool:
+    """Check the Human tax choice against this narrow Evidence family."""
+    expected = {
+        "課税仕入 10%": ("10%", "仕　入"),
+        "対象外": ("", ""),
+    }.get(source_tax_category)
+    return bool(
+        expected is not None
+        and mapping is not None
+        and mapping.status is MappingStatus.USER_CONFIRMED
+        and (mapping.target_value, mapping.metadata.get("jdl_tax_scope", ""))
+        == expected
+        and mapping.metadata.get("jdl_evidence_id") == BATCH_EVIDENCE_ID
+        and mapping.metadata.get("jdl_tax_processing_mode")
+        == context.tax_processing_mode.value
+        and context_is_verified(context)
     )
 
 

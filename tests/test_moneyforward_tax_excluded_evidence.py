@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from datetime import date
 from decimal import Decimal
+from types import SimpleNamespace
 
 from accounting_converter.adapters.output.jdl import (
     JdlAccountIdentity,
@@ -16,8 +17,12 @@ from accounting_converter.adapters.output.jdl import (
 from accounting_converter.application.moneyforward_tax_excluded_evidence import (
     BATCH_EVIDENCE_ID,
     apply_verified_tax_semantics,
+    confirmed_mapping_is_in_scope,
     context_is_verified,
     evidence_for_occurrence,
+)
+from accounting_converter.application.moneyforward_conversion_workflow import (
+    MoneyForwardConversionWorkflow,
 )
 from accounting_converter.application.moneyforward_profile_setup import (
     MoneyForwardProfileSetupService,
@@ -29,6 +34,7 @@ from accounting_converter.domain.journal import (
     SourceReference,
     TaxInfo,
 )
+from accounting_converter.domain.mapping import MappingStatus, MappingValue
 from accounting_converter.profiles.jdl_official import JdlTaxProcessingMode
 
 
@@ -75,6 +81,53 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
             ),
             (),
         )
+
+    def test_mapping_scope_uses_tax_context_not_unrelated_master_hash(self) -> None:
+        context = self._context()
+        mapping = MappingValue(
+            "課税仕入 10%", "10%", MappingStatus.USER_CONFIRMED,
+            metadata={
+                "jdl_evidence_id": BATCH_EVIDENCE_ID,
+                "jdl_tax_processing_mode": "TAXABLE_TAX_EXCLUDED",
+                "jdl_tax_scope": "仕　入",
+                "jdl_context_sha256": "older-full-context-hash",
+            },
+        )
+
+        self.assertTrue(
+            confirmed_mapping_is_in_scope("課税仕入 10%", mapping, context)
+        )
+        self.assertFalse(confirmed_mapping_is_in_scope(
+            "課税仕入 10%",
+            MappingValue(
+                "課税仕入 10%", "10%", MappingStatus.USER_CONFIRMED,
+                metadata={**mapping.metadata, "jdl_evidence_id": "WRONG"},
+            ),
+            context,
+        ))
+
+    def test_evidence_failure_is_not_reported_as_shape_failure(self) -> None:
+        context = self._context()
+        source, mapped = self._p05()
+        mapping = MappingValue(
+            "課税仕入 10%", "10%", MappingStatus.USER_CONFIRMED,
+            metadata={
+                "jdl_evidence_id": "WRONG",
+                "jdl_tax_processing_mode": "TAXABLE_TAX_EXCLUDED",
+            },
+        )
+        profile = SimpleNamespace(
+            tax_mappings={"課税仕入 10%": mapping, "対象外": mapping}
+        )
+
+        _assignments, _reasons, shapes, tax_evidence = (
+            MoneyForwardConversionWorkflow()._route_assignments(
+                (source,), (mapped,), profile, context
+            )
+        )
+
+        self.assertEqual(shapes, set())
+        self.assertEqual(tax_evidence, {"j1"})
 
     @staticmethod
     def _context(

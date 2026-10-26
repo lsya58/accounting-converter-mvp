@@ -249,6 +249,7 @@ class GuiV2PresentationTests(unittest.TestCase):
             "補助科目確認: 2",
             "税区分確認: 1",
             "未対応仕訳構成: 4",
+            "税Evidence条件未一致: 0",
             "保持方法未確認: 5",
             "JDL科目一覧: 設定済み",
             "最終状態: 確認が必要です",

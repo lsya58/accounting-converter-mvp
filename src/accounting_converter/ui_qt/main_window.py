@@ -1281,7 +1281,7 @@ class TradePartnerPolicyDialog(QDialog):
         layout.addWidget(explanation)
         state = controller.company_trade_partner_policy_state(company_id)
         self.confirmed = QCheckBox(
-            "この会社では取引先を摘要へ追加して変換する"
+            "取引先名を摘要に引き継ぐ"
         )
         self.confirmed.setChecked(state.confirmed)
         self.confirmed.setEnabled(state.context_compatible and not state.confirmed)

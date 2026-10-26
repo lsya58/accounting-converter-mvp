@@ -202,5 +202,8 @@ class MoneyForwardTradePartnerDescriptionPolicy:
             source_reference=entry.source_reference,
             field="trade_partner",
             message=message,
-            suggested_action="会社設定で取引先情報の扱いを確認してください。",
+            suggested_action=(
+                "会社設定の「取引先情報の扱い」で「取引先名を摘要に引き継ぐ」"
+                "を確認してください。"
+            ),
         )

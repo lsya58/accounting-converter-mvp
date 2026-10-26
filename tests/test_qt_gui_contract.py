@@ -147,7 +147,7 @@ class QtGuiContractTests(unittest.TestCase):
         for text in (
             "取引先情報の扱い",
             "JDLには取引先専用のCSV項目がないため",
-            "この会社では取引先を摘要へ追加して変換する",
+            "取引先名を摘要に引き継ぐ",
             "自動では有効になりません。内容を確認してください。",
         ):
             self.assertIn(text, source)
