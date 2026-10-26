@@ -423,7 +423,7 @@ class QtGuiContractTests(unittest.TestCase):
         dialog = source.split("class CompanyMappingUpdateDialog", maxsplit=1)[1].split(
             "class CompanyAddDialog", maxsplit=1
         )[0]
-        save_button = dialog.index('self.save_button = QPushButton("追加対応を保存")')
+        save_button = dialog.index('self.save_button = QPushButton("確認済み0件を保存")')
         initial_refresh = dialog.index(
             "for source_value in self.account_controls:\n"
             "            self._refresh_subaccounts(source_value)"
@@ -615,6 +615,24 @@ class QtGuiContractTests(unittest.TestCase):
         self.assertIn("combo.clear()", dialog)
         self.assertIn('combo.addItem("未選択", None)', dialog)
         self.assertIn("checkbox.setChecked(False)", dialog)
+
+    def test_moneyforward_review_exposes_recommendations_and_partial_save(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
+            encoding="utf-8"
+        )
+        dialog = source.split("class CompanyMappingUpdateDialog", maxsplit=1)[1].split(
+            "class CompanyAddDialog", maxsplit=1
+        )[0]
+        for text in (
+            'target.addItem("おすすめ", None)',
+            'target.addItem("その他のJDL科目", None)',
+            "item.recommended_reason",
+            "この画面で確認済み:",
+            "確認済み{confirmed}件を保存",
+            "if key in confirmed",
+        ):
+            self.assertIn(text, dialog)
+        self.assertIn("self.progress_label = QLabel()", dialog)
 
 
 if __name__ == "__main__":

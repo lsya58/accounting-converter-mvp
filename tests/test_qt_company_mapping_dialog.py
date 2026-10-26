@@ -84,6 +84,20 @@ class CompanyMappingUpdateDialogTests(unittest.TestCase):
         self.assertIsNone(subaccount.currentData())
         self.assertFalse(subaccount_confirmed.isChecked())
 
+    def test_confirmed_subset_enables_partial_save(self) -> None:
+        dialog = CompanyMappingUpdateDialog(object(), self.review)
+        parent, parent_confirmed = dialog.account_controls["source-parent"]
+
+        parent.setCurrentIndex(parent.findData("target-parent-a"))
+        parent_confirmed.setChecked(True)
+
+        self.assertTrue(dialog.save_button.isEnabled())
+        self.assertEqual(dialog.save_button.text(), "確認済み1件を保存")
+        self.assertEqual(
+            dialog.progress_label.text(),
+            "この画面で確認済み: 1件 / 未確認: 1件",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -45,6 +45,7 @@ class CompanyMappingUpdateItem:
     parent_only_available: bool = False
     subaccount_targets_by_parent: tuple[tuple[str, tuple[str, ...]], ...] = ()
     confirmed_parent_target: str | None = None
+    recommended_reason: str | None = None
 
     def subaccount_targets_for(self, parent_target: str) -> tuple[str, ...]:
         return next(
@@ -76,6 +77,7 @@ class CompanyMappingUpdateReview:
     tax_categories: tuple[str, ...] = ()
     unsupported_shape_count: int = 0
     optional_field_blocker_count: int = 0
+    source_sha256: str | None = None
 
 
 class CompanyMappingUpdateService:
@@ -98,11 +100,31 @@ class CompanyMappingUpdateService:
         master = self._master_observation(context_path)
         entries = self._entries(source_path)
         accounts = AccountMappingReviewService().build(entries, master, profile)
+        runtime_context = (
+            None
+            if self.drafts.is_draft(context_path)
+            else self.contexts.load(context_path)
+        )
         items: list[CompanyMappingUpdateItem] = []
         for item in accounts.items:
             if item.usable and not include_confirmed:
                 continue
             current = profile.account_mappings.get(item.requirement.source_value)
+            recommendation, reason = self._account_recommendation(
+                item.requirement.source_value,
+                item.selectable_targets,
+                runtime_context,
+            )
+            if (
+                recommendation is None
+                and current is not None
+                and any(
+                    target.name == current.target_value
+                    for target in item.selectable_targets
+                )
+            ):
+                recommendation = current.target_value
+                reason = "保存済みの候補です。再確認してください"
             items.append(
                 CompanyMappingUpdateItem(
                     key=f"ACCOUNT|{item.requirement.source_value}",
@@ -113,10 +135,9 @@ class CompanyMappingUpdateService:
                     exact_candidate=(
                         current.target_value
                         if item.usable and current is not None
-                        else item.exact_candidate.name
-                        if item.exact_candidate
-                        else None
+                        else recommendation
                     ),
+                    recommended_reason=reason,
                 )
             )
 
@@ -235,6 +256,7 @@ class CompanyMappingUpdateService:
             ),
             unsupported_shape_count,
             len({item.journal_id for item in loss_results if item.journal_id}),
+            hashlib.sha256(source_path.read_bytes()).hexdigest(),
         )
 
     def review_saved(self, company_setting_id: str) -> CompanyMappingUpdateReview:
@@ -330,10 +352,18 @@ class CompanyMappingUpdateService:
             items=tuple(items), logical_journal_count=0,
         )
 
-    def apply(self, review: CompanyMappingUpdateReview, selections: Mapping[str, str], confirmed: set[str]) -> None:
+    def apply(self, review: CompanyMappingUpdateReview, selections: Mapping[str, str], confirmed: set[str]) -> int:
         required = {item.key for item in review.items}
-        if set(selections) != required or confirmed != required:
-            raise ValueError("すべての追加対応を明示的に確認してください。")
+        if not confirmed:
+            raise ValueError("保存する確認済み項目がありません。")
+        if not confirmed <= required or set(selections) != confirmed:
+            raise ValueError("確認済み項目だけを選択して保存してください。")
+        if review.source_path is not None and review.source_sha256 is not None:
+            current_source_sha256 = hashlib.sha256(
+                review.source_path.read_bytes()
+            ).hexdigest()
+            if current_source_sha256 != review.source_sha256:
+                raise ValueError("入力ファイルが変更されています。確認画面を開き直してください。")
         setting = self.company_store.get(review.company_setting_id)
         old = self.profile_store.get(setting.conversion_profile_id)
         master = self._master_observation(review.context_path)
@@ -359,6 +389,8 @@ class CompanyMappingUpdateService:
         subs = dict(old.subaccount_context_mappings)
         tax_mappings = dict(old.tax_mappings)
         for item in review.items:
+            if item.key not in confirmed:
+                continue
             selected = selections[item.key]
             if item.mapping_type == "ACCOUNT":
                 matches = account_targets.get(selected, ())
@@ -469,7 +501,13 @@ class CompanyMappingUpdateService:
                     ),
                 )
         accounts = {
-            key: replace(value, metadata={**value.metadata, "setup_context_sha256": context_hash})
+            key: replace(
+                value,
+                metadata={
+                    **value.metadata,
+                    "setup_context_sha256": context_hash,
+                },
+            )
             for key, value in accounts.items()
         }
         updated = replace(
@@ -480,6 +518,29 @@ class CompanyMappingUpdateService:
             updated_at=datetime.now(timezone.utc),
         )
         self._persist_profile(review, old, updated)
+        return len(confirmed)
+
+    @staticmethod
+    def _account_recommendation(source_value, targets, runtime_context):
+        if runtime_context is not None:
+            formal_matches = tuple(
+                identity.mapping_value
+                for identity in runtime_context.account_master
+                if identity.target_formal_name == source_value
+                and any(
+                    target.name == identity.mapping_value for target in targets
+                )
+            )
+            if len(formal_matches) == 1:
+                return formal_matches[0], "正式名称が一致しています"
+        display_matches = tuple(
+            target.name
+            for target in targets
+            if source_value in {target.name, target.abbreviation}
+        )
+        if len(display_matches) == 1:
+            return display_matches[0], "表示名が一致しています"
+        return None, None
 
     @staticmethod
     def _append_default_subaccount_items(

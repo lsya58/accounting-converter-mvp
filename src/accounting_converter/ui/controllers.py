@@ -746,15 +746,15 @@ class AccountingConverterController:
         review: CompanyMappingUpdateReview,
         selections: dict[str, str],
         explicitly_confirmed: set[str],
-    ) -> AppState:
-        self.company_mapping_update_service.apply(
+    ) -> int:
+        saved_count = self.company_mapping_update_service.apply(
             review, selections, explicitly_confirmed
         )
         self.load_profiles()
         self.load_company_settings()
         state = self.select_company_setting(review.company_setting_id)
         self.state = replace(state, user_message="追加の科目対応を保存しました。")
-        return self.state
+        return saved_count
 
     def create_moneyforward_profile(
         self,

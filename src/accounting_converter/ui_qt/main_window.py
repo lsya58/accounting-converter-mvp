@@ -1439,6 +1439,9 @@ class CompanyMappingUpdateDialog(QDialog):
         )
         note.setWordWrap(True)
         layout.addWidget(note)
+        self.progress_label = QLabel()
+        self.progress_label.setObjectName("muted")
+        layout.addWidget(self.progress_label)
         if any(item.parent_only_available for item in review.items):
             policy_note = QLabel(
                 "「親科目のみで変換する」を選ぶと、MF側の補助科目情報は"
@@ -1465,7 +1468,16 @@ class CompanyMappingUpdateDialog(QDialog):
             table.setItem(row, 2, QTableWidgetItem(item.source_value))
             target = WheelSafeComboBox()
             target.addItem("未選択", None)
+            if item.mapping_type == "ACCOUNT" and item.exact_candidate:
+                target.addItem("おすすめ", None)
+                target.addItem(
+                    f"{item.exact_candidate}（{item.recommended_reason}）",
+                    item.exact_candidate,
+                )
+                target.addItem("その他のJDL科目", None)
             for value in item.available_targets:
+                if item.mapping_type == "ACCOUNT" and value == item.exact_candidate:
+                    continue
                 target.addItem(
                     f"JDL補助科目へ対応: {value}"
                     if item.mapping_type in {"SUBACCOUNT", "DEFAULT_SUBACCOUNT"}
@@ -1475,7 +1487,7 @@ class CompanyMappingUpdateDialog(QDialog):
             if item.mapping_type == "SUBACCOUNT" and item.parent_only_available:
                 target.addItem("親科目のみで変換する", PARENT_ONLY_SELECTION)
             if item.exact_candidate in item.available_targets:
-                target.setCurrentIndex(item.available_targets.index(item.exact_candidate) + 1)
+                target.setCurrentIndex(target.findData(item.exact_candidate))
             elif item.exact_candidate == PARENT_ONLY_SELECTION:
                 target.setCurrentIndex(target.findData(PARENT_ONLY_SELECTION))
             confirmed = QCheckBox("確認しました")
@@ -1513,7 +1525,7 @@ class CompanyMappingUpdateDialog(QDialog):
         actions = QHBoxLayout()
         cancel = QPushButton("キャンセル")
         cancel.clicked.connect(self.reject)
-        self.save_button = QPushButton("追加対応を保存")
+        self.save_button = QPushButton("確認済み0件を保存")
         self.save_button.setObjectName("primaryButton")
         self.save_button.clicked.connect(self._save)
         actions.addStretch(1)
@@ -1570,22 +1582,46 @@ class CompanyMappingUpdateDialog(QDialog):
         self._update_action()
 
     def _update_action(self, *_args) -> None:
-        self.save_button.setEnabled(
-            bool(self.controls)
-            and all(
-                combo.currentData() is not None and check.isChecked()
-                for _, combo, check in self.controls
-            )
+        confirmed = sum(
+            combo.currentData() is not None and check.isChecked()
+            for _, combo, check in self.controls
         )
+        unresolved = len(self.controls) - confirmed
+        self.progress_label.setText(
+            f"この画面で確認済み: {confirmed}件 / 未確認: {unresolved}件"
+        )
+        self.save_button.setText(f"確認済み{confirmed}件を保存")
+        self.save_button.setEnabled(confirmed > 0)
 
     def _save(self) -> None:
-        selections = {key: str(combo.currentData()) for key, combo, _ in self.controls if combo.currentData() is not None}
-        confirmed = {key for key, _, check in self.controls if check.isChecked()}
+        confirmed = {
+            key
+            for key, combo, check in self.controls
+            if combo.currentData() is not None and check.isChecked()
+        }
+        selections = {
+            key: str(combo.currentData())
+            for key, combo, _check in self.controls
+            if key in confirmed
+        }
         try:
-            self.controller.apply_company_mapping_updates(self.review, selections, confirmed)
+            saved_count = self.controller.apply_company_mapping_updates(
+                self.review, selections, confirmed
+            )
         except Exception as exc:
             log_local_exception("company_mapping_update_apply", exc)
+            QMessageBox.warning(
+                self,
+                "確認結果を保存できませんでした",
+                "会社設定を保存できませんでした。設定を開き直して再試行してください。",
+            )
             return
+        remaining = len(self.controls) - saved_count
+        QMessageBox.information(
+            self,
+            "確認結果を保存しました",
+            f"{saved_count}件を保存しました。未確認{remaining}件が残っています。",
+        )
         self.accept()
 
 

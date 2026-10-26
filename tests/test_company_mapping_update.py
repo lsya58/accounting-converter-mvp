@@ -94,6 +94,56 @@ class CompanyMappingUpdateTests(unittest.TestCase):
             all(item.exact_candidate for item in editable.items)
         )
 
+    def test_confirmed_subset_is_saved_and_remaining_items_stay_unresolved(self):
+        source = self.root / "partial.csv"
+        self._write(
+            source,
+            debit_account="新規科目A",
+            debit_sub="",
+            credit_account="新規科目B",
+        )
+        review = self.service.review("company-a", source)
+        first = next(
+            item
+            for item in review.items
+            if item.mapping_type == "ACCOUNT" and item.source_value == "新規科目A"
+        )
+
+        saved_count = self.service.apply(
+            review, {first.key: "架空科目A"}, {first.key}
+        )
+
+        self.assertEqual(saved_count, 1)
+        remaining = self.service.review("company-a", source)
+        self.assertNotIn(first.key, {item.key for item in remaining.items})
+        self.assertIn(
+            "ACCOUNT|新規科目B", {item.key for item in remaining.items}
+        )
+
+    def test_source_change_blocks_partial_save(self):
+        source = self.root / "source-change.csv"
+        self._write(
+            source,
+            debit_account="新規科目",
+            debit_sub="",
+            credit_account="入力科目A",
+        )
+        review = self.service.review("company-a", source)
+        account = next(
+            item for item in review.items if item.mapping_type == "ACCOUNT"
+        )
+        self._write(
+            source,
+            debit_account="別の新規科目",
+            debit_sub="",
+            credit_account="入力科目A",
+        )
+
+        with self.assertRaisesRegex(ValueError, "入力ファイルが変更"):
+            self.service.apply(
+                review, {account.key: "架空科目B"}, {account.key}
+            )
+
     def test_empty_company_profile_reviews_first_csv_then_reuses_confirmations(self):
         now = datetime(2026, 10, 14, tzinfo=timezone.utc)
         self.profiles.create(ConversionProfile(
@@ -126,6 +176,38 @@ class CompanyMappingUpdateTests(unittest.TestCase):
             updated.tax_mappings["対象外"].status,
             MappingStatus.UNRESOLVED,
         )
+
+    def test_exact_display_name_is_recommended_but_not_auto_confirmed(self):
+        now = datetime(2026, 10, 14, tzinfo=timezone.utc)
+        self.profiles.create(ConversionProfile(
+            "profile-recommendation", "おすすめ候補の架空設定",
+            moneyforward_cloud_journal_export_observed_schema().identity,
+            jdl_ibex_cashbook_official_journal_import_schema_definition().identity,
+            created_at=now, updated_at=now,
+        ))
+        self.companies.create(
+            company_setting_id="company-recommendation",
+            display_name="おすすめ候補の架空会社",
+            conversion_profile_id="profile-recommendation",
+            context_source=self.draft,
+        )
+        source = self.root / "recommendation.csv"
+        self._write(
+            source,
+            debit_account="架空科目A",
+            debit_sub="",
+            credit_account="架空科目B",
+        )
+
+        review = self.service.review("company-recommendation", source)
+        account = next(
+            item
+            for item in review.items
+            if item.mapping_type == "ACCOUNT" and item.source_value == "架空科目A"
+        )
+        self.assertEqual(account.exact_candidate, "架空科目A")
+        self.assertEqual(account.recommended_reason, "表示名が一致しています")
+        self.assertIn(account, review.items)
 
     def test_subaccount_candidates_are_limited_to_confirmed_parent(self):
         source=self.root/"sub.csv"; self._write(source,debit_account="入力科目A",debit_sub="新規補助",credit_account="入力科目A")
