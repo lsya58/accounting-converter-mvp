@@ -20,6 +20,7 @@ from accounting_converter.domain.mapping import (
     MappingStatus,
     MappingType,
     MappingValue,
+    SubaccountPolicy,
 )
 from accounting_converter.profiles.jdl_official import JdlTaxProcessingMode
 
@@ -47,6 +48,21 @@ class MfTaxExcludedPatternEvidence:
     account_signature: tuple[tuple[str, str, str, str], ...]
     profile: JdlEvidenceProfile
     trade_partner: bool = False
+
+
+@dataclass(frozen=True)
+class MfTaxEvidenceMatchResult:
+    evidence: MfTaxExcludedPatternEvidence | None
+    actual_signature: tuple[tuple[str, str, str, str], ...]
+    expected_signature: tuple[tuple[str, str, str, str], ...] | None
+    mismatch_fields: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class CanonicalTargetIdentity:
+    account_code: str
+    subaccount_code: str
+    mismatch_fields: tuple[str, ...] = ()
 
 
 EVIDENCE = (
@@ -137,36 +153,137 @@ def evidence_for_occurrence(
     context: JdlTargetContext,
     profile: ConversionProfile | None = None,
 ) -> MfTaxExcludedPatternEvidence | None:
+    return match_evidence_for_occurrence(
+        source, mapped, context, profile
+    ).evidence
+
+
+def match_evidence_for_occurrence(
+    source: JournalEntry,
+    mapped: JournalEntry,
+    context: JdlTargetContext,
+    profile: ConversionProfile | None = None,
+) -> MfTaxEvidenceMatchResult:
     if not context_is_verified(context):
-        return None
+        return MfTaxEvidenceMatchResult(None, (), None, ("TAX_CONTEXT_MISMATCH",))
+    identities = tuple(
+        canonical_target_identity(
+            source_account=source_line.account,
+            source_subaccount=source_line.sub_account,
+            side=source_line.side.value,
+            mapped_account=mapped_line.account,
+            mapped_subaccount=mapped_line.sub_account,
+            context=context,
+            profile=profile,
+        )
+        for source_line, mapped_line in zip(source.lines, mapped.lines, strict=True)
+    )
     signature = tuple(
         (
             source_line.side.value,
-            _account_code(
-                source_line.account, mapped_line.account, context, profile
-            ),
-            _subaccount_code(
-                source_line.account,
-                source_line.sub_account,
-                source_line.side.value,
-                mapped_line.account,
-                mapped_line.sub_account,
-                context,
-                profile,
-            ),
+            identity.account_code,
+            identity.subaccount_code,
             source_line.tax_info.category if source_line.tax_info else "",
         )
-        for source_line, mapped_line in zip(source.lines, mapped.lines, strict=True)
+        for source_line, identity in zip(source.lines, identities, strict=True)
     )
     has_partner = any(
         bool(line.metadata.get("moneyforward_trade_partner")) for line in source.lines
     )
-    return next(
+    exact = next(
         (
             item for item in EVIDENCE
             if item.account_signature == signature and item.trade_partner == has_partner
         ),
         None,
+    )
+    identity_mismatches = tuple(
+        dict.fromkeys(
+            field
+            for identity in identities
+            for field in identity.mismatch_fields
+        )
+    )
+    if exact is not None and not identity_mismatches:
+        return MfTaxEvidenceMatchResult(
+            exact,
+            signature,
+            exact.account_signature,
+            (),
+        )
+
+    candidates = tuple(
+        item for item in EVIDENCE
+        if len(item.account_signature) == len(signature)
+        and item.trade_partner == has_partner
+        and tuple(row[0] for row in item.account_signature)
+        == tuple(row[0] for row in signature)
+    )
+    expected = min(
+        candidates,
+        key=lambda item: sum(
+            expected_field != actual_field
+            for expected_row, actual_row in zip(
+                item.account_signature, signature, strict=True
+            )
+            for expected_field, actual_field in zip(
+                expected_row, actual_row, strict=True
+            )
+        ),
+        default=None,
+    )
+    mismatches = list(identity_mismatches)
+    if expected is None:
+        mismatches.append("SHAPE_MISMATCH")
+    else:
+        for expected_row, actual_row in zip(
+            expected.account_signature, signature, strict=True
+        ):
+            if expected_row[1] != actual_row[1]:
+                mismatches.append("ACCOUNT_CODE_MISMATCH")
+            if expected_row[2] != actual_row[2]:
+                mismatches.append(
+                    "PARENT_ONLY_REPRESENTATION_MISMATCH"
+                    if not expected_row[2]
+                    else "SUBACCOUNT_CODE_MISMATCH"
+                )
+            if expected_row[3] != actual_row[3]:
+                mismatches.append("TAX_CATEGORY_MISMATCH")
+    return MfTaxEvidenceMatchResult(
+        None,
+        signature,
+        expected.account_signature if expected is not None else None,
+        tuple(dict.fromkeys(mismatches)),
+    )
+
+
+def canonical_target_identity(
+    *,
+    source_account: str | None,
+    source_subaccount: str | None,
+    side: str,
+    mapped_account: str | None,
+    mapped_subaccount: str | None,
+    context: JdlTargetContext,
+    profile: ConversionProfile | None,
+) -> CanonicalTargetIdentity:
+    account_code, account_mismatches = _account_code(
+        source_account, mapped_account, context, profile
+    )
+    subaccount_code, subaccount_mismatches = _subaccount_code(
+        source_account,
+        source_subaccount,
+        side,
+        mapped_account,
+        mapped_subaccount,
+        account_code,
+        context,
+        profile,
+    )
+    return CanonicalTargetIdentity(
+        account_code,
+        subaccount_code,
+        tuple(dict.fromkeys((*account_mismatches, *subaccount_mismatches))),
     )
 
 
@@ -208,7 +325,7 @@ def _account_code(
     mapped_value: str | None,
     context: JdlTargetContext,
     profile: ConversionProfile | None,
-) -> str:
+) -> tuple[str, tuple[str, ...]]:
     mapping = (
         profile.account_mappings.get(source_value or "")
         if profile is not None else None
@@ -218,15 +335,26 @@ def _account_code(
         matches = tuple(
             item for item in context.account_master
             if item.target_master_code == code
-            and mapping.target_value in {
-                item.mapping_value, item.target_name, item.target_formal_name,
-            }
-            and mapped_value in {
-                item.mapping_value, item.target_name, item.target_formal_name,
-            }
         )
         if len(matches) == 1:
-            return code
+            identity = matches[0]
+            saved_names = {
+                value for value in (
+                    mapping.metadata.get("target_printed_name"),
+                    mapping.metadata.get("target_formal_name"),
+                ) if value
+            }
+            if not saved_names and mapping.target_value:
+                saved_names.add(mapping.target_value)
+            current_names = {
+                identity.mapping_value,
+                identity.target_name,
+                identity.target_formal_name,
+            }
+            if saved_names & current_names:
+                return code, ()
+            return "", ("ACCOUNT_IDENTITY_MISMATCH",)
+        return "", ("ACCOUNT_CODE_MISMATCH",)
     matches = tuple(
         item
         for item in context.account_master
@@ -236,7 +364,9 @@ def _account_code(
             item.target_formal_name,
         }
     )
-    return matches[0].target_master_code if len(matches) == 1 else ""
+    if len(matches) == 1:
+        return matches[0].target_master_code, ()
+    return "", ("ACCOUNT_CODE_MISMATCH",)
 
 
 def _subaccount_code(
@@ -245,14 +375,10 @@ def _subaccount_code(
     side: str,
     mapped_account: str | None,
     mapped_value: str | None,
+    parent_code: str,
     context: JdlTargetContext,
     profile: ConversionProfile | None,
-) -> str:
-    if not mapped_value:
-        return ""
-    parent_code = _account_code(
-        source_account, mapped_account, context, profile
-    )
+) -> tuple[str, tuple[str, ...]]:
     mapping = None
     if profile is not None and source_value:
         mapping = profile.subaccount_context_mappings.get(
@@ -260,6 +386,14 @@ def _subaccount_code(
                 MappingType.SUBACCOUNT, source_value, source_account, side
             )
         )
+    if mapping is not None and mapping.status is MappingStatus.USER_CONFIRMED:
+        policy = mapping.metadata.get("subaccount_policy")
+        if policy == SubaccountPolicy.PARENT_ONLY_CONFIRMED.value:
+            if mapping.target_value != "" or mapped_value not in {None, ""}:
+                return "", ("PARENT_ONLY_REPRESENTATION_MISMATCH",)
+            return "", ()
+    if not mapped_value:
+        return "", ()
     if mapping is not None and mapping.status is MappingStatus.USER_CONFIRMED:
         code = mapping.metadata.get("output_code") or mapping.metadata.get(
             "target_code", ""
@@ -276,7 +410,8 @@ def _subaccount_code(
             }
         )
         if len(matches) == 1:
-            return code.zfill(4)
+            return code.zfill(4), ()
+        return "", ("SUBACCOUNT_CODE_MISMATCH",)
     matches = tuple(
         item for item in context.subaccounts
         if (
@@ -289,4 +424,6 @@ def _subaccount_code(
             item.output_name,
         }
     )
-    return matches[0].output_code.zfill(4) if len(matches) == 1 else ""
+    if len(matches) == 1:
+        return matches[0].output_code.zfill(4), ()
+    return "", ("SUBACCOUNT_CODE_MISMATCH",)

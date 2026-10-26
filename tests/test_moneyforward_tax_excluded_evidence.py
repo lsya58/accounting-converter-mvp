@@ -25,10 +25,15 @@ from accounting_converter.application.moneyforward_tax_excluded_evidence import 
     confirmed_mapping_mismatch_fields,
     context_is_verified,
     evidence_for_occurrence,
+    match_evidence_for_occurrence,
     tax_context_identity_sha256,
 )
 from accounting_converter.application.moneyforward_conversion_workflow import (
     MoneyForwardConversionWorkflow,
+)
+from accounting_converter.application.mapping_engine import MappingEngine
+from accounting_converter.application.profile_preflight import (
+    mapping_rule_set_from_profile,
 )
 from accounting_converter.application.moneyforward_profile_setup import (
     MoneyForwardProfileSetupService,
@@ -41,7 +46,13 @@ from accounting_converter.domain.journal import (
     SourceReference,
     TaxInfo,
 )
-from accounting_converter.domain.mapping import MappingStatus, MappingValue
+from accounting_converter.domain.mapping import (
+    MappingKey,
+    MappingStatus,
+    MappingType,
+    MappingValue,
+    SubaccountPolicy,
+)
 from accounting_converter.infrastructure.conversion_profile_store import (
     ConversionProfileStore,
 )
@@ -143,6 +154,104 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
             "EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P05-8471-3181-001",
         )
 
+    def test_canonical_code_does_not_round_trip_through_display_value(self) -> None:
+        source, mapped = self._p05()
+        context = self._context()
+        mapped.lines[1].account = "Windows保存時の表示値"
+        profile = SimpleNamespace(
+            account_mappings={
+                "旅費交通費": MappingValue(
+                    "旅費交通費", "画面表示用の別名", MappingStatus.USER_CONFIRMED,
+                    metadata={
+                        "target_code": "8471",
+                        "target_printed_name": "旅費交通費",
+                    },
+                ),
+                "未払金": MappingValue(
+                    "未払金", "Windows保存時の表示値", MappingStatus.USER_CONFIRMED,
+                    metadata={
+                        "target_code": "3181",
+                        "target_formal_name": "未払金",
+                    },
+                ),
+            },
+            subaccount_context_mappings={},
+        )
+
+        result = match_evidence_for_occurrence(source, mapped, context, profile)
+
+        self.assertIsNotNone(result.evidence)
+        self.assertEqual(result.mismatch_fields, ())
+
+    def test_parent_only_is_resolved_from_saved_policy_as_canonical_blank(self) -> None:
+        source, mapped = self._p05()
+        source.lines[1].sub_account = "入力元カード"
+        mapped.lines[1].sub_account = ""
+        context = self._context()
+        profile = SimpleNamespace(
+            account_mappings={
+                "旅費交通費": MappingValue(
+                    "旅費交通費", "旅費交通費", MappingStatus.USER_CONFIRMED,
+                    metadata={"target_code": "8471", "target_printed_name": "旅費交通費"},
+                ),
+                "未払金": MappingValue(
+                    "未払金", "未払金", MappingStatus.USER_CONFIRMED,
+                    metadata={"target_code": "3181", "target_printed_name": "未払金"},
+                ),
+            },
+            subaccount_context_mappings={
+                MappingKey(MappingType.SUBACCOUNT, "入力元カード", "未払金"):
+                    MappingValue(
+                        "入力元カード", "", MappingStatus.USER_CONFIRMED,
+                        parent_account="未払金",
+                        metadata={
+                            "subaccount_policy": SubaccountPolicy.PARENT_ONLY_CONFIRMED.value,
+                        },
+                    )
+            },
+        )
+
+        result = match_evidence_for_occurrence(source, mapped, context, profile)
+
+        self.assertIsNotNone(result.evidence)
+        self.assertEqual(result.actual_signature[1][2], "")
+        self.assertEqual(result.mismatch_fields, ())
+
+    def test_parent_only_nonblank_runtime_value_has_field_level_diagnostic(self) -> None:
+        source, mapped = self._p05()
+        source.lines[1].sub_account = "入力元カード"
+        mapped.lines[1].sub_account = "0"
+        context = self._context()
+        profile = SimpleNamespace(
+            account_mappings={
+                "旅費交通費": MappingValue(
+                    "旅費交通費", "旅費交通費", MappingStatus.USER_CONFIRMED,
+                    metadata={"target_code": "8471"},
+                ),
+                "未払金": MappingValue(
+                    "未払金", "未払金", MappingStatus.USER_CONFIRMED,
+                    metadata={"target_code": "3181"},
+                ),
+            },
+            subaccount_context_mappings={
+                MappingKey(MappingType.SUBACCOUNT, "入力元カード", "未払金"):
+                    MappingValue(
+                        "入力元カード", "", MappingStatus.USER_CONFIRMED,
+                        parent_account="未払金",
+                        metadata={
+                            "subaccount_policy": SubaccountPolicy.PARENT_ONLY_CONFIRMED.value,
+                        },
+                    )
+            },
+        )
+
+        result = match_evidence_for_occurrence(source, mapped, context, profile)
+
+        self.assertIsNone(result.evidence)
+        self.assertIn(
+            "PARENT_ONLY_REPRESENTATION_MISMATCH", result.mismatch_fields
+        )
+
     def test_batch_evidence_id_is_stable(self) -> None:
         self.assertEqual(
             BATCH_EVIDENCE_ID,
@@ -206,6 +315,149 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
 
                 self.assertIsNotNone(actual)
                 self.assertEqual(actual.evidence_id, expected.evidence_id)
+
+    def test_production_preflight_path_matches_all_13_batch_occurrences(self) -> None:
+        counts = (1, 1, 1, 1, 5, 2, 2)
+        codes = sorted({row[1] for item in EVIDENCE for row in item.account_signature})
+        account_names = {code: f"TARGET-{code}" for code in codes}
+        accounts = tuple(
+            JdlAccountIdentity(name, code, name, name)
+            for code, name in account_names.items()
+        )
+        sub_keys = sorted({
+            (row[1], row[2])
+            for item in EVIDENCE for row in item.account_signature if row[2]
+        })
+        subaccounts = tuple(
+            JdlSubaccountIdentity(
+                account_names[parent], f"TARGET-SUB-{parent}-{code}", code,
+                code, f"TARGET-SUB-{parent}-{code}", True, parent,
+                f"TARGET-SUB-{parent}-{code}",
+            )
+            for parent, code in sub_keys
+        )
+        base = self._context()
+        context = JdlTargetContext(**{
+            **base.__dict__,
+            "accounts": frozenset(account_names.values()),
+            "account_master": accounts,
+            "subaccounts": subaccounts,
+        })
+        account_mappings = {
+            f"SOURCE-{code}": MappingValue(
+                f"SOURCE-{code}", name, MappingStatus.USER_CONFIRMED,
+                metadata={"target_code": code, "target_printed_name": name},
+            )
+            for code, name in account_names.items()
+        }
+        sub_mappings = {
+            MappingKey(
+                MappingType.SUBACCOUNT, f"SOURCE-SUB-{parent}-{code}",
+                f"SOURCE-{parent}",
+            ): MappingValue(
+                f"SOURCE-SUB-{parent}-{code}",
+                f"TARGET-SUB-{parent}-{code}", MappingStatus.USER_CONFIRMED,
+                parent_account=f"SOURCE-{parent}",
+                metadata={
+                    "target_code": code,
+                    "output_code": code,
+                    "output_name": f"TARGET-SUB-{parent}-{code}",
+                    "subaccount_policy": SubaccountPolicy.PRESERVE_SUBACCOUNT.value,
+                },
+            )
+            for parent, code in sub_keys
+        }
+        parent_only_source = "SOURCE-PARENT-ONLY"
+        sub_mappings.update({
+            MappingKey(
+                MappingType.SUBACCOUNT, parent_only_source, "SOURCE-3181"
+            ): MappingValue(
+                parent_only_source, "", MappingStatus.USER_CONFIRMED,
+                parent_account="SOURCE-3181",
+                metadata={
+                    "subaccount_policy": SubaccountPolicy.PARENT_ONLY_CONFIRMED.value,
+                },
+            )
+        })
+        tax_mappings = {
+            category: MappingValue(
+                category, target, MappingStatus.USER_CONFIRMED,
+                metadata={
+                    "jdl_evidence_id": BATCH_EVIDENCE_ID,
+                    "jdl_tax_processing_mode": context.tax_processing_mode.value,
+                    "jdl_tax_scope": scope,
+                    "jdl_tax_context_identity_sha256": tax_context_identity_sha256(context),
+                },
+            )
+            for category, target, scope in (
+                ("課税仕入 10%", "10%", "仕　入"),
+                ("対象外", "", ""),
+            )
+        }
+        now = datetime.now(timezone.utc)
+        profile = ConversionProfile(
+            "production-path", "production-path",
+            moneyforward_cloud_journal_export_observed_schema().identity,
+            jdl_ibex_cashbook_official_journal_import_schema_definition().identity,
+            account_mappings=account_mappings,
+            subaccount_context_mappings=sub_mappings,
+            tax_mappings=tax_mappings,
+            created_at=now, updated_at=now,
+        )
+        entries = []
+        expected_ids = []
+        occurrence = 0
+        for evidence, count in zip(EVIDENCE, counts, strict=True):
+            for _ in range(count):
+                occurrence += 1
+                ref = SourceReference("privacy-safe.csv", occurrence + 1, str(occurrence))
+                lines = []
+                for index, (side, account, subaccount, tax) in enumerate(
+                    evidence.account_signature
+                ):
+                    source_subaccount = (
+                        f"SOURCE-SUB-{account}-{subaccount}"
+                        if subaccount else (
+                            parent_only_source if account == "3181" else None
+                        )
+                    )
+                    metadata = (
+                        {"moneyforward_trade_partner": "SYNTHETIC-PARTNER"}
+                        if evidence.trade_partner and index == 0 else {}
+                    )
+                    lines.append(JournalLine(
+                        Side(side), f"SOURCE-{account}", Decimal("100"), ref,
+                        sub_account=source_subaccount, tax_info=TaxInfo(tax),
+                        metadata=metadata,
+                    ))
+                entries.append(JournalEntry(
+                    f"privacy-safe-{occurrence}", ref, date(2026, 4, 20),
+                    lines, "SYNTHETIC",
+                ))
+                expected_ids.append(evidence.evidence_id)
+
+        mapped = MappingEngine(mapping_rule_set_from_profile(profile)).apply(entries)
+        transformed = tuple(
+            apply_verified_tax_semantics(source, target, context, profile)
+            for source, target in zip(entries, mapped.entries, strict=True)
+        )
+        assignments, reasons, shapes, tax_evidence = (
+            MoneyForwardConversionWorkflow()._route_assignments(
+                tuple(entries), transformed, profile, context,
+                company_setting_validated=True,
+            )
+        )
+
+        self.assertEqual(len(assignments), 13)
+        self.assertEqual(reasons, [])
+        self.assertEqual(shapes, set())
+        self.assertEqual(tax_evidence, set())
+        actual_ids = [
+            match_evidence_for_occurrence(source, target, context, profile)
+            .evidence.evidence_id
+            for source, target in zip(entries, mapped.entries, strict=True)
+        ]
+        self.assertEqual(actual_ids, expected_ids)
 
     def test_tax_review_is_available_only_for_exact_verified_context(self) -> None:
         items = MoneyForwardProfileSetupService._tax_items(

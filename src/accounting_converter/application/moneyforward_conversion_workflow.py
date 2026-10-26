@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import logging
 from pathlib import Path
 
 from accounting_converter.adapters.input.moneyforward import (
@@ -38,7 +40,7 @@ from accounting_converter.application.moneyforward_tax_excluded_evidence import 
     apply_verified_tax_semantics,
     confirmed_mapping_mismatch_fields as tax_excluded_mapping_mismatch_fields,
     context_is_verified as tax_excluded_proportional_context_verified,
-    evidence_for_occurrence as tax_excluded_proportional_evidence_for,
+    match_evidence_for_occurrence as match_tax_excluded_proportional_evidence,
 )
 from accounting_converter.application.profile_preflight import mapping_rule_set_from_profile
 from accounting_converter.application.validation_pipeline import ValidationPipeline
@@ -75,6 +77,9 @@ _COMPOUND_PROFILES = {
     (5, 7): JdlEvidenceProfile.COMPOUND_5D7C_LINE_DESCRIPTIONS,
     (5, 8): JdlEvidenceProfile.COMPOUND_5D8C_LINE_DESCRIPTIONS,
 }
+
+
+logger = logging.getLogger(__name__)
 
 _TAX_ROUTES = {
     (Side.DEBIT, "課税仕入 10%", True): (
@@ -326,9 +331,10 @@ class MoneyForwardConversionWorkflow:
             JdlTargetContextLoader().to_json_text(context).encode("utf-8")
         ).hexdigest()
         for entry, mapped_entry in zip(entries, mapped_entries, strict=True):
-            proportional_evidence = tax_excluded_proportional_evidence_for(
+            proportional_match = match_tax_excluded_proportional_evidence(
                 entry, mapped_entry, context, profile
             )
+            proportional_evidence = proportional_match.evidence
             if tax_excluded_proportional_context_verified(context):
                 mappings = tuple(
                     (
@@ -343,6 +349,28 @@ class MoneyForwardConversionWorkflow:
                     for category, item in mappings
                 )
                 if proportional_evidence is None or not mappings or stale_mapping:
+                    if proportional_evidence is None:
+                        logger.warning(
+                            "MF-JDL-TAX-EVIDENCE-CONDITION-MISMATCH %s",
+                            json.dumps(
+                                {
+                                    "journal_sha256": hashlib.sha256(
+                                        entry.id.encode("utf-8")
+                                    ).hexdigest(),
+                                    "expected_signature": (
+                                        proportional_match.expected_signature
+                                    ),
+                                    "actual_signature": (
+                                        proportional_match.actual_signature
+                                    ),
+                                    "mismatch_fields": (
+                                        proportional_match.mismatch_fields
+                                    ),
+                                },
+                                ensure_ascii=False,
+                                sort_keys=True,
+                            ),
+                        )
                     reasons.append(
                         "税区分の確認内容が更新されています。再確認してください。"
                         if proportional_evidence is not None and stale_mapping
