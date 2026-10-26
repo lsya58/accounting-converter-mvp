@@ -76,6 +76,7 @@ def write_manifest(artifact_dir: Path, manifest: dict[str, Any]) -> None:
     )
     info = (
         "AccountingConverter build provenance\n"
+        f"Project version: {manifest['project_version']}\n"
         f"Git commit: {manifest['git_commit']}\n"
         f"Build time (UTC): {manifest['built_at_utc']}\n"
         f"Python: {manifest['python_version']}\n"

@@ -240,10 +240,17 @@ class GuiV2PresentationTests(unittest.TestCase):
             messages=("架空の内部メッセージ",),
         )
 
-        text = support_diagnostic_text(state, "0.1.0")
+        text = support_diagnostic_text(
+            state,
+            "0.1.0",
+            build_commit="a" * 40,
+            build_identifier="0.1.0+aaaaaaaaaaaa",
+        )
 
         for expected in (
             "アプリ: 0.1.0",
+            f"Build commit: {'a' * 40}",
+            "Build identifier: 0.1.0+aaaaaaaaaaaa",
             "仕訳数: 482",
             "科目確認: 3",
             "補助科目確認: 2",

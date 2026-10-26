@@ -63,6 +63,10 @@ class ReleaseManifestTest(unittest.TestCase):
             self.assertNotIn(MANIFEST_NAME, paths)
             self.assertNotIn(BUILD_INFO_NAME, paths)
             self.assertTrue((artifact_dir / BUILD_INFO_NAME).is_file())
+            self.assertIn(
+                "Project version: 0.1.0",
+                (artifact_dir / BUILD_INFO_NAME).read_text(encoding="utf-8"),
+            )
 
     def test_missing_executable_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

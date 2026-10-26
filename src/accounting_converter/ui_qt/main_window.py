@@ -51,6 +51,7 @@ from accounting_converter.ui.view_models import (
     present_main_screen,
     support_diagnostic_text,
 )
+from accounting_converter.application.build_identity import current_build_identity
 from accounting_converter.infrastructure.local_diagnostic_log import (
     log_local_exception,
 )
@@ -389,8 +390,14 @@ class AccountingConverterMainWindow(QMainWindow):
         QApplication.clipboard().setText(presentation.guidance)
 
     def _copy_diagnostics(self) -> None:
+        build = current_build_identity()
         QApplication.clipboard().setText(
-            support_diagnostic_text(self.controller.state, "0.1.0")
+            support_diagnostic_text(
+                self.controller.state,
+                build.version,
+                build_commit=build.commit,
+                build_identifier=build.identifier,
+            )
         )
 
     def _show_report(self) -> None:

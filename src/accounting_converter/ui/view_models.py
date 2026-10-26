@@ -268,7 +268,13 @@ def _friendly_guidance(state: AppState) -> str:
     return state.user_message
 
 
-def support_diagnostic_text(state: AppState, app_version: str) -> str:
+def support_diagnostic_text(
+    state: AppState,
+    app_version: str,
+    *,
+    build_commit: str = "不明",
+    build_identifier: str | None = None,
+) -> str:
     """Return a support-ready summary that cannot include accounting values."""
     recognition = state.file_recognition
     summary = state.conversion_summary
@@ -290,6 +296,8 @@ def support_diagnostic_text(state: AppState, app_version: str) -> str:
     }.get(recognition.format, "未選択") if recognition else "未選択"
     rows = (
         ("アプリ", app_version),
+        ("Build commit", build_commit),
+        ("Build identifier", build_identifier or f"{app_version}+unverified"),
         ("入力元", recognition.display_name if recognition else "未選択"),
         ("入力形式", source_format),
         ("仕訳数", str(recognition.journal_count) if recognition and recognition.journal_count is not None else "未確認"),
