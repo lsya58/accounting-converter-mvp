@@ -10,6 +10,12 @@ from accounting_converter.application.profile_revision import revised_profile_id
 from accounting_converter.application.jdl_master_identity import (
     observed_master_identity_sha256,
 )
+from accounting_converter.application.jdl_master_diff import JdlMasterDiff, compare_jdl_masters
+from accounting_converter.application.jdl_master_observation import (
+    JdlMasterObservation,
+    JdlObservedSubaccount,
+    JdlPrintedAccount,
+)
 from accounting_converter.domain.conversion_profile import ConversionProfile
 from accounting_converter.domain.mapping import (
     MappingKey,
@@ -37,6 +43,7 @@ class AccountMasterRefreshPlan:
     new_context_sha256: str
     items: tuple[AccountMasterRefreshItem, ...]
     master_identity_unchanged: bool = False
+    master_diff: JdlMasterDiff = JdlMasterDiff(())
 
     @property
     def reconfirmation_count(self) -> int:
@@ -55,6 +62,7 @@ class CompanyMasterRefreshService:
         setting = self.company_store.get(company_setting_id)
         profile = self.profile_store.get(setting.conversion_profile_id)
         draft = self.drafts.load(new_context_path)
+        old_observation = self._current_observation(setting)
         targets = tuple(item for item in draft.observation.printed_accounts if item.enabled)
         by_identity = {(item.code, item.name) for item in targets}
         available = tuple(item.name for item in sorted(targets, key=lambda item: (item.code, item.name)))
@@ -81,6 +89,41 @@ class CompanyMasterRefreshService:
             master_identity_unchanged=(
                 self.company_store.target_master_identity_sha256(company_setting_id)
                 == observed_master_identity_sha256(draft.observation)
+            ),
+            master_diff=compare_jdl_masters(
+                old_observation, draft.observation
+            ),
+        )
+
+    def _current_observation(self, setting) -> JdlMasterObservation:
+        path = self.company_store.context_path(setting)
+        if self.drafts.is_draft(path):
+            return self.drafts.load(path).observation
+        accounts, subaccounts, _excluded = self.company_store.target_master_inventory(
+            setting.company_setting_id
+        )
+        return JdlMasterObservation(
+            accounts=tuple(accounts),
+            subaccounts=tuple(
+                JdlObservedSubaccount(
+                    item.parent_account_code,
+                    item.parent_account,
+                    item.output_code,
+                    item.output_name or item.target_name,
+                )
+                for item in subaccounts
+            ),
+            departments=(),
+            sources=(),
+            printed_accounts=tuple(
+                JdlPrintedAccount(
+                    item.target_master_code,
+                    item.target_name,
+                    item.target_name,
+                    "",
+                    True,
+                )
+                for item in accounts
             ),
         )
 

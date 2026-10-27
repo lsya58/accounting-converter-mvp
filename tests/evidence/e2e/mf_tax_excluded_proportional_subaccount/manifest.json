@@ -1,0 +1,30 @@
+{
+  "schema_version": "1",
+  "status": "VERIFIED_BY_REAL_IMPORT_AND_REEXPORT",
+  "route": "MF_TO_JDL",
+  "product": "JDL IBEX Cashbook",
+  "version": "35.5",
+  "tax_context": {
+    "tax_processing": "taxable",
+    "accounting": "tax_excluded",
+    "taxation_method": "standard",
+    "input_tax_credit_method": "proportional"
+  },
+  "journal_count": 2,
+  "physical_row_count": 2,
+  "unexpected_change_count": 0,
+  "candidate_sha256": "ce5a8ead5f022b5c13cf9447d49833e149f1759a8231343295a0c7b6ae712dd7",
+  "reexport_sha256": "1335ce10bbda5c9389244d9ec69898d12e1b11f6114b4d024615d8d501f66deb",
+  "evidence_ids": [
+    "EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P05-8471-3181-SUB0001-001",
+    "EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P07-8481-3181-SUB0001-001"
+  ],
+  "normalizations": [
+    "blank voucher to zero",
+    "blank opposite tax amount to zero",
+    "blank department code to zero",
+    "target-master account abbreviation",
+    "exact scoped numeric subaccount code 0001 to 1"
+  ],
+  "raw_private_data_in_repository": false
+}

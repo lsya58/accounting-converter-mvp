@@ -360,8 +360,13 @@ class MoneyForwardConversionWorkflow:
                         tax_evidence_diagnostics.extend(
                             (pattern_id, field) for field in mismatch_fields
                         )
+                        event_code = (
+                            "MF-JDL-EVIDENCE-SCOPE-CHANGED-BY-MASTER"
+                            if "EVIDENCE_SCOPE_CHANGED_BY_MASTER" in mismatch_fields
+                            else "MF-JDL-TAX-EVIDENCE-CONDITION-MISMATCH"
+                        )
                         log_local_event(
-                            "MF-JDL-TAX-EVIDENCE-CONDITION-MISMATCH",
+                            event_code,
                             {
                                 "journal_sha256": hashlib.sha256(
                                     entry.id.encode("utf-8")
@@ -379,11 +384,20 @@ class MoneyForwardConversionWorkflow:
                                 "mismatch_fields": mismatch_fields,
                             },
                         )
-                    reasons.append(
-                        "税区分の確認内容が更新されています。再確認してください。"
-                        if proportional_evidence is not None and stale_mapping
-                        else "この税抜仕訳は実機確認済み範囲外です。"
-                    )
+                    if (
+                        proportional_evidence is None
+                        and "EVIDENCE_SCOPE_CHANGED_BY_MASTER"
+                        in proportional_match.mismatch_fields
+                    ):
+                        reasons.append(
+                            "JDL科目一覧の変更により、現在の補助科目設定に対応する実機確認がありません。"
+                        )
+                    else:
+                        reasons.append(
+                            "税区分の確認内容が更新されています。再確認してください。"
+                            if proportional_evidence is not None and stale_mapping
+                            else "この税抜仕訳は実機確認済み範囲外です。"
+                        )
                     tax_evidence_blocked.add(entry.id)
                 else:
                     assignments[entry.id] = proportional_evidence.profile

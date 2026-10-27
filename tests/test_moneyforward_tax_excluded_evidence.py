@@ -21,6 +21,9 @@ from accounting_converter.adapters.output.jdl import (
 from accounting_converter.application.moneyforward_tax_excluded_evidence import (
     BATCH_EVIDENCE_ID,
     EVIDENCE,
+    EVIDENCE_REGISTRY,
+    MfTaxEvidenceRegistry,
+    MfTaxExcludedPatternEvidence,
     apply_verified_tax_semantics,
     confirmed_mapping_is_in_scope,
     confirmed_mapping_mismatch_fields,
@@ -296,6 +299,95 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
             "PARENT_ONLY_REPRESENTATION_MISMATCH", result.mismatch_fields
         )
 
+    def test_current_preserve_mapping_selects_only_exact_subaccount_evidence(self) -> None:
+        source, _mapped = self._p05()
+        source.lines[1].sub_account = "入力元カード"
+        context = self._context_with_3181_subaccount()
+        mapping = MappingValue(
+            "入力元カード",
+            "三井住友カードご本人",
+            MappingStatus.USER_CONFIRMED,
+            parent_account="未払金",
+            metadata={
+                "target_code": "0001",
+                "output_code": "0001",
+                "output_name": "三井住友カードご本人",
+                "subaccount_policy": SubaccountPolicy.PRESERVE_SUBACCOUNT.value,
+            },
+        )
+        profile = SimpleNamespace(
+            account_mappings={
+                "旅費交通費": MappingValue(
+                    "旅費交通費", "旅費交通費", MappingStatus.USER_CONFIRMED,
+                    metadata={"target_code": "8471", "target_printed_name": "旅費交通費"},
+                ),
+                "未払金": MappingValue(
+                    "未払金", "未払金", MappingStatus.USER_CONFIRMED,
+                    metadata={"target_code": "3181", "target_printed_name": "未払金"},
+                ),
+            },
+            subaccount_context_mappings={
+                MappingKey(MappingType.SUBACCOUNT, "入力元カード", "未払金"): mapping
+            },
+            subaccount_mappings={},
+            department_mappings={},
+            tax_mappings={},
+        )
+        mapped = MappingEngine(mapping_rule_set_from_profile(profile)).apply(
+            (source,)
+        ).entries[0]
+
+        result = match_evidence_for_occurrence(source, mapped, context, profile)
+
+        self.assertEqual(result.actual_signature[1][2], "0001")
+        self.assertIsNotNone(result.evidence)
+        self.assertEqual(
+            result.evidence.evidence_id,
+            "EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P05-8471-3181-SUB0001-001",
+        )
+        self.assertEqual(result.mismatch_fields, ())
+
+    def test_registry_can_hold_blank_and_subaccount_variants_exactly(self) -> None:
+        blank = next(item for item in EVIDENCE if "-P05-" in item.evidence_id)
+        subaccount = MfTaxExcludedPatternEvidence(
+            "PENDING-P05-3181-0001",
+            (("DEBIT", "8471", "", "課税仕入 10%"),
+             ("CREDIT", "3181", "0001", "対象外")),
+            blank.profile,
+        )
+        registry = MfTaxEvidenceRegistry((blank, subaccount))
+
+        self.assertEqual(
+            registry.exact(subaccount.account_signature, trade_partner=False),
+            subaccount,
+        )
+        self.assertEqual(
+            registry.exact(blank.account_signature, trade_partner=False), blank
+        )
+
+    def test_verified_p05_p07_subaccount_variants_are_exact_and_blank_is_retained(self) -> None:
+        for pattern, debit_code in (("P05", "8471"), ("P07", "8481")):
+            with self.subTest(pattern=pattern):
+                blank_signature = (
+                    ("DEBIT", debit_code, "", "課税仕入 10%"),
+                    ("CREDIT", "3181", "", "対象外"),
+                )
+                subaccount_signature = (
+                    ("DEBIT", debit_code, "", "課税仕入 10%"),
+                    ("CREDIT", "3181", "0001", "対象外"),
+                )
+                blank = EVIDENCE_REGISTRY.exact(
+                    blank_signature, trade_partner=False
+                )
+                subaccount = EVIDENCE_REGISTRY.exact(
+                    subaccount_signature, trade_partner=False
+                )
+
+                self.assertIsNotNone(blank)
+                self.assertIsNotNone(subaccount)
+                self.assertNotEqual(blank.evidence_id, subaccount.evidence_id)
+                self.assertIn("SUB0001", subaccount.evidence_id)
+
     def test_batch_evidence_id_is_stable(self) -> None:
         self.assertEqual(
             BATCH_EVIDENCE_ID,
@@ -362,7 +454,15 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
 
     def test_production_preflight_path_matches_all_13_batch_occurrences(self) -> None:
         counts = (1, 1, 1, 1, 5, 2, 2)
-        codes = sorted({row[1] for item in EVIDENCE for row in item.account_signature})
+        batch_evidence = tuple(
+            next(
+                item for item in EVIDENCE
+                if f"-{pattern}-" in item.evidence_id
+                and ((pattern not in {"P05", "P07"}) or "SUB0001" in item.evidence_id)
+            )
+            for pattern in ("P01", "P02", "P03", "P04", "P05", "P06", "P07")
+        )
+        codes = sorted({row[1] for item in batch_evidence for row in item.account_signature})
         account_names = {code: f"TARGET-{code}" for code in codes}
         accounts = tuple(
             JdlAccountIdentity(name, code, name, name)
@@ -370,7 +470,7 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
         )
         sub_keys = sorted({
             (row[1], row[2])
-            for item in EVIDENCE for row in item.account_signature if row[2]
+            for item in batch_evidence for row in item.account_signature if row[2]
         })
         subaccounts = tuple(
             JdlSubaccountIdentity(
@@ -411,18 +511,6 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
             )
             for parent, code in sub_keys
         }
-        parent_only_source = "SOURCE-PARENT-ONLY"
-        sub_mappings.update({
-            MappingKey(
-                MappingType.SUBACCOUNT, parent_only_source, "SOURCE-3181"
-            ): MappingValue(
-                parent_only_source, "__PARENT_ONLY_CONFIRMED__", MappingStatus.USER_CONFIRMED,
-                parent_account="SOURCE-3181",
-                metadata={
-                    "subaccount_policy": SubaccountPolicy.PARENT_ONLY_CONFIRMED.value,
-                },
-            )
-        })
         tax_mappings = {
             category: MappingValue(
                 category, target, MappingStatus.USER_CONFIRMED,
@@ -451,7 +539,7 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
         entries = []
         expected_ids = []
         occurrence = 0
-        for evidence, count in zip(EVIDENCE, counts, strict=True):
+        for evidence, count in zip(batch_evidence, counts, strict=True):
             for _ in range(count):
                 occurrence += 1
                 ref = SourceReference("privacy-safe.csv", occurrence + 1, str(occurrence))
@@ -461,9 +549,7 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
                 ):
                     source_subaccount = (
                         f"SOURCE-SUB-{account}-{subaccount}"
-                        if subaccount else (
-                            parent_only_source if account == "3181" else None
-                        )
+                        if subaccount else None
                     )
                     metadata = (
                         {"moneyforward_trade_partner": "SYNTHETIC-PARTNER"}
@@ -698,6 +784,26 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
             provenance=JdlContextProvenance.USER_CONFIRMED_RUNTIME_SNAPSHOT,
         )
 
+    @staticmethod
+    def _context_with_3181_subaccount() -> JdlTargetContext:
+        base = MoneyForwardTaxExcludedEvidenceTests._context()
+        return JdlTargetContext(
+            **{
+                **base.__dict__,
+                "subaccounts": (
+                    JdlSubaccountIdentity(
+                        "未払金",
+                        "三井住友カードご本人",
+                        "0001",
+                        "0001",
+                        "三井住友カードご本人",
+                        True,
+                        "3181",
+                        "三井住友カードご本人",
+                    ),
+                ),
+            }
+        )
     @staticmethod
     def _p05() -> tuple[JournalEntry, JournalEntry]:
         ref = SourceReference("synthetic.csv", 2, "1")

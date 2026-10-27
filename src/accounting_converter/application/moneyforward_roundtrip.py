@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 from collections import Counter
+import csv
 from dataclasses import dataclass
 from enum import Enum
+import io
 from pathlib import Path
 
 from accounting_converter.adapters.input.jdl.observed_parser import JdlMigrationParser
+from accounting_converter.profiles.jdl_official import (
+    jdl_ibex_cashbook_official_journal_import_spec,
+)
 
 
 class MoneyForwardRoundTripClassification(str, Enum):
@@ -54,6 +59,16 @@ class MoneyForwardRoundTripReport:
 class MoneyForwardJdlRoundTripComparator:
     """Strict generated-JDL to real-JDL re-export semantic comparator."""
 
+    def __init__(
+        self,
+        *,
+        numeric_subaccount_normalizations: frozenset[
+            tuple[str, str, str, str]
+        ] = frozenset(),
+    ) -> None:
+        # (side, parent account code, zero-padded code, exact subaccount name)
+        self._numeric_subaccount_normalizations = numeric_subaccount_normalizations
+
     _FIELDS = (
         "flag",
         "voucher",
@@ -88,9 +103,8 @@ class MoneyForwardJdlRoundTripComparator:
     )
 
     def compare(self, candidate_path: Path, reexport_path: Path) -> MoneyForwardRoundTripReport:
-        parser = JdlMigrationParser()
-        candidate = parser.parse_path(candidate_path)
-        reexport = parser.parse_path(reexport_path)
+        candidate = self._parse_for_comparison(candidate_path)
+        reexport = self._parse_for_comparison(reexport_path)
         candidate_rows = self._rows(candidate.entries)
         reexport_rows = self._rows(reexport.entries)
         differences: list[MoneyForwardRoundTripDifference] = []
@@ -163,8 +177,8 @@ class MoneyForwardJdlRoundTripComparator:
             )
         return tuple(differences)
 
-    @staticmethod
     def _known_normalization(
+        self,
         column: int,
         before: str,
         after: str,
@@ -181,6 +195,32 @@ class MoneyForwardJdlRoundTripComparator:
                 and expected[account_base] == actual[account_base]
                 and expected[account_base + 1] == actual[account_base + 1]
             )
+        if column in {4, 14}:
+            account_base = 3 if column == 4 else 13
+            formal_name_column = 5 if column == 4 else 15
+            return (
+                bool(before)
+                and bool(after)
+                and expected[account_base] == actual[account_base]
+                and expected[formal_name_column] == actual[formal_name_column]
+            )
+        if column in {6, 16}:
+            side = "DEBIT" if column == 6 else "CREDIT"
+            account_column = 3 if column == 6 else 13
+            name_column = 7 if column == 6 else 17
+            return bool(
+                before.isdigit()
+                and after.isdigit()
+                and int(before) == int(after)
+                and (
+                    side,
+                    expected[account_column],
+                    before.zfill(4),
+                    expected[name_column],
+                )
+                in self._numeric_subaccount_normalizations
+                and expected[name_column] == actual[name_column]
+            )
         if column in {12, 22}:
             return before in {"", "0"} and after in {"", "0"}
         if column in {26, 28}:
@@ -191,6 +231,34 @@ class MoneyForwardJdlRoundTripComparator:
                 and expected[name_column] == actual[name_column]
             )
         return False
+
+    @staticmethod
+    def _parse_for_comparison(path: Path):
+        text = path.read_bytes().decode("cp932", errors="strict")
+        rows = list(csv.reader(io.StringIO(text, newline="")))
+        header = tuple(MoneyForwardJdlRoundTripComparator._FIELDS)
+        source_header = (
+            jdl_ibex_cashbook_official_journal_import_spec().column_names
+        )
+        header_indexes = [
+            index for index, row in enumerate(rows) if tuple(row) == source_header
+        ]
+        if len(header_indexes) != 1:
+            raise ValueError(f"JDL comparison requires one official header: {path.name}")
+        header_index = header_indexes[0]
+        for index, row in enumerate(rows[:header_index], start=1):
+            if any(row) and (not row[0].startswith("//") or any(row[1:])):
+                raise ValueError(
+                    f"unknown JDL comparison preamble row {index}: {path.name}"
+                )
+        data_rows = [row for row in rows[header_index + 1 :] if row]
+        if any(len(row) != len(header) for row in data_rows):
+            raise ValueError(f"JDL comparison data row is not 30 columns: {path.name}")
+        normalized = io.StringIO(newline="")
+        writer = csv.writer(normalized, lineterminator="\n")
+        writer.writerow(source_header)
+        writer.writerows(data_rows)
+        return JdlMigrationParser().parse_text(normalized.getvalue(), file_name=path.name)
 
     @staticmethod
     def _rows(entries) -> tuple[tuple[str, ...], ...]:

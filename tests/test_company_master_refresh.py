@@ -15,7 +15,13 @@ from accounting_converter.application.profile_revision import (
     revised_profile_id,
 )
 from accounting_converter.domain.conversion_profile import ConversionProfile
-from accounting_converter.domain.mapping import MappingStatus, MappingValue
+from accounting_converter.domain.mapping import (
+    MappingKey,
+    MappingStatus,
+    MappingType,
+    MappingValue,
+    SubaccountPolicy,
+)
 from accounting_converter.infrastructure.company_setting_store import CompanySettingStore
 from accounting_converter.infrastructure.conversion_profile_store import ConversionProfileStore
 from accounting_converter.infrastructure.jdl_account_pdf_draft import JdlAccountPdfDraftStore
@@ -42,6 +48,22 @@ class _Pages:
         )
 
 
+class _SubPages:
+    def __init__(self, subaccounts: tuple[tuple[str, str], ...]) -> None:
+        self.subaccounts = subaccounts
+
+    def extract_pages(self, _path: Path) -> tuple[str, ...]:
+        subs = "".join(
+            f"             -{code} {name}  貸\n"
+            for code, name in self.subaccounts
+        )
+        return (
+            "科        目        一         覧\n頁\n1\n"
+            "令和 8年12月31日決算\n"
+            "勘 定 科 目  略名称 使用 課区 税区 入力 固変 比率 説明\n"
+            "         3181- 未払金                    貸未払金  ○ \n"
+            + subs,
+        )
 class CompanyMasterRefreshTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
@@ -188,11 +210,99 @@ class CompanyMasterRefreshTests(unittest.TestCase):
             "REQUIRES_CONFIRMATION",
         )
 
+    def test_preserve_subaccount_survives_unrelated_master_addition(self) -> None:
+        self._replace_with_subaccount_profile(SubaccountPolicy.PRESERVE_SUBACCOUNT)
+        new = self._sub_draft(
+            "preserve-new",
+            (("0001", "カード"), ("0002", "無関係追加")),
+        )
+        plan = self.service.plan("company-a", new)
+
+        self.service.apply(plan, {}, set())
+
+        profile = self.profiles.get(
+            self.companies.get("company-a").conversion_profile_id
+        )
+        mapping = next(iter(profile.subaccount_context_mappings.values()))
+        self.assertEqual(mapping.status, MappingStatus.USER_CONFIRMED)
+        self.assertEqual(mapping.metadata["output_code"], "0001")
+
+    def test_parent_only_is_not_silently_switched_when_subaccount_is_added(self) -> None:
+        self._replace_with_subaccount_profile(SubaccountPolicy.PARENT_ONLY_CONFIRMED)
+        new = self._sub_draft("parent-only-new", (("0001", "カード"),))
+        plan = self.service.plan("company-a", new)
+
+        self.service.apply(plan, {}, set())
+
+        profile = self.profiles.get(
+            self.companies.get("company-a").conversion_profile_id
+        )
+        mapping = next(iter(profile.subaccount_context_mappings.values()))
+        self.assertEqual(mapping.status, MappingStatus.OBSOLETE)
+        self.assertIsNone(mapping.target_value)
+        self.assertEqual(
+            mapping.metadata["subaccount_policy"],
+            SubaccountPolicy.PARENT_ONLY_CONFIRMED.value,
+        )
+
+    def _replace_with_subaccount_profile(self, policy: SubaccountPolicy) -> None:
+        old = self.profiles.get("profile-1")
+        old_context = self._sub_draft(
+            "sub-old",
+            (("0001", "カード"),) if policy is SubaccountPolicy.PRESERVE_SUBACCOUNT else (),
+        )
+        context_hash = hashlib.sha256(old_context.read_bytes()).hexdigest()
+        account = MappingValue(
+            "未払金",
+            "未払金",
+            MappingStatus.USER_CONFIRMED,
+            metadata={
+                "target_code": "3181",
+                "target_printed_name": "未払金",
+                "setup_context_sha256": context_hash,
+            },
+        )
+        target = "カード" if policy is SubaccountPolicy.PRESERVE_SUBACCOUNT else ""
+        metadata = {
+            "subaccount_policy": policy.value,
+            "setup_context_sha256": context_hash,
+        }
+        if policy is SubaccountPolicy.PRESERVE_SUBACCOUNT:
+            metadata.update(
+                {"target_code": "0001", "output_code": "0001", "output_name": "カード"}
+            )
+        updated = replace(
+            old,
+            profile_id=f"profile-{policy.value.lower()}",
+            account_mappings={"未払金": account},
+            subaccount_context_mappings={
+                MappingKey(MappingType.SUBACCOUNT, "入力元カード", "未払金"):
+                    MappingValue(
+                        "入力元カード",
+                        target,
+                        MappingStatus.USER_CONFIRMED,
+                        parent_account="未払金",
+                        metadata=metadata,
+                    )
+            },
+        )
+        self.profiles.create(updated)
+        self.companies.replace_context(
+            "company-a", old_context, conversion_profile_id=updated.profile_id
+        )
+
     def _draft(self, name: str, rows: tuple[tuple[str, str], ...]) -> Path:
         pdf = self.root / f"{name}.pdf"
         pdf.write_bytes(name.encode("ascii"))
         path = self.root / f"{name}.json"
         JdlAccountPdfDraftStore(_Pages(rows)).import_pdf(pdf, path)
+        return path
+
+    def _sub_draft(self, name: str, rows: tuple[tuple[str, str], ...]) -> Path:
+        pdf = self.root / f"{name}.pdf"
+        pdf.write_bytes(name.encode("ascii"))
+        path = self.root / f"{name}.json"
+        JdlAccountPdfDraftStore(_SubPages(rows)).import_pdf(pdf, path)
         return path
 
 

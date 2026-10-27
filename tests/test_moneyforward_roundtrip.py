@@ -70,11 +70,59 @@ class MoneyForwardJdlRoundTripComparatorTests(unittest.TestCase):
             )
         )
 
+    def test_exact_scoped_numeric_subaccount_normalization_passes(self) -> None:
+        before = self._row()
+        before[13:18] = ["3181", "未払金", "未払金", "0001", "SYNTHETIC-SUBACCOUNT"]
+        after = list(before)
+        after[16] = "1"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            candidate = self._write(root / "candidate.csv", [before])
+            reexport = self._write(
+                root / "reexport.csv",
+                [after],
+                preamble=("// company", "// 出力期間 ： 20260101 ～ 20260101"),
+            )
+            report = MoneyForwardJdlRoundTripComparator(
+                numeric_subaccount_normalizations=frozenset({
+                    ("CREDIT", "3181", "0001", "SYNTHETIC-SUBACCOUNT")
+                })
+            ).compare(candidate, reexport)
+
+        self.assertTrue(report.passed)
+        self.assertEqual(
+            report.classification_counts,
+            {"EXPECTED_JDL_CANONICAL_NORMALIZATION": 1},
+        )
+
+    def test_numeric_subaccount_normalization_is_not_generalized(self) -> None:
+        before = self._row()
+        before[13:18] = ["3181", "未払金", "未払金", "0001", "SYNTHETIC-SUBACCOUNT"]
+        after = list(before)
+        after[16] = "1"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            candidate = self._write(root / "candidate.csv", [before])
+            reexport = self._write(root / "reexport.csv", [after])
+            report = MoneyForwardJdlRoundTripComparator().compare(candidate, reexport)
+
+        self.assertFalse(report.passed)
+        self.assertEqual(report.classification_counts, {"UNEXPECTED_CHANGE": 1})
+
     @staticmethod
-    def _write(path: Path, rows: list[list[str]]) -> Path:
+    def _write(
+        path: Path,
+        rows: list[list[str]],
+        *,
+        preamble: tuple[str, ...] = (),
+    ) -> Path:
         header = jdl_ibex_cashbook_official_journal_import_spec().column_names
         with path.open("w", encoding="cp932", newline="") as handle:
             writer = csv.writer(handle, lineterminator="\r\n")
+            for value in preamble:
+                writer.writerow([value])
+            if preamble:
+                writer.writerow([])
             writer.writerow(header)
             writer.writerows(rows)
         return path

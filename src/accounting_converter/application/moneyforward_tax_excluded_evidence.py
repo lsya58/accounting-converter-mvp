@@ -70,15 +70,39 @@ class CanonicalTargetIdentity:
     mismatch_fields: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class MfTaxEvidenceRegistry:
+    """Select only a verified variant with an exact canonical dependency signature."""
+
+    evidence: tuple[MfTaxExcludedPatternEvidence, ...]
+
+    def exact(
+        self,
+        signature: tuple[tuple[str, str, str, str], ...],
+        *,
+        trade_partner: bool,
+    ) -> MfTaxExcludedPatternEvidence | None:
+        matches = tuple(
+            item
+            for item in self.evidence
+            if item.account_signature == signature
+            and item.trade_partner == trade_partner
+        )
+        return matches[0] if len(matches) == 1 else None
+
+
 EVIDENCE = (
     MfTaxExcludedPatternEvidence("EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P01-2D2C-PURCHASE-10-001", (("DEBIT","3231","","対象外"),("CREDIT","1311","0002","対象外"),("DEBIT","8681","","課税仕入 10%"),("CREDIT","1311","0002","対象外")), JdlEvidenceProfile.MF_COMPOUND_2D2C_TAX_EXCLUDED_PROPORTIONAL),
     MfTaxExcludedPatternEvidence("EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P02-OUT-3231-1311-SUB-001", (("DEBIT","3231","","対象外"),("CREDIT","1311","0002","対象外")), JdlEvidenceProfile.MF_NO_TAX_PROPORTIONAL_1111),
     MfTaxExcludedPatternEvidence("EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P03-OUT-3241-1311-SUB-001", (("DEBIT","3241","","対象外"),("CREDIT","1311","0002","対象外")), JdlEvidenceProfile.MF_NO_TAX_PROPORTIONAL_1111),
     MfTaxExcludedPatternEvidence("EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P04-PARTNER-001", (("DEBIT","8691","","課税仕入 10%"),("CREDIT","1311","0002","対象外")), JdlEvidenceProfile.MF_TAX_EXCLUDED_PROPORTIONAL_1111, True),
     MfTaxExcludedPatternEvidence("EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P05-8471-3181-001", (("DEBIT","8471","","課税仕入 10%"),("CREDIT","3181",PARENT_ONLY_CANONICAL_SUBACCOUNT,"対象外")), JdlEvidenceProfile.MF_TAX_EXCLUDED_PROPORTIONAL_1111),
+    MfTaxExcludedPatternEvidence("EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P05-8471-3181-SUB0001-001", (("DEBIT","8471","","課税仕入 10%"),("CREDIT","3181","0001","対象外")), JdlEvidenceProfile.MF_TAX_EXCLUDED_PROPORTIONAL_1111),
     MfTaxExcludedPatternEvidence("EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P06-OUT-1311-SUB-3161-001", (("DEBIT","1311","0002","対象外"),("CREDIT","3161","","対象外")), JdlEvidenceProfile.MF_NO_TAX_PROPORTIONAL_1111),
     MfTaxExcludedPatternEvidence("EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P07-8481-3181-001", (("DEBIT","8481","","課税仕入 10%"),("CREDIT","3181",PARENT_ONLY_CANONICAL_SUBACCOUNT,"対象外")), JdlEvidenceProfile.MF_TAX_EXCLUDED_PROPORTIONAL_1111),
+    MfTaxExcludedPatternEvidence("EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P07-8481-3181-SUB0001-001", (("DEBIT","8481","","課税仕入 10%"),("CREDIT","3181","0001","対象外")), JdlEvidenceProfile.MF_TAX_EXCLUDED_PROPORTIONAL_1111),
 )
+EVIDENCE_REGISTRY = MfTaxEvidenceRegistry(EVIDENCE)
 
 
 def context_is_verified(context: JdlTargetContext) -> bool:
@@ -195,12 +219,9 @@ def match_evidence_for_occurrence(
     has_partner = any(
         bool(line.metadata.get("moneyforward_trade_partner")) for line in source.lines
     )
-    exact = next(
-        (
-            item for item in EVIDENCE
-            if item.account_signature == signature and item.trade_partner == has_partner
-        ),
-        None,
+    exact = EVIDENCE_REGISTRY.exact(
+        signature,
+        trade_partner=has_partner,
     )
     identity_mismatches = tuple(
         dict.fromkeys(
@@ -249,11 +270,16 @@ def match_evidence_for_occurrence(
             if expected_row[1] != actual_row[1]:
                 mismatches.append("ACCOUNT_CODE_MISMATCH")
             if expected_row[2] != actual_row[2]:
-                mismatches.append(
-                    "PARENT_ONLY_REPRESENTATION_MISMATCH"
-                    if not expected_row[2]
-                    else "SUBACCOUNT_CODE_MISMATCH"
-                )
+                if (
+                    not expected_row[2]
+                    and actual_row[2]
+                    and _target_subaccount_exists(
+                        context, actual_row[1], actual_row[2]
+                    )
+                ):
+                    mismatches.append("EVIDENCE_SCOPE_CHANGED_BY_MASTER")
+                else:
+                    mismatches.append("SUBACCOUNT_CODE_MISMATCH")
             if expected_row[3] != actual_row[3]:
                 mismatches.append("TAX_CATEGORY_MISMATCH")
     return MfTaxEvidenceMatchResult(
@@ -271,6 +297,18 @@ def _pattern_id(evidence: MfTaxExcludedPatternEvidence) -> str:
         if len(part) == 3 and part.startswith("P") and part[1:].isdigit():
             return part
     return "UNKNOWN"
+
+
+def _target_subaccount_exists(
+    context: JdlTargetContext,
+    parent_code: str,
+    subaccount_code: str,
+) -> bool:
+    return any(
+        item.parent_account_code == parent_code
+        and item.output_code.zfill(4) == subaccount_code.zfill(4)
+        for item in context.subaccounts
+    )
 
 
 def canonical_target_identity(
