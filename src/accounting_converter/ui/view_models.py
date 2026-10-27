@@ -307,6 +307,7 @@ def support_diagnostic_text(
         ("未対応仕訳構成", str(summary.unsupported_shape_count if summary else state.unsupported_shape_count)),
         ("税Evidence条件未一致", str(summary.tax_evidence_blocker_count if summary else 0)),
         ("保持方法未確認", str(summary.optional_field_blocker_count if summary else state.optional_field_blocker_count)),
+        ("Formal出力条件未一致", str(summary.formal_output_blocker_count if summary else 0)),
         ("JDL科目一覧", "設定済み" if state.jdl_master_configured else "未設定"),
         ("JDL科目一覧の状態", state.jdl_master_state),
         ("最終状態", readiness),
@@ -317,6 +318,13 @@ def support_diagnostic_text(
         if summary and summary.tax_evidence_mismatch_details
         else ()
     )
+    formal_details = (
+        ("Formal output blocker詳細:", *summary.formal_output_blocker_details)
+        if summary and summary.formal_output_blocker_details
+        else ()
+    )
     return "会計データ変換 サポート診断\n" + "\n".join(
         f"{label}: {value}" for label, value in rows
-    ) + ("\n" + "\n".join(details) if details else "")
+    ) + ("\n" + "\n".join(details) if details else "") + (
+        "\n" + "\n".join(formal_details) if formal_details else ""
+    )

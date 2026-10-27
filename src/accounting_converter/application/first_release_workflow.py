@@ -69,6 +69,8 @@ class FirstReleaseSummary:
     tax_evidence_blocker_count: int = 0
     optional_field_blocker_count: int = 0
     tax_evidence_mismatch_details: tuple[str, ...] = ()
+    formal_output_blocker_count: int = 0
+    formal_output_blocker_details: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

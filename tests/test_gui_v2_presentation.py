@@ -290,6 +290,21 @@ class GuiV2PresentationTests(unittest.TestCase):
         self.assertIn("Pattern P05: ACCOUNT_CODE_MISMATCH x5", text)
         self.assertIn("Pattern P07: ACCOUNT_CODE_MISMATCH x2", text)
 
+    def test_support_diagnostics_exposes_formal_output_blocker(self) -> None:
+        state = AppState(
+            conversion_summary=FirstReleaseSummary(
+                readiness=FirstReleaseReadiness.BLOCKED,
+                blocking_reasons=("JDL科目一覧と科目対応を確認してください。",),
+                formal_output_blocker_count=1,
+                formal_output_blocker_details=("JDL-OUT-ACCOUNT-MASTER",),
+            ),
+        )
+
+        text = support_diagnostic_text(state, "0.1.0")
+
+        self.assertIn("Formal出力条件未一致: 1", text)
+        self.assertIn("JDL-OUT-ACCOUNT-MASTER", text)
+
     @staticmethod
     def _assert_no_internal_terms(text: str) -> None:
         for term in ("ConversionProfile", "Profile ID", "Registry", "Evidence", "BLOCKED_BY"):

@@ -233,6 +233,7 @@ class MoneyForwardConversionWorkflow:
                 route_id="GUI-MF-EXACT-COMPANY-SETTING-V0",
             ),
         )
+        formal_output_results = ()
         if not reasons:
             if mapping_result.unresolved_count or mapping_result.validation_results:
                 reasons.append("会社設定に未確認の対応があります。")
@@ -247,10 +248,24 @@ class MoneyForwardConversionWorkflow:
                     if not runtime.resolved or runtime.output_adapter is None:
                         reasons.append("JDL科目一覧が更新されています。会社設定を確認してください。")
                     else:
-                        output_results = runtime.output_adapter.preflight(
+                        formal_output_results = tuple(runtime.output_adapter.preflight(
                             route_result.entries, jdl_ibex_35_5_output_profile()
+                        ))
+                        if formal_output_results:
+                            rule_counts = Counter(
+                                item.rule_id for item in formal_output_results
+                            )
+                            log_local_event(
+                                "MF-JDL-FORMAL-OUTPUT-PREFLIGHT-BLOCKED",
+                                {
+                                    "blocker_count": len(formal_output_results),
+                                    "rule_counts": dict(sorted(rule_counts.items())),
+                                },
+                            )
+                        reasons.extend(
+                            self._preflight_reason(item.rule_id)
+                            for item in formal_output_results
                         )
-                        reasons.extend(self._preflight_reason(item.rule_id) for item in output_results)
 
         summary = self._summary(
             input_path, output_path, profile, context, tuple(dict.fromkeys(reasons)),
@@ -261,6 +276,10 @@ class MoneyForwardConversionWorkflow:
                 {item.journal_id for item in loss_results if item.journal_id}
             ),
             tax_evidence_mismatch_details=tax_evidence_diagnostics,
+            formal_output_blocker_count=len(formal_output_results),
+            formal_output_blocker_details=tuple(
+                dict.fromkeys(item.rule_id for item in formal_output_results)
+            ),
         )
         if reasons:
             return FirstReleasePreparedConversion(summary)
@@ -669,6 +688,8 @@ class MoneyForwardConversionWorkflow:
         tax_evidence_blocker_count=0,
         optional_field_blocker_count=0,
         tax_evidence_mismatch_details=(),
+        formal_output_blocker_count=0,
+        formal_output_blocker_details=(),
     ):
         return FirstReleaseSummary(
             readiness=FirstReleaseReadiness.BLOCKED if reasons else FirstReleaseReadiness.READY,
@@ -691,6 +712,8 @@ class MoneyForwardConversionWorkflow:
             tax_evidence_blocker_count=tax_evidence_blocker_count,
             optional_field_blocker_count=optional_field_blocker_count,
             tax_evidence_mismatch_details=tax_evidence_mismatch_details,
+            formal_output_blocker_count=formal_output_blocker_count,
+            formal_output_blocker_details=formal_output_blocker_details,
         )
 
 

@@ -629,9 +629,14 @@ class JdlOutputPreflight:
         entry: JournalEntry,
         errors: list[ValidationResult],
     ) -> None:
-        if not line.account or line.account not in self.context.accounts:
+        identity = self._account_identity(line.account)
+        if not line.account or (
+            self.context.account_master and identity is None
+        ) or (
+            not self.context.account_master and line.account not in self.context.accounts
+        ):
             errors.append(self._error("JDL-OUT-ACCOUNT-MASTER", "確認済み取込先科目に一致しません。", "account", entry))
-        elif len(line.account) > 4:
+        elif identity is None and len(line.account) > 4:
             errors.append(self._error("JDL-OUT-ACCOUNT-LENGTH", "v0の科目名称identifierは4文字以内です。", "account", entry))
 
     def _validate_amount(
@@ -875,6 +880,8 @@ class JdlOutputPreflight:
         credit: JournalLine | None,
         description: str,
     ) -> JdlOutputRow:
+        debit_account = self._account_identity(debit.account) if debit else None
+        credit_account = self._account_identity(credit.account) if credit else None
         debit_sub = self._subaccount_identity(debit) if debit else None
         credit_sub = self._subaccount_identity(credit)
         debit_department = self._department_identity(debit.department) if debit and debit.department else None
@@ -885,9 +892,14 @@ class JdlOutputPreflight:
             identifier_flag=flag,
             voucher_number="",
             journal_date=entry.date.strftime("%Y%m%d"),
-            debit_account_code="",
-            debit_account_name=debit.account if debit and debit.account else "",
-            debit_account_formal_name="",
+            debit_account_code=(debit_account.target_master_code if debit_account else ""),
+            debit_account_name=(
+                debit_account.target_name
+                if debit_account else debit.account if debit and debit.account else ""
+            ),
+            debit_account_formal_name=(
+                debit_account.target_formal_name if debit_account else ""
+            ),
             debit_subaccount_code=debit_sub.output_code if debit_sub else "",
             debit_subaccount_name=debit_sub.output_name if debit_sub else "",
             debit_tax_scope=self._tax_metadata(debit_tax, "jdl_tax_scope"),
@@ -895,9 +907,14 @@ class JdlOutputPreflight:
             debit_tax_input_method=self._tax_metadata(debit_tax, "jdl_tax_input_method"),
             debit_amount=self._amount(debit.amount) if debit else "0",
             debit_tax_amount=self._optional_amount(debit_tax.tax_amount if debit_tax else None),
-            credit_account_code="",
-            credit_account_name=credit.account if credit and credit.account else "",
-            credit_account_formal_name="",
+            credit_account_code=(credit_account.target_master_code if credit_account else ""),
+            credit_account_name=(
+                credit_account.target_name
+                if credit_account else credit.account if credit and credit.account else ""
+            ),
+            credit_account_formal_name=(
+                credit_account.target_formal_name if credit_account else ""
+            ),
             credit_subaccount_code=credit_sub.output_code if credit_sub else "",
             credit_subaccount_name=credit_sub.output_name if credit_sub else "",
             credit_tax_scope=self._tax_metadata(credit_tax, "jdl_tax_scope"),
@@ -913,6 +930,15 @@ class JdlOutputPreflight:
             credit_department_code=credit_department.output_code if credit_department else "",
             credit_department_name=credit_department.output_name if credit_department else "",
         )
+
+    def _account_identity(self, value: str | None):
+        if not value:
+            return None
+        matches = tuple(
+            item for item in self.context.account_master
+            if item.mapping_value == value
+        )
+        return matches[0] if len(matches) == 1 else None
 
     def _subaccount_identity(self, line: JournalLine | None) -> JdlSubaccountIdentity | None:
         if line is None or not line.account or not line.sub_account:

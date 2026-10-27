@@ -10,6 +10,7 @@ import tempfile
 from unittest.mock import patch
 
 from accounting_converter.adapters.output.jdl import (
+    ExplicitJdlEvidenceRoutePolicy,
     JdlAccountIdentity,
     JdlContextConfirmationState,
     JdlContextProvenance,
@@ -17,7 +18,9 @@ from accounting_converter.adapters.output.jdl import (
     JdlSubaccountIdentity,
     JdlTargetContext,
     JdlTaxationMethod,
+    jdl_ibex_35_5_output_profile,
 )
+from accounting_converter.adapters.output.jdl.adapter import JDLOutputAdapter
 from accounting_converter.application.moneyforward_tax_excluded_evidence import (
     BATCH_EVIDENCE_ID,
     EVIDENCE,
@@ -453,7 +456,6 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
                 self.assertEqual(actual.evidence_id, expected.evidence_id)
 
     def test_production_preflight_path_matches_all_13_batch_occurrences(self) -> None:
-        counts = (1, 1, 1, 1, 5, 2, 2)
         batch_evidence = tuple(
             next(
                 item for item in EVIDENCE
@@ -465,8 +467,8 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
         codes = sorted({row[1] for item in batch_evidence for row in item.account_signature})
         account_names = {code: f"TARGET-{code}" for code in codes}
         accounts = tuple(
-            JdlAccountIdentity(name, code, name, name)
-            for code, name in account_names.items()
+            JdlAccountIdentity(name, code, f"A{index:02d}", f"FORMAL{index:02d}")
+            for index, (code, name) in enumerate(account_names.items(), start=1)
         )
         sub_keys = sorted({
             (row[1], row[2])
@@ -475,10 +477,10 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
         subaccounts = tuple(
             JdlSubaccountIdentity(
                 account_names[parent], f"TARGET-SUB-{parent}-{code}", code,
-                code, f"TARGET-SUB-{parent}-{code}", True, parent,
+                code, f"S{index:02d}", True, parent,
                 f"TARGET-SUB-{parent}-{code}",
             )
-            for parent, code in sub_keys
+            for index, (parent, code) in enumerate(sub_keys, start=1)
         )
         base = self._context()
         context = JdlTargetContext(**{
@@ -494,23 +496,22 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
             )
             for code, name in account_names.items()
         }
-        sub_mappings = {
-            MappingKey(
+        sub_mappings = {}
+        for index, (parent, code) in enumerate(sub_keys, start=1):
+            sub_mappings[MappingKey(
                 MappingType.SUBACCOUNT, f"SOURCE-SUB-{parent}-{code}",
                 f"SOURCE-{parent}",
-            ): MappingValue(
+            )] = MappingValue(
                 f"SOURCE-SUB-{parent}-{code}",
                 f"TARGET-SUB-{parent}-{code}", MappingStatus.USER_CONFIRMED,
                 parent_account=f"SOURCE-{parent}",
                 metadata={
                     "target_code": code,
                     "output_code": code,
-                    "output_name": f"TARGET-SUB-{parent}-{code}",
+                    "output_name": f"S{index:02d}",
                     "subaccount_policy": SubaccountPolicy.PRESERVE_SUBACCOUNT.value,
                 },
             )
-            for parent, code in sub_keys
-        }
         tax_mappings = {
             category: MappingValue(
                 category, target, MappingStatus.USER_CONFIRMED,
@@ -539,32 +540,60 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
         entries = []
         expected_ids = []
         occurrence = 0
-        for evidence, count in zip(batch_evidence, counts, strict=True):
-            for _ in range(count):
-                occurrence += 1
-                ref = SourceReference("privacy-safe.csv", occurrence + 1, str(occurrence))
-                lines = []
-                for index, (side, account, subaccount, tax) in enumerate(
-                    evidence.account_signature
-                ):
-                    source_subaccount = (
-                        f"SOURCE-SUB-{account}-{subaccount}"
-                        if subaccount else None
-                    )
-                    metadata = (
-                        {"moneyforward_trade_partner": "SYNTHETIC-PARTNER"}
-                        if evidence.trade_partner and index == 0 else {}
-                    )
-                    lines.append(JournalLine(
-                        Side(side), f"SOURCE-{account}", Decimal("100"), ref,
-                        sub_account=source_subaccount, tax_info=TaxInfo(tax),
-                        metadata=metadata,
-                    ))
-                entries.append(JournalEntry(
-                    f"privacy-safe-{occurrence}", ref, date(2026, 4, 20),
-                    lines, "SYNTHETIC",
+        evidence_by_pattern = {
+            pattern: evidence
+            for pattern, evidence in zip(
+                ("P01", "P02", "P03", "P04", "P05", "P06", "P07"),
+                batch_evidence,
+                strict=True,
+            )
+        }
+        occurrence_patterns = (
+            "P01", "P02", "P03", "P04", "P05", "P05", "P05",
+            "P06", "P06", "P05", "P05", "P07", "P07",
+        )
+        for pattern in occurrence_patterns:
+            evidence = evidence_by_pattern[pattern]
+            occurrence += 1
+            ref = SourceReference("privacy-safe.csv", occurrence + 1, str(occurrence))
+            lines = []
+            for index, (side, account, subaccount, tax) in enumerate(
+                evidence.account_signature
+            ):
+                source_subaccount = (
+                    f"SOURCE-SUB-{account}-{subaccount}"
+                    if subaccount else None
+                )
+                metadata = (
+                    {"moneyforward_trade_partner": "SYNTHETIC-PARTNER"}
+                    if evidence.trade_partner and index == 0 else {}
+                )
+                line_metadata = dict(metadata)
+                if pattern == "P01":
+                    line_metadata.update({
+                        "moneyforward_source_row_number": occurrence * 10 + index // 2,
+                        "moneyforward_description": f"ROW-{index // 2 + 1}",
+                    })
+                lines.append(JournalLine(
+                    Side(side), f"SOURCE-{account}", Decimal("100"), ref,
+                    sub_account=source_subaccount, tax_info=TaxInfo(tax),
+                    metadata=line_metadata,
                 ))
-                expected_ids.append(evidence.evidence_id)
+            entry_metadata = {}
+            if pattern == "P01":
+                row_numbers = (occurrence * 10, occurrence * 10 + 1)
+                entry_metadata = {
+                    "physical_row_numbers": row_numbers,
+                    "moneyforward_descriptions": tuple(
+                        {"row_number": number, "value": f"ROW-{index + 1}"}
+                        for index, number in enumerate(row_numbers)
+                    ),
+                }
+            entries.append(JournalEntry(
+                f"privacy-safe-{occurrence}", ref, date(2026, 4, 20),
+                lines, "SYNTHETIC", metadata=entry_metadata,
+            ))
+            expected_ids.append(evidence.evidence_id)
 
         mapped = MappingEngine(mapping_rule_set_from_profile(profile)).apply(entries)
         transformed = tuple(
@@ -589,6 +618,21 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
             for source, target in zip(entries, mapped.entries, strict=True)
         ]
         self.assertEqual(actual_ids, expected_ids)
+
+        routed = ExplicitJdlEvidenceRoutePolicy(
+            assignments,
+            route_id="GUI-MF-EXACT-COMPANY-SETTING-V0",
+        ).apply(transformed)
+        self.assertEqual(routed.validation_results, ())
+        output_results = JDLOutputAdapter(context).preflight(
+            routed.entries,
+            jdl_ibex_35_5_output_profile(),
+        )
+        self.assertEqual(
+            output_results,
+            [],
+            [item.rule_id for item in output_results],
+        )
 
     def test_tax_review_is_available_only_for_exact_verified_context(self) -> None:
         items = MoneyForwardProfileSetupService._tax_items(

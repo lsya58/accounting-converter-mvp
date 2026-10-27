@@ -14,6 +14,7 @@ from accounting_converter.adapters.output.jdl import (
     JDL_OUTPUT_METADATA_KEY,
     JDLOutputAdapter,
     JDLOutputValidator,
+    JdlAccountIdentity,
     JdlDepartmentIdentity,
     JdlEvidenceProfile,
     JdlSubaccountIdentity,
@@ -98,6 +99,32 @@ class JDLOutputAdapterV0Tests(unittest.TestCase):
         rows, result = self.roundtrip((entry,), self.exempt_context())
         self.assertEqual(rows[1][0], "1000")
         self.assertTrue(result.success)
+
+    def test_account_output_uses_exact_master_identity_not_mapping_value_length(self) -> None:
+        entry = self.simple(JdlEvidenceProfile.BASIC_1111)
+        entry.lines[0].account = "HUMAN-CONFIRMED-DEBIT"
+        entry.lines[1].account = "HUMAN-CONFIRMED-CREDIT"
+        context = self.exempt_context()
+        context = JdlTargetContext(**{
+            **context.__dict__,
+            "accounts": frozenset({
+                "HUMAN-CONFIRMED-DEBIT", "HUMAN-CONFIRMED-CREDIT"
+            }),
+            "account_master": (
+                JdlAccountIdentity(
+                    "HUMAN-CONFIRMED-DEBIT", "8471", "旅費交通", "旅費交通費"
+                ),
+                JdlAccountIdentity(
+                    "HUMAN-CONFIRMED-CREDIT", "3181", "未払金", "未払金"
+                ),
+            ),
+        })
+
+        rows, result = self.roundtrip((entry,), context)
+
+        self.assertTrue(result.success)
+        self.assertEqual(rows[1][3:6], ["8471", "旅費交通", "旅費交通費"])
+        self.assertEqual(rows[1][13:16], ["3181", "未払金", "未払金"])
 
     def test_supported_credit_subaccount_passes_with_parent_context(self) -> None:
         entry = self.simple(JdlEvidenceProfile.SUBACCOUNT_1000)
