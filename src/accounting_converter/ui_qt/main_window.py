@@ -32,6 +32,12 @@ from PySide6.QtWidgets import (
 from accounting_converter.application.company_mapping_update import (
     PARENT_ONLY_SELECTION,
 )
+from accounting_converter.application.description_replacement import (
+    replacement_is_valid,
+)
+from accounting_converter.application.moneyforward_description_replacement import (
+    unsafe_description_positions,
+)
 from accounting_converter.application.jdl_migration_review import (
     JdlMigrationReviewError,
 )
@@ -261,7 +267,7 @@ class AccountingConverterMainWindow(QMainWindow):
                 "会社設定とCSVを確認してください。",
             )
             return
-        if review.items:
+        if review.items or review.descriptions:
             dialog = CompanyMappingUpdateDialog(self.controller, review, self)
             if dialog.exec() != QDialog.DialogCode.Accepted:
                 self._refresh_current_csv_readiness()
@@ -777,7 +783,7 @@ class SettingsDialog(QDialog):
             log_local_exception("company_mapping_update_review", exc)
             self.message_label.setText("CSVと現在の会社設定を確認できませんでした。")
             return
-        if not review.items:
+        if not review.items and not review.descriptions:
             self.message_label.setText("追加確認が必要な科目はありません。")
             return
         dialog = CompanyMappingUpdateDialog(self.controller, review, self)
@@ -1437,6 +1443,7 @@ class CompanyMappingUpdateDialog(QDialog):
         self.controls: list[tuple[str, QComboBox, QCheckBox]] = []
         self.account_controls: dict[str, tuple[QComboBox, QCheckBox]] = {}
         self.subaccount_controls: list[tuple[object, QComboBox, QCheckBox]] = []
+        self.description_controls: dict[str, tuple[QLineEdit, QCheckBox]] = {}
         self.setWindowTitle("新しい科目を確認")
         self.resize(980, 680)
         self.setMinimumSize(760, 520)
@@ -1528,6 +1535,47 @@ class CompanyMappingUpdateDialog(QDialog):
             else:
                 self.subaccount_controls.append((item, target, confirmed))
         layout.addWidget(table, 1)
+        if review.descriptions:
+            description_title = QLabel(
+                f"JDLで保持できない摘要文字（{len(review.descriptions)}件）"
+            )
+            description_title.setObjectName("sectionTitle")
+            layout.addWidget(description_title)
+        for item in review.descriptions:
+            positions = ", ".join(str(index + 1) for index in item.unsafe_positions)
+            detail = QLabel(
+                f"対象仕訳: {item.affected_journal_count}件 / "
+                f"{item.current_length}文字 / 保持できない文字位置: {positions}文字目"
+            )
+            detail.setWordWrap(True)
+            layout.addWidget(detail)
+            current = QLabel(f"現在の摘要: {item.current_description}")
+            current.setWordWrap(True)
+            layout.addWidget(current)
+            guidance = QLabel(
+                "候補: 「髙」を「高」へ置換、任意の別摘要を入力、または未確認のまま変換を保留"
+            )
+            guidance.setObjectName("muted")
+            guidance.setWordWrap(True)
+            layout.addWidget(guidance)
+            replacement = QLineEdit()
+            replacement.setPlaceholderText("置換後の摘要（1〜32文字）")
+            confirmation = QCheckBox("この摘要への置換を確認しました")
+            confirmation.setEnabled(False)
+            replacement.textChanged.connect(
+                lambda text, check=confirmation: (
+                    check.setChecked(False),
+                    check.setEnabled(
+                        replacement_is_valid(text)
+                        and not unsafe_description_positions(text)
+                    ),
+                    self._update_action(),
+                )
+            )
+            confirmation.stateChanged.connect(self._update_action)
+            layout.addWidget(replacement)
+            layout.addWidget(confirmation)
+            self.description_controls[item.key] = (replacement, confirmation)
         tax_status = QLabel(
             tax_message or "税区分はCSV読込時に必要なものだけ確認します。"
         )
@@ -1602,7 +1650,13 @@ class CompanyMappingUpdateDialog(QDialog):
             combo.currentData() is not None and check.isChecked()
             for _, combo, check in self.controls
         )
-        unresolved = len(self.controls) - confirmed
+        confirmed += sum(
+            check.isChecked()
+            and replacement_is_valid(field.text())
+            and not unsafe_description_positions(field.text())
+            for field, check in self.description_controls.values()
+        )
+        unresolved = len(self.controls) + len(self.description_controls) - confirmed
         self.progress_label.setText(
             f"この画面で確認済み: {confirmed}件 / 未確認: {unresolved}件"
         )
@@ -1620,9 +1674,25 @@ class CompanyMappingUpdateDialog(QDialog):
             for key, combo, _check in self.controls
             if key in confirmed
         }
+        description_confirmed = {
+            key
+            for key, (field, check) in self.description_controls.items()
+            if check.isChecked()
+            and replacement_is_valid(field.text())
+            and not unsafe_description_positions(field.text())
+        }
+        description_replacements = {
+            key: field.text()
+            for key, (field, _check) in self.description_controls.items()
+            if key in description_confirmed
+        }
         try:
             saved_count = self.controller.apply_company_mapping_updates(
-                self.review, selections, confirmed
+                self.review,
+                selections,
+                confirmed,
+                description_replacements,
+                description_confirmed,
             )
         except Exception as exc:
             log_local_exception("company_mapping_update_apply", exc)
@@ -1632,7 +1702,7 @@ class CompanyMappingUpdateDialog(QDialog):
                 "会社設定を保存できませんでした。設定を開き直して再試行してください。",
             )
             return
-        remaining = len(self.controls) - saved_count
+        remaining = len(self.controls) + len(self.description_controls) - saved_count
         QMessageBox.information(
             self,
             "確認結果を保存しました",

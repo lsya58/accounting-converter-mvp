@@ -21,6 +21,7 @@ from accounting_converter.application.first_release_workflow import (
     FirstReleaseSummary,
 )
 from accounting_converter.application.jdl_migration import JdlMigrationPreflight
+from accounting_converter.application.description_replacement import description_sha256
 from accounting_converter.application.jdl_migration_review import (
     jdl_description_replacement_key,
 )
@@ -264,7 +265,7 @@ class JdlMigrationFormalWorkflow:
                         or replacement.status is not MappingStatus.USER_CONFIRMED
                         or replacement.metadata.get("source_sha256") != source_sha256
                         or replacement.metadata.get("original_description_sha256")
-                        != hashlib.sha256(description.encode("utf-8")).hexdigest()
+                        != description_sha256(description)
                         or not replacement.target_value
                     ):
                         raise ValueError("摘要のHuman確認済み置換が一致しません。")

@@ -642,6 +642,25 @@ class QtGuiContractTests(unittest.TestCase):
             self.assertIn(text, dialog)
         self.assertIn("self.progress_label = QLabel()", dialog)
 
+    def test_moneyforward_review_requires_explicit_description_replacement(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
+            encoding="utf-8"
+        )
+        dialog = source.split("class CompanyMappingUpdateDialog", maxsplit=1)[1].split(
+            "class CompanyAddDialog", maxsplit=1
+        )[0]
+        for text in (
+            "JDLで保持できない摘要文字",
+            "対象仕訳:",
+            "現在の摘要:",
+            "候補: 「髙」を「高」へ置換",
+            "任意の別摘要を入力",
+            "未確認のまま変換を保留",
+            "この摘要への置換を確認しました",
+            "description_confirmed",
+        ):
+            self.assertIn(text, dialog)
+
 
 if __name__ == "__main__":
     unittest.main()

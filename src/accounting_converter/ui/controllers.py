@@ -746,9 +746,15 @@ class AccountingConverterController:
         review: CompanyMappingUpdateReview,
         selections: dict[str, str],
         explicitly_confirmed: set[str],
+        description_replacements: dict[str, str] | None = None,
+        description_confirmed: set[str] | None = None,
     ) -> int:
         saved_count = self.company_mapping_update_service.apply(
-            review, selections, explicitly_confirmed
+            review,
+            selections,
+            explicitly_confirmed,
+            description_replacements,
+            description_confirmed,
         )
         self.load_profiles()
         self.load_company_settings()

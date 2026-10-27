@@ -31,6 +31,9 @@ from accounting_converter.application.moneyforward_jdl_loss import (
     MoneyForwardToJdlLossRule,
     moneyforward_verified_description_rows,
 )
+from accounting_converter.application.moneyforward_description_replacement import (
+    MoneyForwardDescriptionReplacementPolicy,
+)
 from accounting_converter.application.moneyforward_trade_partner import (
     MoneyForwardTradePartnerDescriptionPolicy,
     TRADE_PARTNER_2D2C_TAXABLE_EVIDENCE_ID,
@@ -191,6 +194,9 @@ class MoneyForwardConversionWorkflow:
         )
         trade_partner_result = trade_partner_policy.apply(entries)
         entries = trade_partner_result.entries
+        description_policy = MoneyForwardDescriptionReplacementPolicy(profile)
+        description_result = description_policy.apply(entries)
+        entries = description_result.entries
         requirements = MappingRequirementExtractor().extract(entries, profile)
         unconfirmed_count = sum(
             1
@@ -202,6 +208,10 @@ class MoneyForwardConversionWorkflow:
         reasons.extend(
             self._trade_partner_reason(item.rule_id)
             for item in trade_partner_result.validation_results
+        )
+        reasons.extend(
+            "摘要にJDLで保持できない文字があります。会社設定で置換内容を確認してください。"
+            for _item in description_result.validation_results
         )
         mapping_engine = MappingEngine(mapping_rule_set_from_profile(profile))
         mapping_result = mapping_engine.apply(entries)
@@ -229,6 +239,7 @@ class MoneyForwardConversionWorkflow:
 
         route = _TradePartnerAndEvidenceRoutePolicy(
             trade_partner_policy,
+            description_policy,
             ExplicitJdlEvidenceRoutePolicy(
                 assignments,
                 route_id="GUI-MF-EXACT-COMPANY-SETTING-V0",
@@ -618,6 +629,8 @@ class MoneyForwardConversionWorkflow:
             return "このデータは現在変換できません。取引先情報の扱いを確認してください。"
         if field == "description":
             return "未検証の複数摘要を含む仕訳があります。"
+        if field == "description_character":
+            return "摘要にJDLで保持できない文字があります。会社設定で置換内容を確認してください。"
         return "JDLへ安全に保持できない項目が含まれています。"
 
     @staticmethod
@@ -720,15 +733,19 @@ class MoneyForwardConversionWorkflow:
 
 
 class _TradePartnerAndEvidenceRoutePolicy:
-    def __init__(self, trade_partner_policy, evidence_policy) -> None:
+    def __init__(self, trade_partner_policy, description_policy, evidence_policy) -> None:
         self._trade_partner_policy = trade_partner_policy
+        self._description_policy = description_policy
         self._evidence_policy = evidence_policy
 
     def apply(self, entries):
         transformed = self._trade_partner_policy.apply(entries)
         if transformed.validation_results:
             return transformed
-        return self._evidence_policy.apply(transformed.entries)
+        described = self._description_policy.apply(transformed.entries)
+        if described.validation_results:
+            return described
+        return self._evidence_policy.apply(described.entries)
 
 
 class _VerifiedTaxSemanticsTransform:

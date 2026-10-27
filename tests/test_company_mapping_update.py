@@ -14,6 +14,9 @@ from accounting_converter.application.company_mapping_update import (
     CompanyMappingUpdateService,
     PARENT_ONLY_SELECTION,
 )
+from accounting_converter.application.moneyforward_description_replacement import (
+    MF_DESCRIPTION_REPLACEMENT_POLICY,
+)
 from accounting_converter.domain.conversion_profile import ConversionProfile
 from accounting_converter.domain.mapping import (
     DEFAULT_SUBACCOUNT_SOURCE_VALUE,
@@ -93,6 +96,72 @@ class CompanyMappingUpdateTests(unittest.TestCase):
         self.assertTrue(
             all(item.exact_candidate for item in editable.items)
         )
+
+    def test_non_roundtrip_description_requires_confirmed_exact_replacement(self):
+        source = self.root / "unsafe-description.csv"
+        self._write(
+            source,
+            debit_account="入力科目A",
+            debit_sub="入力補助A",
+            credit_account="入力科目A",
+            description="髙橋",
+        )
+        review = self.service.review("company-a", source)
+
+        self.assertEqual(len(review.descriptions), 1)
+        item = review.descriptions[0]
+        self.assertEqual(item.unsafe_positions, (0,))
+        self.assertEqual(item.affected_journal_count, 1)
+        with self.assertRaises(ValueError):
+            self.service.apply(
+                review, {}, set(), {item.key: "髙橋"}, {item.key}
+            )
+
+        saved_count = self.service.apply(
+            review, {}, set(), {item.key: "高橋"}, {item.key}
+        )
+
+        self.assertEqual(saved_count, 1)
+        self.assertFalse(self.service.review("company-a", source).descriptions)
+        setting = self.companies.get("company-a")
+        profile = self.profiles.get(setting.conversion_profile_id)
+        mapping = profile.loss_policy_mappings[item.key]
+        self.assertEqual(mapping.target_value, "高橋")
+        self.assertEqual(
+            mapping.metadata["policy"], MF_DESCRIPTION_REPLACEMENT_POLICY
+        )
+
+        self._write(
+            source,
+            debit_account="入力科目A",
+            debit_sub="入力補助A",
+            credit_account="入力科目A",
+            description="髙橋X",
+        )
+        changed = self.service.review("company-a", source)
+        self.assertEqual(len(changed.descriptions), 1)
+        self.assertNotEqual(changed.descriptions[0].key, item.key)
+
+    def test_description_replacement_rejects_length_and_cp932(self):
+        source = self.root / "invalid-replacement.csv"
+        self._write(
+            source,
+            debit_account="入力科目A",
+            debit_sub="入力補助A",
+            credit_account="入力科目A",
+            description="髙橋",
+        )
+        review = self.service.review("company-a", source)
+        item = review.descriptions[0]
+        for replacement in ("A" * 33, "🙂"):
+            with self.assertRaises(ValueError):
+                self.service.apply(
+                    review,
+                    {},
+                    set(),
+                    {item.key: replacement},
+                    {item.key},
+                )
 
     def test_confirmed_subset_is_saved_and_remaining_items_stay_unresolved(self):
         source = self.root / "partial.csv"
@@ -704,8 +773,8 @@ class CompanyMappingUpdateTests(unittest.TestCase):
         item=next(i for i in review.items if i.mapping_type=="SUBACCOUNT")
         self.assertNotIn("架空補助A", item.available_targets)
 
-    def _write(self,path,*,debit_account,debit_sub,credit_account):
-        row=["1","2026/10/14",debit_account,debit_sub,"","","対象外","","100",credit_account,"","","","","対象外","100","架空摘要","",""]
+    def _write(self,path,*,debit_account,debit_sub,credit_account,description="架空摘要"):
+        row=["1","2026/10/14",debit_account,debit_sub,"","","対象外","","100",credit_account,"","","","","対象外","100",description,"",""]
         with path.open("w",encoding="cp932",newline="") as f:
             w=csv.writer(f,lineterminator="\n",quoting=csv.QUOTE_ALL); w.writerow(MONEYFORWARD_OBSERVED_HEADER); w.writerow(row)
 

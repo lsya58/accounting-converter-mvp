@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass, replace
 from typing import Sequence
 
@@ -20,6 +19,7 @@ from accounting_converter.domain.mapping import (
 from accounting_converter.domain.validation import Severity, ValidationResult
 
 from .company_settings import CompanySettingStatus
+from .description_replacement import description_sha256, replacement_is_valid
 from .jdl_migration_tax_evidence import evidence_occurrence_mismatches
 from .jdl_migration_review import jdl_description_replacement_key
 from .journal_route import JournalRouteResult
@@ -171,16 +171,11 @@ class JdlMigrationPreflight:
             != "HUMAN_CONFIRMED_DESCRIPTION_REPLACEMENT"
             or mapping.metadata.get("source_sha256") != source_sha256
             or mapping.metadata.get("original_description_sha256")
-            != hashlib.sha256(original.encode("utf-8")).hexdigest()
+            != description_sha256(original)
             or not mapping.target_value
-            or not 1 <= len(mapping.target_value) <= 32
         ):
             return False
-        try:
-            mapping.target_value.encode("cp932", errors="strict")
-        except UnicodeEncodeError:
-            return False
-        return True
+        return replacement_is_valid(mapping.target_value)
 
     @staticmethod
     def _tax_evidence_mismatch_message(reason: str) -> str:

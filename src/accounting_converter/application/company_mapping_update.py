@@ -16,7 +16,20 @@ from accounting_converter.application.jdl_master_observation import (
     JdlPrintedAccount,
 )
 from accounting_converter.application.mapping_review import MappingRequirementExtractor
+from accounting_converter.application.description_replacement import (
+    description_sha256,
+    replacement_is_valid,
+)
+from accounting_converter.application.moneyforward_description_replacement import (
+    MF_DESCRIPTION_REPLACEMENT_POLICY,
+    MoneyForwardDescriptionReviewItem,
+    moneyforward_description_replacement_key,
+    unsafe_description_positions,
+)
 from accounting_converter.application.moneyforward_jdl_loss import MoneyForwardToJdlLossRule
+from accounting_converter.application.moneyforward_trade_partner import (
+    MoneyForwardTradePartnerDescriptionPolicy,
+)
 from accounting_converter.application.moneyforward_tax_excluded_evidence import (
     confirmed_mapping_is_in_scope as tax_excluded_mapping_is_in_scope,
     context_is_verified as tax_excluded_proportional_context_verified,
@@ -89,6 +102,7 @@ class CompanyMappingUpdateReview:
     unsupported_shape_count: int = 0
     optional_field_blocker_count: int = 0
     source_sha256: str | None = None
+    descriptions: tuple[MoneyForwardDescriptionReviewItem, ...] = ()
 
 
 class CompanyMappingUpdateService:
@@ -110,12 +124,18 @@ class CompanyMappingUpdateService:
         context_path = self.company_store.context_path(setting)
         master = self._master_observation(context_path)
         entries = self._entries(source_path)
-        accounts = AccountMappingReviewService().build(entries, master, profile)
         runtime_context = (
             None
             if self.drafts.is_draft(context_path)
             else self.contexts.load(context_path)
         )
+        if runtime_context is not None:
+            entries = tuple(
+                MoneyForwardTradePartnerDescriptionPolicy(
+                    profile, runtime_context
+                ).apply(entries).entries
+            )
+        accounts = AccountMappingReviewService().build(entries, master, profile)
         items: list[CompanyMappingUpdateItem] = []
         for item in accounts.items:
             if item.usable and not include_confirmed:
@@ -271,6 +291,7 @@ class CompanyMappingUpdateService:
         loss_results = ValidationPipeline((MoneyForwardToJdlLossRule(),)).validate(
             entries
         )
+        descriptions = self._description_review_items(entries, profile)
         return CompanyMappingUpdateReview(
             company_setting_id,
             source_path,
@@ -294,6 +315,7 @@ class CompanyMappingUpdateService:
             unsupported_shape_count,
             len({item.journal_id for item in loss_results if item.journal_id}),
             hashlib.sha256(source_path.read_bytes()).hexdigest(),
+            descriptions,
         )
 
     def review_saved(self, company_setting_id: str) -> CompanyMappingUpdateReview:
@@ -406,12 +428,27 @@ class CompanyMappingUpdateService:
             items=tuple(items), logical_journal_count=0,
         )
 
-    def apply(self, review: CompanyMappingUpdateReview, selections: Mapping[str, str], confirmed: set[str]) -> int:
+    def apply(
+        self,
+        review: CompanyMappingUpdateReview,
+        selections: Mapping[str, str],
+        confirmed: set[str],
+        description_replacements: Mapping[str, str] | None = None,
+        description_confirmed: set[str] | None = None,
+    ) -> int:
         required = {item.key for item in review.items}
-        if not confirmed:
+        description_replacements = description_replacements or {}
+        description_confirmed = description_confirmed or set()
+        description_required = {item.key for item in review.descriptions}
+        if not confirmed and not description_confirmed:
             raise ValueError("保存する確認済み項目がありません。")
         if not confirmed <= required or set(selections) != confirmed:
             raise ValueError("確認済み項目だけを選択して保存してください。")
+        if (
+            not description_confirmed <= description_required
+            or set(description_replacements) != description_confirmed
+        ):
+            raise ValueError("確認済みの摘要置換だけを選択して保存してください。")
         if review.source_path is not None and review.source_sha256 is not None:
             current_source_sha256 = hashlib.sha256(
                 review.source_path.read_bytes()
@@ -442,6 +479,7 @@ class CompanyMappingUpdateService:
         accounts = dict(old.account_mappings)
         subs = dict(old.subaccount_context_mappings)
         tax_mappings = dict(old.tax_mappings)
+        loss_policies = dict(old.loss_policy_mappings)
         for item in review.items:
             if item.key not in confirmed:
                 continue
@@ -564,15 +602,81 @@ class CompanyMappingUpdateService:
             )
             for key, value in accounts.items()
         }
+        description_items = {item.key: item for item in review.descriptions}
+        for key in description_confirmed:
+            item = description_items[key]
+            replacement = description_replacements[key]
+            if (
+                not replacement_is_valid(replacement)
+                or unsafe_description_positions(replacement)
+            ):
+                raise ValueError(
+                    "置換後の摘要はJDLで保持可能な1文字以上32文字以内にしてください。"
+                )
+            loss_policies[key] = MappingValue(
+                key,
+                replacement,
+                MappingStatus.USER_CONFIRMED,
+                metadata={
+                    "policy": MF_DESCRIPTION_REPLACEMENT_POLICY,
+                    "original_description_sha256": item.original_description_sha256,
+                    "setup_context_sha256": context_hash,
+                },
+            )
         updated = replace(
             old,
             account_mappings=accounts,
             subaccount_context_mappings=subs,
             tax_mappings=tax_mappings,
+            loss_policy_mappings=loss_policies,
             updated_at=datetime.now(timezone.utc),
         )
         self._persist_profile(review, old, updated)
-        return len(confirmed)
+        return len(confirmed) + len(description_confirmed)
+
+    @staticmethod
+    def _description_review_items(entries, profile):
+        affected: dict[str, set[str]] = defaultdict(set)
+        values: dict[str, str] = {}
+        positions: dict[str, tuple[int, ...]] = {}
+        for entry in entries:
+            descriptions = [entry.description or ""]
+            descriptions.extend(
+                str(item.get("value", ""))
+                for item in entry.metadata.get("moneyforward_descriptions", ())
+            )
+            for description in descriptions:
+                unsafe = unsafe_description_positions(description)
+                if not unsafe:
+                    continue
+                key = moneyforward_description_replacement_key(description)
+                mapping = profile.loss_policy_mappings.get(key)
+                if (
+                    mapping is not None
+                    and mapping.status is MappingStatus.USER_CONFIRMED
+                    and mapping.metadata.get("policy")
+                    == MF_DESCRIPTION_REPLACEMENT_POLICY
+                    and mapping.metadata.get("original_description_sha256")
+                    == description_sha256(description)
+                    and isinstance(mapping.target_value, str)
+                    and replacement_is_valid(mapping.target_value)
+                    and not unsafe_description_positions(mapping.target_value)
+                ):
+                    continue
+                affected[key].add(entry.id)
+                values[key] = description
+                positions[key] = unsafe
+        return tuple(
+            MoneyForwardDescriptionReviewItem(
+                key=key,
+                original_description_sha256=description_sha256(values[key]),
+                current_description=values[key],
+                current_length=len(values[key]),
+                unsafe_positions=positions[key],
+                affected_journal_count=len(journal_ids),
+            )
+            for key, journal_ids in sorted(affected.items())
+        )
 
     @staticmethod
     def _account_recommendation(source_value, targets, runtime_context):

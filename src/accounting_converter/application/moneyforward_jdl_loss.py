@@ -30,6 +30,9 @@ class MoneyForwardPhysicalRow:
     credit: JournalLine | None
     description: str
 from accounting_converter.domain.validation import Severity, ValidationResult
+from accounting_converter.application.moneyforward_description_replacement import (
+    unsafe_description_positions,
+)
 
 
 class MoneyForwardToJdlLossRule:
@@ -50,6 +53,8 @@ class MoneyForwardToJdlLossRule:
         }
         if len(descriptions) > 1 and moneyforward_verified_description_rows(entry) is None:
             fields.add("description")
+        if any(unsafe_description_positions(value) for value in descriptions):
+            fields.add("description_character")
 
         for line in entry.lines:
             if (
@@ -81,7 +86,9 @@ class MoneyForwardToJdlLossRule:
             source_reference=entry.source_reference,
             field=field,
             message=(
-                "Money Forward入力にJDL Output v0で保持できない項目があります。"
+                "摘要にJDLで保持できない文字があります。"
+                if field == "description_character"
+                else "Money Forward入力にJDL Output v0で保持できない項目があります。"
             ),
             suggested_action=(
                 "値を破棄せず、明示的なloss policyまたはtarget表現を確認してください。"

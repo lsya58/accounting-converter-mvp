@@ -15,6 +15,9 @@ from accounting_converter.adapters.input.jdl import (
     jdl_source_tax_key,
 )
 from accounting_converter.application.profile_revision import revised_profile_id
+from accounting_converter.application.description_replacement import (
+    description_sha256,
+)
 from accounting_converter.application.company_settings import CompanySettingStatus
 from accounting_converter.application.jdl_migration_tax_evidence import (
     evidence_for_target_context,
@@ -155,9 +158,7 @@ class JdlMigrationHumanReviewService:
                     description = str(row.get("description", ""))
                     row_key = jdl_description_replacement_key(entry.id, row_index)
                     saved_replacement = profile.loss_policy_mappings.get(row_key)
-                    original_sha256 = hashlib.sha256(
-                        description.encode("utf-8")
-                    ).hexdigest()
+                    original_sha256 = description_sha256(description)
                     if (
                         saved_replacement is not None
                         and saved_replacement.status is MappingStatus.USER_CONFIRMED
