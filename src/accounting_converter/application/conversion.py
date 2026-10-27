@@ -17,7 +17,7 @@ from accounting_converter.domain.profile import FormatProfile
 from accounting_converter.domain.validation import Severity, ValidationResult
 
 from .mapping_engine import MappingEngine
-from .journal_route import JournalRoutePolicy
+from .journal_route import JournalRoutePolicy, JournalRouteResult
 from .output_validation import OutputValidationResult, OutputValidator
 from .profile_preflight import mapping_rule_set_from_profile
 from .runtime_output import RuntimeOutputFactory
@@ -44,6 +44,15 @@ class StructuralValidator(Protocol):
 
 class BusinessValidator(Protocol):
     def validate(self, entries: Iterable[JournalEntry]) -> list[ValidationResult]:
+        ...
+
+
+class PostMappingTransform(Protocol):
+    def apply(
+        self,
+        source_entries: Sequence[JournalEntry],
+        mapped_entries: Sequence[JournalEntry],
+    ) -> JournalRouteResult:
         ...
 
 
@@ -88,6 +97,7 @@ class ConversionService:
         output_validator: OutputValidator | None,
         verification_report_generator: VerificationReportGenerator | None = None,
         journal_route_policy: JournalRoutePolicy | None = None,
+        post_mapping_transform: PostMappingTransform | None = None,
         runtime_output_factory: RuntimeOutputFactory | None = None,
     ) -> None:
         self._input_adapter = input_adapter
@@ -97,6 +107,7 @@ class ConversionService:
         self._output_adapter = output_adapter
         self._output_validator = output_validator
         self._journal_route_policy = journal_route_policy
+        self._post_mapping_transform = post_mapping_transform
         self._runtime_output_factory = runtime_output_factory
         self._report_generator = (
             verification_report_generator or VerificationReportGenerator()
@@ -273,6 +284,31 @@ class ConversionService:
                 )
 
             mapped_entries = mapping_result.entries
+            if self._post_mapping_transform is not None:
+                post_mapping_result = self._post_mapping_transform.apply(
+                    entries,
+                    mapped_entries,
+                )
+                validation_results.extend(post_mapping_result.validation_results)
+                if self._has_blocking_validation(
+                    post_mapping_result.validation_results
+                ):
+                    return self._result(
+                        status=ConversionStatus.BLOCKED_BY_OUTPUT_PREFLIGHT,
+                        request=request,
+                        input_record_count=input_record_count,
+                        input_journal_count=input_journal_count,
+                        output_record_count=output_record_count,
+                        output_journal_count=output_journal_count,
+                        debit_total=debit_total,
+                        credit_total=credit_total,
+                        validation_results=validation_results,
+                        unresolved_mapping_count=unresolved_mapping_count,
+                        output_validation_result=output_validation_result,
+                        output_path=None,
+                        completed_at=completed_at,
+                    )
+                mapped_entries = post_mapping_result.entries
             debit_total = self._debit_total(mapped_entries)
             credit_total = self._credit_total(mapped_entries)
 

@@ -4,6 +4,7 @@ import csv
 import io
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -179,6 +180,32 @@ class JDLOutputAdapterV0Tests(unittest.TestCase):
         )
         self.assertIn(
             "JDL-OUT-TAX-AMOUNT-PATTERN",
+            {item.rule_id for item in errors},
+        )
+
+    def test_tax_exclusive_missing_internal_method_blocks_in_preflight(self) -> None:
+        entry = self.tax_entry(JdlEvidenceProfile.TAX_EXCLUDED_1111, included=False)
+        entry.lines[0].tax_info.metadata["jdl_tax_input_method"] = ""
+
+        errors = JDLOutputAdapter(self.tax_context(included=False)).preflight(
+            (entry,), self.profile
+        )
+
+        self.assertIn(
+            "JDL-OUT-TAX-EXCLUDED-FIELDS",
+            {item.rule_id for item in errors},
+        )
+
+    def test_tax_exclusive_missing_explicit_amount_blocks_in_preflight(self) -> None:
+        entry = self.tax_entry(JdlEvidenceProfile.TAX_EXCLUDED_1111, included=False)
+        entry.lines[0].tax_info = replace(entry.lines[0].tax_info, tax_amount=None)
+
+        errors = JDLOutputAdapter(self.tax_context(included=False)).preflight(
+            (entry,), self.profile
+        )
+
+        self.assertIn(
+            "JDL-OUT-TAX-EXCLUDED-FIELDS",
             {item.rule_id for item in errors},
         )
 

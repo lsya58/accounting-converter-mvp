@@ -24,6 +24,7 @@ from accounting_converter.application.first_release_workflow import (
     FirstReleaseReadiness,
     FirstReleaseSummary,
 )
+from accounting_converter.application.journal_route import JournalRouteResult
 from accounting_converter.application.mapping_engine import MappingEngine
 from accounting_converter.application.mapping_review import MappingRequirementExtractor
 from accounting_converter.application.moneyforward_jdl_loss import (
@@ -204,10 +205,10 @@ class MoneyForwardConversionWorkflow:
         )
         mapping_engine = MappingEngine(mapping_rule_set_from_profile(profile))
         mapping_result = mapping_engine.apply(entries)
-        mapped_entries = tuple(
-            apply_verified_tax_semantics(source, mapped, context, profile)
-            for source, mapped in zip(entries, mapping_result.entries, strict=True)
-        )
+        tax_semantics_transform = _VerifiedTaxSemanticsTransform(profile, context)
+        mapped_entries = tax_semantics_transform.apply(
+            entries, mapping_result.entries
+        ).entries
         (
             assignments,
             route_reasons,
@@ -292,6 +293,7 @@ class MoneyForwardConversionWorkflow:
             output_adapter=None,
             output_validator=None,
             journal_route_policy=route,
+            post_mapping_transform=tax_semantics_transform,
             runtime_output_factory=output_lookup.registration.runtime_factory,
         )
         request = ConversionRequest(
@@ -727,3 +729,25 @@ class _TradePartnerAndEvidenceRoutePolicy:
         if transformed.validation_results:
             return transformed
         return self._evidence_policy.apply(transformed.entries)
+
+
+class _VerifiedTaxSemanticsTransform:
+    def __init__(self, profile, context) -> None:
+        self._profile = profile
+        self._context = context
+
+    def apply(self, source_entries, mapped_entries) -> JournalRouteResult:
+        transformed = tuple(
+            apply_verified_tax_semantics(
+                source,
+                mapped,
+                self._context,
+                self._profile,
+            )
+            for source, mapped in zip(
+                source_entries,
+                mapped_entries,
+                strict=True,
+            )
+        )
+        return JournalRouteResult(transformed)

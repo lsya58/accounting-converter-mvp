@@ -21,6 +21,12 @@ from accounting_converter.adapters.output.jdl import (
     jdl_ibex_35_5_output_profile,
 )
 from accounting_converter.adapters.output.jdl.adapter import JDLOutputAdapter
+from accounting_converter.adapters.output.jdl.validator import JDLOutputValidator
+from accounting_converter.application.conversion import (
+    ConversionRequest,
+    ConversionService,
+    ConversionStatus,
+)
 from accounting_converter.application.moneyforward_tax_excluded_evidence import (
     BATCH_EVIDENCE_ID,
     EVIDENCE,
@@ -37,6 +43,7 @@ from accounting_converter.application.moneyforward_tax_excluded_evidence import 
 )
 from accounting_converter.application.moneyforward_conversion_workflow import (
     MoneyForwardConversionWorkflow,
+    _VerifiedTaxSemanticsTransform,
 )
 from accounting_converter.application.mapping_engine import MappingEngine
 from accounting_converter.application.profile_preflight import (
@@ -60,6 +67,9 @@ from accounting_converter.domain.mapping import (
     MappingValue,
     SubaccountPolicy,
 )
+from accounting_converter.domain.profile import FormatProfile
+from accounting_converter.domain.validation import BalanceRule
+from accounting_converter.application.validation_pipeline import ValidationPipeline
 from accounting_converter.infrastructure.conversion_profile_store import (
     ConversionProfileStore,
 )
@@ -633,6 +643,54 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
             [],
             [item.rule_id for item in output_results],
         )
+
+        class StaticInputAdapter:
+            def read(self, path, input_profile):
+                return list(entries)
+
+            def record_count(self, path, input_profile):
+                return 14
+
+        class NoStructuralErrors:
+            def validate(self, path, input_profile):
+                return []
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_path = root / "privacy-safe.csv"
+            input_path.write_text("synthetic", encoding="ascii")
+            output_path = root / "output.csv"
+            service = ConversionService(
+                input_adapter=StaticInputAdapter(),
+                structural_validator=NoStructuralErrors(),
+                mapping_engine=MappingEngine(mapping_rule_set_from_profile(profile)),
+                business_validator=ValidationPipeline((BalanceRule(),)),
+                output_adapter=JDLOutputAdapter(context),
+                output_validator=JDLOutputValidator(context),
+                journal_route_policy=ExplicitJdlEvidenceRoutePolicy(
+                    assignments,
+                    route_id="GUI-MF-EXACT-COMPANY-SETTING-V0",
+                ),
+                post_mapping_transform=_VerifiedTaxSemanticsTransform(
+                    profile, context
+                ),
+            )
+            result = service.convert(ConversionRequest(
+                input_path=input_path,
+                output_path=output_path,
+                input_profile=FormatProfile(
+                    "Money Forward", "Synthetic", "1", "synthetic", "cp932"
+                ),
+                output_profile=jdl_ibex_35_5_output_profile(),
+                conversion_profile=profile,
+                target_runtime_context=context,
+            ))
+
+            self.assertEqual(result.status, ConversionStatus.SUCCESS)
+            self.assertEqual(result.input_journal_count, 13)
+            self.assertEqual(result.output_journal_count, 13)
+            self.assertEqual(result.output_record_count, 14)
+            self.assertTrue(output_path.is_file())
 
     def test_tax_review_is_available_only_for_exact_verified_context(self) -> None:
         items = MoneyForwardProfileSetupService._tax_items(
