@@ -68,6 +68,12 @@ class CompanyMappingUpdateItem:
     blocker_code: str | None = None
     parent_only_targets: tuple[str, ...] = ()
     already_confirmed: bool = False
+    affected_journal_count: int = 0
+    recommendation_category: str = "HUMAN_DECISION_REQUIRED"
+    recommendation_code: str = "C"
+    recommendation_label: str = "Human判断が必要"
+    recommendation_detail: str = "会社の管理方針に合わせて選択してください。"
+    parent_only_loss: str = "補助科目別の情報はJDLへ引き継がれません。"
 
     def subaccount_targets_for(self, parent_target: str) -> tuple[str, ...]:
         return next(
@@ -125,6 +131,22 @@ class CompanyMappingUpdateService:
         context_path = self.company_store.context_path(setting)
         master = self._master_observation(context_path)
         entries = self._entries(source_path)
+        subaccount_journals: dict[MappingKey, set[str]] = defaultdict(set)
+        blank_subaccount_journals: dict[str, set[str]] = defaultdict(set)
+        for entry in entries:
+            for line in entry.lines:
+                if not line.account:
+                    continue
+                if line.sub_account:
+                    subaccount_journals[
+                        MappingKey(
+                            MappingType.SUBACCOUNT,
+                            line.sub_account,
+                            line.account,
+                        )
+                    ].add(entry.id)
+                else:
+                    blank_subaccount_journals[line.account].add(entry.id)
         runtime_context = (
             None
             if self.drafts.is_draft(context_path)
@@ -224,6 +246,9 @@ class CompanyMappingUpdateService:
             parent_review = account_review_by_source.get(
                 requirement.parent_account or ""
             )
+            recommendation = self._subaccount_recommendation(
+                requirement.parent_account or "", requirement.source_value
+            )
             parent_targets = (
                 parent_review.selectable_targets
                 if parent_review is not None
@@ -274,6 +299,14 @@ class CompanyMappingUpdateService:
                         else "MF-SUBACCOUNT-USER-CONFIRMATION-REQUIRED"
                     ),
                     already_confirmed=usable,
+                    affected_journal_count=len(
+                        subaccount_journals.get(requirement.key, ())
+                    ),
+                    recommendation_category=recommendation[0],
+                    recommendation_code=recommendation[1],
+                    recommendation_label=recommendation[2],
+                    recommendation_detail=recommendation[3],
+                    parent_only_loss=recommendation[4],
                 )
             )
         self._append_default_subaccount_items(
@@ -285,6 +318,7 @@ class CompanyMappingUpdateService:
             targets,
             ambiguous,
             include_confirmed=include_confirmed,
+            blank_subaccount_journals=blank_subaccount_journals,
         )
         verified_shapes = {(1, 1), (1, 3), (2, 1), (2, 2), (2, 3), (4, 6), (5, 7), (5, 8)}
         unsupported_shape_count = sum(
@@ -713,6 +747,43 @@ class CompanyMappingUpdateService:
         return None, None
 
     @staticmethod
+    def _subaccount_recommendation(parent_account: str, source_value: str):
+        if parent_account == "売掛金":
+            return (
+                "TRADE_PARTNER_BALANCE",
+                "A",
+                "JDL側に補助科目を作ることを推奨",
+                "取引先別の売掛金残高を確認できる状態を保つためです。",
+                "取引先別の売掛金残高をJDLで確認できなくなります。",
+            )
+        if parent_account == "預り金" and any(
+            keyword in source_value
+            for keyword in ("住民税", "所得税", "社会保険")
+        ):
+            return (
+                "TAX_SOCIAL_INSURANCE_BALANCE",
+                "A",
+                "JDL側に補助科目を作ることを推奨",
+                "税・社会保険料ごとの預り残高を分けて確認できる状態を保つためです。",
+                "税・社会保険料ごとの預り残高をJDLで区別できなくなります。",
+            )
+        if any(keyword in parent_account for keyword in ("預金", "未払金")):
+            return (
+                "BANK_OR_CARD_ACCOUNT",
+                "C",
+                "Human判断が必要",
+                "銀行・カード別の残高管理をJDLでも続けるか確認してください。",
+                "銀行・カード別の残高をJDLで区別できなくなります。",
+            )
+        return (
+            "MF_INTERNAL_MANAGEMENT",
+            "C",
+            "Human判断が必要",
+            "MF固有の管理区分をJDLでも保持する必要があるか確認してください。",
+            "MFで使用していた補助科目別の情報はJDLへ引き継がれません。",
+        )
+
+    @staticmethod
     def _append_default_subaccount_items(
         items,
         entries,
@@ -723,6 +794,7 @@ class CompanyMappingUpdateService:
         ambiguous,
         *,
         include_confirmed,
+        blank_subaccount_journals,
     ) -> None:
         source_accounts = sorted({
             line.account
@@ -802,6 +874,20 @@ class CompanyMappingUpdateService:
                     else "MF-DEFAULT-SUBACCOUNT-USER-CONFIRMATION-REQUIRED"
                 ),
                 already_confirmed=usable,
+                affected_journal_count=len(
+                    blank_subaccount_journals.get(source_account, ())
+                ),
+                recommendation_category="DEFAULT_TARGET_SUBACCOUNT",
+                recommendation_code="C",
+                recommendation_label="Human判断が必要",
+                recommendation_detail=(
+                    "MFで補助科目が空欄の仕訳を、JDLではどの補助科目へ"
+                    "入れるか確認してください。"
+                ),
+                parent_only_loss=(
+                    "これは情報を削除する選択ではなく、JDL側で必須の既定補助を"
+                    "指定する設定です。"
+                ),
             ))
 
     def ensure_tax_requirements(self, review: CompanyMappingUpdateReview) -> None:

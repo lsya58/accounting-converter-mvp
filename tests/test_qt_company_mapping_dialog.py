@@ -150,7 +150,7 @@ class CompanyMappingUpdateDialogTests(unittest.TestCase):
         dialog = CompanyMappingUpdateDialog(object(), review)
 
         self.assertEqual(dialog.tabs.count(), 5)
-        self.assertEqual(dialog.tabs.tabText(0), "科目 0/60")
+        self.assertEqual(dialog.tabs.tabText(0), "科目 0/60 [要確認]")
         account_table = dialog.tabs.widget(0).findChild(QTableWidget)
         self.assertIsNotNone(account_table)
         self.assertEqual(account_table.rowCount(), 60)
@@ -159,8 +159,40 @@ class CompanyMappingUpdateDialogTests(unittest.TestCase):
             QAbstractItemView.ScrollMode.ScrollPerPixel,
         )
         self.assertIsInstance(dialog.tabs.widget(2), QScrollArea)
-        self.assertEqual(dialog.tabs.tabText(3), "税区分 0/1")
-        self.assertEqual(dialog.tabs.tabText(4), "その他 2構成/26仕訳")
+        self.assertEqual(dialog.tabs.tabText(3), "税区分 0/1 [要確認]")
+        self.assertEqual(dialog.tabs.tabText(4), "その他 [要確認]")
+
+    def test_first_unresolved_tab_is_subaccounts_and_zero_tabs_are_disabled(self) -> None:
+        subaccounts = tuple(
+            CompanyMappingUpdateItem(
+                key=f"SUBACCOUNT|source-{index}|parent",
+                mapping_type="SUBACCOUNT",
+                source_value=f"source-{index}",
+                parent_account="parent",
+                available_targets=(),
+                recommendation_code="A",
+                recommendation_label="JDL側に補助科目を作ることを推奨",
+                affected_journal_count=1,
+            )
+            for index in range(13)
+        )
+        review = CompanyMappingUpdateReview(
+            company_setting_id="company-a",
+            source_path=None,
+            context_path=None,
+            items=subaccounts,
+        )
+
+        dialog = CompanyMappingUpdateDialog(object(), review)
+
+        self.assertFalse(dialog.tabs.isTabEnabled(dialog.category_tabs["accounts"]))
+        self.assertEqual(
+            dialog.tabs.currentIndex(), dialog.category_tabs["subaccounts"]
+        )
+        self.assertEqual(
+            dialog.tabs.tabText(dialog.category_tabs["subaccounts"]),
+            "補助科目 0/13 [要確認]",
+        )
 
     def test_description_candidate_is_prefilled_but_requires_confirmation(self) -> None:
         original = "髙橋"

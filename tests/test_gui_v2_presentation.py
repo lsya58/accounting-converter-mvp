@@ -257,7 +257,7 @@ class GuiV2PresentationTests(unittest.TestCase):
             "Build identifier: 0.1.0+aaaaaaaaaaaa",
             "仕訳数: 482",
             "科目確認: 3",
-            "補助科目確認: 2",
+            "補助科目確認（設定項目）: 2",
             "税区分確認: 1",
             "未対応仕訳構成: 4",
             "税Evidence条件未一致: 0",

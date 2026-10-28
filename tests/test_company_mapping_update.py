@@ -143,6 +143,25 @@ class CompanyMappingUpdateTests(unittest.TestCase):
         self.assertEqual(len(changed.descriptions), 1)
         self.assertNotEqual(changed.descriptions[0].key, item.key)
 
+    def test_subaccount_recommendations_preserve_balance_management(self):
+        receivable = self.service._subaccount_recommendation(
+            "売掛金", "取引先A"
+        )
+        withheld = self.service._subaccount_recommendation(
+            "預り金", "社会保険料"
+        )
+        ordinary = self.service._subaccount_recommendation(
+            "普通科目", "管理値"
+        )
+
+        self.assertEqual(receivable[:3], (
+            "TRADE_PARTNER_BALANCE", "A", "JDL側に補助科目を作ることを推奨"
+        ))
+        self.assertEqual(withheld[:3], (
+            "TAX_SOCIAL_INSURANCE_BALANCE", "A", "JDL側に補助科目を作ることを推奨"
+        ))
+        self.assertEqual(ordinary[1:3], ("C", "Human判断が必要"))
+
     def test_description_replacement_rejects_length_and_cp932(self):
         source = self.root / "invalid-replacement.csv"
         self._write(

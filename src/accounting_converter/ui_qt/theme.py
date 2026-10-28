@@ -159,6 +159,33 @@ QHeaderView::section {{
     padding: 9px 10px;
     font-weight: 600;
 }}
+QTabWidget::pane {{
+    background: {COLORS['surface']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 6px;
+    top: -1px;
+}}
+QTabBar::tab {{
+    color: {COLORS['text']};
+    background: {COLORS['neutral_soft']};
+    border: 1px solid #C8D0D8;
+    padding: 10px 14px;
+    margin-right: 2px;
+    min-height: 24px;
+}}
+QTabBar::tab:selected {{
+    color: white;
+    background: {COLORS['accent']};
+    border-color: {COLORS['accent']};
+    font-weight: 700;
+}}
+QTabBar::tab:hover:!selected {{
+    background: #DCECF8;
+}}
+QTabBar::tab:disabled {{
+    color: {COLORS['disabled_text']};
+    background: {COLORS['disabled_surface']};
+}}
 QScrollBar:vertical {{
     width: 15px;
     background: #EEF2F5;

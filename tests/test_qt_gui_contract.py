@@ -415,7 +415,9 @@ class QtGuiContractTests(unittest.TestCase):
         source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
             encoding="utf-8"
         )
-        self.assertIn('"DEFAULT_SUBACCOUNT": "補助なし時"', source)
+        self.assertIn('item.mapping_type in {"SUBACCOUNT", "DEFAULT_SUBACCOUNT"}', source)
+        self.assertIn('"親科目のみで失う情報"', source)
+        self.assertIn('"JDL補助科目へ対応: {value}"', source)
         self.assertIn(
             'item.mapping_type in {"SUBACCOUNT", "DEFAULT_SUBACCOUNT"}', source
         )
@@ -676,15 +678,15 @@ class QtGuiContractTests(unittest.TestCase):
         )[0]
         for text in (
             "self.tabs = QTabWidget()",
-            '"accounts", "科目"',
+            'self._add_tab("accounts", "科目"',
             '"subaccounts", "補助科目"',
-            '"descriptions", "摘要・文字置換"',
-            '"tax", "税区分"',
-            '"other", "その他"',
+            'self._add_tab("descriptions", "摘要・文字置換"',
+            'self._add_tab("tax", "税区分"',
+            'self._add_tab("other", "その他"',
             "QScrollArea()",
             "ScrollPerPixel",
-            "次の操作",
-            "影響する仕訳数",
+            "影響する仕訳:",
+            "_select_first_unresolved_tab",
         ):
             self.assertIn(text, dialog)
 

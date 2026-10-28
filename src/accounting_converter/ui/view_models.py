@@ -302,7 +302,7 @@ def support_diagnostic_text(
         ("入力形式", source_format),
         ("仕訳数", str(recognition.journal_count) if recognition and recognition.journal_count is not None else "未確認"),
         ("科目確認", str(state.pending_account_confirmations)),
-        ("補助科目確認", str(state.pending_subaccount_confirmations)),
+        ("補助科目確認（設定項目）", str(state.pending_subaccount_confirmations)),
         ("税区分確認", str(state.pending_tax_confirmations)),
         ("未対応仕訳構成", str(summary.unsupported_shape_count if summary else state.unsupported_shape_count)),
         ("税Evidence条件未一致", str(summary.tax_evidence_blocker_count if summary else 0)),

@@ -1450,7 +1450,19 @@ class CompanyMappingUpdateDialog(QDialog):
         self.controls: list[tuple[str, QComboBox, QCheckBox]] = []
         self.account_controls: dict[str, tuple[QComboBox, QCheckBox]] = {}
         self.subaccount_controls: list[tuple[object, QComboBox, QCheckBox]] = []
+        self.subaccount_parent_cells: dict[str, QTableWidgetItem] = {}
         self.description_controls: dict[str, tuple[QLineEdit, QCheckBox]] = {}
+        self.tax_completed = not bool(review.tax_categories)
+        policy_getter = getattr(controller, "company_trade_partner_policy_state", None)
+        policy_state = (
+            policy_getter(review.company_setting_id)
+            if policy_getter is not None and review.optional_field_blocker_count
+            else None
+        )
+        self.retention_completed = bool(
+            not review.optional_field_blocker_count
+            or (policy_state is not None and policy_state.confirmed)
+        )
         self.setWindowTitle("新しい科目を確認")
         self.resize(980, 680)
         self.setMinimumSize(760, 520)
@@ -1460,6 +1472,10 @@ class CompanyMappingUpdateDialog(QDialog):
         )
         note.setWordWrap(True)
         layout.addWidget(note)
+        self.summary_label = QLabel()
+        self.summary_label.setObjectName("warningCard")
+        self.summary_label.setWordWrap(True)
+        layout.addWidget(self.summary_label)
         self.progress_label = QLabel()
         self.progress_label.setObjectName("muted")
         layout.addWidget(self.progress_label)
@@ -1493,6 +1509,7 @@ class CompanyMappingUpdateDialog(QDialog):
         for source_value in self.account_controls:
             self._refresh_subaccounts(source_value)
         self._update_action()
+        self._select_first_unresolved_tab()
 
     def _add_tab(self, key: str, label: str, widget: QWidget) -> None:
         self.category_tabs[key] = self.tabs.addTab(widget, label)
@@ -1511,21 +1528,30 @@ class CompanyMappingUpdateDialog(QDialog):
             policy_note = QLabel(
                 "「親科目のみで変換する」は、補助科目をJDLへ引き継がない"
                 "ことを明示的に選ぶ操作です。MF側の補助科目情報はJDLへ"
-                "引き継がれません。候補がない場合は、JDL側で"
-                "補助科目の追加が必要か確認してください。"
+                "引き継がれません。取引先別や税・社会保険料別の残高を"
+                "JDLでも管理する場合は、次の順に進めてください。\n"
+                "1. JDLで補助科目を追加\n"
+                "2. このアプリへ戻る\n"
+                "3. 「JDL科目一覧を更新」\n"
+                "4. この確認画面を開き直す\n"
+                "5. 新しい補助科目を対応先として選択"
             )
             policy_note.setObjectName("warningCard")
             policy_note.setWordWrap(True)
             page_layout.addWidget(policy_note)
-        table = QTableWidget(len(items), 6)
+        table = QTableWidget(len(items), 8)
         table.setHorizontalHeaderLabels(
-            ("種類", "MFの親科目", "MFの入力値", "JDLでの対応先", "次の操作", "確認")
+            (
+                "MFの親科目", "MFの補助・入力値", "JDLの親科目",
+                "JDLの既存補助", "推奨操作", "親科目のみで失う情報",
+                "JDLでの対応先", "確認",
+            )
         )
-        for column in (0, 5):
+        for column in (0, 1, 2, 7):
             table.horizontalHeader().setSectionResizeMode(
                 column, QHeaderView.ResizeMode.ResizeToContents
             )
-        for column in (1, 2, 3, 4):
+        for column in (3, 4, 5, 6):
             table.horizontalHeader().setSectionResizeMode(
                 column, QHeaderView.ResizeMode.Stretch
             )
@@ -1533,13 +1559,28 @@ class CompanyMappingUpdateDialog(QDialog):
         table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         table.setMinimumHeight(280)
         for row, item in enumerate(items):
-            kind_label = {
-                "SUBACCOUNT": "補助科目",
-                "DEFAULT_SUBACCOUNT": "補助なし時",
-            }.get(item.mapping_type, "科目")
-            table.setItem(row, 0, QTableWidgetItem(kind_label))
-            table.setItem(row, 1, QTableWidgetItem(item.parent_account or ""))
-            table.setItem(row, 2, QTableWidgetItem(item.source_value))
+            values = (
+                item.parent_account or "-",
+                item.source_value,
+                item.confirmed_parent_target or (
+                    "-" if item.mapping_type == "ACCOUNT" else "親科目の確認後に表示"
+                ),
+                "、".join(item.available_targets) or "既存候補なし",
+                (
+                    f"{item.recommendation_code}: {item.recommendation_label}\n"
+                    f"{item.recommendation_detail}\n"
+                    f"影響する仕訳: {item.affected_journal_count}件"
+                    if item.mapping_type != "ACCOUNT"
+                    else "JDLで使用する科目を選び、内容を確認してください。"
+                ),
+                item.parent_only_loss if item.mapping_type != "ACCOUNT" else "-",
+            )
+            for column, value in enumerate(values):
+                cell = QTableWidgetItem(value)
+                cell.setToolTip(value)
+                table.setItem(row, column, cell)
+                if column == 2 and item.mapping_type != "ACCOUNT":
+                    self.subaccount_parent_cells[item.key] = cell
             target = WheelSafeComboBox()
             target.addItem("未選択", None)
             if item.mapping_type == "ACCOUNT" and item.exact_candidate:
@@ -1575,16 +1616,12 @@ class CompanyMappingUpdateDialog(QDialog):
                 item.already_confirmed and target.currentData() is not None
             )
             target.currentIndexChanged.connect(
-                lambda _index, combo=target, checkbox=confirmed: (
-                    checkbox.setChecked(False), checkbox.setEnabled(combo.currentData() is not None), self._update_action()
-                )
+                lambda _index, combo=target, checkbox=confirmed, review_item=item:
+                self._mapping_target_changed(combo, checkbox, review_item)
             )
             confirmed.stateChanged.connect(self._update_action)
-            table.setCellWidget(row, 3, target)
-            guidance = QTableWidgetItem(self._mapping_guidance(item))
-            guidance.setToolTip(guidance.text())
-            table.setItem(row, 4, guidance)
-            table.setCellWidget(row, 5, confirmed)
+            table.setCellWidget(row, 6, target)
+            table.setCellWidget(row, 7, confirmed)
             self.controls.append((item.key, target, confirmed))
             if item.mapping_type == "ACCOUNT":
                 self.account_controls[item.source_value] = (target, confirmed)
@@ -1602,6 +1639,16 @@ class CompanyMappingUpdateDialog(QDialog):
                 self.subaccount_controls.append((item, target, confirmed))
         page_layout.addWidget(table, 1)
         return page
+
+    def _mapping_target_changed(self, combo, checkbox, item) -> None:
+        checkbox.setChecked(False)
+        checkbox.setEnabled(combo.currentData() is not None)
+        checkbox.setText(
+            "この補助情報をJDLへ引き継がず、親科目のみで変換することを確認しました"
+            if combo.currentData() == PARENT_ONLY_SELECTION
+            else "確認しました"
+        )
+        self._update_action()
 
     @staticmethod
     def _mapping_guidance(item) -> str:
@@ -1714,8 +1761,14 @@ class CompanyMappingUpdateDialog(QDialog):
                     row, 2, QTableWidgetItem("この会社では初回確認または再確認が必要です")
                 )
             page_layout.addWidget(table, 1)
+            self.tax_review_button = QPushButton(
+                f"{len(self.review.tax_categories)}件の税区分を確認する"
+            )
+            self.tax_review_button.clicked.connect(self._open_tax_review)
+            page_layout.addWidget(self.tax_review_button)
         else:
             page_layout.addWidget(QLabel("税区分の追加確認はありません。"))
+            self.tax_review_button = None
         tax_status = QLabel(
             tax_message or "税区分はCSV読込時に必要なものだけ確認します。"
         )
@@ -1724,6 +1777,24 @@ class CompanyMappingUpdateDialog(QDialog):
         page_layout.addWidget(tax_status)
         return page
 
+    def _open_tax_review(self) -> None:
+        state = self.controller.ensure_selected_tax_requirements(self.review)
+        if state.developer_error is not None:
+            QMessageBox.warning(
+                self, "税区分を確認できませんでした", state.user_message
+            )
+            return
+        dialog = TaxMappingConfirmationDialog(
+            self.controller, self.review.company_setting_id, self
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        remaining = self.controller.company_tax_mapping_review(
+            self.review.company_setting_id
+        )
+        self.tax_completed = not remaining.items
+        self._update_action()
+
     def _other_tab(self) -> QWidget:
         page = QWidget()
         page_layout = QVBoxLayout(page)
@@ -1731,22 +1802,28 @@ class CompanyMappingUpdateDialog(QDialog):
         title = QLabel("変換できる状態までに残っている確認")
         title.setObjectName("sectionTitle")
         page_layout.addWidget(title)
-        rows = (
-            ("未対応の仕訳構成", self.review.unsupported_shape_count,
-             "推測変換せず、対応Evidenceまたは実装が必要です。"),
-            ("保持方法の確認が必要な仕訳", self.review.optional_field_blocker_count,
-             "取引先などの保持方法を会社設定で確認してください。"),
+        unsupported = QLabel(
+            "未対応の仕訳構成: "
+            f"{'完了' if self.review.unsupported_shape_count == 0 else f'{self.review.unsupported_shape_count}仕訳'}\n"
+            + (
+                "推測変換せず、対応Evidenceまたは実装が必要です。"
+                if self.review.unsupported_shape_count else ""
+            )
         )
-        for label, count, guidance in rows:
-            state = "完了" if count == 0 else f"{count}仕訳"
-            item = QLabel(f"{label}: {state}\n{guidance if count else ''}")
-            item.setObjectName("warningCard" if count else "muted")
-            item.setWordWrap(True)
-            page_layout.addWidget(item)
+        unsupported.setObjectName(
+            "warningCard" if self.review.unsupported_shape_count else "muted"
+        )
+        unsupported.setWordWrap(True)
+        page_layout.addWidget(unsupported)
+        self.retention_status_label = QLabel()
+        self.retention_status_label.setWordWrap(True)
+        page_layout.addWidget(self.retention_status_label)
         if self.review.optional_field_blocker_count:
-            policy_button = QPushButton("取引先情報の扱いを確認")
-            policy_button.clicked.connect(self._open_trade_partner_policy)
-            page_layout.addWidget(policy_button)
+            self.policy_button = QPushButton("取引先情報の扱いを確認")
+            self.policy_button.clicked.connect(self._open_trade_partner_policy)
+            page_layout.addWidget(self.policy_button)
+        else:
+            self.policy_button = None
         note = QLabel(
             "ここに表示する件数は影響する仕訳数です。上部タブの件数は"
             "Humanが確認する設定項目数なので、同じ数になるとは限りません。"
@@ -1755,19 +1832,50 @@ class CompanyMappingUpdateDialog(QDialog):
         note.setWordWrap(True)
         page_layout.addWidget(note)
         page_layout.addStretch(1)
+        self._refresh_retention_status()
         return page
+
+    def _refresh_retention_status(self) -> None:
+        if self.review.optional_field_blocker_count == 0:
+            text = "保持方法の確認が必要な仕訳: 完了"
+            pending = False
+        elif self.retention_completed:
+            text = (
+                "保持方法の確認が必要な仕訳: 完了\n"
+                f"確認した会社方針を{self.review.optional_field_blocker_count}仕訳へ適用します。"
+            )
+            pending = False
+        else:
+            text = (
+                "保持方法の確認が必要な仕訳: "
+                f"{self.review.optional_field_blocker_count}仕訳\n"
+                "取引先などの保持方法を会社設定で確認してください。"
+            )
+            pending = True
+        self.retention_status_label.setText(text)
+        self.retention_status_label.setObjectName(
+            "warningCard" if pending else "muted"
+        )
+        self.retention_status_label.style().unpolish(self.retention_status_label)
+        self.retention_status_label.style().polish(self.retention_status_label)
+        if self.policy_button is not None and self.retention_completed:
+            self.policy_button.setText("取引先情報の扱いは確認済みです")
+            self.policy_button.setEnabled(False)
 
     def _open_trade_partner_policy(self) -> None:
         dialog = TradePartnerPolicyDialog(
             self.controller, self.review.company_setting_id, self
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.retention_completed = True
+            self._refresh_retention_status()
             QMessageBox.information(
                 self,
                 "保持方法を保存しました",
                 "取引先情報の扱いを保存しました。この画面の確認項目を保存後、"
                 "CSVを再確認すると最新状態が反映されます。",
             )
+            self._update_action()
 
     def _refresh_subaccounts(self, source_account: str) -> None:
         account_control = self.account_controls.get(source_account)
@@ -1781,6 +1889,15 @@ class CompanyMappingUpdateDialog(QDialog):
         for item, combo, checkbox in self.subaccount_controls:
             if item.parent_account != source_account:
                 continue
+            parent_cell = self.subaccount_parent_cells.get(item.key)
+            if parent_cell is not None:
+                parent_label = (
+                    str(parent_target)
+                    if parent_target is not None
+                    else "親科目を先に確認してください"
+                )
+                parent_cell.setText(parent_label)
+                parent_cell.setToolTip(parent_label)
             combo.blockSignals(True)
             combo.clear()
             combo.addItem("未選択", None)
@@ -1822,6 +1939,11 @@ class CompanyMappingUpdateDialog(QDialog):
                 )
             )
             checkbox.setEnabled(combo.currentData() is not None)
+            checkbox.setText(
+                "この補助情報をJDLへ引き継がず、親科目のみで変換することを確認しました"
+                if combo.currentData() == PARENT_ONLY_SELECTION
+                else "確認しました"
+            )
         self._update_action()
 
     def _update_action(self, *_args) -> None:
@@ -1880,21 +2002,83 @@ class CompanyMappingUpdateDialog(QDialog):
             "descriptions": "摘要・文字置換",
         }
         for key, (total, done) in category_counts.items():
+            status = "完了" if done == total else "要確認"
             self.tabs.setTabText(
-                self.category_tabs[key], f"{labels[key]} {done}/{total}"
+                self.category_tabs[key],
+                f"{labels[key]} {done}/{total} [{status}]",
             )
+            self.tabs.setTabEnabled(self.category_tabs[key], total > 0)
         tax_count = len(self.review.tax_categories)
+        tax_done = tax_count if self.tax_completed else 0
         self.tabs.setTabText(
-            self.category_tabs["tax"], f"税区分 0/{tax_count}"
+            self.category_tabs["tax"],
+            f"税区分 {tax_done}/{tax_count} "
+            f"[{'完了' if self.tax_completed else '要確認'}]",
+        )
+        self.tabs.setTabEnabled(self.category_tabs["tax"], tax_count > 0)
+        if self.tax_review_button is not None:
+            self.tax_review_button.setEnabled(not self.tax_completed)
+            if self.tax_completed:
+                self.tax_review_button.setText("税区分の確認は完了しました")
+        retention_pending = int(
+            self.review.optional_field_blocker_count > 0
+            and not self.retention_completed
+        )
+        other_status = (
+            "要確認" if retention_pending else
+            "未対応あり" if self.review.unsupported_shape_count else "完了"
         )
         self.tabs.setTabText(
             self.category_tabs["other"],
-            "その他 "
-            f"{self.review.unsupported_shape_count}構成/"
-            f"{self.review.optional_field_blocker_count}仕訳",
+            f"その他 [{other_status}]",
+        )
+        self.tabs.setTabEnabled(
+            self.category_tabs["other"],
+            bool(
+                self.review.unsupported_shape_count
+                or self.review.optional_field_blocker_count
+            ),
+        )
+        pending_accounts = category_counts["accounts"][0] - category_counts["accounts"][1]
+        pending_subaccounts = (
+            category_counts["subaccounts"][0]
+            - category_counts["subaccounts"][1]
+        )
+        pending_descriptions = (
+            category_counts["descriptions"][0]
+            - category_counts["descriptions"][1]
+        )
+        self.summary_label.setText(
+            "変換まで残っている確認\n"
+            f"科目: {pending_accounts}設定 / "
+            f"補助科目: {pending_subaccounts}設定 / "
+            f"税区分: {tax_count - tax_done}設定 / "
+            f"摘要: {pending_descriptions}設定 / "
+            f"取引先情報: {retention_pending}設定 / "
+            f"未対応仕訳: {self.review.unsupported_shape_count}仕訳"
         )
         self.save_button.setText(f"確認済み{confirmed}件を保存")
         self.save_button.setEnabled(confirmed > 0)
+        self.save_button.setVisible(confirmed > 0)
+
+    def _select_first_unresolved_tab(self) -> None:
+        candidates = (
+            ("accounts", any(key.startswith(("ACCOUNT|", "ACCOUNT:")) for key, _, _ in self.controls)),
+            ("subaccounts", any(not key.startswith(("ACCOUNT|", "ACCOUNT:")) for key, _, _ in self.controls)),
+            ("descriptions", bool(self.description_controls)),
+            ("tax", bool(self.review.tax_categories) and not self.tax_completed),
+            (
+                "other",
+                bool(
+                    self.review.optional_field_blocker_count
+                    or self.review.unsupported_shape_count
+                ),
+            ),
+        )
+        for key, unresolved in candidates:
+            if unresolved:
+                self.tabs.setCurrentIndex(self.category_tabs[key])
+                return
 
     def _save(self) -> None:
         confirmed = {

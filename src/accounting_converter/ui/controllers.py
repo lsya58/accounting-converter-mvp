@@ -496,7 +496,8 @@ class AccountingConverterController:
             )
         account_count = sum(item.mapping_type == "ACCOUNT" for item in review.items)
         subaccount_count = sum(
-            item.mapping_type == "SUBACCOUNT" for item in review.items
+            item.mapping_type in {"SUBACCOUNT", "DEFAULT_SUBACCOUNT"}
+            for item in review.items
         )
         tax_count = len(review.tax_categories)
         guidance: list[str] = []
