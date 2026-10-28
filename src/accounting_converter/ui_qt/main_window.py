@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QStackedWidget,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -36,6 +37,8 @@ from accounting_converter.application.description_replacement import (
     replacement_is_valid,
 )
 from accounting_converter.application.moneyforward_description_replacement import (
+    observed_jdl_description,
+    recommended_description_replacement,
     unsafe_description_positions,
 )
 from accounting_converter.application.jdl_migration_review import (
@@ -1460,23 +1463,76 @@ class CompanyMappingUpdateDialog(QDialog):
         self.progress_label = QLabel()
         self.progress_label.setObjectName("muted")
         layout.addWidget(self.progress_label)
-        if any(item.parent_only_available for item in review.items):
+        self.tabs = QTabWidget()
+        self.tabs.setDocumentMode(True)
+        self.category_tabs: dict[str, int] = {}
+        account_items = tuple(
+            item for item in review.items if item.mapping_type == "ACCOUNT"
+        )
+        subaccount_items = tuple(
+            item for item in review.items if item.mapping_type != "ACCOUNT"
+        )
+        self._add_tab("accounts", "科目", self._build_mapping_tab(account_items))
+        self._add_tab(
+            "subaccounts", "補助科目", self._build_mapping_tab(subaccount_items)
+        )
+        self._add_tab("descriptions", "摘要・文字置換", self._description_tab())
+        self._add_tab("tax", "税区分", self._tax_tab(tax_message))
+        self._add_tab("other", "その他", self._other_tab())
+        layout.addWidget(self.tabs, 1)
+        actions = QHBoxLayout()
+        cancel = QPushButton("キャンセル")
+        cancel.clicked.connect(self.reject)
+        self.save_button = QPushButton("確認済み0件を保存")
+        self.save_button.setObjectName("primaryButton")
+        self.save_button.clicked.connect(self._save)
+        actions.addStretch(1)
+        actions.addWidget(cancel)
+        actions.addWidget(self.save_button)
+        layout.addLayout(actions)
+        for source_value in self.account_controls:
+            self._refresh_subaccounts(source_value)
+        self._update_action()
+
+    def _add_tab(self, key: str, label: str, widget: QWidget) -> None:
+        self.category_tabs[key] = self.tabs.addTab(widget, label)
+
+    def _build_mapping_tab(self, items) -> QWidget:
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(0, 8, 0, 0)
+        if not items:
+            empty = QLabel("このカテゴリで確認が必要な項目はありません。")
+            empty.setObjectName("muted")
+            page_layout.addWidget(empty)
+            page_layout.addStretch(1)
+            return page
+        if any(item.parent_only_available for item in items):
             policy_note = QLabel(
-                "「親科目のみで変換する」を選ぶと、MF側の補助科目情報は"
-                "JDLへ引き継がれません。この会社では親科目のみで変換します。"
+                "「親科目のみで変換する」は、補助科目をJDLへ引き継がない"
+                "ことを明示的に選ぶ操作です。MF側の補助科目情報はJDLへ"
+                "引き継がれません。候補がない場合は、JDL側で"
+                "補助科目の追加が必要か確認してください。"
             )
             policy_note.setObjectName("warningCard")
             policy_note.setWordWrap(True)
-            layout.addWidget(policy_note)
-        table = QTableWidget(len(review.items), 5)
-        table.setHorizontalHeaderLabels(("種類", "親科目", "入力元", "JDLの科目", "確認"))
-        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+            page_layout.addWidget(policy_note)
+        table = QTableWidget(len(items), 6)
+        table.setHorizontalHeaderLabels(
+            ("種類", "MFの親科目", "MFの入力値", "JDLでの対応先", "次の操作", "確認")
+        )
+        for column in (0, 5):
+            table.horizontalHeader().setSectionResizeMode(
+                column, QHeaderView.ResizeMode.ResizeToContents
+            )
+        for column in (1, 2, 3, 4):
+            table.horizontalHeader().setSectionResizeMode(
+                column, QHeaderView.ResizeMode.Stretch
+            )
         table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
-        for row, item in enumerate(review.items):
+        table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        table.setMinimumHeight(280)
+        for row, item in enumerate(items):
             kind_label = {
                 "SUBACCOUNT": "補助科目",
                 "DEFAULT_SUBACCOUNT": "補助なし時",
@@ -1525,7 +1581,10 @@ class CompanyMappingUpdateDialog(QDialog):
             )
             confirmed.stateChanged.connect(self._update_action)
             table.setCellWidget(row, 3, target)
-            table.setCellWidget(row, 4, confirmed)
+            guidance = QTableWidgetItem(self._mapping_guidance(item))
+            guidance.setToolTip(guidance.text())
+            table.setItem(row, 4, guidance)
+            table.setCellWidget(row, 5, confirmed)
             self.controls.append((item.key, target, confirmed))
             if item.mapping_type == "ACCOUNT":
                 self.account_controls[item.source_value] = (target, confirmed)
@@ -1541,67 +1600,174 @@ class CompanyMappingUpdateDialog(QDialog):
                 )
             else:
                 self.subaccount_controls.append((item, target, confirmed))
-        layout.addWidget(table, 1)
-        if review.descriptions:
-            description_title = QLabel(
-                f"JDLで保持できない摘要文字（{len(review.descriptions)}件）"
-            )
-            description_title.setObjectName("sectionTitle")
-            layout.addWidget(description_title)
-        for item in review.descriptions:
-            positions = ", ".join(str(index + 1) for index in item.unsafe_positions)
-            detail = QLabel(
-                f"対象仕訳: {item.affected_journal_count}件 / "
-                f"{item.current_length}文字 / 保持できない文字位置: {positions}文字目"
-            )
-            detail.setWordWrap(True)
-            layout.addWidget(detail)
-            current = QLabel(f"現在の摘要: {item.current_description}")
+        page_layout.addWidget(table, 1)
+        return page
+
+    @staticmethod
+    def _mapping_guidance(item) -> str:
+        if item.mapping_type == "ACCOUNT":
+            return "JDLで使用する科目を選び、内容を確認してください。"
+        if item.available_targets:
+            return "確認済みのJDL親科目の直下から補助科目を選んでください。"
+        if item.parent_only_available:
+            return "親科目のみでよいか確認するか、JDL側へ補助科目を追加してください。"
+        return item.blocker_reason or "先に親科目の対応を確認してください。"
+
+    def _description_tab(self) -> QWidget:
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(4, 8, 8, 8)
+        page_layout.setSpacing(12)
+        if not self.review.descriptions:
+            empty = QLabel("摘要・文字置換の確認はありません。")
+            empty.setObjectName("muted")
+            page_layout.addWidget(empty)
+        for item in self.review.descriptions:
+            card = QFrame()
+            card.setObjectName("card")
+            card_layout = QVBoxLayout(card)
+            heading = QLabel("JDLでは正しく保存できない文字があります")
+            heading.setObjectName("sectionTitle")
+            card_layout.addWidget(heading)
+            affected = QLabel(f"この摘要を使う仕訳: {item.affected_journal_count}件")
+            affected.setObjectName("muted")
+            card_layout.addWidget(affected)
+            current = QLabel(f"現在: {item.current_description}")
             current.setWordWrap(True)
-            layout.addWidget(current)
+            card_layout.addWidget(current)
+            observed = observed_jdl_description(item.current_description)
+            changed = QLabel(f"このままJDLへ変換すると: {observed}")
+            changed.setObjectName("warningCard")
+            changed.setWordWrap(True)
+            card_layout.addWidget(changed)
             guidance = QLabel(
-                "候補: 「髙」を「高」へ置換、任意の別摘要を入力、または未確認のまま変換を保留"
+                "JDLで文字が変わることを実機で確認しています。意味を保つ"
+                "置き換え内容を確認してください。変換を保留する場合は未確認のまま閉じます。"
             )
             guidance.setObjectName("muted")
             guidance.setWordWrap(True)
-            layout.addWidget(guidance)
+            card_layout.addWidget(guidance)
             replacement = QLineEdit()
-            replacement.setPlaceholderText("置換後の摘要（1〜32文字）")
-            confirmation = QCheckBox("この摘要への置換を確認しました")
-            confirmation.setEnabled(False)
+            replacement.setPlaceholderText("置き換え後の摘要（1〜32文字）")
+            recommended = recommended_description_replacement(
+                item.current_description
+            )
+            if recommended is not None:
+                replacement.setText(recommended)
+                replacement.setToolTip("実機確認済みの推奨候補です。保存には確認が必要です。")
+            confirmation = QCheckBox("この置き換え内容を確認しました")
+            confirmation.setEnabled(
+                replacement_is_valid(replacement.text())
+                and not unsafe_description_positions(replacement.text())
+            )
             replacement.textChanged.connect(
-                lambda text, check=confirmation: (
+                lambda text, field=replacement, check=confirmation: (
                     check.setChecked(False),
                     check.setEnabled(
-                        replacement_is_valid(text)
-                        and not unsafe_description_positions(text)
+                        replacement_is_valid(field.text())
+                        and not unsafe_description_positions(field.text())
                     ),
                     self._update_action(),
                 )
             )
             confirmation.stateChanged.connect(self._update_action)
-            layout.addWidget(replacement)
-            layout.addWidget(confirmation)
+            card_layout.addWidget(replacement)
+            card_layout.addWidget(confirmation)
             self.description_controls[item.key] = (replacement, confirmation)
+            page_layout.addWidget(card)
+        page_layout.addStretch(1)
+        scroll.setWidget(page)
+        return scroll
+
+    def _tax_tab(self, tax_message: str) -> QWidget:
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(4, 8, 4, 8)
+        if self.review.tax_categories:
+            guidance = QLabel(
+                "Money Forwardの税区分ごとに、JDLでの扱いを初回だけ確認します。"
+                "既に有効な確認結果は再表示されません。科目対応を保存した後、"
+                "税区分の確認画面へ進みます。"
+            )
+            guidance.setWordWrap(True)
+            page_layout.addWidget(guidance)
+            table = QTableWidget(len(self.review.tax_categories), 3)
+            table.setHorizontalHeaderLabels(("MFの税区分", "JDL候補", "確認が必要な理由"))
+            table.horizontalHeader().setSectionResizeMode(
+                0, QHeaderView.ResizeMode.Stretch
+            )
+            table.horizontalHeader().setSectionResizeMode(
+                1, QHeaderView.ResizeMode.Stretch
+            )
+            table.horizontalHeader().setSectionResizeMode(
+                2, QHeaderView.ResizeMode.Stretch
+            )
+            table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+            for row, source_value in enumerate(self.review.tax_categories):
+                table.setItem(row, 0, QTableWidgetItem(source_value))
+                table.setItem(row, 1, QTableWidgetItem("次の画面で表示します"))
+                table.setItem(
+                    row, 2, QTableWidgetItem("この会社では初回確認または再確認が必要です")
+                )
+            page_layout.addWidget(table, 1)
+        else:
+            page_layout.addWidget(QLabel("税区分の追加確認はありません。"))
         tax_status = QLabel(
             tax_message or "税区分はCSV読込時に必要なものだけ確認します。"
         )
         tax_status.setObjectName("warningCard" if tax_message else "muted")
         tax_status.setWordWrap(True)
-        layout.addWidget(tax_status)
-        actions = QHBoxLayout()
-        cancel = QPushButton("キャンセル")
-        cancel.clicked.connect(self.reject)
-        self.save_button = QPushButton("確認済み0件を保存")
-        self.save_button.setObjectName("primaryButton")
-        self.save_button.clicked.connect(self._save)
-        actions.addStretch(1)
-        actions.addWidget(cancel)
-        actions.addWidget(self.save_button)
-        layout.addLayout(actions)
-        for source_value in self.account_controls:
-            self._refresh_subaccounts(source_value)
-        self._update_action()
+        page_layout.addWidget(tax_status)
+        return page
+
+    def _other_tab(self) -> QWidget:
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(4, 8, 4, 8)
+        title = QLabel("変換できる状態までに残っている確認")
+        title.setObjectName("sectionTitle")
+        page_layout.addWidget(title)
+        rows = (
+            ("未対応の仕訳構成", self.review.unsupported_shape_count,
+             "推測変換せず、対応Evidenceまたは実装が必要です。"),
+            ("保持方法の確認が必要な仕訳", self.review.optional_field_blocker_count,
+             "取引先などの保持方法を会社設定で確認してください。"),
+        )
+        for label, count, guidance in rows:
+            state = "完了" if count == 0 else f"{count}仕訳"
+            item = QLabel(f"{label}: {state}\n{guidance if count else ''}")
+            item.setObjectName("warningCard" if count else "muted")
+            item.setWordWrap(True)
+            page_layout.addWidget(item)
+        if self.review.optional_field_blocker_count:
+            policy_button = QPushButton("取引先情報の扱いを確認")
+            policy_button.clicked.connect(self._open_trade_partner_policy)
+            page_layout.addWidget(policy_button)
+        note = QLabel(
+            "ここに表示する件数は影響する仕訳数です。上部タブの件数は"
+            "Humanが確認する設定項目数なので、同じ数になるとは限りません。"
+        )
+        note.setObjectName("muted")
+        note.setWordWrap(True)
+        page_layout.addWidget(note)
+        page_layout.addStretch(1)
+        return page
+
+    def _open_trade_partner_policy(self) -> None:
+        dialog = TradePartnerPolicyDialog(
+            self.controller, self.review.company_setting_id, self
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            QMessageBox.information(
+                self,
+                "保持方法を保存しました",
+                "取引先情報の扱いを保存しました。この画面の確認項目を保存後、"
+                "CSVを再確認すると最新状態が反映されます。",
+            )
 
     def _refresh_subaccounts(self, source_account: str) -> None:
         account_control = self.account_controls.get(source_account)
@@ -1672,6 +1838,60 @@ class CompanyMappingUpdateDialog(QDialog):
         unresolved = len(self.controls) + len(self.description_controls) - confirmed
         self.progress_label.setText(
             f"この画面で確認済み: {confirmed}件 / 未確認: {unresolved}件"
+        )
+        category_counts = {
+            "accounts": (
+                sum(
+                    key.startswith(("ACCOUNT|", "ACCOUNT:"))
+                    for key, _, _ in self.controls
+                ),
+                sum(
+                    key.startswith(("ACCOUNT|", "ACCOUNT:"))
+                    and combo.currentData() is not None
+                    and check.isChecked()
+                    for key, combo, check in self.controls
+                ),
+            ),
+            "subaccounts": (
+                sum(
+                    not key.startswith(("ACCOUNT|", "ACCOUNT:"))
+                    for key, _, _ in self.controls
+                ),
+                sum(
+                    not key.startswith(("ACCOUNT|", "ACCOUNT:"))
+                    and combo.currentData() is not None
+                    and check.isChecked()
+                    for key, combo, check in self.controls
+                ),
+            ),
+            "descriptions": (
+                len(self.description_controls),
+                sum(
+                    check.isChecked()
+                    and replacement_is_valid(field.text())
+                    and not unsafe_description_positions(field.text())
+                    for field, check in self.description_controls.values()
+                ),
+            ),
+        }
+        labels = {
+            "accounts": "科目",
+            "subaccounts": "補助科目",
+            "descriptions": "摘要・文字置換",
+        }
+        for key, (total, done) in category_counts.items():
+            self.tabs.setTabText(
+                self.category_tabs[key], f"{labels[key]} {done}/{total}"
+            )
+        tax_count = len(self.review.tax_categories)
+        self.tabs.setTabText(
+            self.category_tabs["tax"], f"税区分 0/{tax_count}"
+        )
+        self.tabs.setTabText(
+            self.category_tabs["other"],
+            "その他 "
+            f"{self.review.unsupported_shape_count}構成/"
+            f"{self.review.optional_field_blocker_count}仕訳",
         )
         self.save_button.setText(f"確認済み{confirmed}件を保存")
         self.save_button.setEnabled(confirmed > 0)
@@ -2577,8 +2797,15 @@ class TaxMappingConfirmationDialog(QDialog):
                 card = QFrame()
                 card.setObjectName("card")
                 card_layout = QVBoxLayout(card)
-                card_layout.addWidget(QLabel(f"Money Forward: {item.source_value}"))
-                card_layout.addWidget(QLabel(f"JDL: {item.target_display}"))
+                card_layout.addWidget(QLabel(f"MFの税区分: {item.source_value}"))
+                card_layout.addWidget(QLabel(f"JDLでの扱い: {item.target_display}"))
+                reason = QLabel(
+                    "この会社でこの組み合わせを使うのは初回、またはJDL設定の"
+                    "変更後のため、内容の確認が必要です。"
+                )
+                reason.setObjectName("muted")
+                reason.setWordWrap(True)
+                card_layout.addWidget(reason)
                 confirmed = QCheckBox("確認しました")
                 confirmed.stateChanged.connect(self._update_save_enabled)
                 card_layout.addWidget(confirmed)

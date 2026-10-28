@@ -9,6 +9,8 @@ from accounting_converter.application.moneyforward_description_replacement impor
     MF_DESCRIPTION_REPLACEMENT_POLICY,
     MoneyForwardDescriptionReplacementPolicy,
     moneyforward_description_replacement_key,
+    observed_jdl_description,
+    recommended_description_replacement,
 )
 from accounting_converter.application.moneyforward_jdl_loss import MoneyForwardToJdlLossRule
 from accounting_converter.domain.conversion_profile import ConversionProfile
@@ -21,6 +23,11 @@ from accounting_converter.profiles.known_formats import (
 
 
 class MoneyForwardDescriptionReplacementTests(unittest.TestCase):
+    def test_observed_character_has_explanatory_preview_and_human_candidate(self):
+        self.assertEqual(observed_jdl_description("髙橋"), "・橋")
+        self.assertEqual(recommended_description_replacement("髙橋"), "高橋")
+        self.assertIsNone(recommended_description_replacement("通常摘要"))
+
     def test_unconfirmed_non_roundtrip_character_blocks(self):
         entry = self._entry("髙橋")
         result = MoneyForwardDescriptionReplacementPolicy(

@@ -19,6 +19,8 @@ MF_DESCRIPTION_REPLACEMENT_PREFIX = "mf_description_replacement|"
 # JDL 35.5 accepted the CP932 vendor-extension byte sequence for this character,
 # but changed it on re-export. It is therefore encodable but not round-trip safe.
 JDL_OBSERVED_NON_ROUNDTRIP_CHARACTERS = frozenset({"髙"})
+JDL_OBSERVED_DESCRIPTION_REPLACEMENTS = {"髙": "高"}
+JDL_OBSERVED_DESCRIPTION_ROUNDTRIP_OUTPUT = {"髙": "・"}
 
 
 @dataclass(frozen=True)
@@ -40,6 +42,27 @@ def unsafe_description_positions(description: str) -> tuple[int, ...]:
         index
         for index, character in enumerate(description)
         if character in JDL_OBSERVED_NON_ROUNDTRIP_CHARACTERS
+    )
+
+
+def recommended_description_replacement(description: str) -> str | None:
+    """Return only a Human-review candidate proven by scoped JDL Evidence."""
+    replacement = "".join(
+        JDL_OBSERVED_DESCRIPTION_REPLACEMENTS.get(character, character)
+        for character in description
+    )
+    if replacement == description or not replacement_is_valid(replacement):
+        return None
+    if unsafe_description_positions(replacement):
+        return None
+    return replacement
+
+
+def observed_jdl_description(description: str) -> str:
+    """Preview the exact non-round-trip substitutions observed on JDL 35.5."""
+    return "".join(
+        JDL_OBSERVED_DESCRIPTION_ROUNDTRIP_OUTPUT.get(character, character)
+        for character in description
     )
 
 

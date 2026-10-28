@@ -656,14 +656,35 @@ class QtGuiContractTests(unittest.TestCase):
             "class CompanyAddDialog", maxsplit=1
         )[0]
         for text in (
-            "JDLで保持できない摘要文字",
-            "対象仕訳:",
-            "現在の摘要:",
-            "候補: 「髙」を「高」へ置換",
-            "任意の別摘要を入力",
-            "未確認のまま変換を保留",
-            "この摘要への置換を確認しました",
+            "JDLでは正しく保存できない文字があります",
+            "この摘要を使う仕訳:",
+            "このままJDLへ変換すると:",
+            "意味を保つ",
+            "この置き換え内容を確認しました",
+            "recommended_description_replacement",
+            "observed_jdl_description",
             "description_confirmed",
+        ):
+            self.assertIn(text, dialog)
+
+    def test_moneyforward_review_uses_scrollable_category_navigation(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
+            encoding="utf-8"
+        )
+        dialog = source.split("class CompanyMappingUpdateDialog", maxsplit=1)[1].split(
+            "class CompanyAddDialog", maxsplit=1
+        )[0]
+        for text in (
+            "self.tabs = QTabWidget()",
+            '"accounts", "科目"',
+            '"subaccounts", "補助科目"',
+            '"descriptions", "摘要・文字置換"',
+            '"tax", "税区分"',
+            '"other", "その他"',
+            "QScrollArea()",
+            "ScrollPerPixel",
+            "次の操作",
+            "影響する仕訳数",
         ):
             self.assertIn(text, dialog)
 

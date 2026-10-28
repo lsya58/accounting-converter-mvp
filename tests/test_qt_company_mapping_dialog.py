@@ -6,11 +6,20 @@ import unittest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import (
+        QAbstractItemView,
+        QApplication,
+        QScrollArea,
+        QTableWidget,
+    )
 
     from accounting_converter.application.company_mapping_update import (
         CompanyMappingUpdateItem,
         CompanyMappingUpdateReview,
+    )
+    from accounting_converter.application.moneyforward_description_replacement import (
+        MoneyForwardDescriptionReviewItem,
+        moneyforward_description_replacement_key,
     )
     from accounting_converter.ui_qt.main_window import CompanyMappingUpdateDialog
 
@@ -116,6 +125,69 @@ class CompanyMappingUpdateDialogTests(unittest.TestCase):
             dialog.progress_label.text(),
             "この画面で確認済み: 1件 / 未確認: 1件",
         )
+
+    def test_large_review_is_split_into_scrollable_categories(self) -> None:
+        accounts = tuple(
+            CompanyMappingUpdateItem(
+                key=f"ACCOUNT|source-{index}",
+                mapping_type="ACCOUNT",
+                source_value=f"source-{index}",
+                parent_account=None,
+                available_targets=("target-parent-a",),
+            )
+            for index in range(60)
+        )
+        review = CompanyMappingUpdateReview(
+            company_setting_id="company-a",
+            source_path=None,
+            context_path=None,
+            items=accounts,
+            tax_categories=("課税仕入10%",),
+            unsupported_shape_count=2,
+            optional_field_blocker_count=26,
+        )
+
+        dialog = CompanyMappingUpdateDialog(object(), review)
+
+        self.assertEqual(dialog.tabs.count(), 5)
+        self.assertEqual(dialog.tabs.tabText(0), "科目 0/60")
+        account_table = dialog.tabs.widget(0).findChild(QTableWidget)
+        self.assertIsNotNone(account_table)
+        self.assertEqual(account_table.rowCount(), 60)
+        self.assertEqual(
+            account_table.verticalScrollMode(),
+            QAbstractItemView.ScrollMode.ScrollPerPixel,
+        )
+        self.assertIsInstance(dialog.tabs.widget(2), QScrollArea)
+        self.assertEqual(dialog.tabs.tabText(3), "税区分 0/1")
+        self.assertEqual(dialog.tabs.tabText(4), "その他 2構成/26仕訳")
+
+    def test_description_candidate_is_prefilled_but_requires_confirmation(self) -> None:
+        original = "髙橋"
+        review = CompanyMappingUpdateReview(
+            company_setting_id="company-a",
+            source_path=None,
+            context_path=None,
+            items=(),
+            descriptions=(
+                MoneyForwardDescriptionReviewItem(
+                    key=moneyforward_description_replacement_key(original),
+                    original_description_sha256="hash",
+                    current_description=original,
+                    current_length=2,
+                    unsafe_positions=(0,),
+                    affected_journal_count=10,
+                ),
+            ),
+        )
+
+        dialog = CompanyMappingUpdateDialog(object(), review)
+        field, confirmation = next(iter(dialog.description_controls.values()))
+
+        self.assertEqual(field.text(), "高橋")
+        self.assertTrue(confirmation.isEnabled())
+        self.assertFalse(confirmation.isChecked())
+        self.assertFalse(dialog.save_button.isEnabled())
 
 
 if __name__ == "__main__":
