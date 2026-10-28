@@ -722,7 +722,9 @@ class SettingsDialog(QDialog):
             self.message_label.setText("会社設定を選択してください。")
             return
         try:
-            review = self.controller.review_saved_company_mappings(company_id)
+            review = self.controller.review_company_settings_with_current_source(
+                company_id
+            )
             tax_review = self.controller.company_tax_mapping_review(company_id)
         except Exception as exc:
             log_local_exception("company_mapping_update_review", exc)
@@ -742,6 +744,8 @@ class SettingsDialog(QDialog):
         self._reload_companies(self.controller.state)
         if tax_review.items:
             self._confirm_tax()
+        else:
+            self.accept()
 
     def _refresh_master(self) -> None:
         company_id = self.company_combo.currentData()
@@ -1511,6 +1515,9 @@ class CompanyMappingUpdateDialog(QDialog):
                 target.setCurrentIndex(target.findData(PARENT_ONLY_SELECTION))
             confirmed = QCheckBox("確認しました")
             confirmed.setEnabled(target.currentData() is not None)
+            confirmed.setChecked(
+                item.already_confirmed and target.currentData() is not None
+            )
             target.currentIndexChanged.connect(
                 lambda _index, combo=target, checkbox=confirmed: (
                     checkbox.setChecked(False), checkbox.setEnabled(combo.currentData() is not None), self._update_action()
@@ -1641,7 +1648,13 @@ class CompanyMappingUpdateDialog(QDialog):
             else:
                 combo.setCurrentIndex(0)
             combo.blockSignals(False)
-            checkbox.setChecked(False)
+            checkbox.setChecked(
+                bool(
+                    restore_saved_selection
+                    and item.already_confirmed
+                    and combo.currentData() is not None
+                )
+            )
             checkbox.setEnabled(combo.currentData() is not None)
         self._update_action()
 

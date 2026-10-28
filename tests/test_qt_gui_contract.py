@@ -320,7 +320,12 @@ class QtGuiContractTests(unittest.TestCase):
         self.assertIn("追加確認が必要な科目はありません", source)
         self.assertIn("WheelSafeComboBox()", source)
         self.assertIn('target.addItem("未選択", None)', source)
-        self.assertIn("review_saved_company_mappings", source)
+        self.assertIn("review_company_settings_with_current_source", source)
+        self.assertIn(
+            "if tax_review.items:\n            self._confirm_tax()\n"
+            "        else:\n            self.accept()",
+            source,
+        )
         self.assertIn("税設定の確認が必要です。CSV読込時に確認できます。", source)
 
     def test_pdf_company_has_explicit_jdl_tax_context_confirmation_flow(self) -> None:
@@ -638,6 +643,7 @@ class QtGuiContractTests(unittest.TestCase):
             "この画面で確認済み:",
             "確認済み{confirmed}件を保存",
             "if key in confirmed",
+            "item.already_confirmed",
         ):
             self.assertIn(text, dialog)
         self.assertIn("self.progress_label = QLabel()", dialog)

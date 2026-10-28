@@ -96,6 +96,7 @@ class CompanyMappingUpdateTests(unittest.TestCase):
         self.assertTrue(
             all(item.exact_candidate for item in editable.items)
         )
+        self.assertTrue(all(item.already_confirmed for item in editable.items))
 
     def test_non_roundtrip_description_requires_confirmed_exact_replacement(self):
         source = self.root / "unsafe-description.csv"
@@ -671,6 +672,7 @@ class CompanyMappingUpdateTests(unittest.TestCase):
                 ("SUBACCOUNT", "架空補助A"),
             ],
         )
+        self.assertTrue(all(item.already_confirmed for item in review.items))
         selections = {item.key: item.exact_candidate for item in review.items}
         self.service.apply(review, selections, set(selections))
         self.assertEqual(len(self.service.review_saved("company-a").items), 3)

@@ -711,6 +711,23 @@ class AccountingConverterController:
     ) -> CompanyMappingUpdateReview:
         return self.company_mapping_update_service.review_saved(company_setting_id)
 
+    def review_company_settings_with_current_source(
+        self, company_setting_id: str
+    ) -> CompanyMappingUpdateReview:
+        """Include source-bound policies only for the active MF company/file."""
+        if (
+            self.state.selected_company_setting_id == company_setting_id
+            and self.state.selected_file is not None
+            and self.state.file_recognition is not None
+            and self.state.file_recognition.format is RecognizedFormat.MONEYFORWARD
+        ):
+            return self.review_company_mapping_updates(
+                company_setting_id,
+                self.state.selected_file,
+                include_confirmed=True,
+            )
+        return self.review_saved_company_mappings(company_setting_id)
+
     def load_jdl_migration_review(self, company_setting_id: str, path: Path):
         return self.jdl_migration_review_service.load(company_setting_id, path)
 

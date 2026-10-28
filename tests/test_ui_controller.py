@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -21,7 +22,12 @@ from accounting_converter.profiles.known_formats import (
     yayoi_desktop_import_25_documented_schema,
 )
 from accounting_converter.ui.controllers import AccountingConverterController
-from accounting_converter.ui.view_models import DiagnosticKind, DiagnosticStatus
+from accounting_converter.ui.view_models import (
+    DiagnosticKind,
+    DiagnosticStatus,
+    FileRecognition,
+    RecognizedFormat,
+)
 
 
 class ExplodingAnalyzer:
@@ -31,6 +37,51 @@ class ExplodingAnalyzer:
 
 
 class UiControllerTests(unittest.TestCase):
+    def test_company_settings_review_uses_active_mf_source(self) -> None:
+        controller = AccountingConverterController()
+        source = Path("active-mf.csv")
+        controller.state = replace(
+            controller.state,
+            selected_company_setting_id="company-a",
+            selected_file=source,
+            file_recognition=FileRecognition(
+                RecognizedFormat.MONEYFORWARD, "Money Forward"
+            ),
+        )
+        expected = object()
+        with patch.object(
+            controller, "review_company_mapping_updates", return_value=expected
+        ) as derive:
+            actual = controller.review_company_settings_with_current_source(
+                "company-a"
+            )
+
+        self.assertIs(actual, expected)
+        derive.assert_called_once_with(
+            "company-a", source, include_confirmed=True
+        )
+
+    def test_company_settings_review_does_not_reuse_source_for_other_company(self) -> None:
+        controller = AccountingConverterController()
+        controller.state = replace(
+            controller.state,
+            selected_company_setting_id="company-a",
+            selected_file=Path("active-mf.csv"),
+            file_recognition=FileRecognition(
+                RecognizedFormat.MONEYFORWARD, "Money Forward"
+            ),
+        )
+        expected = object()
+        with patch.object(
+            controller, "review_saved_company_mappings", return_value=expected
+        ) as saved:
+            actual = controller.review_company_settings_with_current_source(
+                "company-b"
+            )
+
+        self.assertIs(actual, expected)
+        saved.assert_called_once_with("company-b")
+
     def test_profile_zero_items(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             controller = AccountingConverterController(

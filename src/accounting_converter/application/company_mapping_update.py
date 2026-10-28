@@ -67,6 +67,7 @@ class CompanyMappingUpdateItem:
     blocker_reason: str | None = None
     blocker_code: str | None = None
     parent_only_targets: tuple[str, ...] = ()
+    already_confirmed: bool = False
 
     def subaccount_targets_for(self, parent_target: str) -> tuple[str, ...]:
         return next(
@@ -169,6 +170,11 @@ class CompanyMappingUpdateService:
                         else recommendation
                     ),
                     recommended_reason=reason,
+                    already_confirmed=bool(
+                        item.usable
+                        and current is not None
+                        and current.status is MappingStatus.USER_CONFIRMED
+                    ),
                 )
             )
 
@@ -267,6 +273,7 @@ class CompanyMappingUpdateService:
                         if not parent_code
                         else "MF-SUBACCOUNT-USER-CONFIRMATION-REQUIRED"
                     ),
+                    already_confirmed=usable,
                 )
             )
         self._append_default_subaccount_items(
@@ -346,6 +353,10 @@ class CompanyMappingUpdateService:
                         if mapping.target_value in account_targets
                         else None
                     ),
+                    already_confirmed=(
+                        mapping.status is MappingStatus.USER_CONFIRMED
+                        and mapping.target_value in account_targets
+                    ),
                 )
             )
         account_codes = {
@@ -421,6 +432,7 @@ class CompanyMappingUpdateService:
                         if not parent_code
                         else "MF-SUBACCOUNT-USER-CONFIRMATION-REQUIRED"
                     ),
+                    already_confirmed=True,
                 )
             )
         return CompanyMappingUpdateReview(
@@ -789,6 +801,7 @@ class CompanyMappingUpdateService:
                     if not parent_is_confirmed
                     else "MF-DEFAULT-SUBACCOUNT-USER-CONFIRMATION-REQUIRED"
                 ),
+                already_confirmed=usable,
             ))
 
     def ensure_tax_requirements(self, review: CompanyMappingUpdateReview) -> None:
