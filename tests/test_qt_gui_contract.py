@@ -416,7 +416,7 @@ class QtGuiContractTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn('item.mapping_type in {"SUBACCOUNT", "DEFAULT_SUBACCOUNT"}', source)
-        self.assertIn('"親科目のみで失う情報"', source)
+        self.assertIn('("親科目のみの場合", item.parent_only_loss)', source)
         self.assertIn('"JDL補助科目へ対応: {value}"', source)
         self.assertIn(
             'item.mapping_type in {"SUBACCOUNT", "DEFAULT_SUBACCOUNT"}', source
@@ -642,7 +642,7 @@ class QtGuiContractTests(unittest.TestCase):
             'target.addItem("おすすめ", None)',
             'target.addItem("その他のJDL科目", None)',
             "item.recommended_reason",
-            "この画面で確認済み:",
+            "確認済み / 設定数:",
             "確認済み{confirmed}件を保存",
             "if key in confirmed",
             "item.already_confirmed",
@@ -685,10 +685,30 @@ class QtGuiContractTests(unittest.TestCase):
             'self._add_tab("other", "その他"',
             "QScrollArea()",
             "ScrollPerPixel",
-            "影響する仕訳:",
+            '("影響する仕訳",',
             "_select_first_unresolved_tab",
+            "QSplitter(Qt.Orientation.Horizontal)",
+            "QStackedWidget()",
         ):
             self.assertIn(text, dialog)
+
+    def test_moneyforward_review_dialogs_are_resizable_and_restore_geometry(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
+            encoding="utf-8"
+        )
+        mapping = source.split("class CompanyMappingUpdateDialog", maxsplit=1)[1].split(
+            "class CompanyAddDialog", maxsplit=1
+        )[0]
+        tax = source.split("class TaxMappingConfirmationDialog", maxsplit=1)[1].split(
+            "class CompanyRenameDialog", maxsplit=1
+        )[0]
+        for dialog, size in ((mapping, "1240, 780"), (tax, "820, 680")):
+            self.assertIn("WindowMaximizeButtonHint", dialog)
+            self.assertIn(f"self.resize({size})", dialog)
+            self.assertIn("restoreGeometry", dialog)
+            self.assertIn("saveGeometry", dialog)
+        self.assertIn("setHorizontalScrollBarPolicy", mapping)
+        self.assertIn("setVerticalScrollBarPolicy", mapping)
 
 
 if __name__ == "__main__":

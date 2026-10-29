@@ -123,7 +123,7 @@ class CompanyMappingUpdateDialogTests(unittest.TestCase):
         self.assertEqual(dialog.save_button.text(), "確認済み1件を保存")
         self.assertEqual(
             dialog.progress_label.text(),
-            "この画面で確認済み: 1件 / 未確認: 1件",
+            "確認済み / 設定数: 1 / 2",
         )
 
     def test_large_review_is_split_into_scrollable_categories(self) -> None:
@@ -193,6 +193,25 @@ class CompanyMappingUpdateDialogTests(unittest.TestCase):
             dialog.tabs.tabText(dialog.category_tabs["subaccounts"]),
             "補助科目 0/13 [要確認]",
         )
+
+    def test_tax_is_first_tab_when_only_tax_confirmation_remains(self) -> None:
+        review = CompanyMappingUpdateReview(
+            company_setting_id="company-a",
+            source_path=None,
+            context_path=None,
+            items=(),
+            tax_categories=("tax-a", "tax-b", "tax-c", "tax-d"),
+        )
+
+        dialog = CompanyMappingUpdateDialog(object(), review)
+
+        self.assertEqual(dialog.tabs.currentIndex(), dialog.category_tabs["tax"])
+        self.assertEqual(
+            dialog.tabs.tabText(dialog.category_tabs["tax"]),
+            "税区分 0/4 [要確認]",
+        )
+        self.assertIn("Humanが解決できる残り設定", dialog.summary_label.text())
+        self.assertIn("Evidence・実装対応待ち", dialog.summary_label.text())
 
     def test_description_candidate_is_prefilled_but_requires_confirmation(self) -> None:
         original = "髙橋"
