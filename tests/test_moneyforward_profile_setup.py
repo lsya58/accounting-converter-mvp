@@ -178,12 +178,17 @@ class MoneyForwardProfileSetupTests(unittest.TestCase):
             EVIDENCE_ID_MF_JDL_PURCHASE_10_ROUNDTRIP,
         )
 
-    def test_purchase_tax_candidate_is_hidden_for_context_mismatch(self) -> None:
+    def test_purchase_tax_candidate_is_visible_but_blocked_for_context_mismatch(self) -> None:
         self._write_source(self.source, debit_tax="課税仕入 10%")
 
         analysis = self.service.analyze(self.source, self.context)
 
-        self.assertFalse(analysis.tax_items)
+        self.assertEqual(len(analysis.tax_items), 1)
+        self.assertFalse(analysis.tax_items[0].human_confirmable)
+        self.assertEqual(
+            analysis.tax_items[0].blocker_code,
+            "MF-JDL-TAX-CONTEXT-CONFIRMATION-REQUIRED",
+        )
         self.assertFalse(analysis.tax_context_compatible)
         self.assertEqual(
             analysis.tax_context_message,
@@ -365,10 +370,38 @@ class MoneyForwardProfileSetupTests(unittest.TestCase):
         context = self.service.context_loader.load(self.context)
 
         self.assertEqual(self.service._tax_items(("",), context), ())
-        self.assertEqual(self.service._tax_items(("未観測税区分",), context), ())
+        unknown = self.service._tax_items(("未観測税区分",), context)
+        self.assertEqual(len(unknown), 1)
+        self.assertFalse(unknown[0].human_confirmable)
+        self.assertEqual(
+            unknown[0].blocker_code,
+            "MF-JDL-TAX-EVIDENCE-MISSING-EXACT",
+        )
         self.assertIn(
             "確認できない税区分",
             self.service._tax_context_message(("未観測税区分",), context),
+        )
+
+    def test_partial_tax_failure_keeps_every_identity_visible(self) -> None:
+        self._write_context(self.context, taxable_included=True)
+        context = self.service.context_loader.load(self.context)
+        source_values = (
+            "対象外仕入",
+            "課税売上 10%",
+            "非課税仕入",
+            "非課税売上",
+        )
+
+        items = self.service._tax_items(source_values, context)
+
+        self.assertEqual(tuple(item.source_value for item in items), source_values)
+        self.assertEqual(len(items), 4)
+        self.assertEqual(len(tuple(item for item in items if item.human_confirmable)), 3)
+        blocked = tuple(item for item in items if not item.human_confirmable)
+        self.assertEqual(tuple(item.source_value for item in blocked), ("対象外仕入",))
+        self.assertEqual(
+            blocked[0].blocker_code,
+            "MF-JDL-TAX-EVIDENCE-MISSING-EXACT",
         )
 
     def test_all_seven_tax_mappings_are_saved_only_as_user_confirmed(self) -> None:

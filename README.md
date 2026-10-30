@@ -1,243 +1,37 @@
-# Accounting Converter MVP
+# Accounting Converter
 
-会計ソフト間の仕訳データ変換・取込支援システムのMVP実装です。
+会計ソフトから出力した仕訳CSVを、会社ごとのJDL設定に合わせて安全に変換するWindowsアプリです。現在はMoney Forward→JDLとJDL→JDLを中心に開発・検証しています。
 
-一般向けの製品説明、操作、pilot、サポート資料は
-[ドキュメント案内](docs/README.md)を参照してください。LP制作・収益化検討の詳細は
-[会計データ変換 Product / LP Brief](docs/product/lp_product_brief.md)にまとめています。
+## 方針
 
-製品全体は特定vendor専用ではなく、Input Adapter、Common Journal Model、Mapping / Validation、Output Adapterを分離した構造です。現在のMVPはJDL→JDLの回帰維持と、Money Forward→JDLの実案件E2Eを優先しています。弥生→JDLは限定routeを維持し、対応拡大は後順位です。
+- 科目、補助科目、税区分を推測で確定しない
+- 一度確認した対応は、同じ会社設定の範囲で再利用する
+- JDL科目一覧や税設定の変更は、影響する項目だけ再評価する
+- 未確認・未検証・情報損失の可能性があれば出力前に停止する
+- 一部だけの出力、入力ファイルの変更、既存出力の上書きを行わない
 
-最終的な利用価値は、他社会計ソフトに存在する日々の全仕訳を、税理士事務所が普段使用しているJDLへ取り込み、JDL上で仕訳・元帳・補助元帳等を確認できるようにすることです。
+## 現在地
 
-## 現在の実装範囲
+| ルート | 確認済み範囲 |
+|---|---|
+| JDL→JDL | 実案件1,158仕訳・1,271物理行のformal出力と実JDL Importに成功。再Export strict comparisonと会計判断の確認は未完了 |
+| Money Forward→JDL | 実案件13仕訳・14物理行で実JDL Import、同期間再Export、strict comparisonに成功。予期しない差分0、silent loss 0 |
+| 弥生→JDL | AE19 direct export由来の限定入力経路を回帰維持。対応拡大は後順位 |
 
-実CSV仕様未確定でも実装できるコアから着手しています。
+482仕訳の実データでは、現在のformal scope見込みは480件（99.59%）です。これは482件一括の実機往復検証を意味しません。未検証の1D2Cと10D9Cが各1件あり、atomic設計により全体出力は停止します。
 
-- Common Journal Model
-- TaxInfo
-- SourceReference
-- FormatProfile
-- InputAdapter / OutputAdapter境界
-- ValidationResult / Severity
-- BalanceRule
-- 未対応複合仕訳の安全側Error化
-- Application ConversionService
-- MappingEngine基盤
-- OutputValidation基盤
-- VerificationReportGenerator
-- Atomic Output
-- 既存出力ファイルの上書き禁止
-- input path == output path拒否
-- JDL CSV Diagnostic Analyzer
-- JDL IBEX出納帳35.5のObserved Behavior診断
-- 弥生公式ドキュメント上のインポート形式仕様モデル
-- 弥生CSV Observation / Diagnostics
-- Conversion Profile要件
-- Conversion Profileローカル永続化基盤
-- Mapping Requirement Extraction / Mapping Review基盤
-- Mapping Confirmation Service
-- Format Identity / Capability / Schema基盤
-- Format Registry
-- Compatibility Diff / Transformation Plan基盤
-- Conversion Preparation / Readiness判定基盤
-- Adapter Registry基盤
-- Adapter Contract Test helper
-- Canonical Synthetic Dataset
-- Demo AdapterによるConversionService E2E
-- Windows向け薄いGUIプロトタイプ
-- PyInstaller Packaging Proof of Concept
-- GitHub Actions
+詳細は[ドキュメント案内](docs/README.md)、現在のEvidence境界は[Current Evidence Status](docs/development/current_evidence_status.md)、LP原稿は[LP Content](docs/marketing/lp_content.md)を参照してください。
 
-## 弥生仕様の現在位置
-
-`accounting_converter.profiles.yayoi_official` には、弥生株式会社公式サポートで公開されている「弥生取り込み（インポート）形式（弥生会計05以降）」の25項目仕様を `OFFICIAL_DOCUMENTED` / `REAL_DATA_VERIFICATION_PENDING` として保持しています。
-
-これは万能な弥生CSV仕様や正式 `FormatProfile` ではありません。現在は、Yayoi AE19 direct exportのObserved evidenceに限定した最小 `YayoiInputAdapter` だけを実装しています。別製品・別バージョン・別エクスポート経路へは一般化しません。
-
-`accounting_converter.diagnostics.yayoi_csv` には、任意の弥生CSV候補を観測し、公式25項目仕様との構造差分を確認する診断機能があります。これは正式変換ではなく、`MATCH_CANDIDATE` / `STRUCTURAL_DIFFERENCE` / `INSUFFICIENT_EVIDENCE` のような人間レビュー前提の判定だけを行います。摘要本文、取引先名、生CSV行全文は既定のテキストレポート/JSONへ出力しません。
-
-## JDL診断機能の現在位置
-
-`accounting_converter.diagnostics.jdl_csv` には、JDLへ取り込めないCSVの構造・診断メッセージ・マスター不一致候補・Observed Schema・Observed Journal Group Candidateを分析する診断機能があります。
-
-JDL IBEX出納帳 35.5の実データでObserved Behaviorは再現済みです。検証済みsubsetだけを扱うEvidence-limited `JDLOutputAdapter v0`も正式`src`配下に実装しました。Adapter Registryにはcontext必須の実装として登録していますが、production有効化と正式JDL FormatProfileへの昇格は行っていません。
-
-JDL診断CLIは、schema未指定の純粋観測と、明示的なObserved Schema比較を分けています。バージョン未確認のJDL由来CSVを、黙って35.5 evidenceとして扱いません。
-
-実運用上は、日常入力にJDL IBEX出納帳 35.5を使い、決算・申告時にserver-sideのJDL財務/会計システムへ移行する流れが観測されています。MVPの直接Import target候補はJDL IBEX出納帳 35.5へ整理し、JDL会計21列仕訳一覧はpost-import verification用のread-only evidence候補として分離します。
-
-JDL IBEX出納帳 35.5では `データ管理・選択 -> CSV入力 -> データ種類: 仕訳データ` のImport flowも観測済みです。退避確認、日付範囲指定、決算整理の含む/含まない選択、rejection時のログ表示が確認されています。JDL自身が出力した `1111` data rowの限定round-tripに加え、explicit configから生成した完全架空の `1111` と `1000` 各1件を同じ実機へImportし、再Exportまで確認しました。`1111` は振替伝票、`1000` は非伝票仕訳として仕訳帳で確認しています。特定のgenerator-authored artifactsでは、貸方補助付き `1000`、借貸両側へ部門を明示した `1111`、課税・税込/税抜の借方tax表現各1組を持つ `1111` もImport・再Exportまで成功しました。さらに、伝番blankのgenerator-authored `1110 -> 1100 -> 1101` 3 recordsが1つの振替伝票へgroupingされ、同日・全伝番blankの`1111 + 1110/1100/1101`と`1111 + 1111`が、それぞれ1 CSVからexactly 2 vouchersとしてImportされることも確認しました。いずれも限定artifactのEvidenceであり、任意件数・順序、補助/部門/税付きbatch、別の複合構造、Format全体へ一般化しません。
-
-JDL IBEX 出納帳の操作マニュアルP319-P322/P326-P327から、CSV仕訳データ入力の30項目、1行目header requirement、identifier flag meanings、税処理ごとのconditional requirements、error CSV behaviorを `OFFICIAL_DOCUMENTED` evidenceとして追加しています。CP932/CRLF/BOMなしは実CSV由来のobserved-compatible serializationとして分離しています。限定round-tripは実機成功済みですが、official schema identityは `OFFICIAL_DOCUMENTED` のままです。
-
-JDL runtimeのerror-annotated CSVでは、account/subaccount mismatch candidatesが観測されています。このためEXP-01や将来のJDL output preflightでは、target masterに科目が存在すること、補助科目が正しい親勘定科目の下に存在すること、unknown mappingをblockすることを重視します。自動置換やfuzzy matchingは行いません。
+## 開発
 
 ```bash
-PYTHONPATH=src python3 -m accounting_converter.cli diagnose-jdl <csv-path>
-PYTHONPATH=src python3 -m accounting_converter.cli diagnose-jdl <csv-path> --compare-observed jdl-ibex-cashbook-35.5
-PYTHONPATH=src python3 -m accounting_converter.cli diagnose-jdl <csv-path> --format privacy-json
-PYTHONPATH=src python3 -m accounting_converter.cli compare-jdl <baseline-csv> <target-csv>
+PYTHONPATH=src python3 -m unittest discover -s tests
+PYTHONPATH=src python3 -m compileall -q src tests
+git diff --check
 ```
 
-`privacy-json` と `compare-jdl` は、構造・件数・識別フラグ・診断カテゴリ集計を中心に出力し、伝番、日付、金額、摘要、個別科目/補助科目名、CSV本文は出力しない方針です。詳細JSONはローカル調査用であり、共有用Evidenceには使用しません。
+Windowsのclean buildは[Windows Release Checklist](docs/operator/windows_release_checklist.md)に従います。配布物の`BUILD_INFO.txt`とサポート診断に表示されるcommitが、build対象のHEADと一致することを確認してください。
 
-## Application層の現在位置
+## 注意
 
-`ConversionService` は、InputAdapter、Structural Validation、明示的な出力route割当、Mapping、Business Validation、OutputAdapter、OutputValidation、VerificationReportを統括します。
-
-ConversionService自身には、弥生/JDL固有のCSV列変換や識別フラグ生成を実装しません。
-
-Yayoi AE19 observed subsetからCommon Journal Modelを経由し、Evidence-limited JDL Output Adapter v0へ渡すformal E2Eは、synthetic sourceからのsoftware変換、JDL IBEX出納帳35.5への実機Import、UI確認、self re-export比較まで成功しています（`EVID-JDL-YAYOI-TO-JDL-E2E-001`）。単一仕訳は`SUPPORTED_1111_BASIC`、複合仕訳は`SUPPORTED_COMPOUND_1D3C`を仕訳IDごとに明示割当し、特徴からprofileを推測しません。検証範囲は免税・補助/部門/税なし・同日simple 1件 + exact 1D3C compound 1件に限定し、production Adapter Registryと一般利用のreadinessは変更しません。
-
-正式出力は一時ファイルへ生成し、OutputValidation成功後のみatomic replaceします。既存出力ファイルは `overwrite=True` が明示されない限り上書きしません。
-
-JDL出力では、Conversion Profileと`JdlTargetContext`を分離します。Profileはsourceからtargetへの確認済みMapping、Contextは今回実行するJDL製品/version、target master、会社・税設定の確認済みsnapshotです。`JdlTargetContextBuilder`がidentity、master重複、補助親科目、部門、税設定を検証し、context-aware factoryがProfileのtarget code/正式名称とsnapshotを照合します。context不在・不整合は`BLOCKED_BY_TARGET_CONTEXT`で停止し、global customer defaultや前回contextの再利用はしません。
-
-First Release候補GUIでは、入力ファイル、保存済み変換設定、ローカルの確認済みJDL設定JSON、出力先を利用者が明示選択します。実行前チェックはMapping件数、JDL IBEX出納帳35.5、免税、master件数、単一/複合仕訳件数、no-overwriteを表示し、未確認Mapping、課税、補助、部門、未検証仕訳構成、既存出力を停止します。GUIはCSVを生成せず、Application workflowがRegistry、`ConversionRequest`、`ConversionService`を組み立てます。JDL設定JSONは顧客別ローカルデータとしてGit管理せず、sample masterや既定値を自動投入しません。
-
-Windows packaged appのGUIでProfile、JDL Context、入力、出力を利用者が明示選択し、生成した同日simple 2件をJDL IBEX出納帳35.5へImport、UI確認、self re-export比較まで完了しました（`EVID-JDL-WINDOWS-GUI-E2E-001`）。このexact scopeでは60 fieldsのsemantic differenceは0です。scroll/resize操作と、未対応version `99.9`を選択したときに変換を実行せずBLOCKするnegative pathもWindows実機で確認済みです。arbitrary Profile/Context、tax、補助、部門、任意batchへは一般化しません。
-
-画面全体の縦Scrollbar、mouse wheel、resize後の結果/検証欄への到達はWindows packaged appで確認済みです。変換処理やEvidence scopeは変更しません。
-
-## Conversion Profileの方針
-
-同じ顧問先や同じ変換条件を翌月以降再利用できるよう、安全に確定した勘定科目・補助科目・部門・税区分等のMappingをローカルのConversion Profileとして保存可能にする基盤があります。
-
-Profileには仕訳本文、金額データ、摘要本文、実会計ファイルそのものを保存しません。クラウド同期や外部送信も行いません。
-
-保存済みProfileの既知Mappingは自動適用できますが、未知Mappingが出現した場合は推測補完せず、変換停止、ユーザー確認、Profile更新、再実行の流れで扱います。
-
-補助科目Mappingは、同名の補助科目が親勘定科目によって異なる意味を持つ可能性があるため、`MappingKey(mapping_type=SUBACCOUNT, source_value, parent_account)` によるcontext-aware keyを利用できます。借方/貸方のsideは出現位置の観測情報としてReviewには表示できますが、Mapping identityには含めません。既存の `schema_version=1` / `2` Profileは、この意味変更を黙って読み替えずunsupportedとして扱います。現在のConversion Profile schema versionは `3` です。
-
-`MappingRequirementExtractor` はCommon Journal Modelから、今回のファイルで確認が必要になり得る勘定科目、補助科目、部門、税区分を抽出します。Review結果には科目系の値、出現回数、確認状態だけを保持し、摘要全文、金額、個別仕訳本文は保持しません。
-
-開発者向けProfile CLI:
-
-```bash
-PYTHONPATH=src python3 -m accounting_converter.cli profile --store-dir <profile-dir> list
-PYTHONPATH=src python3 -m accounting_converter.cli profile --store-dir <profile-dir> inspect <profile-id>
-PYTHONPATH=src python3 -m accounting_converter.cli profile validate <profile-json>
-```
-
-## デスクトップGUI
-
-`accounting_converter.ui_qt`にはWindows向けPySide6 GUIがあります。Qt標準drag/drop、高DPI、layout managerを使用し、Web server、Electron、Cloud serviceは使用しません。`accounting_converter.ui`のTkinter GUIはQt版のWindows smoke test完了までfallbackとして残します。
-
-起動:
-
-```bash
-PYTHONPATH=src python3 -m accounting_converter.ui_qt.app
-# fallback
-PYTHONPATH=src python3 -m accounting_converter.ui.app
-```
-
-現在GUIから確認できること:
-
-- Conversion Profile一覧
-- Profile選択
-- `.csv` / `.txt` 入力ファイル選択
-- 弥生CSV候補の診断
-- JDL CSV候補の診断
-- ConversionPreflightServiceによる事前確認
-- 状態、件数、Error/Warning件数の表示
-
-最小YayoiInputAdapterとstrict scopeのJDLOutputAdapterはproduction利用可能です。GUIの作成ボタンは、exact JDL IBEX出納帳35.5 Context、confirmed Mapping、Evidence allow-listなど全条件がREADYの場合だけ有効になります。ダミーCSVを生成して成功したように見せる処理はありません。
-
-GUIは生CSV全文、摘要全文、個別仕訳全文、個別金額を既定表示しません。表示するのはファイル名、形式候補、件数、構造状態、Error/Warning件数、Preflight状態などに限定します。
-
-## 拡張可能なFormat基盤
-
-`accounting_converter.domain.format_metadata` では、`OFFICIAL_DOCUMENTED`、`OBSERVED`、`VERIFIED_BY_REAL_IMPORT`、`INFERRED`、`UNKNOWN` を区別します。弥生Desktop 25項目、弥生Next 25/27項目候補、JDL IBEX出納帳35.5 Observed Schemaを同一視しないための土台です。
-
-`FormatRegistry` は候補とconfidenceを返しますが、CSVだけを見て製品やバージョンを自動確定しません。JDL IBEX出納帳のofficial documented 30-column schemaとobserved 30-column schemaは列名順序が一致していても、Evidence layerとFormatIdentityを分けて保持します。`FormatCompatibilityAnalyzer` はSource/Target Schemaの差分からTransformation Planを作りますが、科目・税区分などのMapping値は推測しません。
-
-## Conversion Preparation / Readiness
-
-`ConversionPreparationService` は正式変換前に以下をまとめて確認します。
-
-- Compatibility分析
-- TransformationPlan生成
-- Mapping requirement抽出
-- 保存済みProfileとのPreflight
-- TransformationStepの実行可能性評価
-- AdapterRegistryによるInput/Output Adapter可用性確認
-- Lossy変換の停止判定
-
-Readiness status:
-
-- `READY`
-- `REQUIRES_MAPPING`
-- `REQUIRES_CONFIRMATION`
-- `FORMAT_MISMATCH`
-- `PROFILE_INVALID`
-- `ADAPTER_UNAVAILABLE`
-- `UNSUPPORTED_TRANSFORMATION`
-- `LOSSY_CONFIRMATION_REQUIRED`
-- `VALIDATION_FAILED`
-- `UNKNOWN`
-
-`TransformationPlan` にStepが存在しても、それだけで実装済みとは扱いません。`MASTER_MAPPING` / `TAX_MAPPING` は確認済みConversion Profileがある場合のみ `SUPPORTED_WITH_PROFILE` になり、`UNKNOWN` / `UNSUPPORTED` / lossyな変換は通常のREADYにしません。
-
-`AdapterRegistry` は `FormatIdentity` のexact/candidate/unavailableを区別します。Candidateは自動採用しません。Yayoi AE19 Inputはproduction利用可能です。JDL Output v0はJDL IBEX出納帳35.5のexact identityに限り`RuntimeOutputFactory`付きでproduction利用可能です。確認済み`JdlTargetContext`、confirmed Mapping、Evidence allow-listを満たさなければ生成・変換を停止します。Demo Adapterは登録しません。
-
-Preparationが `READY` になった場合のみ、薄い実行層が既存 `ConversionService` を呼び出します。ConversionService内のstructural / mapping / business / output validation、atomic output、overwrite safety、Verification Reportは引き続き残り、二重安全性を維持します。
-
-## まだ実装していないもの
-
-- すべての弥生製品/バージョンに対応する汎用YayoiInputAdapter
-- Evidence-limited JDLOutputAdapter v0のcontext-aware registry path実機確認とproduction有効化判断
-- JDL `VERIFIED_BY_REAL_IMPORT` FormatProfile
-- 勘定科目/補助科目/税区分の実マッピング
-- Conversion Profile管理GUI
-- target contextを安全に注入したYayoi -> JDL production実行経路
-
-これらは実CSVとJDL取込仕様確認後に実装します。
-
-## テスト
-
-```bash
-PYTHONPATH=src python -m unittest discover -s tests -v
-```
-
-弥生CSV候補の観測CLI:
-
-```bash
-PYTHONPATH=src python3 -m accounting_converter.cli diagnose-yayoi <csv-path>
-PYTHONPATH=src python3 -m accounting_converter.cli diagnose-yayoi <csv-path> --format json
-PYTHONPATH=src python3 -m accounting_converter.cli diagnose-yayoi <csv-path> --format privacy-json
-```
-
-現在のテスト数は後述コマンドで確認します。
-
-## Windows Packaging PoC
-
-Windows上で将来 `.exe` 化できることを確認するため、PyInstaller用のPoCスクリプトを用意しています。PyInstallerは通常実行時依存ではなく、任意のbuild dependencyです。
-
-Windowsでの想定手順:
-
-```powershell
-.\scripts\build_windows.ps1
-```
-
-スクリプト内部では概ね以下を行います。
-
-```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -e ".[build]"
-python -m PyInstaller --windowed --name "AccountingConverter" --paths "src" --collect-submodules "accounting_converter" --collect-all "PySide6" "src\accounting_converter\ui_qt\app.py"
-```
-
-Tkinter fallbackをbuildする場合は`build_windows.ps1 -TkFallback`を使用します。
-
-`dist/`、`build/`、`*.spec` はGit管理対象外です。Linux/WSL上でWindows `.exe` が生成できるとは仮定しません。現開発環境ではWindows実機ビルドは未検証です。
-
-GitHub ActionsではPython 3.12で同じテストを実行し、`tests/fixtures/` 配下以外のCSVがGit管理対象に含まれていないことを確認します。
-
-## JDL実機Import Testの準備
-
-`experiments/jdl_import/` には、JDL IBEX出納帳のofficial documented 30-column schemaとJDL IBEX出納帳35.5 observed-compatible serializationを使った研究用CSV generatorがあります。これは正式JDLOutputAdapterではなく、完全架空データでJDL実機の取込条件を確認するための実験環境です。
-
-JDL-origin `1111` round-trip、各generator-authored subset、正式YayoiInputAdapter起点E2E、context-aware factory経路、固定mixed batchに加え、Windows packaged GUIから生成したartifactもJDL IBEX出納帳35.5へのImport、UI確認、self re-export比較まで成功しました（`EVID-JDL-WINDOWS-GUI-E2E-001`）。packaged negative pathとscroll/resizeも確認済みのため、strict scopeに限りproduction RegistryとYayoi AE19からJDL IBEX出納帳35.5へのFirst Release経路を有効化します。未確認scopeは引き続きBLOCKします。
+本製品は「どのCSVでも完全自動変換する」ものではありません。対応は実機Evidenceのexact scopeに限定し、未知の形式や会社設定はBLOCKします。JDL Import前には必ずbackupを取得してください。

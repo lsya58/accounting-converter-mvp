@@ -698,12 +698,15 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
         )
         self.assertEqual(len(items), 2)
         self.assertTrue(all(item.evidence_id == BATCH_EVIDENCE_ID for item in items))
+        mismatch = MoneyForwardProfileSetupService._tax_items(
+            ("課税仕入 10%",),
+            self._context(JdlInputTaxCreditMethod.INDIVIDUAL),
+        )
+        self.assertEqual(len(mismatch), 1)
+        self.assertFalse(mismatch[0].human_confirmable)
         self.assertEqual(
-            MoneyForwardProfileSetupService._tax_items(
-                ("課税仕入 10%",),
-                self._context(JdlInputTaxCreditMethod.INDIVIDUAL),
-            ),
-            (),
+            mismatch[0].blocker_code,
+            "MF-JDL-TAX-CONTEXT-CONFIRMATION-REQUIRED",
         )
 
     def test_mapping_scope_uses_tax_context_not_unrelated_master_hash(self) -> None:

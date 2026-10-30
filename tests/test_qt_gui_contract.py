@@ -487,7 +487,9 @@ class QtGuiContractTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("for item in self.review.items", dialog)
-        self.assertIn('QCheckBox("確認しました")', dialog)
+        self.assertIn('QCheckBox("この税区分のJDLでの扱いを確認しました")', dialog)
+        self.assertIn("if item.human_confirmable", dialog)
+        self.assertIn("item.blocker_code", dialog)
         self.assertIn("all(item.isChecked()", dialog)
         self.assertIn("confirm_company_tax_mappings", dialog)
         self.assertIn("def confirm_company_tax_mappings", controller)
@@ -500,7 +502,7 @@ class QtGuiContractTests(unittest.TestCase):
             "class CompanyRenameDialog", maxsplit=1
         )[0]
         cards_section, actions_section = dialog.split(
-            "actions = QHBoxLayout()", maxsplit=1
+            "actions = QHBoxLayout(footer)", maxsplit=1
         )
         self.assertIn("scroll = QScrollArea()", cards_section)
         self.assertIn("scroll.setWidgetResizable(True)", cards_section)
@@ -509,6 +511,37 @@ class QtGuiContractTests(unittest.TestCase):
         self.assertIn("layout.addWidget(scroll, 1)", cards_section)
         self.assertIn('QPushButton("確認を保存")', actions_section)
         self.assertNotIn("scroll.setWidget", actions_section)
+
+    def test_tax_review_keeps_blocked_items_visible_and_shares_parent_state(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
+            encoding="utf-8"
+        )
+        mapping = source.split("class CompanyMappingUpdateDialog", maxsplit=1)[1].split(
+            "class CompanyAddDialog", maxsplit=1
+        )[0]
+        tax = source.split("class TaxMappingConfirmationDialog", maxsplit=1)[1].split(
+            "class CompanyRenameDialog", maxsplit=1
+        )[0]
+        self.assertIn("self.tax_review = tax_review", mapping)
+        self.assertIn("review=self.tax_review", mapping)
+        self.assertIn("システム側のEvidence・対応待ち", tax)
+        self.assertIn("if item.human_confirmable", tax)
+        self.assertIn("item.reason", tax)
+        self.assertIn("item.blocker_code", tax)
+
+    def test_review_footer_is_outside_stretching_content(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
+            encoding="utf-8"
+        )
+        for class_name, next_class in (
+            ("CompanyMappingUpdateDialog", "CompanyAddDialog"),
+            ("TaxMappingConfirmationDialog", "CompanyRenameDialog"),
+        ):
+            dialog = source.split(f"class {class_name}", maxsplit=1)[1].split(
+                f"class {next_class}", maxsplit=1
+            )[0]
+            self.assertIn('footer.setObjectName("dialogFooter")', dialog)
+            self.assertIn("layout.addWidget(footer, 0)", dialog)
 
     def test_mapping_selector_ignores_wheel_so_table_can_scroll(self) -> None:
         source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
@@ -702,11 +735,16 @@ class QtGuiContractTests(unittest.TestCase):
         tax = source.split("class TaxMappingConfirmationDialog", maxsplit=1)[1].split(
             "class CompanyRenameDialog", maxsplit=1
         )[0]
-        for dialog, size in ((mapping, "1240, 780"), (tax, "820, 680")):
+        for dialog in (mapping, tax):
             self.assertIn("WindowMaximizeButtonHint", dialog)
-            self.assertIn(f"self.resize({size})", dialog)
-            self.assertIn("restoreGeometry", dialog)
+            self.assertIn("_restore_dialog_geometry", dialog)
             self.assertIn("saveGeometry", dialog)
+        helper = source.split("def _restore_dialog_geometry", maxsplit=1)[1].split(
+            "class AccountingConverterMainWindow", maxsplit=1
+        )[0]
+        self.assertIn("availableGeometry()", helper)
+        self.assertIn("available.contains(frame)", helper)
+        self.assertIn("dialog.setGeometry", helper)
         self.assertIn("setHorizontalScrollBarPolicy", mapping)
         self.assertIn("setVerticalScrollBarPolicy", mapping)
 

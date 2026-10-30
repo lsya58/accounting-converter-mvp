@@ -1,5 +1,7 @@
 # 会計データ変換 Product / LP Brief
 
+> 履歴・企画資料です。現行の公開コピーと実績値は [LP Content](../marketing/lp_content.md) と [Current Evidence Status](../development/current_evidence_status.md) を優先してください。
+
 最終更新: 2026-10-24
 
 この文書は、Accounting Converter MVPのLP、営業説明、pilot募集、紹介資料を作るための基礎資料です。研究用語や内部IDではなく、利用者に提供する価値と、現在安全に提供できる範囲を整理します。

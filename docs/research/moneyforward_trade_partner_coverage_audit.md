@@ -1,5 +1,7 @@
 # Money Forward trade partner coverage audit
 
+> Historical snapshot from 2026-10-18. The 458/482 figure below records the state at that audit. For current product status, see `docs/development/current_evidence_status.md`.
+
 ## Scope
 
 - Audit date: 2026-10-18

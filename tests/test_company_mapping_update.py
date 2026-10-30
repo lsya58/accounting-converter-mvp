@@ -661,6 +661,7 @@ class CompanyMappingUpdateTests(unittest.TestCase):
             profile.tax_mappings["対象外"].status,
             MappingStatus.UNRESOLVED,
         )
+        self.assertEqual(review.tax_category_counts, (("対象外", 1),))
         self.assertEqual(
             self.service.review("company-a", source).tax_categories,
             ("対象外",),

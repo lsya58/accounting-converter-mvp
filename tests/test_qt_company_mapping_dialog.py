@@ -6,6 +6,7 @@ import unittest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:
+    from PySide6.QtCore import Qt
     from PySide6.QtWidgets import (
         QAbstractItemView,
         QApplication,
@@ -99,6 +100,33 @@ class CompanyMappingUpdateDialogTests(unittest.TestCase):
         self.assertIsNone(subaccount.currentData())
         self.assertFalse(subaccount_confirmed.isChecked())
 
+    def test_ranked_candidate_does_not_confirm_mapping(self) -> None:
+        from dataclasses import replace
+
+        account, subaccount = self.review.items
+        ranked = replace(
+            subaccount,
+            source_value="ABCDEFGHIJ長い名前",
+            source_peer_names=("ABCDEFGHIJ長い名前", "ABCDEFGHIJ別名"),
+            subaccount_targets_by_parent=(
+                ("target-parent-a", ("別名", "ABCDEFGHIJ")),
+            ),
+        )
+        review = replace(self.review, items=(account, ranked))
+        dialog = CompanyMappingUpdateDialog(object(), review)
+        parent, parent_confirmed = dialog.account_controls["source-parent"]
+        parent.setCurrentIndex(parent.findData("target-parent-a"))
+        parent_confirmed.setChecked(True)
+        _item, combo, checkbox = dialog.subaccount_controls[0]
+        self.assertEqual(combo.itemData(1), "ABCDEFGHIJ")
+        self.assertIn("先頭10文字", combo.itemText(1))
+        combo.setCurrentIndex(1)
+        self.assertFalse(checkbox.isChecked())
+        self.assertIn(
+            "先頭10文字が複数",
+            combo.itemData(1, Qt.ItemDataRole.ToolTipRole),
+        )
+
     def test_confirmed_parent_without_target_subaccounts_offers_parent_only(self) -> None:
         dialog = CompanyMappingUpdateDialog(object(), self.review)
         parent, parent_confirmed = dialog.account_controls["source-parent"]
@@ -150,7 +178,10 @@ class CompanyMappingUpdateDialogTests(unittest.TestCase):
         dialog = CompanyMappingUpdateDialog(object(), review)
 
         self.assertEqual(dialog.tabs.count(), 5)
-        self.assertEqual(dialog.tabs.tabText(0), "科目 0/60 [要確認]")
+        self.assertEqual(
+            dialog.tabs.tabText(0),
+            "科目 残り60（確認済み0 / 全60）[要確認]",
+        )
         account_table = dialog.tabs.widget(0).findChild(QTableWidget)
         self.assertIsNotNone(account_table)
         self.assertEqual(account_table.rowCount(), 60)
@@ -159,7 +190,10 @@ class CompanyMappingUpdateDialogTests(unittest.TestCase):
             QAbstractItemView.ScrollMode.ScrollPerPixel,
         )
         self.assertIsInstance(dialog.tabs.widget(2), QScrollArea)
-        self.assertEqual(dialog.tabs.tabText(3), "税区分 0/1 [要確認]")
+        self.assertEqual(
+            dialog.tabs.tabText(3),
+            "税区分 残り1（確認済み0 / 全1）[要確認]",
+        )
         self.assertEqual(dialog.tabs.tabText(4), "その他 [要確認]")
 
     def test_first_unresolved_tab_is_subaccounts_and_zero_tabs_are_disabled(self) -> None:
@@ -191,7 +225,7 @@ class CompanyMappingUpdateDialogTests(unittest.TestCase):
         )
         self.assertEqual(
             dialog.tabs.tabText(dialog.category_tabs["subaccounts"]),
-            "補助科目 0/13 [要確認]",
+            "補助科目 残り13（確認済み0 / 全13）[要確認]",
         )
 
     def test_tax_is_first_tab_when_only_tax_confirmation_remains(self) -> None:
@@ -208,7 +242,7 @@ class CompanyMappingUpdateDialogTests(unittest.TestCase):
         self.assertEqual(dialog.tabs.currentIndex(), dialog.category_tabs["tax"])
         self.assertEqual(
             dialog.tabs.tabText(dialog.category_tabs["tax"]),
-            "税区分 0/4 [要確認]",
+            "税区分 残り4（確認済み0 / 全4）[要確認]",
         )
         self.assertIn("Humanが解決できる残り設定", dialog.summary_label.text())
         self.assertIn("Evidence・実装対応待ち", dialog.summary_label.text())

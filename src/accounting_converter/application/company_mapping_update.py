@@ -16,6 +16,10 @@ from accounting_converter.application.jdl_master_observation import (
     JdlPrintedAccount,
 )
 from accounting_converter.application.mapping_review import MappingRequirementExtractor
+from accounting_converter.application.subaccount_candidate_discovery import (
+    SubaccountCandidate,
+    rank_subaccount_candidates,
+)
 from accounting_converter.application.description_replacement import (
     description_sha256,
     replacement_is_valid,
@@ -74,6 +78,7 @@ class CompanyMappingUpdateItem:
     recommendation_label: str = "Human判断が必要"
     recommendation_detail: str = "会社の管理方針に合わせて選択してください。"
     parent_only_loss: str = "補助科目別の情報はJDLへ引き継がれません。"
+    source_peer_names: tuple[str, ...] = ()
 
     def subaccount_targets_for(self, parent_target: str) -> tuple[str, ...]:
         return next(
@@ -83,6 +88,15 @@ class CompanyMappingUpdateItem:
                 if target == parent_target
             ),
             (),
+        )
+
+    def ranked_subaccount_targets_for(
+        self, parent_target: str
+    ) -> tuple[SubaccountCandidate, ...]:
+        return rank_subaccount_candidates(
+            self.source_value,
+            self.subaccount_targets_for(parent_target),
+            source_peer_names=self.source_peer_names,
         )
 
     def has_parent_target(self, parent_target: str) -> bool:
@@ -110,6 +124,7 @@ class CompanyMappingUpdateReview:
     optional_field_blocker_count: int = 0
     source_sha256: str | None = None
     descriptions: tuple[MoneyForwardDescriptionReviewItem, ...] = ()
+    tax_category_counts: tuple[tuple[str, int], ...] = ()
 
 
 class CompanyMappingUpdateService:
@@ -201,6 +216,10 @@ class CompanyMappingUpdateService:
             )
 
         requirements = MappingRequirementExtractor().extract(entries, profile)
+        source_subaccounts_by_parent: dict[str, set[str]] = defaultdict(set)
+        for requirement in requirements.subaccounts:
+            parent = requirement.parent_account or ""
+            source_subaccounts_by_parent[parent].add(requirement.source_value)
         targets, ambiguous = self._subaccount_targets(master.subaccounts)
         account_review_by_source = {
             item.requirement.source_value: item for item in accounts.items
@@ -307,6 +326,11 @@ class CompanyMappingUpdateService:
                     recommendation_label=recommendation[2],
                     recommendation_detail=recommendation[3],
                     parent_only_loss=recommendation[4],
+                    source_peer_names=tuple(sorted(
+                        source_subaccounts_by_parent.get(
+                            requirement.parent_account or "", set()
+                        )
+                    )),
                 )
             )
         self._append_default_subaccount_items(
@@ -357,6 +381,11 @@ class CompanyMappingUpdateService:
             len({item.journal_id for item in loss_results if item.journal_id}),
             hashlib.sha256(source_path.read_bytes()).hexdigest(),
             descriptions,
+            tuple(
+                (item.source_value, item.occurrence_count)
+                for item in requirements.tax_categories
+                if item.requires_confirmation
+            ),
         )
 
     def review_saved(self, company_setting_id: str) -> CompanyMappingUpdateReview:

@@ -91,6 +91,7 @@ from accounting_converter.infrastructure.jdl_account_pdf_draft import (
 )
 from accounting_converter.infrastructure.local_diagnostic_log import (
     log_local_exception,
+    log_local_event,
 )
 from accounting_converter.infrastructure.company_setting_store import (
     CompanySettingStore,
@@ -836,16 +837,39 @@ class AccountingConverterController:
         return profile
 
     def company_tax_mapping_review(
-        self, company_setting_id: str
+        self,
+        company_setting_id: str,
+        *,
+        affected_counts: dict[str, int] | None = None,
     ) -> TaxMappingSetupReview:
         resolved = self.company_setting_service.resolve_for_source(company_setting_id)
         if not resolved.available or resolved.profile is None or resolved.context is None:
             return TaxMappingSetupReview(
                 user_message="現在のJDL設定ではこの税区分を確認できません"
             )
-        return self.moneyforward_profile_setup_service.tax_mapping_review(
-            resolved.profile, resolved.context
+        review = self.moneyforward_profile_setup_service.tax_mapping_review(
+            resolved.profile,
+            resolved.context,
+            affected_counts=affected_counts,
         )
+        if review.blocked_items:
+            log_local_event(
+                "MF-JDL-TAX-REVIEW-BLOCKED",
+                {
+                    "profile_revision": resolved.profile.profile_id,
+                    "tax_context_mode": resolved.context.tax_processing_mode.value,
+                    "items": [
+                        {
+                            "source_identity": item.source_value,
+                            "blocker_code": item.blocker_code,
+                            "action_owner": item.action_owner,
+                            "affected_row_count": item.affected_row_count,
+                        }
+                        for item in review.blocked_items
+                    ],
+                },
+            )
+        return review
 
     def company_trade_partner_policy_state(self, company_setting_id: str):
         return self.company_trade_partner_policy_service.state(company_setting_id)

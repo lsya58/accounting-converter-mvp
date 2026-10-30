@@ -5,7 +5,7 @@
 1. Defenderを有効なままにし、定義を更新する。
 2. release対象commitをreviewし、`git status --short`が空であることを確認する。
 3. `git rev-parse HEAD`を記録する。
-4. 前回の`.venv-build`をHumanが確認後に削除する。
+4. 前回のbuild環境と生成物を削除する。
 5. customer/private dataがcloneやrelease stagingにないことを確認する。
 
 ## Clean build
@@ -14,10 +14,12 @@ PowerShellでrepository rootから実行する。
 
 ```powershell
 Remove-Item -Recurse -Force .venv-build -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force src\accounting_converter.egg-info -ErrorAction SilentlyContinue
 .\scripts\build_windows.ps1
 ```
 
-scriptは既存`build/`と`dist/`だけをcleanし、Python 3.12のfresh environmentを作る。worktreeがdirtyなら停止する。
+scriptはPython 3.12のfresh environmentを作る。worktreeがdirtyなら停止する。
 
 生成後に次を確認する。
 
@@ -25,6 +27,14 @@ scriptは既存`build/`と`dist/`だけをcleanし、Python 3.12のfresh environ
 Get-Content .\dist\AccountingConverter\BUILD_INFO.txt
 Get-Content .\dist\AccountingConverter\release_manifest.json
 Get-FileHash .\dist\AccountingConverter\AccountingConverter.exe -Algorithm SHA256
+```
+
+`Build commit`は配布物を生成したGit commit、`Build identifier`はversionと検証状態を含むbuild識別子である。どちらもexeのサポート診断に表示される値と一致し、`Build commit`はbuild直前の`git rev-parse HEAD`と一致しなければならない。
+
+起動確認:
+
+```powershell
+.\dist\AccountingConverter\AccountingConverter.exe
 ```
 
 ## Scanとsmoke test

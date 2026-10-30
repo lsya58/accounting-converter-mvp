@@ -70,6 +70,37 @@ from .theme import status_visual
 from .widgets import CsvDropZone, WheelSafeComboBox
 
 
+def _restore_dialog_geometry(
+    dialog: QDialog,
+    settings_key: str,
+    *,
+    width_ratio: float,
+    height_ratio: float,
+) -> None:
+    """Restore a dialog inside a currently available screen."""
+    settings = QSettings("AccountingConverter", "AccountingConverter")
+    saved_geometry = settings.value(settings_key)
+    if saved_geometry is not None:
+        dialog.restoreGeometry(saved_geometry)
+    screen = dialog.screen() or QApplication.primaryScreen()
+    if screen is None:
+        return
+    available = screen.availableGeometry()
+    frame = dialog.frameGeometry()
+    if saved_geometry is None:
+        dialog.resize(
+            max(dialog.minimumWidth(), int(available.width() * width_ratio)),
+            max(dialog.minimumHeight(), int(available.height() * height_ratio)),
+        )
+        frame = dialog.frameGeometry()
+    if not available.contains(frame):
+        width = min(max(dialog.minimumWidth(), frame.width()), available.width())
+        height = min(max(dialog.minimumHeight(), frame.height()), available.height())
+        left = min(max(frame.left(), available.left()), available.right() - width + 1)
+        top = min(max(frame.top(), available.top()), available.bottom() - height + 1)
+        dialog.setGeometry(left, top, width, height)
+
+
 class AccountingConverterMainWindow(QMainWindow):
     def __init__(self, controller: AccountingConverterController | None = None) -> None:
         super().__init__()
@@ -271,20 +302,31 @@ class AccountingConverterMainWindow(QMainWindow):
                 "会社設定とCSVを確認してください。",
             )
             return
-        if review.items or review.descriptions:
-            dialog = CompanyMappingUpdateDialog(self.controller, review, self)
-            if dialog.exec() != QDialog.DialogCode.Accepted:
-                self._refresh_current_csv_readiness()
-                return
-            review = self.controller.review_company_mapping_updates(company_id, path)
+        tax_review = None
         if review.tax_categories:
             saved = self.controller.ensure_selected_tax_requirements(review)
             if saved.developer_error is not None:
                 self._render(saved)
                 return
-            tax_review = self.controller.company_tax_mapping_review(company_id)
+            tax_review = self.controller.company_tax_mapping_review(
+                company_id, affected_counts=dict(review.tax_category_counts)
+            )
+        if review.items or review.descriptions or review.tax_categories:
+            dialog = CompanyMappingUpdateDialog(
+                self.controller, review, self, tax_review=tax_review
+            )
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                self._refresh_current_csv_readiness()
+                return
+            review = self.controller.review_company_mapping_updates(company_id, path)
+        if review.tax_categories:
+            tax_review = tax_review or self.controller.company_tax_mapping_review(
+                company_id, affected_counts=dict(review.tax_category_counts)
+            )
             if tax_review.items:
-                dialog = TaxMappingConfirmationDialog(self.controller, company_id, self)
+                dialog = TaxMappingConfirmationDialog(
+                    self.controller, company_id, self, review=tax_review
+                )
                 if dialog.exec() != QDialog.DialogCode.Accepted:
                     self._refresh_current_csv_readiness()
                     return
@@ -296,10 +338,13 @@ class AccountingConverterMainWindow(QMainWindow):
                     if context_dialog.exec() != QDialog.DialogCode.Accepted:
                         self._refresh_current_csv_readiness()
                         return
-                    tax_review = self.controller.company_tax_mapping_review(company_id)
+                    tax_review = self.controller.company_tax_mapping_review(
+                        company_id,
+                        affected_counts=dict(review.tax_category_counts),
+                    )
                     if tax_review.items:
                         dialog = TaxMappingConfirmationDialog(
-                            self.controller, company_id, self
+                            self.controller, company_id, self, review=tax_review
                         )
                         if dialog.exec() != QDialog.DialogCode.Accepted:
                             self._refresh_current_csv_readiness()
@@ -729,13 +774,15 @@ class SettingsDialog(QDialog):
             review = self.controller.review_company_settings_with_current_source(
                 company_id
             )
-            tax_review = self.controller.company_tax_mapping_review(company_id)
+            tax_review = self.controller.company_tax_mapping_review(
+                company_id, affected_counts=dict(review.tax_category_counts)
+            )
         except Exception as exc:
             log_local_exception("company_mapping_update_review", exc)
             self.message_label.setText("現在の対応内容を確認できませんでした。")
             return
         dialog = CompanyMappingUpdateDialog(
-            self.controller, review, self, tax_message=(
+            self.controller, review, self, tax_review=tax_review, tax_message=(
                 "税設定の確認が必要です。CSV読込時に確認できます。"
                 if not tax_review.context_compatible
                 else tax_review.user_message
@@ -791,10 +838,21 @@ class SettingsDialog(QDialog):
             log_local_exception("company_mapping_update_review", exc)
             self.message_label.setText("CSVと現在の会社設定を確認できませんでした。")
             return
-        if not review.items and not review.descriptions:
+        if not review.items and not review.descriptions and not review.tax_categories:
             self.message_label.setText("追加確認が必要な科目はありません。")
             return
-        dialog = CompanyMappingUpdateDialog(self.controller, review, self)
+        tax_review = None
+        if review.tax_categories:
+            state = self.controller.ensure_selected_tax_requirements(review)
+            if state.developer_error is not None:
+                self.message_label.setText(state.user_message)
+                return
+            tax_review = self.controller.company_tax_mapping_review(
+                company_id, affected_counts=dict(review.tax_category_counts)
+            )
+        dialog = CompanyMappingUpdateDialog(
+            self.controller, review, self, tax_review=tax_review
+        )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._reload_companies(self.controller.state)
 
@@ -1157,7 +1215,10 @@ class JdlMigrationHumanReviewDialog(QDialog):
         )
         self.status_label.setWordWrap(True)
         outer.addWidget(self.status_label)
-        actions = QHBoxLayout()
+        footer = QFrame()
+        footer.setObjectName("dialogFooter")
+        actions = QHBoxLayout(footer)
+        actions.setContentsMargins(0, 8, 0, 0)
         cancel = QPushButton("キャンセル")
         cancel.setAutoDefault(False)
         cancel.clicked.connect(self.reject)
@@ -1333,7 +1394,7 @@ class TradePartnerPolicyDialog(QDialog):
         actions.addStretch(1)
         actions.addWidget(cancel)
         actions.addWidget(self.save_button)
-        layout.addLayout(actions)
+        layout.addWidget(footer, 0)
 
     def _save(self) -> None:
         state = self.controller.confirm_company_trade_partner_policy(
@@ -1445,17 +1506,20 @@ class CompanyMappingUpdateDialog(QDialog):
     _GEOMETRY_KEY = "company_mapping_update_dialog/geometry"
 
     def __init__(
-        self, controller, review, parent=None, *, tax_message: str = ""
+        self, controller, review, parent=None, *, tax_review=None, tax_message: str = ""
     ) -> None:
         super().__init__(parent)
         self.controller = controller
         self.review = review
+        self.tax_review = tax_review
         self.controls: list[tuple[str, QComboBox, QCheckBox]] = []
         self.account_controls: dict[str, tuple[QComboBox, QCheckBox]] = {}
         self.subaccount_controls: list[tuple[object, QComboBox, QCheckBox]] = []
         self.subaccount_parent_cells: dict[str, QTableWidgetItem] = {}
         self.description_controls: dict[str, tuple[QLineEdit, QCheckBox]] = {}
         self.tax_completed = not bool(review.tax_categories)
+        if tax_review is not None:
+            self.tax_completed = not bool(tax_review.items)
         policy_getter = getattr(controller, "company_trade_partner_policy_state", None)
         policy_state = (
             policy_getter(review.company_setting_id)
@@ -1468,14 +1532,13 @@ class CompanyMappingUpdateDialog(QDialog):
         )
         self.setWindowTitle("新しい科目を確認")
         self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
-        self.resize(1240, 780)
         self.setMinimumSize(900, 600)
-        saved_geometry = QSettings(
-            "AccountingConverter", "AccountingConverter"
-        ).value(self._GEOMETRY_KEY)
-        if saved_geometry is not None:
-            self.restoreGeometry(saved_geometry)
+        _restore_dialog_geometry(
+            self, self._GEOMETRY_KEY, width_ratio=0.86, height_ratio=0.84
+        )
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(10)
         note = QLabel(
             "保存済みの対応は再利用し、新規または再確認が必要な項目だけ表示しています。"
         )
@@ -1490,6 +1553,7 @@ class CompanyMappingUpdateDialog(QDialog):
         layout.addWidget(self.progress_label)
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
+        self.tabs.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.category_tabs: dict[str, int] = {}
         account_items = tuple(
             item for item in review.items if item.mapping_type == "ACCOUNT"
@@ -1505,7 +1569,10 @@ class CompanyMappingUpdateDialog(QDialog):
         self._add_tab("tax", "税区分", self._tax_tab(tax_message))
         self._add_tab("other", "その他", self._other_tab())
         layout.addWidget(self.tabs, 1)
-        actions = QHBoxLayout()
+        footer = QFrame()
+        footer.setObjectName("dialogFooter")
+        actions = QHBoxLayout(footer)
+        actions.setContentsMargins(0, 8, 0, 0)
         cancel = QPushButton("キャンセル")
         cancel.clicked.connect(self.reject)
         self.save_button = QPushButton("確認済み0件を保存")
@@ -1514,7 +1581,7 @@ class CompanyMappingUpdateDialog(QDialog):
         actions.addStretch(1)
         actions.addWidget(cancel)
         actions.addWidget(self.save_button)
-        layout.addLayout(actions)
+        layout.addWidget(footer, 0)
         for source_value in self.account_controls:
             self._refresh_subaccounts(source_value)
         self._update_action()
@@ -1581,6 +1648,7 @@ class CompanyMappingUpdateDialog(QDialog):
         table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         table.setMinimumHeight(280)
         detail_stack = QStackedWidget()
+        detail_stack.setObjectName("reviewDetailPane")
         detail_stack.setMinimumWidth(350)
         for row, item in enumerate(items):
             values = (
@@ -1680,7 +1748,8 @@ class CompanyMappingUpdateDialog(QDialog):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
-        page = QWidget()
+        page = QFrame()
+        page.setObjectName("card")
         layout = QVBoxLayout(page)
         layout.setContentsMargins(14, 10, 14, 10)
         heading = QLabel("この設定の確認内容")
@@ -1708,6 +1777,28 @@ class CompanyMappingUpdateDialog(QDialog):
             layout.addWidget(title)
             layout.addWidget(body)
         if item.mapping_type != "ACCOUNT":
+            if (
+                item.mapping_type == "SUBACCOUNT"
+                and any(
+                    candidate.prefix_collision
+                    for parent_target, _targets in item.subaccount_targets_by_parent
+                    for candidate in item.ranked_subaccount_targets_for(parent_target)
+                )
+            ):
+                collision = QLabel(
+                    "複数のMF補助が同じ先頭10文字になります。JDL側で識別できる"
+                    "別の補助名を設定し、対応先を個別に確認してください。"
+                )
+                collision.setObjectName("warningCard")
+                collision.setWordWrap(True)
+                layout.addWidget(collision)
+            limit = QLabel(
+                "JDL IBEX 出納帳35.5の補助名称は10文字までです。"
+                "候補は選択後に確認が必要です。"
+            )
+            limit.setObjectName("muted")
+            limit.setWordWrap(True)
+            layout.addWidget(limit)
             steps = QLabel(
                 "JDL側に補助を作る場合\n"
                 "1. JDLで補助科目を追加\n"
@@ -1835,7 +1926,12 @@ class CompanyMappingUpdateDialog(QDialog):
         page = QWidget()
         page_layout = QVBoxLayout(page)
         page_layout.setContentsMargins(4, 8, 4, 8)
-        if self.review.tax_categories:
+        tax_items = (
+            self.tax_review.items
+            if self.tax_review is not None
+            else tuple(self.review.tax_categories)
+        )
+        if tax_items:
             guidance = QLabel(
                 "Money Forwardの税区分ごとに、JDLでの扱いを初回だけ確認します。"
                 "既に有効な確認結果は再表示されません。科目対応を保存した後、"
@@ -1843,7 +1939,7 @@ class CompanyMappingUpdateDialog(QDialog):
             )
             guidance.setWordWrap(True)
             page_layout.addWidget(guidance)
-            table = QTableWidget(len(self.review.tax_categories), 3)
+            table = QTableWidget(len(tax_items), 3)
             table.setHorizontalHeaderLabels(("MFの税区分", "JDL候補", "確認が必要な理由"))
             table.horizontalHeader().setSectionResizeMode(
                 0, QHeaderView.ResizeMode.Stretch
@@ -1855,15 +1951,31 @@ class CompanyMappingUpdateDialog(QDialog):
                 2, QHeaderView.ResizeMode.Stretch
             )
             table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
-            for row, source_value in enumerate(self.review.tax_categories):
-                table.setItem(row, 0, QTableWidgetItem(source_value))
-                table.setItem(row, 1, QTableWidgetItem("次の画面で表示します"))
-                table.setItem(
-                    row, 2, QTableWidgetItem("この会社では初回確認または再確認が必要です")
+            for row, review_item in enumerate(tax_items):
+                source_value = (
+                    review_item
+                    if isinstance(review_item, str)
+                    else review_item.source_value
                 )
+                target_display = (
+                    "次の画面で表示します"
+                    if isinstance(review_item, str)
+                    else review_item.target_display
+                )
+                reason = (
+                    "この会社では初回確認または再確認が必要です"
+                    if isinstance(review_item, str)
+                    else review_item.reason
+                )
+                for column, value in enumerate(
+                    (source_value, target_display, reason)
+                ):
+                    cell = QTableWidgetItem(value)
+                    cell.setToolTip(value)
+                    table.setItem(row, column, cell)
             page_layout.addWidget(table, 1)
             self.tax_review_button = QPushButton(
-                f"{len(self.review.tax_categories)}件の税区分を確認する"
+                f"{len(tax_items)}件の税区分を確認する"
             )
             self.tax_review_button.clicked.connect(self._open_tax_review)
             page_layout.addWidget(self.tax_review_button)
@@ -1885,14 +1997,23 @@ class CompanyMappingUpdateDialog(QDialog):
                 self, "税区分を確認できませんでした", state.user_message
             )
             return
+        self.tax_review = self.controller.company_tax_mapping_review(
+            self.review.company_setting_id,
+            affected_counts=dict(self.review.tax_category_counts),
+        )
         dialog = TaxMappingConfirmationDialog(
-            self.controller, self.review.company_setting_id, self
+            self.controller,
+            self.review.company_setting_id,
+            self,
+            review=self.tax_review,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         remaining = self.controller.company_tax_mapping_review(
-            self.review.company_setting_id
+            self.review.company_setting_id,
+            affected_counts=dict(self.review.tax_category_counts),
         )
+        self.tax_review = remaining
         self.tax_completed = not remaining.items
         self._update_action()
 
@@ -2004,8 +2125,24 @@ class CompanyMappingUpdateDialog(QDialog):
             combo.addItem("未選択", None)
             if parent_is_confirmed:
                 targets = item.subaccount_targets_for(str(parent_target))
-                for value in targets:
-                    combo.addItem(f"JDL補助科目へ対応: {value}", value)
+                for candidate in item.ranked_subaccount_targets_for(
+                    str(parent_target)
+                ):
+                    label = (
+                        f"{candidate.target_name}（{candidate.reason}）"
+                        if candidate.priority < 4
+                        else candidate.target_name
+                    )
+                    combo.addItem(label, candidate.target_name)
+                    combo.setItemData(
+                        combo.count() - 1,
+                        "同じ親科目のJDL補助です。Human確認後のみ保存します。"
+                        + (
+                            " 先頭10文字が複数のMF補助で重複しています。"
+                            if candidate.prefix_collision else ""
+                        ),
+                        Qt.ItemDataRole.ToolTipRole,
+                    )
                 if (
                     item.mapping_type == "SUBACCOUNT"
                     and item.allows_parent_only_for(str(parent_target))
@@ -2104,16 +2241,27 @@ class CompanyMappingUpdateDialog(QDialog):
         }
         for key, (total, done) in category_counts.items():
             status = "完了" if done == total else "要確認"
+            remaining = total - done
             self.tabs.setTabText(
                 self.category_tabs[key],
-                f"{labels[key]} {done}/{total} [{status}]",
+                f"{labels[key]} 残り{remaining}（確認済み{done} / 全{total}）[{status}]",
             )
             self.tabs.setTabEnabled(self.category_tabs[key], total > 0)
         tax_count = len(self.review.tax_categories)
         tax_done = tax_count if self.tax_completed else 0
+        tax_human_pending = (
+            len(self.tax_review.confirmable_items)
+            if self.tax_review is not None
+            else tax_count - tax_done
+        )
+        tax_system_pending = (
+            len(self.tax_review.blocked_items)
+            if self.tax_review is not None
+            else 0
+        )
         self.tabs.setTabText(
             self.category_tabs["tax"],
-            f"税区分 {tax_done}/{tax_count} "
+            f"税区分 残り{tax_count - tax_done}（確認済み{tax_done} / 全{tax_count}）"
             f"[{'完了' if self.tax_completed else '要確認'}]",
         )
         self.tabs.setTabEnabled(self.category_tabs["tax"], tax_count > 0)
@@ -2153,14 +2301,15 @@ class CompanyMappingUpdateDialog(QDialog):
             "Humanが解決できる残り設定\n"
             f"科目: {pending_accounts}設定 / "
             f"補助科目: {pending_subaccounts}設定 / "
-            f"税区分: {tax_count - tax_done}設定 / "
+            f"税区分: {tax_human_pending}設定 / "
             f"摘要: {pending_descriptions}設定 / "
             f"取引先情報: {retention_pending}設定\n"
             "Evidence・実装対応待ち\n"
-            f"未対応仕訳: {self.review.unsupported_shape_count}仕訳"
+            f"未対応仕訳: {self.review.unsupported_shape_count}仕訳 / "
+            f"税区分: {tax_system_pending}設定"
         )
         self.summary_label.setToolTip(
-            "タブの件数は、Humanが確認する設定項目の「確認済み / 設定数」です。"
+            "残りはHumanが次に確認する設定数です。確認済み・全設定数も併記しています。"
         )
         self.save_button.setText(f"確認済み{confirmed}件を保存")
         self.save_button.setEnabled(confirmed > 0)
@@ -3054,20 +3203,19 @@ class TaxMappingConfirmationDialog(QDialog):
         controller: AccountingConverterController,
         company_setting_id: str,
         parent=None,
+        *,
+        review=None,
     ) -> None:
         super().__init__(parent)
         self.controller = controller
         self.company_setting_id = company_setting_id
-        self.review = controller.company_tax_mapping_review(company_setting_id)
+        self.review = review or controller.company_tax_mapping_review(company_setting_id)
         self.setWindowTitle("税区分を確認")
         self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
-        self.resize(820, 680)
         self.setMinimumSize(640, 500)
-        saved_geometry = QSettings(
-            "AccountingConverter", "AccountingConverter"
-        ).value(self._GEOMETRY_KEY)
-        if saved_geometry is not None:
-            self.restoreGeometry(saved_geometry)
+        _restore_dialog_geometry(
+            self, self._GEOMETRY_KEY, width_ratio=0.62, height_ratio=0.72
+        )
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(14)
@@ -3076,7 +3224,9 @@ class TaxMappingConfirmationDialog(QDialog):
         layout.addWidget(title)
         self.confirmations: dict[str, QCheckBox] = {}
         if self.review.items:
-            guidance = QLabel("内容を確認し、各税区分の「確認しました」を選択してください。")
+            guidance = QLabel(
+                "税区分ごとに現在の状態を表示します。確認可能な項目だけ明示確認できます。"
+            )
             guidance.setObjectName("muted")
             guidance.setWordWrap(True)
             layout.addWidget(guidance)
@@ -3097,17 +3247,36 @@ class TaxMappingConfirmationDialog(QDialog):
                 card_layout = QVBoxLayout(card)
                 card_layout.addWidget(QLabel(f"MFの税区分: {item.source_value}"))
                 card_layout.addWidget(QLabel(f"JDLでの扱い: {item.target_display}"))
-                reason = QLabel(
-                    "この会社でこの組み合わせを使うのは初回、またはJDL設定の"
-                    "変更後のため、内容の確認が必要です。"
+                if item.affected_row_count:
+                    card_layout.addWidget(
+                        QLabel(f"この税区分を使う入力行: {item.affected_row_count}行")
+                    )
+                state_label = QLabel(
+                    "状態: 確認できます"
+                    if item.human_confirmable
+                    else "状態: システム側のEvidence・対応待ち"
                 )
+                state_label.setObjectName(
+                    "muted" if item.human_confirmable else "warningCard"
+                )
+                state_label.setWordWrap(True)
+                card_layout.addWidget(state_label)
+                reason = QLabel(item.reason)
                 reason.setObjectName("muted")
                 reason.setWordWrap(True)
+                reason.setToolTip(f"{item.blocker_code} / owner={item.action_owner}")
                 card_layout.addWidget(reason)
-                confirmed = QCheckBox("確認しました")
-                confirmed.stateChanged.connect(self._update_save_enabled)
-                card_layout.addWidget(confirmed)
-                self.confirmations[item.source_value] = confirmed
+                if item.human_confirmable:
+                    confirmed = QCheckBox("この税区分のJDLでの扱いを確認しました")
+                    confirmed.stateChanged.connect(self._update_save_enabled)
+                    card_layout.addWidget(confirmed)
+                    self.confirmations[item.source_value] = confirmed
+                else:
+                    next_action = QLabel(
+                        "次の対応: 実機検証済みのexact Evidenceまたは対応実装が必要です。"
+                    )
+                    next_action.setWordWrap(True)
+                    card_layout.addWidget(next_action)
                 cards_layout.addWidget(card)
             if self.review.user_message:
                 warning = QLabel(self.review.user_message)
@@ -3125,7 +3294,10 @@ class TaxMappingConfirmationDialog(QDialog):
             message.setObjectName("warningCard")
             message.setWordWrap(True)
             layout.addWidget(message)
-        actions = QHBoxLayout()
+        footer = QFrame()
+        footer.setObjectName("dialogFooter")
+        actions = QHBoxLayout(footer)
+        actions.setContentsMargins(0, 8, 0, 0)
         cancel = QPushButton("キャンセル")
         cancel.clicked.connect(self.reject)
         self.save_button = QPushButton("確認を保存")
@@ -3135,7 +3307,7 @@ class TaxMappingConfirmationDialog(QDialog):
         actions.addStretch(1)
         actions.addWidget(cancel)
         actions.addWidget(self.save_button)
-        layout.addLayout(actions)
+        layout.addWidget(footer, 0)
 
     def done(self, result: int) -> None:
         QSettings("AccountingConverter", "AccountingConverter").setValue(

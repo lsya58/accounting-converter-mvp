@@ -1,45 +1,30 @@
 # ドキュメント案内
 
-Accounting Converterの資料を、読む目的ごとに案内します。製品の現在地は、古い設計書ではなく、まず「一般・導入向け」の資料で確認してください。
+最終更新: 2026-10-29
 
-## 一般・導入向け
+## 製品・利用者向け
 
-- [製品概要](product/製品概要.md): 製品が行うこと、安全設計、会社設定の考え方
-- [対応状況](product/対応状況.md): JDL→JDL、MF→JDL、弥生→JDLの現在地
-- [実績と検証結果](product/実績と検証結果.md): privacy-safeな実機検証実績
-- [操作ガイド](product/操作ガイド.md): 初回設定からJDL Import後確認まで
-- [よくある質問](product/よくある質問.md): 実際の運用で迷いやすい点
-- [制限事項と対応外条件](product/制限事項と対応外条件.md): BLOCKになる条件と非対応範囲
-- [開発ロードマップ](product/開発ロードマップ.md): 実案件E2E、pilot、対応拡大の優先順位
-
-## Pilot・サポート
-
-- [パイロット導入ガイド](product/パイロット導入ガイド.md): backup、test Import、Go/No-Go
-- [サポートと障害対応](product/サポートと障害対応.md): 診断情報、log、retry、復元
+- [製品概要](product/製品概要.md)
+- [操作ガイド](product/操作ガイド.md)
+- [対応状況](product/対応状況.md)
+- [実績と検証結果](product/実績と検証結果.md)
+- [制限事項と対応外条件](product/制限事項と対応外条件.md)
+- [よくある質問](product/よくある質問.md)
+- [パイロット導入ガイド](product/パイロット導入ガイド.md)
+- [サポートと障害対応](product/サポートと障害対応.md)
+- [開発ロードマップ](product/開発ロードマップ.md)
 
 ## LP・営業
 
-- [LP・営業資料たたき台](product/LP・営業資料たたき台.md): 課題、価値、安全性、実績、CTA候補
-- [Product / LP Brief](product/lp_product_brief.md): 詳細な企画・収益化検討用brief
+- [LP Content](marketing/lp_content.md): 公開用コピーの正本。検証済み表現と制約を含む
+- `product/LP・営業資料たたき台.md`、`product/lp_product_brief.md`: 過去の企画資料。現行の数値・主張には使用しない
 
-## 開発者向け
+## 開発・Evidence・運用
 
-- `design/`: 現行設計と実装境界
-- `research/`: 形式調査、互換性、観測Evidence
-- `development/`: probe、private監査、開発手順
-- `experiments/`: 実機実験の計画と記録
-- `operator/`: build・初回セットアップの技術運用
-- `security/`: Windows配布時の安全性
-- `tests/evidence/`: machine-readable manifestを含むEvidence原本
+- [Current Evidence Status](development/current_evidence_status.md): 現在のroute、Evidence ID、blockerの正本
+- `design/`: 設計と実装境界
+- `research/`: 調査時点の観測・履歴。現在値は上記statusを優先
+- `tests/evidence/`: privacy-safeなEvidence原本
+- [Windows Release Checklist](operator/windows_release_checklist.md)
 
-## 棚卸し結果
-
-| 分類 | 対象 | 扱い |
-|---|---|---|
-| A. 開発者向け | `design/`, `research/`, `development/`, `experiments/`, `security/`, Evidence README | 参照pathを維持。Human向け資料から必要箇所だけ要約 |
-| B. Human・営業向け | `product/`の日本語資料、本index | 現在の製品説明と運用判断の一次資料 |
-| C. 重複 | `lp_product_brief.md`と各Human向け資料の一部 | Briefは企画詳細、各資料は用途別に分離し相互リンク |
-| D. 履歴資料 | `basic_design_v0.2.md`, `basic_design_v0.3.md`, `要件定義書.md`, `要求仕様書.md` | 当時の設計・要求の記録。現在の対応状況には使用しない |
-| E. 更新対象 | Product Brief、一般向け対応状況、操作・pilot・support資料 | 2026-10-24時点へ更新 |
-
-既存の技術文書はコードやEvidenceから参照される可能性があるため、今回rename・削除していません。
+履歴資料は削除していません。日付の古いcoverage値やprobe計画は、その時点の記録であり、現在の製品状態を示すものではありません。

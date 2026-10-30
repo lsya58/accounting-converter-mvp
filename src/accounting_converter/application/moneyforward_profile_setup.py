@@ -70,10 +70,19 @@ class AccountMappingSetupItem:
 @dataclass(frozen=True)
 class TaxMappingSetupItem:
     source_value: str
-    target_value: str
-    target_display: str
-    target_scope: str
-    evidence_id: str
+    target_value: str | None = None
+    target_display: str = "未確定"
+    target_scope: str = ""
+    evidence_id: str | None = None
+    human_confirmable: bool = False
+    action_owner: str = "SYSTEM_EVIDENCE"
+    blocker_code: str = "MF-JDL-TAX-EVIDENCE-MISSING-EXACT"
+    reason: str = "この税区分には、現在のJDL設定で使える実機Evidenceがありません。"
+    affected_row_count: int = 0
+
+    @property
+    def state(self) -> str:
+        return "HUMAN_CONFIRMATION_REQUIRED" if self.human_confirmable else "BLOCKED"
 
 
 @dataclass(frozen=True)
@@ -82,6 +91,14 @@ class TaxMappingSetupReview:
     context_compatible: bool = False
     user_message: str = ""
     stale_source_values: tuple[str, ...] = ()
+
+    @property
+    def confirmable_items(self) -> tuple[TaxMappingSetupItem, ...]:
+        return tuple(item for item in self.items if item.human_confirmable)
+
+    @property
+    def blocked_items(self) -> tuple[TaxMappingSetupItem, ...]:
+        return tuple(item for item in self.items if not item.human_confirmable)
 
 
 @dataclass(frozen=True)
@@ -255,6 +272,10 @@ class MoneyForwardProfileSetupService:
             tax_items=() if context_is_draft else self._tax_items(
                 tuple(item.source_value for item in requirements.tax_categories),
                 context,
+                affected_counts={
+                    item.source_value: item.occurrence_count
+                    for item in requirements.tax_categories
+                },
             ),
             tax_context_compatible=(
                 False if context_is_draft else self._tax_context_compatible(context)
@@ -295,7 +316,9 @@ class MoneyForwardProfileSetupService:
         if any(target not in by_target for target in selections.values()):
             raise MoneyForwardProfileSetupError("JDL設定に存在しない科目が選択されています。")
         confirmed_tax = explicitly_confirmed_tax or set()
-        eligible_tax = {item.source_value for item in analysis.tax_items}
+        eligible_tax = {
+            item.source_value for item in analysis.tax_items if item.human_confirmable
+        }
         if not confirmed_tax <= eligible_tax:
             raise MoneyForwardProfileSetupError(
                 "現在のJDL設定ではこの税区分を確認できません。"
@@ -409,9 +432,21 @@ class MoneyForwardProfileSetupService:
         self,
         profile: ConversionProfile,
         context: JdlTargetContext,
+        *,
+        affected_counts: Mapping[str, int] | None = None,
     ) -> TaxMappingSetupReview:
         if not self._profile_identity_compatible(profile):
             return TaxMappingSetupReview(
+                items=tuple(
+                    TaxMappingSetupItem(
+                        source_value=value,
+                        action_owner="SYSTEM_IMPLEMENTATION",
+                        blocker_code="MF-JDL-TAX-ROUTE-MISMATCH",
+                        reason="会社設定の入力元・変換先形式が一致していません。",
+                    )
+                    for value, mapping in profile.tax_mappings.items()
+                    if not mapping.is_resolved
+                ),
                 user_message="現在のJDL設定ではこの税区分を確認できません"
             )
         if not profile.tax_mappings:
@@ -442,7 +477,11 @@ class MoneyForwardProfileSetupService:
                 context_compatible=self._tax_context_compatible(context),
                 user_message="税区分はすべて確認済みです。",
             )
-        items = self._tax_items(unresolved, context)
+        items = self._tax_items(
+            unresolved,
+            context,
+            affected_counts=affected_counts,
+        )
         compatible = self._tax_context_compatible(context)
         return TaxMappingSetupReview(
             items=items,
@@ -465,7 +504,12 @@ class MoneyForwardProfileSetupService:
         profile = self.profile_store.get(profile_id)
         review = self.tax_mapping_review(profile, context)
         item = next(
-            (candidate for candidate in review.items if candidate.source_value == source_value),
+            (
+                candidate
+                for candidate in review.items
+                if candidate.source_value == source_value
+                and candidate.human_confirmable
+            ),
             None,
         )
         if item is None:
@@ -512,9 +556,11 @@ class MoneyForwardProfileSetupService:
         cls,
         source_values: tuple[str, ...],
         context: JdlTargetContext,
+        *,
+        affected_counts: Mapping[str, int] | None = None,
     ) -> tuple[TaxMappingSetupItem, ...]:
-        if not cls._tax_context_compatible(context):
-            return ()
+        context_compatible = cls._tax_context_compatible(context)
+        affected_counts = affected_counts or {}
         if tax_excluded_proportional_context_verified(context):
             specs = {
                 MF_PURCHASE_TAX_10: (
@@ -535,12 +581,50 @@ class MoneyForwardProfileSetupService:
             "非課税売上": ("", "非課税売上", "非売上", "EVID-JDL-MF-TAX-NONTAXABLE-SALES-SUBACCOUNT-ROUNDTRIP-001"),
                 "対象外": ("", "対象外", "", "EVID-JDL-MF-TAX-OUT-OF-SCOPE-SUBACCOUNT-ROUNDTRIP-001"),
             }
-        return tuple(
-            TaxMappingSetupItem(source, target, display, scope, evidence)
-            for source in source_values
-            if source in specs
-            for target, display, scope, evidence in (specs[source],)
-        )
+        items: list[TaxMappingSetupItem] = []
+        for source in source_values:
+            if not source:
+                continue
+            if not context_compatible:
+                items.append(
+                    TaxMappingSetupItem(
+                        source_value=source,
+                        action_owner="HUMAN",
+                        blocker_code="MF-JDL-TAX-CONTEXT-CONFIRMATION-REQUIRED",
+                        reason=(
+                            "会社のJDL税設定を確認すると、この税区分の候補を評価できます。"
+                        ),
+                        affected_row_count=affected_counts.get(source, 0),
+                    )
+                )
+                continue
+            spec = specs.get(source)
+            if spec is None:
+                items.append(
+                    TaxMappingSetupItem(
+                        source_value=source,
+                        affected_row_count=affected_counts.get(source, 0),
+                    )
+                )
+                continue
+            target, display, scope, evidence = spec
+            items.append(
+                TaxMappingSetupItem(
+                    source_value=source,
+                    target_value=target,
+                    target_display=display,
+                    target_scope=scope,
+                    evidence_id=evidence,
+                    human_confirmable=True,
+                    action_owner="HUMAN",
+                    blocker_code="MF-JDL-TAX-HUMAN-CONFIRMATION-REQUIRED",
+                    reason=(
+                        "実機Evidenceと現在のJDL税設定が一致しています。内容を確認してください。"
+                    ),
+                    affected_row_count=affected_counts.get(source, 0),
+                )
+            )
+        return tuple(items)
 
     @classmethod
     def _tax_context_message(
@@ -550,7 +634,11 @@ class MoneyForwardProfileSetupService:
     ) -> str:
         if source_values and not cls._tax_context_compatible(context):
             return "現在のJDL設定ではこの税区分を確認できません"
-        known = {item.source_value for item in cls._tax_items(source_values, context)}
+        known = {
+            item.source_value
+            for item in cls._tax_items(source_values, context)
+            if item.human_confirmable
+        }
         if set(source_values) - known:
             return "確認できない税区分があります。未確認の税区分は変換できません。"
         return ""
@@ -561,6 +649,10 @@ class MoneyForwardProfileSetupService:
         context_sha256: str | None = None,
         context: JdlTargetContext | None = None,
     ) -> dict[str, str]:
+        if not item.human_confirmable or item.target_value is None or not item.evidence_id:
+            raise MoneyForwardProfileSetupError(
+                "実機Evidenceが確認できない税区分は保存できません。"
+            )
         return {
             "jdl_tax_scope": item.target_scope,
             "jdl_evidence_id": item.evidence_id,
