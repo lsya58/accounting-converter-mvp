@@ -59,6 +59,7 @@ class CorruptCompanySettingError(CompanySettingStoreError):
 class CompanySettingStore:
     COMPANY_FILE = "company.json"
     CONTEXT_FILE = "jdl-context.json"
+    PENDING_TAX_FILE = "jdl-tax-confirmation.pending.json"
 
     def __init__(self, root_dir: Path, profile_store: ConversionProfileStore) -> None:
         self.root_dir = root_dir
@@ -132,6 +133,48 @@ class CompanySettingStore:
         if not path.exists():
             raise CompanySettingNotFoundError("company setting not found")
         return self._from_json(path)
+
+    def save_pending_tax_confirmation(
+        self, company_setting_id: str, selection: dict[str, str | None]
+    ) -> None:
+        setting = self.get(company_setting_id)
+        context_path = self.context_path(setting)
+        if not self.account_pdf_drafts.is_draft(context_path):
+            raise CompanySettingStoreError("pending tax confirmation requires a PDF draft")
+        context_hash = self._hash(context_path.read_bytes())
+        if context_hash != setting.context_fingerprint:
+            raise CompanySettingStoreError("JDL master changed during tax confirmation")
+        destination = context_path.with_name(self.PENDING_TAX_FILE)
+        temporary = destination.with_name(f".{self.PENDING_TAX_FILE}.tmp")
+        try:
+            self._write_json(temporary, {
+                "schema_version": "1",
+                "master_draft_sha256": context_hash,
+                "selection": selection,
+            }, exclusive=True)
+            os.replace(temporary, destination)
+        finally:
+            if temporary.exists():
+                temporary.unlink()
+
+    def load_pending_tax_confirmation(
+        self, company_setting_id: str
+    ) -> dict[str, str | None] | None:
+        setting = self.get(company_setting_id)
+        context_path = self.context_path(setting)
+        destination = context_path.with_name(self.PENDING_TAX_FILE)
+        if not self.account_pdf_drafts.is_draft(context_path) or not destination.exists():
+            return None
+        payload = json.loads(destination.read_text(encoding="utf-8"))
+        if (
+            payload.get("schema_version") != "1"
+            or payload.get("master_draft_sha256")
+            != self._hash(context_path.read_bytes())
+            or payload.get("master_draft_sha256") != setting.context_fingerprint
+            or not isinstance(payload.get("selection"), dict)
+        ):
+            return None
+        return payload["selection"]
 
     def list(self) -> tuple[CompanySetting, ...]:
         if not self.root_dir.exists():
@@ -436,15 +479,24 @@ class CompanySettingStore:
                         CompanySettingStatus.INCOMPATIBLE,
                         "FORMAT_IDENTITY_MISMATCH",
                     )
+                pending_tax = self.load_pending_tax_confirmation(company_setting_id)
                 return ResolvedCompanySetting(
                     setting,
                     CompanySettingStatus.REQUIRES_CONFIRMATION,
                     profile=profile,
                     user_message=(
+                        "税設定の確認内容は保留保存済みですが、科目一覧の補助条件が未解決です。"
+                        if pending_tax is not None else
                         "この会社で使うJDL科目一覧は設定済みです。"
                         "税設定などの確認が完了するまで変換できません。"
                     ),
-                    reason_codes=("JDL_CONTEXT_DRAFT_UNCONFIRMED",),
+                    reason_codes=(
+                        "JDL_CONTEXT_DRAFT_UNCONFIRMED",
+                        *(
+                            ("JDL_TAX_SELECTION_SAVED_MASTER_BLOCKED",)
+                            if pending_tax is not None else ()
+                        ),
+                    ),
                 )
             context = self.context_loader.load(context_path)
         except (OSError, JdlTargetContextLoadError, JdlAccountPdfDraftError):

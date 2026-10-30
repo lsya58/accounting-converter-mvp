@@ -37,6 +37,7 @@ class UserFacingStatus(str, Enum):
 
 class TaxContextSaveStatus(str, Enum):
     SAVED = "SAVED"
+    SAVED_MASTER_BLOCKED = "SAVED_MASTER_BLOCKED"
     SAVED_REFRESH_WARNING = "SAVED_REFRESH_WARNING"
     NOT_SAVED = "NOT_SAVED"
 

@@ -10,6 +10,7 @@ from accounting_converter.domain.journal import JournalEntry
 from accounting_converter.domain.profile import FormatProfile
 from accounting_converter.domain.validation import ValidationResult
 from accounting_converter.profiles.jdl_official import (
+    jdl_field_length_valid,
     jdl_ibex_cashbook_official_journal_import_spec,
 )
 
@@ -84,7 +85,7 @@ class JDLOutputAdapter(OutputAdapter):
                     )
                 )
             for definition, value in zip(spec.columns, row, strict=True):
-                if definition.max_length is not None and len(value) > definition.max_length:
+                if not jdl_field_length_valid(definition, value):
                     raise JdlOutputBlockedError(
                         (
                             JdlOutputPreflight._error(

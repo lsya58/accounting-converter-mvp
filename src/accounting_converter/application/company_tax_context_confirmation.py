@@ -27,7 +27,7 @@ from accounting_converter.infrastructure.jdl_account_pdf_draft import (
 from accounting_converter.infrastructure.jdl_target_context_loader import (
     JdlTargetContextLoader,
 )
-from accounting_converter.profiles.jdl_official import JdlTaxProcessingMode
+from accounting_converter.profiles.jdl_official import JdlTaxProcessingMode, jdl_subaccount_name_fits
 from accounting_converter.profiles.known_formats import (
     jdl_ibex_cashbook_official_journal_import_schema_definition,
 )
@@ -45,6 +45,12 @@ class JdlTaxContextSelection:
         JdlInputTaxCreditMethod.UNCONFIRMED
     )
     simplified_business_category: JdlSimplifiedBusinessCategory | None = None
+
+
+@dataclass(frozen=True)
+class PendingTaxContextConfirmation:
+    selection: JdlTaxContextSelection
+    blocking_rule_ids: tuple[str, ...]
 
 
 class CompanyTaxContextConfirmationService:
@@ -66,6 +72,23 @@ class CompanyTaxContextConfirmationService:
         if self.drafts.is_draft(path):
             return None
         return self.contexts.load(path)
+
+    def pending_selection(self, company_setting_id: str) -> JdlTaxContextSelection | None:
+        payload = self.company_store.load_pending_tax_confirmation(company_setting_id)
+        if payload is None:
+            return None
+        try:
+            return JdlTaxContextSelection(
+                tax_processing_mode=JdlTaxProcessingMode(payload["tax_processing_mode"]),
+                taxation_method=JdlTaxationMethod(payload["taxation_method"]),
+                input_tax_credit_method=JdlInputTaxCreditMethod(payload["input_tax_credit_method"]),
+                simplified_business_category=(
+                    JdlSimplifiedBusinessCategory(payload["simplified_business_category"])
+                    if payload.get("simplified_business_category") else None
+                ),
+            )
+        except (KeyError, TypeError, ValueError):
+            return None
 
     def confirm_taxable_included(self, company_setting_id: str, *, confirmed: bool):
         return self.confirm(
@@ -135,7 +158,7 @@ class CompanyTaxContextConfirmationService:
             subaccounts = current.subaccounts
             departments = current.departments
             department_processing_enabled = current.department_processing_enabled
-        result = JdlTargetContextBuilder().build(
+        build_args = dict(
             target_format_identity=(
                 jdl_ibex_cashbook_official_journal_import_schema_definition().identity
             ),
@@ -161,8 +184,35 @@ class CompanyTaxContextConfirmationService:
             no_fuzzy_matching=True,
             no_automatic_replacement=True,
         )
+        result = JdlTargetContextBuilder().build(**build_args)
         if not result.success or result.context is None:
             rule_ids = sorted({item.rule_id for item in result.validation_results})
+            overlong = tuple(
+                item for item in subaccounts if not jdl_subaccount_name_fits(item.output_name)
+            )
+            if (
+                previous_context is None
+                and rule_ids == ["JDL-CONTEXT-SUBACCOUNT-PARENT"]
+                and overlong
+                and JdlTargetContextBuilder().build(
+                    **{**build_args, "subaccounts": tuple(
+                        item for item in subaccounts if item not in overlong
+                    )}
+                ).success
+            ):
+                self.company_store.save_pending_tax_confirmation(
+                    company_setting_id,
+                    {
+                        "tax_processing_mode": selection.tax_processing_mode.value,
+                        "taxation_method": selection.taxation_method.value,
+                        "input_tax_credit_method": selection.input_tax_credit_method.value,
+                        "simplified_business_category": (
+                            selection.simplified_business_category.value
+                            if selection.simplified_business_category else None
+                        ),
+                    },
+                )
+                return PendingTaxContextConfirmation(selection, tuple(rule_ids))
             raise CompanyTaxContextConfirmationError(
                 "JDL printed master cannot be promoted safely: "
                 + ", ".join(rule_ids)

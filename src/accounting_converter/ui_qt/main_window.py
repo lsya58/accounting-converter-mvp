@@ -1835,7 +1835,7 @@ class CompanyMappingUpdateDialog(QDialog):
                 collision.setWordWrap(True)
                 layout.addWidget(collision)
             limit = QLabel(
-                "JDL IBEX 出納帳35.5の補助名称は10文字までです。"
+                "JDL IBEX 出納帳35.5の補助名称は全角10文字相当（CP932で20バイト以内）です。"
                 "候補は選択後に確認が必要です。"
             )
             limit.setObjectName("muted")
@@ -3080,6 +3080,13 @@ class JdlTaxContextConfirmationDialog(QDialog):
         product = QLabel("製品: JDL IBEX 出納帳\nVersion: 35.5")
         product.setObjectName("card")
         layout.addWidget(product)
+        self.pending_master_label = QLabel(
+            "税設定の確認内容は保留保存済みです。補助科目の条件が未解決のため、"
+            "正式なJDL環境確認と変換はまだできません。"
+        )
+        self.pending_master_label.setWordWrap(True)
+        self.pending_master_label.hide()
+        layout.addWidget(self.pending_master_label)
 
         form = QGridLayout()
         self.taxable_status = WheelSafeComboBox()
@@ -3188,6 +3195,10 @@ class JdlTaxContextConfirmationDialog(QDialog):
             QMessageBox.warning(self, "保存済み・表示更新待ち", state.user_message)
             self.accept()
             return
+        if state.tax_context_save_status is TaxContextSaveStatus.SAVED_MASTER_BLOCKED:
+            QMessageBox.warning(self, "確認内容は保存済み・変換不可", state.user_message)
+            self.accept()
+            return
         QMessageBox.warning(
             self,
             "JDL税設定を保存できませんでした",
@@ -3218,30 +3229,44 @@ class JdlTaxContextConfirmationDialog(QDialog):
         getter = getattr(self.controller, "company_tax_context", None)
         context = getter(self.company_setting_id) if getter is not None else None
         if context is None:
-            return
-        self._loaded_context_confirmed = (
-            context.confirmation_state is JdlContextConfirmationState.CONFIRMED
-            and context.provenance
-            is JdlContextProvenance.USER_CONFIRMED_RUNTIME_SNAPSHOT
-        )
+            pending = getattr(self.controller, "pending_company_tax_context", None)
+            context = pending(self.company_setting_id) if pending is not None else None
+            if context is None:
+                return
+            self.pending_master_label.show()
+            self._loaded_context_confirmed = True
+            tax_mode = context.tax_processing_mode
+            taxation_method = context.taxation_method
+            credit_method = context.input_tax_credit_method
+            business_category = context.simplified_business_category
+        else:
+            self._loaded_context_confirmed = (
+                context.confirmation_state is JdlContextConfirmationState.CONFIRMED
+                and context.provenance
+                is JdlContextProvenance.USER_CONFIRMED_RUNTIME_SNAPSHOT
+            )
+            tax_mode = context.tax_processing_mode
+            taxation_method = context.effective_taxation_method
+            credit_method = context.effective_input_tax_credit_method
+            business_category = context.simplified_business_category
         self.taxable_status.setCurrentIndex(
-            1 if context.tax_processing_mode is JdlTaxProcessingMode.EXEMPT else 0
+            1 if tax_mode is JdlTaxProcessingMode.EXEMPT else 0
         )
-        if context.tax_processing_mode is JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED:
+        if tax_mode is JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED:
             self.accounting_method.setCurrentIndex(1)
         method_index = self.taxation_method.findData(
-            context.effective_taxation_method.value
+            taxation_method.value
         )
         if method_index >= 0:
             self.taxation_method.setCurrentIndex(method_index)
         credit_index = self.credit_method.findData(
-            context.effective_input_tax_credit_method.value
+            credit_method.value
         )
         if credit_index >= 0:
             self.credit_method.setCurrentIndex(credit_index)
-        if context.simplified_business_category is not None:
+        if business_category is not None:
             category_index = self.business_category.findData(
-                context.simplified_business_category.value
+                business_category.value
             )
             if category_index >= 0:
                 self.business_category.setCurrentIndex(category_index)

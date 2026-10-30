@@ -25,6 +25,7 @@ from accounting_converter.application.company_mapping_update import (
 from accounting_converter.application.company_tax_context_confirmation import (
     CompanyTaxContextConfirmationService,
     JdlTaxContextSelection,
+    PendingTaxContextConfirmation,
 )
 from accounting_converter.application.company_review_state import (
     build_company_review_work_queue,
@@ -717,6 +718,8 @@ class AccountingConverterController:
             CompanySettingStatus.INCOMPATIBLE: "このJDL環境は確認が必要です",
             CompanySettingStatus.MALFORMED: "このJDL環境は確認が必要です",
         }[resolved.status]
+        if "JDL_TAX_SELECTION_SAVED_MASTER_BLOCKED" in resolved.reason_codes:
+            state = "税設定の確認内容を保留保存済み・科目一覧の補助条件を確認してください"
         return label, state
 
     def ensure_selected_tax_requirements(
@@ -938,6 +941,11 @@ class AccountingConverterController:
             company_setting_id
         )
 
+    def pending_company_tax_context(self, company_setting_id: str):
+        return self.company_tax_context_confirmation_service.pending_selection(
+            company_setting_id
+        )
+
     def confirm_company_tax_context(
         self,
         company_setting_id: str,
@@ -949,7 +957,7 @@ class AccountingConverterController:
         simplified_business_category: JdlSimplifiedBusinessCategory | None = None,
     ) -> AppState:
         try:
-            self.company_tax_context_confirmation_service.confirm(
+            result = self.company_tax_context_confirmation_service.confirm(
                 company_setting_id,
                 selection=JdlTaxContextSelection(
                     tax_processing_mode=tax_processing_mode,
@@ -967,6 +975,42 @@ class AccountingConverterController:
                     error,
                 ),
                 tax_context_save_status=TaxContextSaveStatus.NOT_SAVED,
+            )
+            return self.state
+        if isinstance(result, PendingTaxContextConfirmation):
+            log_local_event(
+                "JDL-TAX-CONTEXT-SAVED-MASTER-BLOCKED",
+                {
+                    "persistence_completed": True,
+                    "failed_phase": "master_promotion",
+                    "rule_ids": result.blocking_rule_ids,
+                },
+            )
+            self._prepared = None
+            try:
+                state = self.select_company_setting(company_setting_id)
+            except Exception as error:
+                log_local_exception("company_tax_context_post_save_refresh", error)
+                self.state = replace(
+                    self.state,
+                    conversion_available=False,
+                    preflight_status="UNKNOWN",
+                    tax_context_save_status=TaxContextSaveStatus.SAVED_REFRESH_WARNING,
+                    user_message=(
+                        "JDL税設定の確認内容は保存しましたが、表示更新に失敗しました。"
+                        "会社設定を開き直してください。"
+                    ),
+                )
+                return self.state
+            self.state = replace(
+                state,
+                conversion_available=False,
+                tax_context_save_status=TaxContextSaveStatus.SAVED_MASTER_BLOCKED,
+                user_message=(
+                    "JDL税設定の確認内容は保存しました。"
+                    "ただし補助科目名称がJDL出力上限を超えるため、"
+                    "科目一覧の確認・更新が必要です。正式変換はできません。"
+                ),
             )
             return self.state
         try:

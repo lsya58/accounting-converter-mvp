@@ -12,6 +12,7 @@ from accounting_converter.application.company_tax_context_confirmation import (
     CompanyTaxContextConfirmationError,
     CompanyTaxContextConfirmationService,
     JdlTaxContextSelection,
+    PendingTaxContextConfirmation,
 )
 from accounting_converter.application.company_master_refresh import (
     CompanyMasterRefreshService,
@@ -57,6 +58,14 @@ class _PrintedMaster:
             "  1001- 架空現金  借A ○\n"
             "  2001- 架空預金  借B ○\n"
             "  -0001 架空補助  借\n",
+        )
+
+
+class _OverlongSubaccountMaster(_PrintedMaster):
+    def extract_pages(self, path):
+        return tuple(
+            page.replace("架空補助", "あ" * 12)
+            for page in super().extract_pages(path)
         )
 
 
@@ -464,6 +473,55 @@ class CompanyTaxContextConfirmationTests(unittest.TestCase):
             ):
                 self.service.confirm_taxable_included("company-1", confirmed=True)
         self.assertEqual(self.companies.get("company-1").conversion_profile_id, "profile-1")
+
+    def test_overlong_subaccount_saves_tax_selection_but_keeps_master_blocked(self) -> None:
+        source = self.root / "overlong.pdf"
+        source.write_bytes(b"synthetic-overlong")
+        draft = self.root / "overlong.json"
+        JdlAccountPdfDraftStore(_OverlongSubaccountMaster()).import_pdf(source, draft)
+        profile = ConversionProfile(
+            profile_id="profile-overlong",
+            profile_name="overlong master",
+            source_format_identity=moneyforward_cloud_journal_export_observed_schema().identity,
+            target_format_identity=jdl_ibex_cashbook_official_journal_import_schema_definition().identity,
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+        self.profiles.create(profile)
+        self.companies.create(
+            company_setting_id="company-overlong",
+            display_name="overlong master",
+            conversion_profile_id=profile.profile_id,
+            context_source=draft,
+        )
+        result = self.service.confirm(
+            "company-overlong",
+            selection=JdlTaxContextSelection(
+                tax_processing_mode=JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED,
+                taxation_method=JdlTaxationMethod.STANDARD,
+                input_tax_credit_method=JdlInputTaxCreditMethod.PROPORTIONAL,
+            ),
+            confirmed=True,
+        )
+        self.assertIsInstance(result, PendingTaxContextConfirmation)
+        self.assertEqual(result.blocking_rule_ids, ("JDL-CONTEXT-SUBACCOUNT-PARENT",))
+        self.assertIsNone(self.service.current_context("company-overlong"))
+        self.assertEqual(
+            self.service.pending_selection("company-overlong").input_tax_credit_method,
+            JdlInputTaxCreditMethod.PROPORTIONAL,
+        )
+        self.assertFalse(self.companies.resolve("company-overlong").available)
+        self.assertIn(
+            "JDL_TAX_SELECTION_SAVED_MASTER_BLOCKED",
+            self.companies.resolve("company-overlong").reason_codes,
+        )
+        self.assertEqual(
+            CompanyTaxContextConfirmationService(self.companies, self.profiles)
+            .pending_selection("company-overlong").taxation_method,
+            JdlTaxationMethod.STANDARD,
+        )
+        self.companies.context_path(self.companies.get("company-overlong")).write_bytes(b"changed")
+        self.assertIsNone(self.service.pending_selection("company-overlong"))
 
     def test_post_save_refresh_failure_is_not_reported_as_persistence_failure(self) -> None:
         controller = AccountingConverterController(

@@ -6,7 +6,7 @@ from typing import Iterable
 from accounting_converter.domain.format_metadata import FormatIdentity
 from accounting_converter.domain.profile import FormatProfile
 from accounting_converter.domain.validation import Severity, ValidationResult
-from accounting_converter.profiles.jdl_official import JdlTaxProcessingMode
+from accounting_converter.profiles.jdl_official import JdlTaxProcessingMode, jdl_subaccount_name_fits
 from accounting_converter.profiles.known_formats import (
     jdl_ibex_cashbook_official_journal_import_schema_definition,
 )
@@ -303,7 +303,7 @@ class JdlTargetContextValidator:
                 or item.mapping_value != item.target_name
                 or not self._numeric(item.target_master_code, 4)
                 or not self._numeric(item.output_code, 4)
-                or not self._text(item.output_name, 10)
+                or not jdl_subaccount_name_fits(item.output_name)
                 or not item.output_representation_confirmed
             ):
                 errors.append(

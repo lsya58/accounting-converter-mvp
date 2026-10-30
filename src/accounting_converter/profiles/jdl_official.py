@@ -27,6 +27,21 @@ class JdlOfficialColumnDefinition:
     notes: str | None = None
 
 
+def jdl_subaccount_name_fits(value: str) -> bool:
+    """JDL 35.5's 10-character subaccount field uses 20 CP932 bytes."""
+    try:
+        encoded = value.encode("cp932", errors="strict")
+        return bool(value) and len(encoded) <= 20 and encoded.decode("cp932") == value
+    except UnicodeError:
+        return False
+
+
+def jdl_field_length_valid(definition: JdlOfficialColumnDefinition, value: str) -> bool:
+    if definition.position in (8, 18):
+        return not value or jdl_subaccount_name_fits(value)
+    return definition.max_length is None or len(value) <= definition.max_length
+
+
 @dataclass(frozen=True)
 class JdlIdentifierFlagDefinition:
     value: str
@@ -82,7 +97,7 @@ JDL_IBEX_CASHBOOK_OFFICIAL_JOURNAL_IMPORT_COLUMNS: tuple[
     JdlOfficialColumnDefinition(5, "借方科目名称", "文字", 4),
     JdlOfficialColumnDefinition(6, "借方科目正式名称", "文字", 12),
     JdlOfficialColumnDefinition(7, "借方補助", "数値", 4, notes="Subaccount code."),
-    JdlOfficialColumnDefinition(8, "借方補助名称", "文字", 10),
+    JdlOfficialColumnDefinition(8, "借方補助名称", "文字", 10, notes="10 full-width equivalents; 20 CP932 bytes."),
     JdlOfficialColumnDefinition(9, "借方課区", "文字", 3),
     JdlOfficialColumnDefinition(10, "借方税区", "文字"),
     JdlOfficialColumnDefinition(11, "借方税入力方法", "文字", 2),
@@ -92,7 +107,7 @@ JDL_IBEX_CASHBOOK_OFFICIAL_JOURNAL_IMPORT_COLUMNS: tuple[
     JdlOfficialColumnDefinition(15, "貸方科目名称", "文字", 4),
     JdlOfficialColumnDefinition(16, "貸方科目正式名称", "文字", 12),
     JdlOfficialColumnDefinition(17, "貸方補助", "数値", 4, notes="Subaccount code."),
-    JdlOfficialColumnDefinition(18, "貸方補助名称", "文字", 10),
+    JdlOfficialColumnDefinition(18, "貸方補助名称", "文字", 10, notes="10 full-width equivalents; 20 CP932 bytes."),
     JdlOfficialColumnDefinition(19, "貸方課区", "文字", 3),
     JdlOfficialColumnDefinition(20, "貸方税区", "文字"),
     JdlOfficialColumnDefinition(21, "貸方税入力方法", "文字", 2),

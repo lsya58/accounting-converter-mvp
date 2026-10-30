@@ -4,6 +4,7 @@ import hashlib
 import tempfile
 import unittest
 from datetime import date, datetime, timezone
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 
@@ -17,6 +18,13 @@ from accounting_converter.application.moneyforward_jdl_loss import MoneyForwardT
 from accounting_converter.application.moneyforward_trade_partner import (
     MoneyForwardTradePartnerDescriptionPolicy,
     TRADE_PARTNER_1D1C_EVIDENCE_ID,
+    TRADE_PARTNER_CAPABILITY_KEY,
+    TRADE_PARTNER_POLICY_SCOPE_KEY,
+    trade_partner_target_capability_sha256,
+    upgrade_trade_partner_policy,
+)
+from accounting_converter.application.moneyforward_tax_excluded_evidence import (
+    tax_context_identity_sha256,
 )
 from accounting_converter.application.company_trade_partner_policy import (
     CompanyTradePartnerPolicyService,
@@ -152,6 +160,82 @@ class MoneyForwardTradePartnerPolicyTests(unittest.TestCase):
             LossPolicy.APPEND_TRADE_PARTNER_TO_DESCRIPTION_CONFIRMED.value,
         )
 
+    def test_scoped_policy_survives_unrelated_master_change_but_not_tax_change(self) -> None:
+        policy = self.profile.loss_policy_mappings[TRADE_PARTNER_LOSS_POLICY_KEY]
+        scoped = replace(policy, metadata={
+            **policy.metadata,
+            TRADE_PARTNER_POLICY_SCOPE_KEY: tax_context_identity_sha256(self.context),
+        })
+        profile = replace(self.profile, loss_policy_mappings={
+            TRADE_PARTNER_LOSS_POLICY_KEY: scoped,
+        })
+        changed_master = replace(
+            self.context,
+            account_master=(*self.context.account_master,
+                            JdlAccountIdentity("UNRELATED", "9999", "UNRELATED", "UNRELATED")),
+        )
+        self.assertFalse(MoneyForwardTradePartnerDescriptionPolicy(
+            profile, changed_master
+        ).apply((self._entry(),)).validation_results)
+        changed_tax = replace(
+            changed_master,
+            tax_processing_mode=JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED,
+        )
+        self.assertTrue(MoneyForwardTradePartnerDescriptionPolicy(
+            profile, changed_tax
+        ).apply((self._entry(),)).validation_results)
+
+    def test_capability_policy_ignores_tax_and_master_but_blocks_target_change(self) -> None:
+        policy = self.profile.loss_policy_mappings[TRADE_PARTNER_LOSS_POLICY_KEY]
+        capability = trade_partner_target_capability_sha256(self.context)
+        self.assertIsNotNone(capability)
+        scoped = replace(policy, metadata={
+            TRADE_PARTNER_CAPABILITY_KEY: capability,
+            "jdl_evidence_id": TRADE_PARTNER_1D1C_EVIDENCE_ID,
+        })
+        profile = replace(self.profile, loss_policy_mappings={
+            TRADE_PARTNER_LOSS_POLICY_KEY: scoped,
+        })
+        changed_tax = replace(
+            self.context,
+            tax_processing_mode=JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED,
+        )
+        changed_master = replace(
+            changed_tax,
+            account_master=(*self.context.account_master,
+                            JdlAccountIdentity("UNRELATED", "9999", "UNRELATED", "UNRELATED")),
+        )
+        for context in (changed_tax, changed_master):
+            self.assertFalse(MoneyForwardTradePartnerDescriptionPolicy(
+                profile, context
+            ).apply((self._entry(),)).validation_results)
+        for context in (
+            replace(self.context, product="Other JDL"),
+            replace(self.context, version="35.6"),
+            replace(self.context, target_format_identity=
+                    moneyforward_cloud_journal_export_observed_schema().identity),
+        ):
+            self.assertTrue(MoneyForwardTradePartnerDescriptionPolicy(
+                profile, context
+            ).apply((self._entry(),)).validation_results)
+
+    def test_legacy_scope_is_upgraded_only_from_valid_old_context(self) -> None:
+        policy = self.profile.loss_policy_mappings[TRADE_PARTNER_LOSS_POLICY_KEY]
+        new_context = replace(
+            self.context,
+            tax_processing_mode=JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED,
+        )
+        upgraded = upgrade_trade_partner_policy(policy, self.context, new_context)
+        self.assertIn(TRADE_PARTNER_CAPABILITY_KEY, upgraded.metadata)
+        self.assertEqual(
+            upgrade_trade_partner_policy(policy, new_context, self.context), policy
+        )
+        self.assertEqual(
+            upgrade_trade_partner_policy(
+                policy, self.context, replace(self.context, version="35.6")
+            ), policy
+        )
+
     def test_company_confirmation_persists_and_is_isolated(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -179,6 +263,15 @@ class MoneyForwardTradePartnerPolicyTests(unittest.TestCase):
             service.confirm("company-a")
             self.assertTrue(service.state("company-a").confirmed)
             self.assertFalse(service.state("company-b").confirmed)
+            confirmed_profile = profiles.get(
+                companies.get("company-a").conversion_profile_id
+            )
+            metadata = confirmed_profile.loss_policy_mappings[
+                TRADE_PARTNER_LOSS_POLICY_KEY
+            ].metadata
+            self.assertIn(TRADE_PARTNER_CAPABILITY_KEY, metadata)
+            self.assertNotIn(TRADE_PARTNER_POLICY_SCOPE_KEY, metadata)
+            self.assertNotIn("jdl_context_sha256", metadata)
 
     def _profile(self, context_hash: str, status=MappingStatus.USER_CONFIRMED):
         now = datetime(2026, 10, 18, tzinfo=timezone.utc)

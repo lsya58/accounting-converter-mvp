@@ -13,6 +13,7 @@ from accounting_converter.application.moneyforward_jdl_loss import (
 )
 from accounting_converter.profiles.jdl_official import (
     JdlTaxProcessingMode,
+    jdl_field_length_valid,
     jdl_ibex_cashbook_official_journal_import_spec,
 )
 
@@ -849,7 +850,7 @@ class JdlOutputPreflight:
                 errors.append(self._error("JDL-OUT-COLUMN-COUNT", "JDL出力行は30列である必要があります。", "column_count"))
                 continue
             for definition, value in zip(spec.columns, columns, strict=True):
-                if definition.max_length is not None and len(value) > definition.max_length:
+                if not jdl_field_length_valid(definition, value):
                     errors.append(self._error("JDL-OUT-FIELD-LENGTH", "JDL項目の最大文字数を超えています。", definition.name))
                 try:
                     encoded = value.encode("cp932", errors="strict")
