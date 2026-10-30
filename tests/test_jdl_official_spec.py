@@ -2,6 +2,15 @@ from __future__ import annotations
 
 import unittest
 
+from accounting_converter.adapters.output.jdl import (
+    JdlAccountIdentity,
+    JdlContextConfirmationState,
+    JdlContextProvenance,
+    JdlInputTaxCreditMethod,
+    JdlSubaccountIdentity,
+    JdlTargetContextBuilder,
+    JdlTaxationMethod,
+)
 from accounting_converter.domain.format_metadata import (
     CapabilityStatus,
     EvidenceLevel,
@@ -14,7 +23,9 @@ from accounting_converter.infrastructure.adapter_registry import (
 from accounting_converter.profiles.jdl_official import (
     JdlDocumentedSpecificationStatus,
     JdlTaxProcessingMode,
+    jdl_field_length_valid,
     jdl_ibex_cashbook_official_journal_import_spec,
+    jdl_subaccount_name_fits,
 )
 from accounting_converter.profiles.known_formats import (
     jdl_ibex_cashbook_35_5_observed_schema_definition,
@@ -23,6 +34,42 @@ from accounting_converter.profiles.known_formats import (
 
 
 class JdlOfficialSpecTests(unittest.TestCase):
+    def test_registered_mixed_width_subaccount_can_build_context(self) -> None:
+        result = JdlTargetContextBuilder().build(
+            target_format_identity=jdl_ibex_cashbook_official_journal_import_schema_definition().identity,
+            product="JDL IBEX 出納帳",
+            version="35.5",
+            account_master=(JdlAccountIdentity("売掛金", "1551", "売掛金", "売掛金"),),
+            subaccounts=(JdlSubaccountIdentity(
+                "売掛金", "株式会社ABCD・フロー", "0006", "0006",
+                "株式会社ABCD・フロー", True, "1551", "株式会社ABCD・フロー",
+            ),),
+            departments=(),
+            tax_processing_mode=JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED,
+            department_processing_enabled=False,
+            standard_taxation_confirmed=True,
+            individual_credit_method_confirmed=False,
+            taxation_method=JdlTaxationMethod.STANDARD,
+            input_tax_credit_method=JdlInputTaxCreditMethod.PROPORTIONAL,
+            confirmation_state=JdlContextConfirmationState.CONFIRMED,
+            provenance=JdlContextProvenance.USER_CONFIRMED_RUNTIME_SNAPSHOT,
+            no_fuzzy_matching=True,
+            no_automatic_replacement=True,
+        )
+        self.assertTrue(result.success, result.validation_results)
+
+    def test_subaccount_name_uses_cp932_full_width_equivalent_limit(self) -> None:
+        columns = jdl_ibex_cashbook_official_journal_import_spec().columns
+        observed = "株式会社ABCD・フロー"
+        self.assertEqual(len(observed), 12)
+        self.assertEqual(len(observed.encode("cp932")), 20)
+        self.assertTrue(jdl_subaccount_name_fits(observed))
+        for position in (8, 18):
+            self.assertTrue(jdl_field_length_valid(columns[position - 1], observed))
+            self.assertFalse(jdl_field_length_valid(columns[position - 1], observed + "A"))
+        self.assertFalse(jdl_subaccount_name_fits("😀"))
+        self.assertFalse(jdl_field_length_valid(columns[23], "A" * 33))
+
     def test_official_manual_schema_has_exact_30_column_header(self) -> None:
         spec = jdl_ibex_cashbook_official_journal_import_spec()
 
