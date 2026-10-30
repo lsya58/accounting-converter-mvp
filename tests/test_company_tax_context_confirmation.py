@@ -21,6 +21,8 @@ from accounting_converter.adapters.output.jdl import (
     JdlSimplifiedBusinessCategory,
     JdlTaxationMethod,
 )
+from accounting_converter.adapters.output.jdl.context import JdlTargetContextBuildResult
+from accounting_converter.domain.validation import Severity, ValidationResult
 from accounting_converter.application.moneyforward_profile_setup import (
     MoneyForwardProfileSetupService,
 )
@@ -44,6 +46,7 @@ from accounting_converter.profiles.known_formats import (
     moneyforward_cloud_journal_export_observed_schema,
 )
 from accounting_converter.ui.controllers import AccountingConverterController
+from accounting_converter.ui.view_models import TaxContextSaveStatus
 
 
 class _PrintedMaster:
@@ -434,10 +437,59 @@ class CompanyTaxContextConfirmationTests(unittest.TestCase):
         )
         self.assertEqual(
             state.user_message,
-            "JDL税設定を保存できませんでした。科目対応を確認してください。",
+            "JDL税設定を保存できませんでした。設定内容を確認してください。",
         )
+        self.assertEqual(state.tax_context_save_status, TaxContextSaveStatus.NOT_SAVED)
         self.assertEqual(
             state.developer_error, "CompanyTaxContextConfirmationError"
+        )
+
+    def test_master_promotion_failure_reports_validation_rule_without_saving(self) -> None:
+        result = JdlTargetContextBuildResult(
+            context=None,
+            validation_results=(ValidationResult(
+                severity=Severity.ERROR,
+                rule_id="JDL-CONTEXT-SUBACCOUNT-PARENT",
+                message="invalid synthetic subaccount",
+            ),),
+        )
+        with patch(
+            "accounting_converter.application.company_tax_context_confirmation."
+            "JdlTargetContextBuilder.build",
+            return_value=result,
+        ):
+            with self.assertRaisesRegex(
+                CompanyTaxContextConfirmationError,
+                "JDL-CONTEXT-SUBACCOUNT-PARENT",
+            ):
+                self.service.confirm_taxable_included("company-1", confirmed=True)
+        self.assertEqual(self.companies.get("company-1").conversion_profile_id, "profile-1")
+
+    def test_post_save_refresh_failure_is_not_reported_as_persistence_failure(self) -> None:
+        controller = AccountingConverterController(
+            profile_store=self.profiles,
+            company_store=self.companies,
+            preferences_store=ApplicationPreferencesStore(
+                self.root / "preferences.json"
+            ),
+        )
+        failure = RuntimeError("synthetic refresh failure")
+        with (
+            patch.object(controller, "load_profiles", side_effect=failure),
+            patch("accounting_converter.ui.controllers.log_local_exception") as logger,
+        ):
+            state = controller.confirm_company_tax_context(
+                "company-1", explicitly_confirmed=True
+            )
+        logger.assert_called_once_with("company_tax_context_post_save_refresh", failure)
+        self.assertEqual(
+            state.tax_context_save_status, TaxContextSaveStatus.SAVED_REFRESH_WARNING
+        )
+        self.assertFalse(state.conversion_available)
+        setting = self.companies.get("company-1")
+        self.assertNotEqual(setting.conversion_profile_id, "profile-1")
+        self.assertIsNotNone(
+            controller.company_tax_context_confirmation_service.current_context("company-1")
         )
 
 

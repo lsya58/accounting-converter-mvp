@@ -162,8 +162,10 @@ class CompanyTaxContextConfirmationService:
             no_automatic_replacement=True,
         )
         if not result.success or result.context is None:
+            rule_ids = sorted({item.rule_id for item in result.validation_results})
             raise CompanyTaxContextConfirmationError(
-                "JDL printed master cannot be promoted safely"
+                "JDL printed master cannot be promoted safely: "
+                + ", ".join(rule_ids)
             )
         context_bytes = self.contexts.to_json_text(result.context).encode("utf-8")
         context_hash = hashlib.sha256(context_bytes).hexdigest()

@@ -126,6 +126,10 @@ class CompanyMappingUpdateReview:
     descriptions: tuple[MoneyForwardDescriptionReviewItem, ...] = ()
     tax_category_counts: tuple[tuple[str, int], ...] = ()
     observed_tax_categories: tuple[str, ...] = ()
+    optional_field_counts: tuple[tuple[str, int], ...] = ()
+    optional_field_row_counts: tuple[tuple[str, int], ...] = ()
+    other_optional_journal_count: int = 0
+    other_optional_row_count: int = 0
 
 
 class CompanyMappingUpdateService:
@@ -357,6 +361,21 @@ class CompanyMappingUpdateService:
         loss_results = ValidationPipeline((MoneyForwardToJdlLossRule(),)).validate(
             entries
         )
+        optional_rows: dict[str, set[tuple[str, int]]] = defaultdict(set)
+        by_id = {entry.id: entry for entry in entries}
+        for result in loss_results:
+            if result.journal_id and result.field:
+                entry = by_id[result.journal_id]
+                optional_rows[result.field].update(
+                    (entry.id, row) for row in self._optional_field_rows(entry, result.field)
+                )
+        other_journals = {
+            result.journal_id for result in loss_results
+            if result.field != "trade_partner" and result.journal_id
+        }
+        other_rows = set().union(
+            *(rows for field, rows in optional_rows.items() if field != "trade_partner")
+        )
         descriptions = self._description_review_items(entries, profile)
         return CompanyMappingUpdateReview(
             company_setting_id,
@@ -387,7 +406,34 @@ class CompanyMappingUpdateService:
                 for item in requirements.tax_categories
             ),
             tuple(item.source_value for item in requirements.tax_categories),
+            tuple(sorted(Counter(item.field for item in loss_results).items())),
+            tuple(sorted((field, len(rows)) for field, rows in optional_rows.items())),
+            len(other_journals),
+            len(other_rows),
         )
+
+    @staticmethod
+    def _optional_field_rows(entry, field: str) -> set[int]:
+        if field in {"description", "description_character"}:
+            descriptions = entry.metadata.get("moneyforward_descriptions", ())
+            return {
+                item["row_number"] for item in descriptions
+                if field == "description"
+                or unsafe_description_positions(item["value"])
+            }
+        if field in {"tag", "memo"}:
+            key = "moneyforward_tags" if field == "tag" else "moneyforward_memos"
+            return {item["row_number"] for item in entry.metadata.get(key, ())}
+        return {
+            row for line in entry.lines
+            if (
+                line.metadata.get("moneyforward_trade_partner")
+                if field == "trade_partner"
+                else line.tax_info is not None
+                and bool(line.tax_info.invoice_classification)
+            )
+            if isinstance(row := line.metadata.get("moneyforward_source_row_number"), int)
+        }
 
     def review_saved(self, company_setting_id: str) -> CompanyMappingUpdateReview:
         setting = self.company_store.get(company_setting_id)

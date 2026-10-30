@@ -26,6 +26,9 @@ from accounting_converter.application.company_tax_context_confirmation import (
     CompanyTaxContextConfirmationService,
     JdlTaxContextSelection,
 )
+from accounting_converter.application.company_review_state import (
+    build_company_review_work_queue,
+)
 from accounting_converter.adapters.output.jdl import (
     JdlInputTaxCreditMethod,
     JdlSimplifiedBusinessCategory,
@@ -122,6 +125,7 @@ from .view_models import (
     FileRecognition,
     ProfileOption,
     RecognizedFormat,
+    TaxContextSaveStatus,
 )
 
 
@@ -322,6 +326,7 @@ class AccountingConverterController:
                 pending_account_confirmations=0,
                 pending_subaccount_confirmations=0,
                 pending_tax_confirmations=0,
+                review_work_queue=None,
                 unsupported_shape_count=0,
                 optional_field_blocker_count=0,
                 user_message="会社設定を選択してください。",
@@ -359,6 +364,7 @@ class AccountingConverterController:
                 pending_account_confirmations=0,
                 pending_subaccount_confirmations=0,
                 pending_tax_confirmations=0,
+                review_work_queue=None,
                 unsupported_shape_count=0,
                 optional_field_blocker_count=0,
                 user_message=resolved.user_message or "会社設定を確認してください。",
@@ -387,6 +393,7 @@ class AccountingConverterController:
             pending_account_confirmations=0,
             pending_subaccount_confirmations=0,
             pending_tax_confirmations=0,
+            review_work_queue=None,
             unsupported_shape_count=0,
             optional_field_blocker_count=0,
             user_message="会社設定を選択しました。",
@@ -490,17 +497,25 @@ class AccountingConverterController:
             review = self.review_company_mapping_updates(
                 state.selected_company_setting_id, state.selected_file
             )
+            tax_review = self.company_tax_mapping_review(
+                state.selected_company_setting_id,
+                affected_counts=dict(review.tax_category_counts),
+                observed_source_values=review.observed_tax_categories,
+            )
+            partner_state = self.company_trade_partner_policy_state(
+                state.selected_company_setting_id
+            )
+            queue = build_company_review_work_queue(
+                review, tax_review, trade_partner_confirmed=partner_state.confirmed
+            )
         except Exception as error:
             return self._fail_state(
                 "会社設定とCSVを確認できませんでした。",
                 error,
             )
-        account_count = sum(item.mapping_type == "ACCOUNT" for item in review.items)
-        subaccount_count = sum(
-            item.mapping_type in {"SUBACCOUNT", "DEFAULT_SUBACCOUNT"}
-            for item in review.items
-        )
-        tax_count = len(review.tax_categories)
+        account_count = queue.account_settings
+        subaccount_count = queue.subaccount_settings
+        tax_count = queue.tax_human_settings
         guidance: list[str] = []
         if any(
             item.mapping_type == "ACCOUNT" and not item.available_targets
@@ -518,7 +533,11 @@ class AccountingConverterController:
             )
         if tax_count:
             guidance.append("税区分の確認が必要です。")
-        if account_count or subaccount_count or tax_count:
+        if queue.tax_evidence_settings:
+            guidance.append(
+                f"税区分{queue.tax_evidence_settings}種類は実機Evidence待ちです。"
+            )
+        if account_count or subaccount_count or tax_count or queue.tax_evidence_settings:
             self._prepared = None
             self.state = replace(
                 self.state,
@@ -530,6 +549,7 @@ class AccountingConverterController:
                 pending_tax_confirmations=tax_count,
                 unsupported_shape_count=review.unsupported_shape_count,
                 optional_field_blocker_count=review.optional_field_blocker_count,
+                review_work_queue=queue,
                 messages=tuple(guidance),
                 user_message="確認が必要な項目があります。",
                 developer_error=None,
@@ -545,6 +565,7 @@ class AccountingConverterController:
                 pending_tax_confirmations=0,
                 unsupported_shape_count=review.unsupported_shape_count,
                 optional_field_blocker_count=review.optional_field_blocker_count,
+                review_work_queue=queue,
                 messages=(),
             )
         return self.state
@@ -687,7 +708,11 @@ class AccountingConverterController:
             label = "確認が必要"
         state = {
             CompanySettingStatus.AVAILABLE: "設定済み",
-            CompanySettingStatus.REQUIRES_CONFIRMATION: "確認が必要",
+            CompanySettingStatus.REQUIRES_CONFIRMATION: (
+                "設定済み（対応設定の確認が必要）"
+                if resolved.context is not None
+                else "JDL税設定の確認が必要"
+            ),
             CompanySettingStatus.STALE: "科目一覧の更新が必要",
             CompanySettingStatus.INCOMPATIBLE: "このJDL環境は確認が必要です",
             CompanySettingStatus.MALFORMED: "このJDL環境は確認が必要です",
@@ -936,15 +961,37 @@ class AccountingConverterController:
             )
         except Exception as error:
             log_local_exception("company_tax_context_confirmation", error)
-            return self._fail_state(
-                "JDL税設定を保存できませんでした。科目対応を確認してください。",
-                error,
+            self.state = replace(
+                self._fail_state(
+                    "JDL税設定を保存できませんでした。設定内容を確認してください。",
+                    error,
+                ),
+                tax_context_save_status=TaxContextSaveStatus.NOT_SAVED,
             )
-        self.load_profiles()
-        self.load_company_settings()
-        state = self.select_company_setting(company_setting_id)
+            return self.state
+        try:
+            self.load_profiles()
+            self.load_company_settings()
+            state = self.select_company_setting(company_setting_id)
+        except Exception as error:
+            log_local_exception("company_tax_context_post_save_refresh", error)
+            self._prepared = None
+            self.state = replace(
+                self.state,
+                conversion_available=False,
+                conversion_summary=None,
+                preflight_status="UNKNOWN",
+                tax_context_save_status=TaxContextSaveStatus.SAVED_REFRESH_WARNING,
+                user_message=(
+                    "JDL税設定は保存されましたが、画面の更新に失敗しました。"
+                    "会社設定を開き直してください。"
+                ),
+                developer_error=error.__class__.__name__,
+            )
+            return self.state
         self.state = replace(
             state,
+            tax_context_save_status=TaxContextSaveStatus.SAVED,
             user_message="JDL税設定を保存しました。税区分を確認してください。",
         )
         return self.state
@@ -1189,6 +1236,8 @@ class AccountingConverterController:
                     inspected.pending_account_confirmations,
                     inspected.pending_subaccount_confirmations,
                     inspected.pending_tax_confirmations,
+                    inspected.review_work_queue.tax_evidence_settings
+                    if inspected.review_work_queue else 0,
                 )
             ):
                 return inspected

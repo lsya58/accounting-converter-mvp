@@ -34,6 +34,9 @@ from PySide6.QtWidgets import (
 from accounting_converter.application.company_mapping_update import (
     PARENT_ONLY_SELECTION,
 )
+from accounting_converter.application.company_review_state import (
+    build_company_review_work_queue,
+)
 from accounting_converter.application.description_replacement import (
     replacement_is_valid,
 )
@@ -60,6 +63,7 @@ from accounting_converter.ui.view_models import (
     RecognizedFormat,
     present_main_screen,
     support_diagnostic_text,
+    TaxContextSaveStatus,
 )
 from accounting_converter.application.build_identity import current_build_identity
 from accounting_converter.infrastructure.local_diagnostic_log import (
@@ -378,6 +382,10 @@ class AccountingConverterMainWindow(QMainWindow):
                 state.pending_account_confirmations
                 or state.pending_subaccount_confirmations
                 or state.pending_tax_confirmations
+                or (
+                    state.review_work_queue.tax_evidence_settings
+                    if state.review_work_queue else 0
+                )
             )
         ):
             self._prepare_if_complete()
@@ -2221,6 +2229,11 @@ class CompanyMappingUpdateDialog(QDialog):
         self._update_action()
 
     def _update_action(self, *_args) -> None:
+        queue = build_company_review_work_queue(
+            self.review,
+            self.tax_review,
+            trade_partner_confirmed=self.retention_completed,
+        )
         confirmed = sum(
             combo.currentData() is not None and check.isChecked()
             for _, combo, check in self.controls
@@ -2283,19 +2296,11 @@ class CompanyMappingUpdateDialog(QDialog):
                 f"{labels[key]} 残り{remaining}（確認済み{done} / 全{total}）[{status}]",
             )
             self.tabs.setTabEnabled(self.category_tabs[key], total > 0)
-        tax_count = len(self.review.observed_tax_categories or self.review.tax_categories)
+        tax_count = queue.tax_observed
         tax_pending = len(self.tax_review.items) if self.tax_review is not None else tax_count
         tax_done = max(0, tax_count - tax_pending)
-        tax_human_pending = (
-            sum(item.action_owner == "HUMAN" for item in self.tax_review.items)
-            if self.tax_review is not None
-            else tax_pending
-        )
-        tax_system_pending = (
-            sum(item.action_owner != "HUMAN" for item in self.tax_review.items)
-            if self.tax_review is not None
-            else 0
-        )
+        tax_human_pending = queue.tax_human_settings if self.tax_review is not None else tax_pending
+        tax_system_pending = queue.tax_system_settings
         self.tabs.setTabText(
             self.category_tabs["tax"],
             f"税区分 Human残り{tax_human_pending} / 実機検証待ち{tax_system_pending}"
@@ -2311,13 +2316,13 @@ class CompanyMappingUpdateDialog(QDialog):
                 self.tax_review_button.setText("実機Evidence待ちのため確認できません")
             elif self.tax_completed:
                 self.tax_review_button.setText("税区分の確認は完了しました")
-        retention_pending = int(
-            self.review.optional_field_blocker_count > 0
-            and not self.retention_completed
-        )
+        retention_pending = queue.trade_partner_policy_settings
         other_status = (
             "要確認" if retention_pending else
-            "未対応あり" if self.review.unsupported_shape_count else "完了"
+            "未対応あり" if (
+                self.review.unsupported_shape_count
+                or queue.other_optional_field_occurrences
+            ) else "完了"
         )
         self.tabs.setTabText(
             self.category_tabs["other"],
@@ -2348,7 +2353,8 @@ class CompanyMappingUpdateDialog(QDialog):
             f"取引先情報: {retention_pending}設定\n"
             "Evidence・実装対応待ち\n"
             f"未対応仕訳: {self.review.unsupported_shape_count}仕訳 / "
-            f"税区分: {tax_system_pending}設定"
+            f"税区分: {queue.tax_evidence_settings}種類 / "
+            f"その他optional: {queue.other_optional_affected_journals}仕訳"
         )
         self.summary_label.setToolTip(
             "残りはHumanが次に確認する設定数です。確認済み・全設定数も併記しています。"
@@ -3175,7 +3181,11 @@ class JdlTaxContextConfirmationDialog(QDialog):
                 else None
             ),
         )
-        if state.user_message.startswith("JDL税設定を保存しました"):
+        if state.tax_context_save_status is TaxContextSaveStatus.SAVED:
+            self.accept()
+            return
+        if state.tax_context_save_status is TaxContextSaveStatus.SAVED_REFRESH_WARNING:
+            QMessageBox.warning(self, "保存済み・表示更新待ち", state.user_message)
             self.accept()
             return
         QMessageBox.warning(

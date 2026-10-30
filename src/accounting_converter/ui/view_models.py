@@ -5,6 +5,7 @@ from enum import Enum
 from pathlib import Path
 
 from accounting_converter.application.first_release_workflow import FirstReleaseSummary
+from accounting_converter.application.company_review_state import CompanyReviewWorkQueue
 
 
 class DiagnosticKind(str, Enum):
@@ -32,6 +33,12 @@ class UserFacingStatus(str, Enum):
     CONFIRM = "CONFIRM"
     BLOCKED = "BLOCKED"
     SUCCESS = "SUCCESS"
+
+
+class TaxContextSaveStatus(str, Enum):
+    SAVED = "SAVED"
+    SAVED_REFRESH_WARNING = "SAVED_REFRESH_WARNING"
+    NOT_SAVED = "NOT_SAVED"
 
 
 @dataclass(frozen=True)
@@ -108,6 +115,8 @@ class AppState:
     jdl_master_configured: bool = False
     jdl_master_state: str = "未設定"
     jdl_master_updated_at: str | None = None
+    tax_context_save_status: TaxContextSaveStatus | None = None
+    review_work_queue: CompanyReviewWorkQueue | None = None
 
 
 @dataclass(frozen=True)
@@ -278,6 +287,18 @@ def support_diagnostic_text(
     """Return a support-ready summary that cannot include accounting values."""
     recognition = state.file_recognition
     summary = state.conversion_summary
+    queue = state.review_work_queue
+    if queue is not None and (
+        queue.source_path != state.selected_file
+        or queue.company_setting_id != state.selected_company_setting_id
+    ):
+        queue = None
+    tax_evidence_result = (
+        "未評価（税の確認が必要）"
+        if queue is not None
+        and (queue.tax_human_settings or queue.tax_evidence_settings)
+        else str(summary.tax_evidence_blocker_count) if summary else "未評価"
+    )
     readiness = present_main_screen(state).status_text
     error_category = (
         "確認が必要"
@@ -303,10 +324,23 @@ def support_diagnostic_text(
         ("仕訳数", str(recognition.journal_count) if recognition and recognition.journal_count is not None else "未確認"),
         ("科目確認", str(state.pending_account_confirmations)),
         ("補助科目確認（設定項目）", str(state.pending_subaccount_confirmations)),
-        ("税区分確認", str(state.pending_tax_confirmations)),
+        ("補助科目確認（影響仕訳）", str(queue.subaccount_affected_journals) if queue else "未評価"),
+        ("補助科目確認（識別子）", ", ".join(queue.subaccount_review_ids) if queue else "未評価"),
+        ("税区分確認", str(queue.tax_human_settings if queue else state.pending_tax_confirmations)),
+        ("税区分（入力で観測）", str(queue.tax_observed) if queue else "未評価"),
+        ("税区分（実機Evidence待ち）", str(queue.tax_evidence_settings) if queue else "未評価"),
+        ("税区分（Evidence待ち入力行）", str(queue.tax_evidence_rows) if queue else "未評価"),
         ("未対応仕訳構成", str(summary.unsupported_shape_count if summary else state.unsupported_shape_count)),
-        ("税Evidence条件未一致", str(summary.tax_evidence_blocker_count if summary else 0)),
-        ("保持方法未確認", str(summary.optional_field_blocker_count if summary else state.optional_field_blocker_count)),
+        ("税Evidence条件未一致", tax_evidence_result),
+        ("取引先保持方針（未確認設定）", str(queue.trade_partner_policy_settings) if queue else "未評価"),
+        ("取引先情報（影響仕訳）", str(queue.trade_partner_affected_journals) if queue else "未評価"),
+        ("取引先情報（入力物理行）", str(queue.trade_partner_affected_rows) if queue else "未評価"),
+        ("入力optional検出（仕訳）", str(queue.optional_affected_journals) if queue else "未評価"),
+        ("保持方法未確認（formal判定）", str(summary.optional_field_blocker_count) if summary else "未評価"),
+        ("その他optional（影響仕訳）", str(queue.other_optional_affected_journals) if queue else "未評価"),
+        ("その他optional（入力物理行）", str(queue.other_optional_affected_rows) if queue else "未評価"),
+        ("その他optional（Human確認待ち設定）", str(queue.description_settings) if queue else "未評価"),
+        ("その他optional blocker（検出件数）", str(queue.other_optional_field_occurrences) if queue else "未評価"),
         ("Formal出力条件未一致", str(summary.formal_output_blocker_count if summary else 0)),
         ("JDL科目一覧", "設定済み" if state.jdl_master_configured else "未設定"),
         ("JDL科目一覧の状態", state.jdl_master_state),
