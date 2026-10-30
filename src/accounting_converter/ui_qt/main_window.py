@@ -303,15 +303,16 @@ class AccountingConverterMainWindow(QMainWindow):
             )
             return
         tax_review = None
-        if review.tax_categories:
+        if review.observed_tax_categories or review.tax_categories:
             saved = self.controller.ensure_selected_tax_requirements(review)
             if saved.developer_error is not None:
                 self._render(saved)
                 return
             tax_review = self.controller.company_tax_mapping_review(
-                company_id, affected_counts=dict(review.tax_category_counts)
+                company_id, affected_counts=dict(review.tax_category_counts),
+                observed_source_values=review.observed_tax_categories or review.tax_categories,
             )
-        if review.items or review.descriptions or review.tax_categories:
+        if review.items or review.descriptions or (tax_review and tax_review.items):
             dialog = CompanyMappingUpdateDialog(
                 self.controller, review, self, tax_review=tax_review
             )
@@ -319,9 +320,10 @@ class AccountingConverterMainWindow(QMainWindow):
                 self._refresh_current_csv_readiness()
                 return
             review = self.controller.review_company_mapping_updates(company_id, path)
-        if review.tax_categories:
+        if review.observed_tax_categories or review.tax_categories:
             tax_review = tax_review or self.controller.company_tax_mapping_review(
-                company_id, affected_counts=dict(review.tax_category_counts)
+                company_id, affected_counts=dict(review.tax_category_counts),
+                observed_source_values=review.observed_tax_categories or review.tax_categories,
             )
             if tax_review.items:
                 dialog = TaxMappingConfirmationDialog(
@@ -330,7 +332,7 @@ class AccountingConverterMainWindow(QMainWindow):
                 if dialog.exec() != QDialog.DialogCode.Accepted:
                     self._refresh_current_csv_readiness()
                     return
-            elif tax_review.user_message:
+            elif tax_review.user_message and not tax_review.context_compatible:
                 if self.controller.company_tax_context_pending(company_id):
                     context_dialog = JdlTaxContextConfirmationDialog(
                         self.controller, company_id, self
@@ -341,6 +343,7 @@ class AccountingConverterMainWindow(QMainWindow):
                     tax_review = self.controller.company_tax_mapping_review(
                         company_id,
                         affected_counts=dict(review.tax_category_counts),
+                        observed_source_values=review.observed_tax_categories or review.tax_categories,
                     )
                     if tax_review.items:
                         dialog = TaxMappingConfirmationDialog(
@@ -775,7 +778,8 @@ class SettingsDialog(QDialog):
                 company_id
             )
             tax_review = self.controller.company_tax_mapping_review(
-                company_id, affected_counts=dict(review.tax_category_counts)
+                company_id, affected_counts=dict(review.tax_category_counts),
+                observed_source_values=review.observed_tax_categories or review.tax_categories,
             )
         except Exception as exc:
             log_local_exception("company_mapping_update_review", exc)
@@ -838,17 +842,18 @@ class SettingsDialog(QDialog):
             log_local_exception("company_mapping_update_review", exc)
             self.message_label.setText("CSVと現在の会社設定を確認できませんでした。")
             return
-        if not review.items and not review.descriptions and not review.tax_categories:
+        if not review.items and not review.descriptions and not review.observed_tax_categories and not review.tax_categories:
             self.message_label.setText("追加確認が必要な科目はありません。")
             return
         tax_review = None
-        if review.tax_categories:
+        if review.observed_tax_categories or review.tax_categories:
             state = self.controller.ensure_selected_tax_requirements(review)
             if state.developer_error is not None:
                 self.message_label.setText(state.user_message)
                 return
             tax_review = self.controller.company_tax_mapping_review(
-                company_id, affected_counts=dict(review.tax_category_counts)
+                company_id, affected_counts=dict(review.tax_category_counts),
+                observed_source_values=review.observed_tax_categories or review.tax_categories,
             )
         dialog = CompanyMappingUpdateDialog(
             self.controller, review, self, tax_review=tax_review
@@ -1517,7 +1522,7 @@ class CompanyMappingUpdateDialog(QDialog):
         self.subaccount_controls: list[tuple[object, QComboBox, QCheckBox]] = []
         self.subaccount_parent_cells: dict[str, QTableWidgetItem] = {}
         self.description_controls: dict[str, tuple[QLineEdit, QCheckBox]] = {}
-        self.tax_completed = not bool(review.tax_categories)
+        self.tax_completed = not bool(review.observed_tax_categories or review.tax_categories)
         if tax_review is not None:
             self.tax_completed = not bool(tax_review.items)
         policy_getter = getattr(controller, "company_trade_partner_policy_state", None)
@@ -1586,8 +1591,34 @@ class CompanyMappingUpdateDialog(QDialog):
             self._refresh_subaccounts(source_value)
         self._update_action()
         self._select_first_unresolved_tab()
+        self._initial_review_state = self._review_state()
+
+    def _review_state(self) -> tuple:
+        return (
+            tuple((key, combo.currentData(), check.isChecked())
+                  for key, combo, check in self.controls),
+            tuple((key, field.text(), check.isChecked())
+                  for key, (field, check) in self.description_controls.items()),
+        )
 
     def done(self, result: int) -> None:
+        if (
+            result == QDialog.DialogCode.Rejected
+            and self._review_state() != self._initial_review_state
+        ):
+            pending = sum(check.isChecked() for _, _, check in self.controls)
+            pending += sum(check.isChecked() for _, check in self.description_controls.values())
+            answer = QMessageBox.question(
+                self,
+                "未保存の確認があります",
+                (f"確認した{pending}件をまだ保存していません。"
+                 if pending else "未保存の選択変更があります。")
+                + "破棄して閉じますか？",
+                QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if answer != QMessageBox.StandardButton.Discard:
+                return
         QSettings("AccountingConverter", "AccountingConverter").setValue(
             self._GEOMETRY_KEY, self.saveGeometry()
         )
@@ -1676,11 +1707,9 @@ class CompanyMappingUpdateDialog(QDialog):
             for value in item.available_targets:
                 if item.mapping_type == "ACCOUNT" and value == item.exact_candidate:
                     continue
-                target.addItem(
-                    f"JDL補助科目へ対応: {value}"
-                    if item.mapping_type in {"SUBACCOUNT", "DEFAULT_SUBACCOUNT"}
-                    else value,
-                    value,
+                target.addItem(value, value)
+                target.setItemData(
+                    target.count() - 1, value, Qt.ItemDataRole.ToolTipRole
                 )
             if item.mapping_type == "SUBACCOUNT" and item.parent_only_available:
                 target.addItem("親科目のみで変換する", PARENT_ONLY_SELECTION)
@@ -1763,7 +1792,12 @@ class CompanyMappingUpdateDialog(QDialog):
         else:
             details = (
                 ("推奨", f"{item.recommendation_code}: {item.recommendation_label}"),
-                ("理由", item.recommendation_detail),
+                ("理由", (
+                    "MFでは補助科目がありません。JDLでこの親科目に補助が必要なため、"
+                    "取引をまとめる既存のJDL補助を選び、確認してください。"
+                    if item.mapping_type == "DEFAULT_SUBACCOUNT"
+                    else item.recommendation_detail
+                )),
                 ("影響する仕訳", f"{item.affected_journal_count}件"),
                 ("JDLの既存補助", "、".join(item.available_targets) or "既存候補なし"),
                 ("親科目のみの場合", item.parent_only_loss),
@@ -2000,6 +2034,7 @@ class CompanyMappingUpdateDialog(QDialog):
         self.tax_review = self.controller.company_tax_mapping_review(
             self.review.company_setting_id,
             affected_counts=dict(self.review.tax_category_counts),
+            observed_source_values=self.review.observed_tax_categories or self.review.tax_categories,
         )
         dialog = TaxMappingConfirmationDialog(
             self.controller,
@@ -2012,6 +2047,7 @@ class CompanyMappingUpdateDialog(QDialog):
         remaining = self.controller.company_tax_mapping_review(
             self.review.company_setting_id,
             affected_counts=dict(self.review.tax_category_counts),
+            observed_source_values=self.review.observed_tax_categories or self.review.tax_categories,
         )
         self.tax_review = remaining
         self.tax_completed = not remaining.items
@@ -2136,7 +2172,7 @@ class CompanyMappingUpdateDialog(QDialog):
                     combo.addItem(label, candidate.target_name)
                     combo.setItemData(
                         combo.count() - 1,
-                        "同じ親科目のJDL補助です。Human確認後のみ保存します。"
+                        candidate.target_name + "。同じ親科目のJDL補助です。Human確認後のみ保存します。"
                         + (
                             " 先頭10文字が複数のMF補助で重複しています。"
                             if candidate.prefix_collision else ""
@@ -2247,27 +2283,33 @@ class CompanyMappingUpdateDialog(QDialog):
                 f"{labels[key]} 残り{remaining}（確認済み{done} / 全{total}）[{status}]",
             )
             self.tabs.setTabEnabled(self.category_tabs[key], total > 0)
-        tax_count = len(self.review.tax_categories)
-        tax_done = tax_count if self.tax_completed else 0
+        tax_count = len(self.review.observed_tax_categories or self.review.tax_categories)
+        tax_pending = len(self.tax_review.items) if self.tax_review is not None else tax_count
+        tax_done = max(0, tax_count - tax_pending)
         tax_human_pending = (
-            len(self.tax_review.confirmable_items)
+            sum(item.action_owner == "HUMAN" for item in self.tax_review.items)
             if self.tax_review is not None
-            else tax_count - tax_done
+            else tax_pending
         )
         tax_system_pending = (
-            len(self.tax_review.blocked_items)
+            sum(item.action_owner != "HUMAN" for item in self.tax_review.items)
             if self.tax_review is not None
             else 0
         )
         self.tabs.setTabText(
             self.category_tabs["tax"],
-            f"税区分 残り{tax_count - tax_done}（確認済み{tax_done} / 全{tax_count}）"
-            f"[{'完了' if self.tax_completed else '要確認'}]",
+            f"税区分 Human残り{tax_human_pending} / 実機検証待ち{tax_system_pending}"
+            f"（確認済み{tax_done} / 全{tax_count}）"
+            f"[{'実機検証待ち' if tax_system_pending else '完了' if self.tax_completed else '要確認'}]",
         )
         self.tabs.setTabEnabled(self.category_tabs["tax"], tax_count > 0)
         if self.tax_review_button is not None:
-            self.tax_review_button.setEnabled(not self.tax_completed)
-            if self.tax_completed:
+            self.tax_review_button.setEnabled(
+                bool(self.tax_review and self.tax_review.confirmable_items)
+            )
+            if tax_system_pending:
+                self.tax_review_button.setText("実機Evidence待ちのため確認できません")
+            elif self.tax_completed:
                 self.tax_review_button.setText("税区分の確認は完了しました")
         retention_pending = int(
             self.review.optional_field_blocker_count > 0
@@ -2320,7 +2362,7 @@ class CompanyMappingUpdateDialog(QDialog):
             ("accounts", any(key.startswith(("ACCOUNT|", "ACCOUNT:")) for key, _, _ in self.controls)),
             ("subaccounts", any(not key.startswith(("ACCOUNT|", "ACCOUNT:")) for key, _, _ in self.controls)),
             ("descriptions", bool(self.description_controls)),
-            ("tax", bool(self.review.tax_categories) and not self.tax_completed),
+            ("tax", bool(self.review.observed_tax_categories or self.review.tax_categories) and not self.tax_completed),
             (
                 "other",
                 bool(

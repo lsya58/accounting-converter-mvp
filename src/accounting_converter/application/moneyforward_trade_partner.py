@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import replace
 from typing import Sequence
 
 from accounting_converter.application.journal_route import JournalRouteResult
+from accounting_converter.application.moneyforward_tax_excluded_evidence import (
+    tax_context_identity_sha256,
+)
+from accounting_converter.application.description_replacement import JDL_DESCRIPTION_LIMIT
 from accounting_converter.domain.conversion_profile import (
     ConversionProfile,
     LossPolicy,
@@ -21,6 +26,63 @@ from accounting_converter.infrastructure.jdl_target_context_loader import (
 
 TRADE_PARTNER_DESCRIPTION_PREFIX = "取引先:"
 TRADE_PARTNER_DESCRIPTION_SEPARATOR = " / "
+TRADE_PARTNER_POLICY_SCOPE_KEY = "trade_partner_policy_scope_sha256"
+TRADE_PARTNER_CAPABILITY_KEY = "trade_partner_target_capability_sha256"
+
+
+def trade_partner_target_capability_sha256(context: object) -> str | None:
+    identity = getattr(context, "target_format_identity", None)
+    product = getattr(context, "product", None)
+    version = getattr(context, "version", None)
+    if identity is None or not product or not version:
+        return None
+    payload = {
+        "target_format": identity.stable_key,
+        "product": product,
+        "version": version,
+        "description_encoding": "cp932",
+        "description_limit": JDL_DESCRIPTION_LIMIT,
+        "description_prefix": TRADE_PARTNER_DESCRIPTION_PREFIX,
+        "description_separator": TRADE_PARTNER_DESCRIPTION_SEPARATOR,
+    }
+    encoded = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def trade_partner_policy_context_matches(metadata, context: object) -> bool:
+    capability = metadata.get(TRADE_PARTNER_CAPABILITY_KEY)
+    if capability is not None:
+        current = trade_partner_target_capability_sha256(context)
+        return current is not None and capability == current
+    scoped = metadata.get(TRADE_PARTNER_POLICY_SCOPE_KEY)
+    if scoped is not None:
+        return scoped == tax_context_identity_sha256(context)
+    legacy = hashlib.sha256(
+        JdlTargetContextLoader().to_json_text(context).encode("utf-8")
+    ).hexdigest()
+    return metadata.get("jdl_context_sha256") == legacy
+
+
+def upgrade_trade_partner_policy(mapping, old_context: object, new_context: object):
+    if mapping is None:
+        return None
+    old_capability = trade_partner_target_capability_sha256(old_context)
+    if (
+        mapping.status is not MappingStatus.USER_CONFIRMED
+        or mapping.target_value
+        != LossPolicy.APPEND_TRADE_PARTNER_TO_DESCRIPTION_CONFIRMED.value
+        or mapping.metadata.get("jdl_evidence_id") != TRADE_PARTNER_1D1C_EVIDENCE_ID
+        or not trade_partner_policy_context_matches(mapping.metadata, old_context)
+        or old_capability is None
+        or old_capability != trade_partner_target_capability_sha256(new_context)
+    ):
+        return mapping
+    return replace(mapping, metadata={
+        **mapping.metadata,
+        TRADE_PARTNER_CAPABILITY_KEY: old_capability,
+    })
 TRADE_PARTNER_1D1C_EVIDENCE_ID = (
     "EVID-MF-JDL-TRADE-PARTNER-1D1C-DESCRIPTION-ROUNDTRIP-001"
 )
@@ -38,9 +100,7 @@ class MoneyForwardTradePartnerDescriptionPolicy:
 
     def __init__(self, profile: ConversionProfile, context: object) -> None:
         self._profile = profile
-        self._context_sha256 = hashlib.sha256(
-            JdlTargetContextLoader().to_json_text(context).encode("utf-8")
-        ).hexdigest()
+        self._context = context
 
     def apply(self, entries: Sequence[JournalEntry]) -> JournalRouteResult:
         transformed: list[JournalEntry] = []
@@ -83,7 +143,7 @@ class MoneyForwardTradePartnerDescriptionPolicy:
             or policy.status is not MappingStatus.USER_CONFIRMED
             or policy.target_value
             != LossPolicy.APPEND_TRADE_PARTNER_TO_DESCRIPTION_CONFIRMED.value
-            or policy.metadata.get("jdl_context_sha256") != self._context_sha256
+            or not trade_partner_policy_context_matches(policy.metadata, self._context)
             or policy.metadata.get("jdl_evidence_id")
             != TRADE_PARTNER_1D1C_EVIDENCE_ID
         ):

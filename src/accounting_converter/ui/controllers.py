@@ -841,6 +841,7 @@ class AccountingConverterController:
         company_setting_id: str,
         *,
         affected_counts: dict[str, int] | None = None,
+        observed_source_values: tuple[str, ...] = (),
     ) -> TaxMappingSetupReview:
         resolved = self.company_setting_service.resolve_for_source(company_setting_id)
         if not resolved.available or resolved.profile is None or resolved.context is None:
@@ -851,6 +852,7 @@ class AccountingConverterController:
             resolved.profile,
             resolved.context,
             affected_counts=affected_counts,
+            observed_source_values=observed_source_values,
         )
         if review.blocked_items:
             log_local_event(

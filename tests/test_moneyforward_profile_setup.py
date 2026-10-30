@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+from dataclasses import replace
 import tempfile
 import unittest
 from pathlib import Path
@@ -241,6 +242,52 @@ class MoneyForwardProfileSetupTests(unittest.TestCase):
 
         self.assertFalse(review.items)
         self.assertEqual(review.user_message, "税区分はすべて確認済みです。")
+
+    def test_saved_mapping_does_not_hide_missing_exact_tax_evidence(self) -> None:
+        self._write_source(self.source, debit_tax="課税仕入 10%")
+        self._write_context(self.context, taxable_included=True)
+        analysis = self.service.analyze(self.source, self.context)
+        selections = {
+            item.source_value: item.exact_candidate
+            for item in analysis.account_items if item.exact_candidate
+        }
+        profile = self.service.save_confirmed_profile(
+            company_display_name="架空会社",
+            analysis=analysis,
+            selections=selections,
+            explicitly_confirmed=set(selections),
+            explicitly_confirmed_tax={"課税仕入 10%"},
+        )
+        review = self.service.tax_mapping_review(
+            profile, analysis.context,
+            observed_source_values=("課税仕入 10%", "未観測税区分"),
+        )
+        self.assertEqual(tuple(item.source_value for item in review.blocked_items),
+                         ("未観測税区分",))
+        self.assertEqual(review.blocked_items[0].action_owner, "SYSTEM_EVIDENCE")
+        self.assertEqual(review.blocked_items[0].blocker_code,
+                         "MF-JDL-TAX-EVIDENCE-MISSING-EXACT")
+
+        saved_without_exact_evidence = replace(profile, tax_mappings={
+            **profile.tax_mappings,
+            "未観測税区分": MappingValue(
+                "未観測税区分", "未確認target", MappingStatus.USER_CONFIRMED
+            ),
+        })
+        saved_review = self.service.tax_mapping_review(
+            saved_without_exact_evidence, analysis.context,
+            observed_source_values=("未観測税区分",),
+        )
+        self.assertEqual(len(saved_review.blocked_items), 1)
+        self.assertFalse(saved_review.confirmable_items)
+
+        four = self.service.tax_mapping_review(
+            profile, analysis.context,
+            observed_source_values=("未観測A", "未観測B", "未観測C", "未観測D"),
+        )
+        self.assertEqual(len(four.confirmable_items), 0)
+        self.assertEqual(len(four.blocked_items), 4)
+        self.assertTrue(all(item.action_owner == "SYSTEM_EVIDENCE" for item in four.items))
 
     def test_tax_is_saved_only_after_explicit_confirmation(self) -> None:
         self._write_source(self.source, debit_tax="課税仕入 10%")

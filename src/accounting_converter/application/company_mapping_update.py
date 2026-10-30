@@ -125,6 +125,7 @@ class CompanyMappingUpdateReview:
     source_sha256: str | None = None
     descriptions: tuple[MoneyForwardDescriptionReviewItem, ...] = ()
     tax_category_counts: tuple[tuple[str, int], ...] = ()
+    observed_tax_categories: tuple[str, ...] = ()
 
 
 class CompanyMappingUpdateService:
@@ -384,8 +385,8 @@ class CompanyMappingUpdateService:
             tuple(
                 (item.source_value, item.occurrence_count)
                 for item in requirements.tax_categories
-                if item.requires_confirmation
             ),
+            tuple(item.source_value for item in requirements.tax_categories),
         )
 
     def review_saved(self, company_setting_id: str) -> CompanyMappingUpdateReview:

@@ -434,6 +434,7 @@ class MoneyForwardProfileSetupService:
         context: JdlTargetContext,
         *,
         affected_counts: Mapping[str, int] | None = None,
+        observed_source_values: tuple[str, ...] = (),
     ) -> TaxMappingSetupReview:
         if not self._profile_identity_compatible(profile):
             return TaxMappingSetupReview(
@@ -449,7 +450,7 @@ class MoneyForwardProfileSetupService:
                 ),
                 user_message="現在のJDL設定ではこの税区分を確認できません"
             )
-        if not profile.tax_mappings:
+        if not profile.tax_mappings and not observed_source_values:
             return TaxMappingSetupReview(
                 context_compatible=self._tax_context_compatible(context),
                 user_message=(
@@ -460,6 +461,7 @@ class MoneyForwardProfileSetupService:
         stale = tuple(
             source_value
             for source_value, mapping in profile.tax_mappings.items()
+            if (not observed_source_values or source_value in observed_source_values)
             if mapping.is_resolved
             and tax_excluded_proportional_context_verified(context)
             and not tax_excluded_mapping_is_in_scope(
@@ -469,9 +471,16 @@ class MoneyForwardProfileSetupService:
         unresolved = tuple(
             source_value
             for source_value, mapping in profile.tax_mappings.items()
+            if (not observed_source_values or source_value in observed_source_values)
             if not mapping.is_resolved
             or source_value in stale
         )
+        evidence_missing = tuple(
+            source for source in observed_source_values
+            if source and source not in unresolved
+            and not self._tax_items((source,), context)[0].human_confirmable
+        )
+        unresolved = tuple(dict.fromkeys((*unresolved, *evidence_missing)))
         if not unresolved:
             return TaxMappingSetupReview(
                 context_compatible=self._tax_context_compatible(context),

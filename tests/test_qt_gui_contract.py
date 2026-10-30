@@ -415,13 +415,23 @@ class QtGuiContractTests(unittest.TestCase):
         source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
             encoding="utf-8"
         )
-        self.assertIn('item.mapping_type in {"SUBACCOUNT", "DEFAULT_SUBACCOUNT"}', source)
+        self.assertIn('item.mapping_type == "DEFAULT_SUBACCOUNT"', source)
         self.assertIn('("親科目のみの場合", item.parent_only_loss)', source)
-        self.assertIn('"JDL補助科目へ対応: {value}"', source)
-        self.assertIn(
-            'item.mapping_type in {"SUBACCOUNT", "DEFAULT_SUBACCOUNT"}', source
-        )
+        self.assertIn('target.addItem(value, value)', source)
+        self.assertIn('"MFでは補助科目がありません。JDLでこの親科目に補助が必要なため、"', source)
         self.assertIn('item.mapping_type == "SUBACCOUNT"', source)
+
+    def test_mapping_dialog_warns_on_unsaved_close_and_separates_tax_evidence(self) -> None:
+        source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(
+            encoding="utf-8"
+        )
+        dialog = source.split("class CompanyMappingUpdateDialog", 1)[1].split(
+            "class CompanyAddDialog", 1
+        )[0]
+        self.assertIn('self._review_state() != self._initial_review_state', dialog)
+        self.assertIn('QMessageBox.StandardButton.Discard', dialog)
+        self.assertIn('実機検証待ち{tax_system_pending}', dialog)
+        self.assertIn('self.save_button.setEnabled(confirmed > 0)', dialog)
 
     def test_mapping_dialog_initializes_actions_before_subaccount_refresh(self) -> None:
         source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(

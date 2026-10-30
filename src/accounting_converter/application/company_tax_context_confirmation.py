@@ -16,6 +16,10 @@ from accounting_converter.adapters.output.jdl import (
     JdlTargetContextBuilder,
 )
 from accounting_converter.application.profile_revision import revised_profile_id
+from accounting_converter.application.moneyforward_trade_partner import (
+    upgrade_trade_partner_policy,
+)
+from accounting_converter.domain.conversion_profile import TRADE_PARTNER_LOSS_POLICY_KEY
 from accounting_converter.domain.mapping import MappingStatus, MappingValue
 from accounting_converter.infrastructure.jdl_account_pdf_draft import (
     JdlAccountPdfDraftStore,
@@ -87,6 +91,7 @@ class CompanyTaxContextConfirmationService:
             )
         setting = self.company_store.get(company_setting_id)
         draft_path = self.company_store.context_path(setting)
+        previous_context = None
         if self.drafts.is_draft(draft_path):
             draft = self.drafts.load(draft_path)
             if draft.observation.conflicts:
@@ -125,6 +130,7 @@ class CompanyTaxContextConfirmationService:
             department_processing_enabled = False
         else:
             current = self.contexts.load(draft_path)
+            previous_context = current
             account_master = current.account_master
             subaccounts = current.subaccounts
             departments = current.departments
@@ -184,12 +190,22 @@ class CompanyTaxContextConfirmationService:
             )
             for key, value in old.tax_mappings.items()
         }
+        loss_policies = dict(old.loss_policy_mappings)
+        if previous_context is not None:
+            policy = loss_policies.get(TRADE_PARTNER_LOSS_POLICY_KEY)
+            if policy is not None:
+                loss_policies[TRADE_PARTNER_LOSS_POLICY_KEY] = (
+                    upgrade_trade_partner_policy(
+                        policy, previous_context, result.context
+                    )
+                )
         updated = replace(
             old,
             profile_id=revised_profile_id(old.profile_id, "tax-context"),
             account_mappings=accounts,
             subaccount_context_mappings=subaccounts,
             tax_mappings=taxes,
+            loss_policy_mappings=loss_policies,
             updated_at=datetime.now(timezone.utc),
         )
         self.profile_store.create(updated)

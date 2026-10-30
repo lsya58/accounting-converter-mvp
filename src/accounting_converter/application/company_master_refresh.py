@@ -7,6 +7,9 @@ from pathlib import Path
 from typing import Mapping
 
 from accounting_converter.application.profile_revision import revised_profile_id
+from accounting_converter.application.moneyforward_trade_partner import (
+    upgrade_trade_partner_policy,
+)
 from accounting_converter.application.jdl_master_identity import (
     observed_master_identity_sha256,
 )
@@ -16,13 +19,16 @@ from accounting_converter.application.jdl_master_observation import (
     JdlObservedSubaccount,
     JdlPrintedAccount,
 )
-from accounting_converter.domain.conversion_profile import ConversionProfile
+from accounting_converter.domain.conversion_profile import (
+    ConversionProfile, TRADE_PARTNER_LOSS_POLICY_KEY,
+)
 from accounting_converter.domain.mapping import (
     MappingKey,
     MappingStatus,
     MappingValue,
     SubaccountPolicy,
 )
+from accounting_converter.infrastructure.jdl_target_context_loader import JdlTargetContextLoader
 from accounting_converter.infrastructure.jdl_account_pdf_draft import (
     JdlAccountPdfDraftStore,
 )
@@ -221,11 +227,25 @@ class CompanyMasterRefreshService:
                     parent_account=previous.parent_account,
                     metadata={**previous.metadata, "refresh_reconfirmation_required": "true"},
                 )
+        loss_policies = dict(old_profile.loss_policy_mappings)
+        policy = loss_policies.get(TRADE_PARTNER_LOSS_POLICY_KEY)
+        if policy is not None and policy.status is MappingStatus.USER_CONFIRMED:
+            old_path = self.company_store.context_path(setting)
+            if not self.drafts.is_draft(old_path):
+                old_context = JdlTargetContextLoader().load(old_path)
+                loss_policies[TRADE_PARTNER_LOSS_POLICY_KEY] = (
+                    upgrade_trade_partner_policy(
+                        policy,
+                        old_context,
+                        replace(old_context, product=draft.product, version=draft.version),
+                    )
+                )
         updated = replace(
             old_profile,
             profile_id=revised_profile_id(old_profile.profile_id, "refresh"),
             account_mappings=mappings,
             subaccount_context_mappings=subaccount_mappings,
+            loss_policy_mappings=loss_policies,
             updated_at=datetime.now(timezone.utc),
         )
         self.profile_store.create(updated)

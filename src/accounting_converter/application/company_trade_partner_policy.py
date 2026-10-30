@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 
 from accounting_converter.application.moneyforward_trade_partner import (
     TRADE_PARTNER_1D1C_EVIDENCE_ID,
+    TRADE_PARTNER_CAPABILITY_KEY,
+    trade_partner_target_capability_sha256,
+    trade_partner_policy_context_matches,
 )
 from accounting_converter.application.profile_revision import revised_profile_id
 from accounting_converter.domain.conversion_profile import (
@@ -38,14 +40,14 @@ class CompanyTradePartnerPolicyService:
         path = self.company_store.context_path(setting)
         if self.drafts.is_draft(path):
             return TradePartnerPolicyState(False, False)
-        context_hash = self._context_hash(path)
+        context = self.contexts.load(path)
         mapping = profile.loss_policy_mappings.get(TRADE_PARTNER_LOSS_POLICY_KEY)
         confirmed = bool(
             mapping
             and mapping.status is MappingStatus.USER_CONFIRMED
             and mapping.target_value
             == LossPolicy.APPEND_TRADE_PARTNER_TO_DESCRIPTION_CONFIRMED.value
-            and mapping.metadata.get("jdl_context_sha256") == context_hash
+            and trade_partner_policy_context_matches(mapping.metadata, context)
             and mapping.metadata.get("jdl_evidence_id")
             == TRADE_PARTNER_1D1C_EVIDENCE_ID
         )
@@ -57,14 +59,17 @@ class CompanyTradePartnerPolicyService:
         path = self.company_store.context_path(setting)
         if self.drafts.is_draft(path):
             raise ValueError("JDL設定の確認完了後に取引先の扱いを設定してください。")
-        context_hash = self._context_hash(path)
+        context = self.contexts.load(path)
+        capability = trade_partner_target_capability_sha256(context)
+        if capability is None:
+            raise ValueError("JDLの出力形式と製品・版を確認できません。")
         policies = dict(old.loss_policy_mappings)
         policies[TRADE_PARTNER_LOSS_POLICY_KEY] = MappingValue(
             TRADE_PARTNER_LOSS_POLICY_KEY,
             LossPolicy.APPEND_TRADE_PARTNER_TO_DESCRIPTION_CONFIRMED.value,
             MappingStatus.USER_CONFIRMED,
             metadata={
-                "jdl_context_sha256": context_hash,
+                TRADE_PARTNER_CAPABILITY_KEY: capability,
                 "jdl_evidence_id": TRADE_PARTNER_1D1C_EVIDENCE_ID,
             },
         )
@@ -80,9 +85,3 @@ class CompanyTradePartnerPolicyService:
         except Exception:
             self.profile_store.delete(updated.profile_id)
             raise
-
-    def _context_hash(self, path) -> str:
-        context = self.contexts.load(path)
-        return hashlib.sha256(
-            self.contexts.to_json_text(context).encode("utf-8")
-        ).hexdigest()
