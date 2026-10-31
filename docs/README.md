@@ -25,6 +25,7 @@
 - [Evidence-driven 開発ワークフロー](development/mf_jdl_evidence_driven_workflow.md): 進め方と判断基準。AI coding agent向けの手順を含む
 - [JDL実機検証履歴](development/jdl_real_evidence_log.md): 実機操作の履歴。Humanへ依頼する前に確認
 - [Capability composition 設計](design/mf_tax_capability_composition.md): Evidenceを組み合わせて出力可否を決める方式
+- [JDL→Money Forward の判断記録](design/jdl_to_mf_decision.md): 逆方向を今は作らない理由と、代わりに進めるJDL出力の入力元非依存化
 - `design/`: 設計と実装境界
 - `research/`: 調査時点の観測・履歴。現在値は上記statusを優先
 - `tests/evidence/`: privacy-safeなEvidence原本
