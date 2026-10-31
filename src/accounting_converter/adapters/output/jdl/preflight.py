@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from decimal import ROUND_DOWN, Decimal, InvalidOperation
 import hashlib
 from typing import Sequence
 
 from accounting_converter.domain.journal import JournalEntry, JournalLine, Side, TaxInfo
+from accounting_converter.domain.mf_outpur_scope import OUTPUR_SHAPE_EVIDENCE_IDS, outpur_target_signature
 from accounting_converter.domain.profile import FormatProfile
 from accounting_converter.domain.validation import Severity, ValidationResult
 from accounting_converter.application.moneyforward_jdl_loss import (
@@ -21,12 +22,16 @@ from accounting_converter.profiles.jdl_official import (
 from .models import (
     JDL_OUTPUT_FORMAT_ID,
     JDL_OUTPUT_METADATA_KEY,
+    JdlContextConfirmationState,
+    JdlContextProvenance,
     JdlDepartmentIdentity,
     JdlEvidenceProfile,
+    JdlInputTaxCreditMethod,
     JdlOutputPlan,
     JdlOutputRow,
     JdlSubaccountIdentity,
     JdlTargetContext,
+    JdlTaxationMethod,
 )
 
 
@@ -104,6 +109,9 @@ EVIDENCE_IDS = {
     JdlEvidenceProfile.MF_COMPOUND_1D2C_TAX_EXCLUDED_PROPORTIONAL: (
         "EVID-MF-JDL-35-5-1D2C-REAL-ROUNDTRIP-001"
     ),
+    JdlEvidenceProfile.MF_OUTPUR_COMPOUND_4D6C: OUTPUR_SHAPE_EVIDENCE_IDS[(4, 6)],
+    JdlEvidenceProfile.MF_OUTPUR_COMPOUND_5D7C: OUTPUR_SHAPE_EVIDENCE_IDS[(5, 7)],
+    JdlEvidenceProfile.MF_OUTPUR_COMPOUND_5D8C: OUTPUR_SHAPE_EVIDENCE_IDS[(5, 8)],
     JdlEvidenceProfile.COMPOUND_2D1C_LINE_DESCRIPTIONS: (
         "EVID-JDL-COMPOUND-2D1C-PER-ROW-DESCRIPTION-001"
     ),
@@ -134,6 +142,16 @@ MF_TAX_EXCLUDED_PROPORTIONAL_13_SEQUENCE = (
     JdlEvidenceProfile.MF_NO_TAX_PROPORTIONAL_1111,
     *(JdlEvidenceProfile.MF_TAX_EXCLUDED_PROPORTIONAL_1111 for _ in range(4)),
 )
+MF_OUTPUR_COMPOUND_11_SEQUENCE = (
+    *(JdlEvidenceProfile.MF_OUTPUR_COMPOUND_4D6C for _ in range(5)),
+    JdlEvidenceProfile.MF_OUTPUR_COMPOUND_5D7C,
+    *(JdlEvidenceProfile.MF_OUTPUR_COMPOUND_5D8C for _ in range(5)),
+)
+MF_OUTPUR_COMPOUND_PROFILES = {
+    JdlEvidenceProfile.MF_OUTPUR_COMPOUND_4D6C: (4, 6),
+    JdlEvidenceProfile.MF_OUTPUR_COMPOUND_5D7C: (5, 7),
+    JdlEvidenceProfile.MF_OUTPUR_COMPOUND_5D8C: (5, 8),
+}
 MIXED_BATCH_PROFILE_SEQUENCE = (
     JdlEvidenceProfile.BASIC_1111,
     JdlEvidenceProfile.BASIC_1111,
@@ -308,6 +326,7 @@ class JdlOutputPreflight:
             JdlEvidenceProfile.COMPOUND_2D2C_PURCHASE_10_TAXABLE_NO_SUBACCOUNT,
             JdlEvidenceProfile.MF_COMPOUND_2D2C_TAX_EXCLUDED_PROPORTIONAL,
             JdlEvidenceProfile.MF_COMPOUND_1D2C_TAX_EXCLUDED_PROPORTIONAL,
+            *MF_OUTPUR_COMPOUND_PROFILES,
             JdlEvidenceProfile.COMPOUND_2D1C_LINE_DESCRIPTIONS,
             JdlEvidenceProfile.COMPOUND_2D3C_LINE_DESCRIPTIONS,
             JdlEvidenceProfile.COMPOUND_4D6C_LINE_DESCRIPTIONS,
@@ -359,6 +378,7 @@ class JdlOutputPreflight:
             JdlEvidenceProfile.COMPOUND_2D2C_PURCHASE_10_TAXABLE_NO_SUBACCOUNT,
             JdlEvidenceProfile.MF_COMPOUND_2D2C_TAX_EXCLUDED_PROPORTIONAL,
             JdlEvidenceProfile.MF_COMPOUND_1D2C_TAX_EXCLUDED_PROPORTIONAL,
+            *MF_OUTPUR_COMPOUND_PROFILES,
             JdlEvidenceProfile.COMPOUND_2D1C_LINE_DESCRIPTIONS,
             JdlEvidenceProfile.COMPOUND_2D3C_LINE_DESCRIPTIONS,
             JdlEvidenceProfile.COMPOUND_4D6C_LINE_DESCRIPTIONS,
@@ -372,6 +392,7 @@ class JdlOutputPreflight:
             JdlEvidenceProfile.COMPOUND_2D2C_PURCHASE_10_TAXABLE_NO_SUBACCOUNT: (2, 2, 2),
             JdlEvidenceProfile.MF_COMPOUND_2D2C_TAX_EXCLUDED_PROPORTIONAL: (2, 2, 2),
             JdlEvidenceProfile.MF_COMPOUND_1D2C_TAX_EXCLUDED_PROPORTIONAL: (1, 2, 2),
+            **{profile: (*shape, sum(shape)) for profile, shape in MF_OUTPUR_COMPOUND_PROFILES.items()},
             JdlEvidenceProfile.COMPOUND_2D1C_LINE_DESCRIPTIONS: (2, 1, 2),
             JdlEvidenceProfile.COMPOUND_2D3C_LINE_DESCRIPTIONS: (2, 3, 3),
             JdlEvidenceProfile.COMPOUND_4D6C_LINE_DESCRIPTIONS: (4, 6, 6),
@@ -427,6 +448,36 @@ class JdlOutputPreflight:
                     expected_credit_method="PROPORTIONAL",
                 )
                 self._validate_optional_subaccount(second.credit, entry, errors)
+        elif evidence in MF_OUTPUR_COMPOUND_PROFILES:
+            assert physical_rows is not None
+            expected_shape = MF_OUTPUR_COMPOUND_PROFILES[evidence]
+            actual_signature = tuple(
+                (
+                    line.side.value,
+                    identity.target_master_code if identity else "",
+                    subaccount.output_code if subaccount else "",
+                )
+                for line in entry.lines
+                for identity, subaccount in ((self._account_identity(line.account), self._subaccount_identity(line)),)
+            )
+            if (
+                self.context.tax_processing_mode is not JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED
+                or self.context.effective_taxation_method is not JdlTaxationMethod.STANDARD
+                or self.context.effective_input_tax_credit_method is not JdlInputTaxCreditMethod.PROPORTIONAL
+                or self.context.confirmation_state is not JdlContextConfirmationState.CONFIRMED
+                or self.context.provenance is not JdlContextProvenance.USER_CONFIRMED_RUNTIME_SNAPSHOT
+                or entry.metadata.get("source") != "moneyforward_cloud_journal_export_observed"
+                or actual_signature != outpur_target_signature(expected_shape)
+                or any(line.tax_info or line.department or line.metadata.get("moneyforward_trade_partner") for line in entry.lines)
+            ):
+                errors.append(self._error(
+                    "JDL-OUT-OUTPUR-EXACT-SCOPE",
+                    "対象外仕入compoundの実機確認済み条件と一致しません。",
+                    "evidence_profile", entry,
+                ))
+            for row in physical_rows:
+                self._validate_optional_subaccount(row.debit, entry, errors)
+                self._validate_optional_subaccount(row.credit, entry, errors)
         elif evidence is JdlEvidenceProfile.MF_COMPOUND_2D2C_TAX_EXCLUDED_PROPORTIONAL:
             assert physical_rows is not None
             taxed_rows = tuple(
@@ -517,15 +568,16 @@ class JdlOutputPreflight:
         else:
             paired_rows = tuple((row.debit, row.credit) for row in physical_rows)
         for index, (debit_line, credit_line) in enumerate(paired_rows):
-            rows.append(
-                self._row(
-                    flags[index],
-                    entry,
-                    debit_line,
-                    credit_line,
-                    descriptions[index],
-                )
+            output_row = self._row(
+                flags[index], entry, debit_line, credit_line, descriptions[index],
             )
+            if evidence in MF_OUTPUR_COMPOUND_PROFILES:
+                output_row = replace(
+                    output_row,
+                    debit_tax_amount="0" if debit_line is not None else "",
+                    credit_tax_amount="0" if credit_line is not None else "",
+                )
+            rows.append(output_row)
         return rows
 
     def _validate_feature_combination(
@@ -851,6 +903,8 @@ class JdlOutputPreflight:
         if experimental_six_tax_batch:
             return
         if profiles == MF_TAX_EXCLUDED_PROPORTIONAL_13_SEQUENCE:
+            return
+        if profiles == MF_OUTPUR_COMPOUND_11_SEQUENCE:
             return
         if len(profiles) == 1:
             return

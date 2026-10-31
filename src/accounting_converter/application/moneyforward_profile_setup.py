@@ -36,6 +36,7 @@ from accounting_converter.domain.mapping import (
     MappingValue,
 )
 from accounting_converter.domain.profile import FormatProfile
+from accounting_converter.domain.mf_outpur_scope import OUTPUR_TAX_MAPPING_EVIDENCE_ID
 from accounting_converter.infrastructure.conversion_profile_store import ConversionProfileStore
 from accounting_converter.infrastructure.jdl_target_context_loader import JdlTargetContextLoader
 from accounting_converter.infrastructure.jdl_account_pdf_draft import (
@@ -578,6 +579,9 @@ class MoneyForwardProfileSetupService:
                 ),
                 "対象外": (
                     "", "対象外", "", TAX_EXCLUDED_PROPORTIONAL_BATCH_EVIDENCE_ID,
+                ),
+                "対象外仕入": (
+                    "", "対象外（CSV税欄は空欄・税額0）", "", OUTPUR_TAX_MAPPING_EVIDENCE_ID,
                 ),
             }
         else:

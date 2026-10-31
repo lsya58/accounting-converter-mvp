@@ -14,6 +14,11 @@ from accounting_converter.adapters.output.jdl import (
     JdlTaxationMethod,
 )
 from accounting_converter.domain.journal import JournalEntry, Side
+from accounting_converter.domain.mf_outpur_scope import (
+    OUTPUR_SHAPE_EVIDENCE_IDS,
+    OUTPUR_TAX_MAPPING_EVIDENCE_ID,
+    outpur_signature,
+)
 from accounting_converter.domain.conversion_profile import ConversionProfile
 from accounting_converter.domain.mapping import (
     PARENT_ONLY_CANONICAL_SUBACCOUNT,
@@ -108,6 +113,18 @@ EVIDENCE = (
          ("CREDIT", "3271", "0002", "対象外")),
         JdlEvidenceProfile.MF_COMPOUND_1D2C_TAX_EXCLUDED_PROPORTIONAL,
     ),
+    MfTaxExcludedPatternEvidence(
+        OUTPUR_SHAPE_EVIDENCE_IDS[(4, 6)], outpur_signature((4, 6)),
+        JdlEvidenceProfile.MF_OUTPUR_COMPOUND_4D6C,
+    ),
+    MfTaxExcludedPatternEvidence(
+        OUTPUR_SHAPE_EVIDENCE_IDS[(5, 7)], outpur_signature((5, 7)),
+        JdlEvidenceProfile.MF_OUTPUR_COMPOUND_5D7C,
+    ),
+    MfTaxExcludedPatternEvidence(
+        OUTPUR_SHAPE_EVIDENCE_IDS[(5, 8)], outpur_signature((5, 8)),
+        JdlEvidenceProfile.MF_OUTPUR_COMPOUND_5D8C,
+    ),
 )
 EVIDENCE_REGISTRY = MfTaxEvidenceRegistry(EVIDENCE)
 
@@ -133,14 +150,19 @@ def confirmed_mapping_is_in_scope(
     expected = {
         "課税仕入 10%": ("10%", "仕　入"),
         "対象外": ("", ""),
+        "対象外仕入": ("", ""),
     }.get(source_tax_category)
+    evidence_id = (
+        OUTPUR_TAX_MAPPING_EVIDENCE_ID
+        if source_tax_category == "対象外仕入" else BATCH_EVIDENCE_ID
+    )
     return bool(
         expected is not None
         and mapping is not None
         and mapping.status is MappingStatus.USER_CONFIRMED
         and (mapping.target_value, mapping.metadata.get("jdl_tax_scope", ""))
         == expected
-        and mapping.metadata.get("jdl_evidence_id") == BATCH_EVIDENCE_ID
+        and mapping.metadata.get("jdl_evidence_id") == evidence_id
         and mapping.metadata.get("jdl_tax_processing_mode")
         == context.tax_processing_mode.value
         and context_is_verified(context)
@@ -157,7 +179,12 @@ def confirmed_mapping_mismatch_fields(
     expected = {
         "課税仕入 10%": ("10%", "仕　入"),
         "対象外": ("", ""),
+        "対象外仕入": ("", ""),
     }.get(source_tax_category)
+    evidence_id = (
+        OUTPUR_TAX_MAPPING_EVIDENCE_ID
+        if source_tax_category == "対象外仕入" else BATCH_EVIDENCE_ID
+    )
     mismatches: list[str] = []
     if not context_is_verified(context):
         mismatches.append("TAX_CONTEXT")
@@ -170,7 +197,7 @@ def confirmed_mapping_mismatch_fields(
             mismatches.append("TARGET_TAX_IDENTITY")
         if mapping.metadata.get("jdl_tax_scope", "") != expected[1]:
             mismatches.append("TARGET_TAX_SCOPE")
-    if mapping.metadata.get("jdl_evidence_id") != BATCH_EVIDENCE_ID:
+    if mapping.metadata.get("jdl_evidence_id") != evidence_id:
         mismatches.append("EVIDENCE_ID")
     if (
         mapping.metadata.get("jdl_tax_processing_mode")

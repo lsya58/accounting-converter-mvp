@@ -56,7 +56,7 @@ Windows保存済みCompanySettingの読み取り可能なsnapshotがある。非
 
 課税売上10%の`売　上` literalは現会社の自己Export `0871`から取得し、rev2 candidateの実機Import・再Export `0872`でexact 1111/補助なし→6121/補助なし、取引先なしの1件だけstrict PASS。ただし実データ65件の署名一致は0件（別署名8種類）であり、このEvidenceによるformal解放は0件。失敗した`売一種`を再利用しない。詳細は `tests/evidence/e2e/mf_tax_sales10_excluded_proportional_cash/`。
 
-対象外仕入のtarget表現は、05/25の自己Export 0873でHuman選択UI `0 対象外`とCSV上の両側tax欄blank/税額0を分けて観測した。05/26の1D1C probeは実機Import・0874再Exportでstrict PASS。scopeとSHAは `tests/evidence/e2e/mf_tax_outpur_excluded_proportional_cash/` を参照。これはsource税区分のHuman-confirmed mappingや実11件のcompound/行別摘要を証明しない。11件は4D6C×5・5D7C×1・5D8C×5、127 physical rows、科目/補助の保存済みmappingは現masterと一致。実顧客11件を元にした05/27のNOT_FOR_PRODUCTION private probeを生成済みで、税表現・compound grouping・行別摘要を別々にstrict判定する。Source tax mappingはまだUNRESOLVEDなのでformal outputへは接続しない。実会社へのprobe投入前にbackup・削除/復元手順を確認する。
+対象外仕入のtarget表現は、05/25の自己Export 0873でHuman選択UI `0 対象外`とCSV上の両側tax欄blank/税額0を分けて観測した。05/26の1D1C probeは実機Import・0874再Exportでstrict PASS。11件は4D6C×5・5D7C×1・5D8C×5、127 physical rowsで、05/27の実機Import・0875再Exportも11件全case strict PASS、unexpected diff 0。tax interaction、各shape、行別摘要は独立Evidenceとして記録し、exact formal routeを接続した。source税区分`対象外仕入`のHuman-confirmed mappingは現Profileでまだ`UNRESOLVED`なので、現実のformal READY/full outputはBLOCKのまま。詳細は `tests/evidence/e2e/mf_tax_outpur_excluded_proportional_cash/` と `tests/evidence/e2e/mf_tax_outpur_compound_11/`。
 
 ## 次のcoverage gate
 
