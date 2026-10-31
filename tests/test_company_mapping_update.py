@@ -13,6 +13,7 @@ from accounting_converter.adapters.input.moneyforward import MONEYFORWARD_OBSERV
 from accounting_converter.application.company_mapping_update import (
     CompanyMappingUpdateService,
     PARENT_ONLY_SELECTION,
+    blank_subaccount_rejection_evidence_id,
 )
 from accounting_converter.application.moneyforward_description_replacement import (
     MF_DESCRIPTION_REPLACEMENT_POLICY,
@@ -52,6 +53,18 @@ class _NoSubaccountExtractor:
 
 
 class CompanyMappingUpdateTests(unittest.TestCase):
+    def test_blank_subaccount_rejection_evidence_is_parent_scoped(self) -> None:
+        self.assertEqual(
+            blank_subaccount_rejection_evidence_id("1551", 9),
+            "EVID-JDL-35-5-BLANK-SUB-REJECT-1551-001",
+        )
+        self.assertEqual(
+            blank_subaccount_rejection_evidence_id("1311", 3),
+            "EVID-JDL-35-5-BLANK-SUB-REJECT-1311-001",
+        )
+        self.assertIsNone(blank_subaccount_rejection_evidence_id("1551", 0))
+        self.assertIsNone(blank_subaccount_rejection_evidence_id("9999", 2))
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.root = Path(self.temp.name)
         pdf = self.root / "master.pdf"; pdf.write_bytes(b"synthetic")

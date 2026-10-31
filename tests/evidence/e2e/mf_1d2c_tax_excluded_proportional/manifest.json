@@ -1,0 +1,19 @@
+{
+  "evidence_id": "EVID-MF-JDL-35-5-1D2C-REAL-ROUNDTRIP-001",
+  "status": "VERIFIED_BY_REAL_IMPORT_AND_REEXPORT",
+  "source_journal_sha256": "6099ad2a91a878298c8fac68226f9cc5b6fd263cd5eb95ffd20daeacbe29e949",
+  "candidate_sha256": "73c89dce18dc9bd66d7af9e06bd8c528f8ee0431dfc9d90b9bc0c42ca487e4d5",
+  "reexport_sha256": "50a0dee743e7a461d2e00caefa8136876b4b76c886948605640b85bfdd6ee718",
+  "tax_context_identity_sha256": "a300dc8750b7fe6417f2d3c092a6cae2055ccf0256cd539a7036e4b67b0de3e0",
+  "date": "2026-05-18",
+  "logical_journals": 1,
+  "physical_rows": 2,
+  "flags": ["1110", "1101"],
+  "missing_rows": 0,
+  "extra_rows": 0,
+  "known_normalizations": 10,
+  "unexpected_diffs": 0,
+  "strict_comparison": "KNOWN_JDL_CANONICAL_NORMALIZATION",
+  "production_ready": false,
+  "private_raw_files_tracked": false
+}

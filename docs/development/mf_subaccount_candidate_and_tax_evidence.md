@@ -1,6 +1,6 @@
 # MF subaccount candidates and pending tax Evidence
 
-最終更新: 2026-10-30
+最終更新: 2026-10-31
 
 この文書はprivateな仕訳・取引先名を含まない集計です。顧客名や摘要は記録しません。
 
@@ -46,8 +46,18 @@ MF実CSVには14種類の補助identityがあり、売掛金9、預り金3、未
 
 確認済みtarget identityとcurrent Tax ContextをWindowsのCompanySettingから取得した後に、同じ会計期間内の複数probeを1つのNOT_FOR_PRODUCTION Importバッチへまとめられる。少なくとも上記shape別・取引先有無別・account/subaccount signature別のcaseを含める。batch全体を1つの万能Evidenceにせず、caseごとにImport/re-export strict comparisonを行う。予期しない差分があるcaseは昇格しない。
 
-このLinux workspaceにはWindows保存済みCompanySettingの確認済みtarget mappingとTax Context snapshotがないため、exact JDL candidateはまだ生成しない。probe path/status: 未生成 / `PENDING_CONFIRMED_TARGET_CONTEXT`。Humanの次の操作は最新PDFをCompanySettingへ読み込み、補助mappingを確認すること。税4種類のprobe作成と実機比較はSYSTEM_EVIDENCE担当。
+Windows保存済みCompanySettingの読み取り可能なsnapshotがある。非課税仕入・非課税売上の各1件は実機Import/re-exportでstrict PASSしたが、実データ全件のformal tax routeは未接続。実データと同じtarget account/subaccount署名はそれぞれ9/10件、2/2件で、署名の異なる1件は別Evidenceが必要。これらはREADY数ではない。
+
+### 現会社JDL自己Exportからの課税売上10%候補
+
+現会社の`売一種` Importは失敗。現会社のJDLで2026-05-23に、借方1111現金/補助なし、貸方6121売上高/補助なし、貸借各1,100円、貸方だけ課税売上10%、摘要`EVID-TAX-SALES10-SELFEXPORT`の1D1CをHumanが入力し、その日をJDL自身からCSV Exportする。実機画面で表示される税入力方法と税額はそのまま観測し、推測でCSV literalを指定しない。実環境へ投入する前にbackupと削除/復元手順を確認する。
+
+`accounting_converter.tools.generate_mf_sales10_selfexport_probe`は、そのExportのmarker行から識別フラグ・借貸科目/補助・金額・貸方課区/税区/入力方法/税額・反対側tax・optional欄を検査する。現master/Tax Contextと一致する場合だけ、2026-05-24の別日で30列/CP932/BOMなし/CRLFの`PENDING_REAL_JDL_IMPORT_REEXPORT` probeをatomic/no-overwriteで生成する。自己Exportはtax literalのprovenanceであってImport Evidenceではない。probeを別途Importし、同日再Exportを既存`compare_probe_patterns`で比較して初めてEvidence判定する。秘密のCSV本体はGitへ入れない。
+
+課税売上10%の`売　上` literalは現会社の自己Export `0871`から取得し、rev2 candidateの実機Import・再Export `0872`でexact 1111/補助なし→6121/補助なし、取引先なしの1件だけstrict PASS。ただし実データ65件の署名一致は0件（別署名8種類）であり、このEvidenceによるformal解放は0件。失敗した`売一種`を再利用しない。詳細は `tests/evidence/e2e/mf_tax_sales10_excluded_proportional_cash/`。
+
+対象外仕入のtarget表現は、05/25の自己Export 0873でHuman選択UI `0 対象外`とCSV上の両側tax欄blank/税額0を分けて観測した。05/26の1D1C probeは実機Import・0874再Exportでstrict PASS。scopeとSHAは `tests/evidence/e2e/mf_tax_outpur_excluded_proportional_cash/` を参照。これはsource税区分のHuman-confirmed mappingや実11件のcompound/行別摘要を証明しない。11件は4D6C×5・5D7C×1・5D8C×5、127 physical rows、科目/補助の保存済みmappingは現masterと一致。実顧客11件を元にした05/27のNOT_FOR_PRODUCTION private probeを生成済みで、税表現・compound grouping・行別摘要を別々にstrict判定する。Source tax mappingはまだUNRESOLVEDなのでformal outputへは接続しない。実会社へのprobe投入前にbackup・削除/復元手順を確認する。
 
 ## 次のcoverage gate
 
-480/482（99.59%）はformal scope projectionであり、Tax EvidenceとHuman mappingが揃ったREADY数ではない。481/482には1D2Cまたは10D9Cの一方のexact Evidenceと実装検証、482/482には両方が必要。各shapeが実JDL Import/re-exportに失敗する場合はcoverageを引き上げない。全482件のformal batchは全blocker解消後にだけ出力する。
+481/482（99.79%）は1D2C実機Evidenceを含む構造projectionであり、Tax EvidenceとHuman mappingが揃ったREADY数ではない。1D2Cのexact output preflight/serializer接続は実装済み。482/482の構造projectionには10D9Cの独立Evidenceと実装検証が必要。全482件のformal batchは全blocker解消後にだけ出力する。

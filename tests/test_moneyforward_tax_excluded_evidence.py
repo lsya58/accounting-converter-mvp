@@ -14,6 +14,7 @@ from accounting_converter.adapters.output.jdl import (
     JdlAccountIdentity,
     JdlContextConfirmationState,
     JdlContextProvenance,
+    JdlEvidenceProfile,
     JdlInputTaxCreditMethod,
     JdlSubaccountIdentity,
     JdlTargetContext,
@@ -81,6 +82,25 @@ from accounting_converter.profiles.known_formats import (
 
 
 class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
+    def test_1d2c_real_evidence_is_exact_and_not_generalized(self) -> None:
+        signature = (
+            ("DEBIT", "7121", "", "課税仕入 10%"),
+            ("CREDIT", "3141", "", "対象外"),
+            ("CREDIT", "3271", "0002", "対象外"),
+        )
+        evidence = EVIDENCE_REGISTRY.exact(signature, trade_partner=False)
+        self.assertIsNotNone(evidence)
+        self.assertEqual(
+            evidence.evidence_id, "EVID-MF-JDL-35-5-1D2C-REAL-ROUNDTRIP-001"
+        )
+        self.assertIs(
+            evidence.profile,
+            JdlEvidenceProfile.MF_COMPOUND_1D2C_TAX_EXCLUDED_PROPORTIONAL,
+        )
+        self.assertIsNone(EVIDENCE_REGISTRY.exact(signature, trade_partner=True))
+        changed_sub = (*signature[:2], ("CREDIT", "3271", "0001", "対象外"))
+        self.assertIsNone(EVIDENCE_REGISTRY.exact(changed_sub, trade_partner=False))
+
     def test_exact_pattern_activates_and_adds_tax_excluded_fields(self) -> None:
         context = self._context()
         source, mapped = self._p05()

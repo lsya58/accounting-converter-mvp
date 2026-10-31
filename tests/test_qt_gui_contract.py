@@ -418,7 +418,8 @@ class QtGuiContractTests(unittest.TestCase):
         self.assertIn('item.mapping_type == "DEFAULT_SUBACCOUNT"', source)
         self.assertIn('("親科目のみの場合", item.parent_only_loss)', source)
         self.assertIn('target.addItem(value, value)', source)
-        self.assertIn('"MFでは補助科目がありません。JDLでこの親科目に補助が必要なため、"', source)
+        self.assertIn('"補助が設定されているため、補助なしでは取り込めません。"', source)
+        self.assertIn('item.blank_rejection_evidence_id', source)
         self.assertIn('item.mapping_type == "SUBACCOUNT"', source)
 
     def test_mapping_dialog_warns_on_unsaved_close_and_separates_tax_evidence(self) -> None:

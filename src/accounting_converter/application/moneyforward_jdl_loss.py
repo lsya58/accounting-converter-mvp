@@ -13,6 +13,7 @@ from accounting_converter.domain.conversion_profile import (
 VERIFIED_DESCRIPTION_SHAPES = frozenset(
     {
         (1, 3, 3),
+        (1, 2, 2),
         (2, 2, 2),
         (2, 1, 2),
         (2, 3, 3),

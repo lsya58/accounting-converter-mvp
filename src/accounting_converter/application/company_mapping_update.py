@@ -79,6 +79,7 @@ class CompanyMappingUpdateItem:
     recommendation_detail: str = "会社の管理方針に合わせて選択してください。"
     parent_only_loss: str = "補助科目別の情報はJDLへ引き継がれません。"
     source_peer_names: tuple[str, ...] = ()
+    blank_rejection_evidence_id: str | None = None
 
     def subaccount_targets_for(self, parent_target: str) -> tuple[str, ...]:
         return next(
@@ -110,6 +111,19 @@ class CompanyMappingUpdateItem:
 
 
 PARENT_ONLY_SELECTION = "__PARENT_ONLY_CONFIRMED__"
+
+_BLANK_SUBACCOUNT_REJECTION_EVIDENCE = {
+    "1551": "EVID-JDL-35-5-BLANK-SUB-REJECT-1551-001",
+    "1311": "EVID-JDL-35-5-BLANK-SUB-REJECT-1311-001",
+}
+
+
+def blank_subaccount_rejection_evidence_id(
+    parent_code: str, observed_subaccount_count: int
+) -> str | None:
+    if observed_subaccount_count == 0:
+        return None
+    return _BLANK_SUBACCOUNT_REJECTION_EVIDENCE.get(parent_code)
 
 
 @dataclass(frozen=True)
@@ -963,6 +977,11 @@ class CompanyMappingUpdateService:
                 parent_only_loss=(
                     "これは情報を削除する選択ではなく、JDL側で必須の既定補助を"
                     "指定する設定です。"
+                ),
+                blank_rejection_evidence_id=(
+                    blank_subaccount_rejection_evidence_id(
+                        parent_code, len(targets.get(parent_code, ()))
+                    )
                 ),
             ))
 

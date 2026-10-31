@@ -1801,14 +1801,23 @@ class CompanyMappingUpdateDialog(QDialog):
             details = (
                 ("推奨", f"{item.recommendation_code}: {item.recommendation_label}"),
                 ("理由", (
-                    "MFでは補助科目がありません。JDLでこの親科目に補助が必要なため、"
-                    "取引をまとめる既存のJDL補助を選び、確認してください。"
+                    "Money Forwardでは補助科目がありませんが、JDLではこの科目に"
+                    "補助が設定されているため、補助なしでは取り込めません。"
+                    "JDLでまとめ先となる補助科目を選択してください。"
+                    if item.blank_rejection_evidence_id else
+                    "MFでは補助科目がありません。このJDL親科目で補助空欄を"
+                    "取り込めるか未確認です。現時点では、取引をまとめる"
+                    "既存のJDL補助を選ぶ場合のみ確認できます。"
                     if item.mapping_type == "DEFAULT_SUBACCOUNT"
                     else item.recommendation_detail
                 )),
                 ("影響する仕訳", f"{item.affected_journal_count}件"),
                 ("JDLの既存補助", "、".join(item.available_targets) or "既存候補なし"),
                 ("親科目のみの場合", item.parent_only_loss),
+                *(
+                    (("実機Evidence", item.blank_rejection_evidence_id),)
+                    if item.blank_rejection_evidence_id else ()
+                ),
             )
         for label, value in details:
             title = QLabel(label)

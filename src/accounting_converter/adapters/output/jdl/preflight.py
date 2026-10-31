@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import ROUND_DOWN, Decimal, InvalidOperation
+import hashlib
 from typing import Sequence
 
 from accounting_converter.domain.journal import JournalEntry, JournalLine, Side, TaxInfo
@@ -99,6 +100,9 @@ EVIDENCE_IDS = {
     ),
     JdlEvidenceProfile.MF_COMPOUND_2D2C_TAX_EXCLUDED_PROPORTIONAL: (
         "EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P01-2D2C-PURCHASE-10-001"
+    ),
+    JdlEvidenceProfile.MF_COMPOUND_1D2C_TAX_EXCLUDED_PROPORTIONAL: (
+        "EVID-MF-JDL-35-5-1D2C-REAL-ROUNDTRIP-001"
     ),
     JdlEvidenceProfile.COMPOUND_2D1C_LINE_DESCRIPTIONS: (
         "EVID-JDL-COMPOUND-2D1C-PER-ROW-DESCRIPTION-001"
@@ -303,6 +307,7 @@ class JdlOutputPreflight:
             JdlEvidenceProfile.COMPOUND_2D2C_PURCHASE_10_TAXABLE,
             JdlEvidenceProfile.COMPOUND_2D2C_PURCHASE_10_TAXABLE_NO_SUBACCOUNT,
             JdlEvidenceProfile.MF_COMPOUND_2D2C_TAX_EXCLUDED_PROPORTIONAL,
+            JdlEvidenceProfile.MF_COMPOUND_1D2C_TAX_EXCLUDED_PROPORTIONAL,
             JdlEvidenceProfile.COMPOUND_2D1C_LINE_DESCRIPTIONS,
             JdlEvidenceProfile.COMPOUND_2D3C_LINE_DESCRIPTIONS,
             JdlEvidenceProfile.COMPOUND_4D6C_LINE_DESCRIPTIONS,
@@ -353,6 +358,7 @@ class JdlOutputPreflight:
             JdlEvidenceProfile.COMPOUND_2D2C_PURCHASE_10_TAXABLE,
             JdlEvidenceProfile.COMPOUND_2D2C_PURCHASE_10_TAXABLE_NO_SUBACCOUNT,
             JdlEvidenceProfile.MF_COMPOUND_2D2C_TAX_EXCLUDED_PROPORTIONAL,
+            JdlEvidenceProfile.MF_COMPOUND_1D2C_TAX_EXCLUDED_PROPORTIONAL,
             JdlEvidenceProfile.COMPOUND_2D1C_LINE_DESCRIPTIONS,
             JdlEvidenceProfile.COMPOUND_2D3C_LINE_DESCRIPTIONS,
             JdlEvidenceProfile.COMPOUND_4D6C_LINE_DESCRIPTIONS,
@@ -365,6 +371,7 @@ class JdlOutputPreflight:
             JdlEvidenceProfile.COMPOUND_2D2C_PURCHASE_10_TAXABLE: (2, 2, 2),
             JdlEvidenceProfile.COMPOUND_2D2C_PURCHASE_10_TAXABLE_NO_SUBACCOUNT: (2, 2, 2),
             JdlEvidenceProfile.MF_COMPOUND_2D2C_TAX_EXCLUDED_PROPORTIONAL: (2, 2, 2),
+            JdlEvidenceProfile.MF_COMPOUND_1D2C_TAX_EXCLUDED_PROPORTIONAL: (1, 2, 2),
             JdlEvidenceProfile.COMPOUND_2D1C_LINE_DESCRIPTIONS: (2, 1, 2),
             JdlEvidenceProfile.COMPOUND_2D3C_LINE_DESCRIPTIONS: (2, 3, 3),
             JdlEvidenceProfile.COMPOUND_4D6C_LINE_DESCRIPTIONS: (4, 6, 6),
@@ -392,7 +399,35 @@ class JdlOutputPreflight:
         for line in entry.lines:
             self._validate_account(line, entry, errors)
             self._validate_amount(line.amount, entry, errors)
-        if evidence is JdlEvidenceProfile.MF_COMPOUND_2D2C_TAX_EXCLUDED_PROPORTIONAL:
+        if evidence is JdlEvidenceProfile.MF_COMPOUND_1D2C_TAX_EXCLUDED_PROPORTIONAL:
+            assert physical_rows is not None
+            first, second = physical_rows
+            accounts = tuple(self._account_identity(line.account) if line is not None else None
+                             for line in (first.debit, first.credit, second.credit))
+            target_signature = tuple(account.target_master_code if account else "" for account in accounts)
+            last_subaccount = self._subaccount_identity(second.credit)
+            if (
+                hashlib.sha256(entry.id.encode("utf-8")).hexdigest()
+                != "6099ad2a91a878298c8fac68226f9cc5b6fd263cd5eb95ffd20daeacbe29e949"
+                or target_signature != ("7121", "3141", "3271")
+                or first.debit is None or first.debit.sub_account
+                or first.credit is None or first.credit.sub_account
+                or second.debit is not None
+                or last_subaccount is None or last_subaccount.target_master_code != "0002"
+                or any(line.department or line.metadata.get("moneyforward_trade_partner") for line in entry.lines)
+                or any(self._nonempty_tax(line.tax_info) for line in (first.credit, second.credit))
+            ):
+                errors.append(self._error(
+                    "JDL-OUT-1D2C-EXACT-SCOPE", "1D2C仕訳が実機確認済みのexact範囲と一致しません。",
+                    "evidence_profile", entry,
+                ))
+            else:
+                self._validate_tax(
+                    first.debit, first.credit, entry, included=False, errors=errors,
+                    expected_credit_method="PROPORTIONAL",
+                )
+                self._validate_optional_subaccount(second.credit, entry, errors)
+        elif evidence is JdlEvidenceProfile.MF_COMPOUND_2D2C_TAX_EXCLUDED_PROPORTIONAL:
             assert physical_rows is not None
             taxed_rows = tuple(
                 row for row in physical_rows

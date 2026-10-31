@@ -101,6 +101,13 @@ EVIDENCE = (
     MfTaxExcludedPatternEvidence("EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P06-OUT-1311-SUB-3161-001", (("DEBIT","1311","0002","対象外"),("CREDIT","3161","","対象外")), JdlEvidenceProfile.MF_NO_TAX_PROPORTIONAL_1111),
     MfTaxExcludedPatternEvidence("EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P07-8481-3181-001", (("DEBIT","8481","","課税仕入 10%"),("CREDIT","3181",PARENT_ONLY_CANONICAL_SUBACCOUNT,"対象外")), JdlEvidenceProfile.MF_TAX_EXCLUDED_PROPORTIONAL_1111),
     MfTaxExcludedPatternEvidence("EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P07-8481-3181-SUB0001-001", (("DEBIT","8481","","課税仕入 10%"),("CREDIT","3181","0001","対象外")), JdlEvidenceProfile.MF_TAX_EXCLUDED_PROPORTIONAL_1111),
+    MfTaxExcludedPatternEvidence(
+        "EVID-MF-JDL-35-5-1D2C-REAL-ROUNDTRIP-001",
+        (("DEBIT", "7121", "", "課税仕入 10%"),
+         ("CREDIT", "3141", "", "対象外"),
+         ("CREDIT", "3271", "0002", "対象外")),
+        JdlEvidenceProfile.MF_COMPOUND_1D2C_TAX_EXCLUDED_PROPORTIONAL,
+    ),
 )
 EVIDENCE_REGISTRY = MfTaxEvidenceRegistry(EVIDENCE)
 

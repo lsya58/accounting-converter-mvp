@@ -19,7 +19,7 @@
 |---|---|---|
 | JDL→JDL | `VERIFIED_BY_REAL_IMPORT`, frozen | 1,158 journals / 1,271 rows。実Import PASS。会計判断reviewとbatch re-export strict comparisonは未完了 |
 | MF→JDL READY batch | `VERIFIED_BY_REAL_IMPORT_AND_REEXPORT` | 13 journals / 14 rows、P01-P07、unexpected diff 0、silent loss 0 |
-| MF→JDL 482 dataset | Expansion in progress | 480/482はformal scope projection。full batch round-trip未検証、atomic outputはBLOCK |
+| MF→JDL 482 dataset | Expansion in progress | 1D2C exact real Import/re-export PASS。structural Evidence projection 481/482、formal routeは未実装。full batch atomic outputはBLOCK |
 | 弥生→JDL | Limited regression route | AE19 direct export由来の限定scope。拡張は後順位 |
 
 ## Key Evidence IDs
@@ -31,22 +31,31 @@
 | `EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-BATCH-001` | 税抜・原則課税・一括比例配分方式の限定P01-P07 batch |
 | `EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P05-8471-3181-SUB0001-001` | P05 exact subaccount variant |
 | `EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P07-8481-3181-SUB0001-001` | P07 exact subaccount variant |
+| `EVID-MF-JDL-35-5-1D2C-REAL-ROUNDTRIP-001` | exact 1D2C / 2-row real Import and re-export; output serializer activation pending |
 
 ## 482-journal dataset
 
 - Logical journals: 482
 - Physical rows: 639
 - Period: 2025-11-01 through 2026-10-30
-- Current formal scope projection: 480 / 482 = 99.59%
+- Structural Evidence projection: 481 / 482 = 99.79%; this includes one newly verified exact 1D2C shape
+- Formal READY count and full-batch output are unchanged. The exact 1D2C output preflight/serializer route is connected with source-journal ID, physical-row, account/subaccount, and tax guards; the 482-journal batch remains BLOCKED for independent reasons.
 - Projection is not a full-batch real JDL verification
 
 ### Current action owners
 
 | Owner | Item |
 |---|---|
-| `HUMAN` | 補助科目設定13件。JDL 35.5の補助名称上限10文字に合わせ、必要ならHumanが短縮先を選ぶ |
+| `HUMAN` | MF補助なしの売掛金1551・普通預金1311に対するまとめ先JDL補助2設定。親科目のみでは実機Import不可 |
 | `SYSTEM_EVIDENCE` | 対象外仕入11 source rows、課税売上10% 65、非課税仕入10、非課税売上2。code: `MF-JDL-TAX-EVIDENCE-MISSING-EXACT` |
-| `SYSTEM_EVIDENCE` | 1D2C 1 journal、10D9C 1 journalのexact実機Evidence |
+| `SYSTEM_IMPLEMENTATION` | 実機確認済みexact 1D2Cのformal preflight/serializer接続は完了。production-pathでの同一仕訳確認と他blockerの解消が残る |
+| `SYSTEM_EVIDENCE` | 10D9C 1 journalのexact実機Evidence。売掛金1551のHumanまとめ先補助が先行依存 |
+
+非課税仕入・非課税売上の各1件について、2026-05-21/22のJDL実機Import・再Exportが独立strict PASS。Exact account/subaccount/side/shape/context限定のEvidence IDと比較結果は `tests/evidence/e2e/mf_non_taxable_exact_20260521_22/README.md` を参照。これは上記10件・2件全体のcoverage確定でもproduction tax mappingのactivationでもない。残る署名は実データと照合し、未確認はBLOCKを維持する。
+
+2026-10-31時点の保存済みMF→JDL CompanySettingと実482件を照合すると、上記非課税仕入Evidenceと同じ1D1C・tax side・account/subaccount署名は9/10件、非課税売上は2/2件。署名の異なる非課税仕入1件はBLOCK。これらは署名照合数であり、Human tax mapping・formal output・実機batchのREADY数ではない。課税売上10%の`売一種`は現会社のImportで失敗済み。
+
+課税売上10%の現会社自己Export由来`売　上` / `10%` / `外税` candidateは、別日の実JDL Import・再Exportでstrict PASS。独立Evidence `EVID-MF-JDL-35-5-SALES10-1111-6121-ROUNDTRIP-001` を登録した。実482件の課税売上10% 65件中、このexact 1111/補助なし→6121/補助なし/取引先なし署名に一致するものは0件。8種類の別署名は追加Evidence待ちで、65件のformal READY率は上がらない。詳細は `tests/evidence/e2e/mf_tax_sales10_excluded_proportional_cash/README.md`。
 
 Humanが解決できるmappingと、開発側のEvidence取得待ちをUI・supportで混同しないこと。Tax Evidence待ちを追加Human確認で解決させてはならない。
 

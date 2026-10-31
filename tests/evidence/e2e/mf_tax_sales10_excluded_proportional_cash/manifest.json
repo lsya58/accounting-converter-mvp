@@ -1,0 +1,32 @@
+{
+  "evidence_id": "EVID-MF-JDL-35-5-SALES10-1111-6121-ROUNDTRIP-001",
+  "status": "VERIFIED_BY_REAL_IMPORT_AND_REEXPORT",
+  "production_activation": false,
+  "target_product": "JDL IBEX 出納帳",
+  "target_version": "35.5",
+  "tax_context_identity_sha256": "a300dc8750b7fe6417f2d3c092a6cae2055ccf0256cd539a7036e4b67b0de3e0",
+  "source_tax_identity": "課税売上 10%",
+  "shape": "1D1C",
+  "flag": "1111",
+  "debit_account_code": "1111",
+  "debit_subaccount_code": "",
+  "credit_account_code": "6121",
+  "credit_subaccount_code": "",
+  "trade_partner": false,
+  "debit_tax": ["", "", "", ""],
+  "credit_tax": ["売　上", "10%", "外税", "100"],
+  "candidate_sha256": "802d0910eb3ce7d828f313b2c76b74b557f89b8a6016826763014590f27af6b9",
+  "reexport_sha256": "b126ed2039c20424ff9fd82c04c3a06d2aee3ecf51bd8a59e8da3eecabbbb521",
+  "strict_result": {
+    "missing_journals": 0,
+    "extra_journals": 0,
+    "missing_rows": 0,
+    "extra_rows": 0,
+    "unexpected_diff": 0,
+    "known_normalizations": 4,
+    "silent_loss": 0
+  },
+  "current_482_exact_matches": 0,
+  "current_482_source_tax_occurrences": 65,
+  "rejected_current_context_literal": "売一種"
+}

@@ -13,6 +13,7 @@ from accounting_converter.adapters.input.moneyforward.observed_parser import (
     MoneyForwardObservedParser,
 )
 from accounting_converter.domain.journal import Side
+from accounting_converter.domain.mapping import DEFAULT_SUBACCOUNT_SOURCE_VALUE
 from accounting_converter.profiles.jdl_official import (
     jdl_ibex_cashbook_official_journal_import_spec,
 )
@@ -91,7 +92,15 @@ def generate(
         )
 
     header = jdl_ibex_cashbook_official_journal_import_spec().column_names
-    payload = _encode((header, *target_rows))
+    if any(len(row[23]) > 32 for row in target_rows):
+        raise ExactShapeProbeError("description exceeds the verified JDL limit")
+    payload = _encode((
+        ("// MF EXACT SHAPE PROBE / NOT FOR PRODUCTION", *("" for _ in range(29))),
+        (f"// 出力期間 ： {probe_date} ～ {probe_date}", *("" for _ in range(29))),
+        ("",) * 30,
+        header,
+        *target_rows,
+    ))
     manifest_payload = {
         "schema_version": "1",
         "NOT_FOR_PRODUCTION": True,
@@ -104,6 +113,7 @@ def generate(
         "source_physical_row_count": len(rows),
         "candidate_physical_row_count": len(target_rows),
         "candidate_sha256": hashlib.sha256(payload).hexdigest(),
+        "import_period": {"start": probe_date, "end": probe_date},
         "strict_comparison_required": True,
         "overwrite_allowed": False,
     }
@@ -132,6 +142,8 @@ def _target_row(
     values = ["" for _ in range(30)]
     values[0] = flag
     values[2] = journal_date
+    values[11] = "0" if debit is None else ""
+    values[21] = "0" if credit is None else ""
     _write_side(
         values, 3, debit, physical_index, "DEBIT",
         account_mappings, subaccount_mappings, line_tax_mappings,
@@ -181,7 +193,20 @@ def _write_side(
 
 def _target_subaccount(parent, source_subaccount, mappings) -> tuple[str, str]:
     if source_subaccount is None:
-        return "", ""
+        source_subaccount = DEFAULT_SUBACCOUNT_SOURCE_VALUE
+        matches = [
+            item for item in mappings
+            if item.get("source_parent") == parent
+            and item.get("source_subaccount") == source_subaccount
+        ]
+        if not matches:
+            return "", ""
+        if len(matches) != 1 or not _confirmed(matches[0]):
+            raise ExactShapeProbeError("default subaccount requires one Human-confirmed target")
+        mapping = matches[0]
+        if mapping.get("policy") != "PRESERVE_SUBACCOUNT" or not mapping.get("target_code") or not mapping.get("target_name"):
+            raise ExactShapeProbeError("default subaccount requires an exact target subaccount")
+        return str(mapping["target_code"]), str(mapping["target_name"])
     matches = [
         item for item in mappings
         if item.get("source_parent") == parent
@@ -259,10 +284,11 @@ def _atomic_write(path: Path, payload: bytes) -> None:
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary, path)
+        os.link(temporary, path)
     except Exception:
         Path(temporary).unlink(missing_ok=True)
         raise
+    Path(temporary).unlink(missing_ok=True)
 
 
 def _atomic_write_pair(*items: tuple[Path, bytes]) -> None:
