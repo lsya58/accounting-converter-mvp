@@ -1,5 +1,8 @@
 # MF subaccount candidates and pending tax Evidence
 
+> **履歴資料（2026-10-30時点）**: ここにある件数・blocker・Evidence待ちは当時の状態です。現在地は [Current Evidence Status](current_evidence_status.md) を参照してください（2026-10-31時点で482/482 READY、記載のEvidence待ちはすべて解消済み）。
+
+
 最終更新: 2026-10-31
 
 この文書はprivateな仕訳・取引先名を含まない集計です。顧客名や摘要は記録しません。

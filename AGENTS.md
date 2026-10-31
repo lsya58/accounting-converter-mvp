@@ -6,6 +6,13 @@ Before changing code or asking a Human for JDL work, read:
 2. [docs/development/jdl_real_evidence_log.md](docs/development/jdl_real_evidence_log.md) — real JDL operations already done. Never re-request one marked `repeat_required: NO`.
 3. [docs/development/current_evidence_status.md](docs/development/current_evidence_status.md) — current READY counts and blockers. Recompute; do not copy old counts.
 
+Current phase (counts live only in current_evidence_status.md):
+
+- MF→JDL Evidence acquisition is finished. Do not generate new probes.
+- Do not re-acquire FY2026 Evidence or repeat real JDL operations 0873–0878 for the same scope.
+- The only critical path is the FY2027 real round-trip ("Remaining critical path" in current_evidence_status.md).
+- Other refactoring waits until the full 482 real acceptance.
+
 Hard rules: never auto-confirm accounting judgments; never track `data/private/`; commit or push only when asked.
 
 Checks: `PYTHONPATH=src python3 -m unittest discover -s tests`, `PYTHONPATH=src python3 -m compileall -q src tests`, `git diff --check`, `git ls-files data/private | wc -l` must be 0.

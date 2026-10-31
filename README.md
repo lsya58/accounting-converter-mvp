@@ -10,17 +10,25 @@
 - 未確認・未検証・情報損失の可能性があれば出力前に停止する
 - 一部だけの出力、入力ファイルの変更、既存出力の上書きを行わない
 
-## 現在地
+## Current validation status
+
+MF→JDL の実データ482仕訳（2025-11-01〜2026-10-30）について:
+
+- MF→JDL formal readiness: 482/482
+- FY2026（2026年5月期）full real JDL round-trip: VERIFIED（378仕訳・479行、unexpected diff 0、silent loss 0）
+- FY2027（2027年5月期）formal output: READY
+- FY2027 real JDL round-trip: PENDING
+- Remaining real acceptance: 104 journals / 160 rows
+
+482件全体の full real E2E はまだ完了していません。現在地の正本は [Current Evidence Status](docs/development/current_evidence_status.md) です。
 
 | ルート | 確認済み範囲 |
 |---|---|
 | JDL→JDL | 実案件1,158仕訳・1,271物理行のformal出力と実JDL Importに成功。再Export strict comparisonと会計判断の確認は未完了 |
-| Money Forward→JDL | 実案件13仕訳・14物理行で実JDL Import、同期間再Export、strict comparisonに成功。予期しない差分0、silent loss 0 |
+| Money Forward→JDL | 上記のとおり。ほかに13仕訳の実E2Eなど（[実機検証履歴](docs/development/jdl_real_evidence_log.md)） |
 | 弥生→JDL | AE19 direct export由来の限定入力経路を回帰維持。対応拡大は後順位 |
 
-482仕訳の実データは、保存済み会社設定で482/482がformal READYです（2026-10-31）。会計年度ごとのformal CSV（2026年5月期378件、2027年5月期104件）を生成済みで、当期378件はJDLへの実Import・期間全体の再Exportでstrict comparisonに合格しました（予期しない差分0、silent loss 0）。翌期104件は翌期データで実施予定です。
-
-開発の進め方は[Evidence-driven 開発ワークフロー](docs/development/mf_jdl_evidence_driven_workflow.md)（AI agentは[AGENTS.md](AGENTS.md)）。詳細は[ドキュメント案内](docs/README.md)、現在のEvidence境界は[Current Evidence Status](docs/development/current_evidence_status.md)、LP原稿は[LP Content](docs/marketing/lp_content.md)を参照してください。
+開発の進め方は[Evidence-driven 開発ワークフロー](docs/development/mf_jdl_evidence_driven_workflow.md)（AI agentは[AGENTS.md](AGENTS.md)）。詳細は[ドキュメント案内](docs/README.md)、LP原稿は[LP Content](docs/marketing/lp_content.md)を参照してください。
 
 ## 開発
 

@@ -2,7 +2,34 @@
 
 最終更新: 2026-10-31
 
-現在のroute、Evidence、blockerの正本です。過去のresearch文書と矛盾する場合は、この文書とEvidence原本を優先します。
+**現在地の唯一の正本（single source of truth）です。** README・製品文書・AGENTS.md はここへリンクし、件数を独自に持ちません。過去の実機操作は [JDL実機検証履歴](jdl_real_evidence_log.md)、調査時点の資料は `docs/research/` と各文書の履歴節に残します。矛盾する場合はこの文書とEvidence原本を優先します。
+
+## Canonical current state（MF→JDL 実データ482件）
+
+| 段階 | 状態 | 範囲 |
+|---|---|---|
+| Converter formal readiness | **482/482 READY**（HUMAN 0 / SYSTEM_EVIDENCE 0 / SYSTEM_IMPLEMENTATION 0） | 482 journals / 639 rows、保存済みCompanySetting |
+| FY2026-05 formal output | 生成・静的検証済み | 378 journals / 479 rows、2025-11-01〜2026-05-31 |
+| FY2026-05 real JDL round-trip | **VERIFIED**（`EVID-MF-JDL-35-5-REAL-482-FY2026-05-FULL-ROUNDTRIP-001`、0878） | 378/378、479/479、missing 0、extra 0、unexpected 0、silent loss 0、順序不一致 0、借方=貸方=24,740,332 |
+| FY2027-05 formal output | 生成・静的検証済み | 104 journals / 160 rows、2026-06-01〜2026-10-30、借方=貸方=4,053,397 |
+| FY2027-05 real JDL round-trip | **PENDING**（JDL翌期環境で未実施） | 104 journals / 160 rows |
+| Full 482 real E2E | **未完了**。FY2027-05 が PASS した時点で `FULL 482 REAL E2E COMPLETE` | 482 journals / 639 rows |
+
+Evidence取得フェーズは終了しています。新しいprobeは作りません（HUMAN・SYSTEM_EVIDENCE・SYSTEM_IMPLEMENTATIONがすべて0で、FY2026-05は実機full batchでPASS済み）。
+
+## Remaining critical path（これだけ）
+
+FY2027-05 の real round-trip。formal CSV は `data/private/mf_482_formal_output/mf_formal_jdl_FY2027-05.csv`（private、生成済み）。
+
+1. JDL の翌期環境（令和9年5月期）を用意する。2026-06-01〜2026-10-30 に他の仕訳がない状態にする
+2. 翌期の科目・補助masterが現CompanySettingと同じことを確認する（翌期の科目一覧を読み込み、master diffで差分0。差分があれば影響項目だけHuman再確認）
+3. 104件をImport
+4. 2026-06-01〜2026-10-30 を再Export
+5. `tools/mf_full_e2e_compare.py` でstrict比較
+
+PASS条件: 104/104 journals、160/160 rows、missing 0、extra 0、unexpected 0、silent loss 0。PASSしたら上表の Full 482 を `FULL 482 REAL E2E COMPLETE`（482 journals / 639 rows、FY2026-05 + FY2027-05）へ更新し、Evidence logへ追記する。
+
+会計期間はconverterのcapabilityとは別のtarget条件です。期外の日付をJDLが拒否しても、converterの失敗ではありません。
 
 ## Evidence policy
 
@@ -19,7 +46,7 @@
 |---|---|---|
 | JDL→JDL | `VERIFIED_BY_REAL_IMPORT`, frozen | 1,158 journals / 1,271 rows。実Import PASS。会計判断reviewとbatch re-export strict comparisonは未完了 |
 | MF→JDL READY batch | `VERIFIED_BY_REAL_IMPORT_AND_REEXPORT` | 13 journals / 14 rows、P01-P07、unexpected diff 0、silent loss 0 |
-| MF→JDL 482 dataset | FY2026-05 `VERIFIED_BY_REAL_IMPORT_AND_REEXPORT` / FY2027-05 READY | 482/482 formal READY。当期378件はclean targetへの実Import・期間全体再Exportでstrict PASS（0878）。翌期104件は翌期データ待ち |
+| MF→JDL 482 dataset | 上の Canonical current state を参照 | FY2026-05 real round-trip VERIFIED、FY2027-05 PENDING |
 | 弥生→JDL | Limited regression route | AE19 direct export由来の限定scope。拡張は後順位 |
 
 ## Key Evidence IDs
@@ -37,45 +64,15 @@
 | `EVID-MF-JDL-35-5-OUTPUR-4D6C-ROUNDTRIP-001` / `...5D7C...` / `...5D8C...` | 3形状のgrouping・行順を各exact scopeで検証 |
 | `EVID-MF-JDL-35-5-OUTPUR-ROW-DESC-ROUNDTRIP-001` | 同じ11件の127行別摘要保持 |
 | `EVID-MF-JDL-35-5-NONPUR-8571-1311-SUB0002-001` | 非課税仕入 8571→1311/0002 の1D1C実機往復（0876）。3181/0001と合わせ実482件の非課税仕入10/10 |
+| `EVID-MF-JDL-35-5-2D1C-PURCHASE10-ROUNDTRIP-001` / `...2D3C...` / `...10D9C...` / `...SALES10-ROUNDING-6121...` / `...SALES10-9251...` | 0877 final batch、5 case別strict PASS |
+| `EVID-MF-JDL-35-5-REAL-482-FY2026-05-FULL-ROUNDTRIP-001` | 実データFY2026-05の378件 full real round-trip（0878） |
 
-## 482-journal dataset
+## 482-journal dataset（判定の根拠）
 
-- Logical journals: 482 / physical rows: 639 / period 2025-11-01 through 2026-10-30
 - 判定: 完全一致Evidence優先、なければ [capability composition](../design/mf_tax_capability_composition.md)
-- 再計算: `tools/mf_formal_readiness.py`、期別出力: `tools/mf_formal_output_by_period.py`（どちらも保存済み設定を変更しない）
-
-### 2026-10-31 再計算（0877 Evidence接続後、保存済みCompanySetting）
-
-| Owner | Journals |
-|---|---:|
-| READY | 482（639 rows） |
-| HUMAN | 0 |
-| SYSTEM_EVIDENCE | 0 |
-| SYSTEM_IMPLEMENTATION | 0 |
-
-Human設定は保存済み設定を直接確認: 税6項目すべて `USER_CONFIRMED`（Evidence ID付き）、普通預金・売掛金の補助なし→まとめ先補助 `DEFAULT_TARGET_SUBACCOUNT`、摘要置換66件（必要63グループ+過去の髙置換、未解決0）、取引先方針確認済み。Optional検出83仕訳はすべてHuman確認済みの摘要置換で解消済み（未解決0）。
-
-### Formal output（private、未Import）
-
-| File | Period | Journals | Rows | Debit = Credit |
-|---|---|---:|---:|---:|
-| `data/private/mf_482_formal_output/mf_formal_jdl_FY2026-05.csv` | 2025-11-01〜2026-05-31 | 378 | 479 | 24,740,332 |
-| `data/private/mf_482_formal_output/mf_formal_jdl_FY2027-05.csv` | 2026-06-01〜2026-10-30 | 104 | 160 | 4,053,397 |
-
-いずれも READY → SUCCESS、CP932・BOMなし・CRLF・30列・strict reparse PASS。
-
-### Full 482 E2E
-
-- 2026-10-31: FY2026-05 の378件は [full round-trip](../../tests/evidence/e2e/mf_482_full_roundtrip/README.md) PASS（0878、unexpected 0、silent loss 0）。
-
-### 残り（翌期）
-
-- JDL 0514 は令和8年5月期。FY2027-05 の104件は翌期データが必要。翌期の科目・補助masterが現CompanySettingと同じことを、翌期の科目一覧で確認してからImportする（違えば master diff で影響項目だけ再確認）。
-- 0514 には13件の実E2E（482件と同じ仕訳）と probe（2026-05-18〜29）がある。full Import は probe 前の状態または専用の検証用会社に対して行う。
-
-Humanが解決できるmappingと、開発側のEvidence取得待ちをUI・supportで混同しないこと。Tax Evidence待ちを追加Human確認で解決させてはならない。
-
-2026-10-30に追加されたJDL科目一覧の補助候補監査とTax probe計画は [MF subaccount candidates and pending tax Evidence](mf_subaccount_candidate_and_tax_evidence.md) を参照。
+- 再計算: `tools/mf_formal_readiness.py`、期別出力: `tools/mf_formal_output_by_period.py`、実機比較: `tools/mf_full_e2e_compare.py`（いずれも保存済み設定を変更しない）
+- Human設定（保存済み設定を直接確認、2026-10-31）: 税6項目 `USER_CONFIRMED`（Evidence ID付き）、普通預金・売掛金の補助なし→まとめ先補助、摘要置換66件（未解決0）、取引先方針確認済み。Optional検出83仕訳はすべて確認済みの摘要置換で解消。
+- Human が解決する mapping と、開発側の Evidence 待ちを UI・support で混同しない。Evidence 待ちを Human の追加確認で解決させない。
 
 ## Known target constraint
 

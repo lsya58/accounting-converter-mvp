@@ -75,7 +75,36 @@ Human には実装の内部状態ではなく、次を見せる。
 - 安全に独立して進められる作業は、全体の blocker を待たずに進める（例: 翌期の確認待ちでも当期 378件の formal output は作る）。
 - 1つの会社・1つの実データで完走することを、汎用化より優先する。
 
+## 9. 2026-10-31 の教訓
+
+### Evidence取得には終了条件がある
+
+HUMAN = 0、SYSTEM_EVIDENCE = 0、SYSTEM_IMPLEMENTATION = 0 になり、そのscopeの実データ full batch が実機でPASSしたら、Evidence取得フェーズは終わり。新しいprobeを増やさない。新しいprobeが必要になるのは、新しいデータ・会社・税設定・JDL版で、readiness の再計算が新しい SYSTEM_EVIDENCE を示したときだけ。
+
+### Formal readiness と real acceptance は別の状態
+
+次の5段階を混ぜて表現しない。
+
+1. formal READY（preflight が全件通る）
+2. formal output generated（CSVを生成し静的検証済み）
+3. real Import（JDLが取り込んだ）
+4. real re-export（同期間を再Exportした）
+5. strict round-trip verified（strict comparison が PASS）
+
+「482/482 READY」は1の意味であり、「482件の実機往復済み」ではない。全件が5に達するまで full real E2E complete と書かない。
+
+### 会計期間は target の条件
+
+converter の capability と、取込先JDL会社の会計期間は別の dimension。期外の日付をJDLが拒否するのは converter の失敗ではない。期をまたぐデータは仕訳を分割せず、期ごとに formal CSV を作り、期ごとに Import・再Export・比較する。
+
 ## For AI coding agents
+
+現在のフェーズ（2026-10-31〜。数字は書かない。件数は必ず [Current Evidence Status](current_evidence_status.md) から読む）:
+
+- MF→JDL 実データの Evidence 取得フェーズは終了。新しい probe を作らない
+- 2026年5月期の Evidence と、実機操作 0873〜0878 と同じ scope を再取得・再依頼しない
+- 次の critical path は 2027年5月期の real round-trip だけ（正本の Remaining critical path）
+- それ以外の refactor・汎用化は、482件の full real acceptance の後
 
 作業開始時に必ず行うこと:
 

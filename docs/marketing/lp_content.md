@@ -53,9 +53,7 @@
 
 ### Money Forward→JDL
 
-実案件13仕訳・14物理行で、JDL Import、同期間再Export、strict comparisonまで完了しました。予期しない差分0、silent loss 0です。この確認は当該13仕訳と保存済み会社設定の範囲に限定されます。
-
-482仕訳の実データでは480件（99.59%）が現在のformal scopeに入る見込みです。ただし、これはfull batchの実機検証結果ではありません。未検証shapeが2件あり、現在も482件一括出力はBLOCKされます。この数値はLPの主見出しには使用しません。
+実データの2026年5月期378仕訳・479行で、変換、JDL Import、期間全体の再Export、厳密比較まで完了しました。予期しない差分0、silent loss 0です。この確認は当該会社・保存済み会社設定・JDL IBEX 出納帳35.5の範囲に限定されます。2027年5月期の104仕訳は実機確認がこれからです。現在地の正本は[Current Evidence Status](../development/current_evidence_status.md)です。数値はLPの主見出しには使用しません。
 
 ## 実機検証
 
@@ -101,10 +99,9 @@
 
 ## 現在の制約
 
-- 482仕訳full batchは未検証shape 2件のため一括出力不可
-- 4つの税identityはexactな実機Evidence取得待ち
+- 実機で確認した仕訳の形・税表現・科目の範囲外は変換しない
+- 会計期間をまたぐデータは期ごとに分けてJDLへ取り込む
 - JDL IBEX 出納帳35.5で観測した補助名称上限は10文字。長い名称はHumanが短縮先を確認する必要がある
-- 1D2Cと10D9Cはexact Evidence未取得。10D9Cは借方10・貸方9、19 journal sides、10 physical rows
 - 対応外データを黙って削除するfallbackはない
 
 ## 使用しない表現

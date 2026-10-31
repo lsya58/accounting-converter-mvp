@@ -1,5 +1,8 @@
 # JDL Tax Probe
 
+> **履歴資料**: 税込Contextでのprobe設計の記録です。MF→JDL実データの現在地は [Current Evidence Status](current_evidence_status.md) を参照してください。
+
+
 ## 目的
 
 Money Forwardの税区分とJDL IBEX出納帳35.5の税fieldを推測で結び付けず、完全syntheticな1仕訳を使って1 categoryずつ実機Evidenceを取得する。probe infrastructureの存在はtax mappingの確認済み化やproduction READYを意味しない。
