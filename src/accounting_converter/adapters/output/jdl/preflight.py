@@ -10,9 +10,8 @@ from accounting_converter.domain.journal_identity import stable_journal_identity
 from accounting_converter.domain.mf_outpur_scope import OUTPUR_SHAPE_EVIDENCE_IDS, outpur_target_signature
 from accounting_converter.domain.profile import FormatProfile
 from accounting_converter.domain.validation import Severity, ValidationResult
-from accounting_converter.application.moneyforward_jdl_loss import (
-    moneyforward_verified_description_rows,
-)
+from accounting_converter.domain.journal_rows import has_counterparty
+from .row_evidence import jdl_row_description_rows
 from accounting_converter.profiles.jdl_official import (
     JdlTaxProcessingMode,
     jdl_field_length_valid,
@@ -445,7 +444,7 @@ class JdlOutputPreflight:
                 return []
             physical_rows = None
         else:
-            physical_rows = moneyforward_verified_description_rows(
+            physical_rows = jdl_row_description_rows(
                 entry, additional_shapes=self.probe_pending_shapes
             )
             shape = (
@@ -478,7 +477,8 @@ class JdlOutputPreflight:
                 or first.credit is None or first.credit.sub_account
                 or second.debit is not None
                 or last_subaccount is None or last_subaccount.target_master_code != "0002"
-                or any(line.department or line.metadata.get("moneyforward_trade_partner") for line in entry.lines)
+                or any(line.department for line in entry.lines)
+                or has_counterparty(entry)
                 or any(self._nonempty_tax(line.tax_info) for line in (first.credit, second.credit))
             ):
                 errors.append(self._error(
@@ -509,9 +509,9 @@ class JdlOutputPreflight:
                 or self.context.effective_input_tax_credit_method is not JdlInputTaxCreditMethod.PROPORTIONAL
                 or self.context.confirmation_state is not JdlContextConfirmationState.CONFIRMED
                 or self.context.provenance is not JdlContextProvenance.USER_CONFIRMED_RUNTIME_SNAPSHOT
-                or entry.metadata.get("source") != "moneyforward_cloud_journal_export_observed"
                 or actual_signature != outpur_target_signature(expected_shape)
-                or any(line.tax_info or line.department or line.metadata.get("moneyforward_trade_partner") for line in entry.lines)
+                or any(line.tax_info or line.department for line in entry.lines)
+                or has_counterparty(entry)
             ):
                 errors.append(self._error(
                     "JDL-OUT-OUTPUR-EXACT-SCOPE",

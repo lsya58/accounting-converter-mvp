@@ -461,7 +461,7 @@ class CompanyMappingUpdateService:
                 else line.tax_info is not None
                 and bool(line.tax_info.invoice_classification)
             )
-            if isinstance(row := line.metadata.get("moneyforward_source_row_number"), int)
+            if isinstance(row := line.metadata.get("journal_row_number"), int)
         }
 
     def review_saved(self, company_setting_id: str) -> CompanyMappingUpdateReview:

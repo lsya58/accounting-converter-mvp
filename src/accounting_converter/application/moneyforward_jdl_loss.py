@@ -1,44 +1,27 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
 
+from accounting_converter.adapters.output.jdl.row_evidence import (
+    JDL_ROW_DESCRIPTION_VERIFIED_SHAPES,
+    jdl_row_description_rows,
+)
 from accounting_converter.domain.journal import JournalEntry, JournalLine, Side
+from accounting_converter.domain.journal_rows import PhysicalRow
+from accounting_converter.domain.validation import Severity, ValidationResult
+from accounting_converter.application.moneyforward_description_replacement import (
+    description_requires_replacement,
+    unsafe_description_positions,
+)
 from accounting_converter.domain.conversion_profile import (
     LossPolicy,
     TRADE_PARTNER_TRANSFORMATION_KEY,
 )
 
 
-VERIFIED_DESCRIPTION_SHAPES = frozenset(
-    {
-        (1, 3, 3),
-        (1, 2, 2),
-        (2, 2, 2),
-        (2, 1, 2),
-        (2, 3, 3),
-        (4, 6, 6),
-        (4, 6, 10),
-        (5, 7, 7),
-        (5, 7, 12),
-        (5, 8, 8),
-        (5, 8, 13),
-        (10, 9, 10),  # 0877 10D9C row descriptions, strict PASS
-    }
-)
-
-
-@dataclass(frozen=True)
-class MoneyForwardPhysicalRow:
-    row_number: int
-    debit: JournalLine | None
-    credit: JournalLine | None
-    description: str
-from accounting_converter.domain.validation import Severity, ValidationResult
-from accounting_converter.application.moneyforward_description_replacement import (
-    description_requires_replacement,
-    unsafe_description_positions,
-)
+# Re-exported for older imports; the Evidence itself belongs to the JDL target.
+VERIFIED_DESCRIPTION_SHAPES = JDL_ROW_DESCRIPTION_VERIFIED_SHAPES
+MoneyForwardPhysicalRow = PhysicalRow
 
 
 class MoneyForwardToJdlLossRule:
@@ -122,52 +105,22 @@ def moneyforward_verified_description_rows(
     entry: JournalEntry,
     *,
     additional_shapes: frozenset[tuple[int, int, int]] = frozenset(),
-) -> tuple[MoneyForwardPhysicalRow, ...] | None:
-    """Physical rows with per-row descriptions for a verified shape.
+) -> tuple[PhysicalRow, ...] | None:
+    """MF route: JDL-verified rows plus an MF-only integrity check.
 
-    additional_shapes is only for NOT_FOR_PRODUCTION probe generation.
+    The MF parser also records the observed per-row descriptions; after the MF
+    transforms they must still match the row semantics the target will write.
     """
-    grouped: dict[int, dict[Side, JournalLine]] = {}
-    descriptions: dict[int, str] = {}
-    for line in entry.lines:
-        row_number = line.metadata.get("moneyforward_source_row_number")
-        description = line.metadata.get("moneyforward_description")
-        if not isinstance(row_number, int) or not isinstance(description, str):
-            return None
-        if row_number in descriptions and descriptions[row_number] != description:
-            return None
-        descriptions[row_number] = description
-        sides = grouped.setdefault(row_number, {})
-        if line.side in sides:
-            return None
-        sides[line.side] = line
-    row_numbers = sorted(grouped)
-    if tuple(row_numbers) != tuple(entry.metadata.get("physical_row_numbers", ())):
+    rows = jdl_row_description_rows(entry, additional_shapes=additional_shapes)
+    if rows is None:
         return None
     observed = tuple(
         (item.get("row_number"), item.get("value"))
         for item in entry.metadata.get("moneyforward_descriptions", ())
     )
     expected = tuple(
-        (row_number, descriptions[row_number])
-        for row_number in row_numbers
-        if descriptions[row_number]
+        (row.row_number, row.description) for row in rows if row.description
     )
     if observed != expected:
         return None
-    shape = (
-        sum(Side.DEBIT in grouped[number] for number in row_numbers),
-        sum(Side.CREDIT in grouped[number] for number in row_numbers),
-        len(row_numbers),
-    )
-    if shape not in VERIFIED_DESCRIPTION_SHAPES | additional_shapes:
-        return None
-    return tuple(
-        MoneyForwardPhysicalRow(
-            row_number=number,
-            debit=grouped[number].get(Side.DEBIT),
-            credit=grouped[number].get(Side.CREDIT),
-            description=descriptions[number],
-        )
-        for number in row_numbers
-    )
+    return rows

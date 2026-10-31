@@ -97,6 +97,10 @@ HUMAN = 0、SYSTEM_EVIDENCE = 0、SYSTEM_IMPLEMENTATION = 0 になり、そのsc
 
 converter の capability と、取込先JDL会社の会計期間は別の dimension。期外の日付をJDLが拒否するのは converter の失敗ではない。期をまたぐデータは仕訳を分割せず、期ごとに formal CSV を作り、期ごとに Import・再Export・比較する。
 
+### Target capability は入力元に依存しない
+
+JDL の実機Evidenceは「JDL が受け取った literal・形・科目で何が起きたか」の記録であり、どの入力元から来たかは関係ない。入力元の税区分名 → JDL 税の意味 は Human の会計判断（会社設定に保存）、JDL 税の意味 → 実機Evidence は JDL の挙動、と2つを分ける。入力元が変わっても JDL の Evidence は再取得しない。逆に、Evidence があるからといって入力元の税区分の対応を自動で確認済みにしない。JDL 出力側のコードに入力元の名前（moneyforward など）を持ち込まない（テストで監視している）。
+
 ## For AI coding agents
 
 現在のフェーズ（2026-10-31〜。数字は書かない。件数は必ず [Current Evidence Status](current_evidence_status.md) から読む）:

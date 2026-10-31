@@ -63,3 +63,26 @@
 ## Evidence identity
 
 Evidenceに結び付ける仕訳identityは `domain/journal_identity.py` の内容hash（日付・各行の科目/補助/部門/取引先/税/金額/摘要/タグ/メモ）を使う。ファイル名・path・行番号・MF取引Noは含めない。同じ仕訳をMFから別名で再出力しても同じidentity、内容が1つでも変われば別identityになる。
+
+## 入力元に依存しない JDL target（2026-10-31）
+
+JDL への出力と実機Evidenceは、入力元（MF・弥生・JDL）ではなく「JDLが受け取るもの」で判定する。
+
+```text
+各入力元 parser ─→ 共通の仕訳の意味（行・行摘要・取引先の有無） ─→ JDL preflight / Evidence / serializer
+入力元の税区分名 ─→ Human が確認したマッピング ─→ JDL 税の意味 ─→ 実機Evidence
+```
+
+| 層 | 置き場所 | 内容 |
+|---|---|---|
+| 共通の行の意味 | `domain/journal_rows.py` | 行番号・行摘要・取引先の有無・行順。各 parser が、入力元固有の変換（取引先追記・摘要置換）を終えた値で持つ |
+| 行摘要の実機Evidence | `adapters/output/jdl/row_evidence.py` | 行ごとの摘要を保持できる (借方, 貸方, 物理行) の形 |
+| JDL 税の意味 | `adapters/output/jdl/tax_semantics.py` | 税なし・仕入10%内税・売上10%外税・非課税仕入・非課税売上と、その literal |
+| 入力元の税区分 → JDL 税の意味 | 会社設定の Human 確認済みマッピング | 未確認・別の税設定で確認したもの・未知の対応は `TAX_MAPPING_UNCONFIRMED` で止める |
+| 実機Evidence | `application/moneyforward_tax_excluded_evidence.py` | 署名と行の能力を JDL 税の意味で索引。記録時の MF 税区分名は `RECORDED_MF_EVIDENCE` に残す |
+
+設計の比較: `JournalEntry` に型付きの行フィールドを足す案は、MF の取引先・摘要置換の処理と多数のテストの組み立てを全部変える必要があるため不採用。入力元ごとに JDL 側で分岐する案は依存の向きが逆のまま残るため不採用。共通キーと読み出し関数を domain に置き、入力元の変換の後の値で埋める案を採用した。
+
+依存は外していない: JDL 製品・版、Tax Context、貸借、科目（3科目未満の税の意味は確認済み科目のみ）、補助（科目に補助があれば blank 不可）、端数（売上10%の端数は 6121 のみ）、取引先の有無（取引先付きは取引先Evidenceのある形のみ）。1D2C と対象外仕入の完全一致Evidenceの「入力元が MF であること」という条件だけを外した（JDL の挙動に無関係なため）。
+
+回帰: 変更前後で FY2026-05・FY2027-05 の formal CSV がバイト単位で同一、482/482 READY。

@@ -183,13 +183,13 @@ class MoneyForwardDescriptionReplacementPolicy:
                 line,
                 metadata={
                     **line.metadata,
-                    "moneyforward_description": replacements.get(
-                        str(line.metadata.get("moneyforward_description", "")),
-                        line.metadata.get("moneyforward_description", ""),
+                    "journal_row_description": replacements.get(
+                        str(line.metadata.get("journal_row_description", "")),
+                        line.metadata.get("journal_row_description", ""),
                     ),
                 },
             )
-            if "moneyforward_description" in line.metadata
+            if "journal_row_description" in line.metadata
             else line
             for line in entry.lines
         ]

@@ -151,10 +151,10 @@ class MoneyForwardTradePartnerPolicyTests(unittest.TestCase):
     def test_confirmed_policy_updates_only_partner_row_in_2d2c(self) -> None:
         source = SourceReference("synthetic.csv", 2, "1")
         lines = [
-            JournalLine(Side.DEBIT, "A", Decimal("600"), source, metadata={"moneyforward_trade_partner": "PARTNER-A", "moneyforward_source_row_number": 2, "moneyforward_description": "TEST"}),
-            JournalLine(Side.CREDIT, "B", Decimal("300"), source, metadata={"moneyforward_source_row_number": 2, "moneyforward_description": "TEST"}),
-            JournalLine(Side.DEBIT, "C", Decimal("400"), source, metadata={"moneyforward_source_row_number": 3, "moneyforward_description": "ROW2"}),
-            JournalLine(Side.CREDIT, "D", Decimal("700"), source, metadata={"moneyforward_source_row_number": 3, "moneyforward_description": "ROW2"}),
+            JournalLine(Side.DEBIT, "A", Decimal("600"), source, metadata={"moneyforward_trade_partner": "PARTNER-A", "journal_row_number": 2, "journal_row_description": "TEST"}),
+            JournalLine(Side.CREDIT, "B", Decimal("300"), source, metadata={"journal_row_number": 2, "journal_row_description": "TEST"}),
+            JournalLine(Side.DEBIT, "C", Decimal("400"), source, metadata={"journal_row_number": 3, "journal_row_description": "ROW2"}),
+            JournalLine(Side.CREDIT, "D", Decimal("700"), source, metadata={"journal_row_number": 3, "journal_row_description": "ROW2"}),
         ]
         entry = JournalEntry(
             "synthetic:1", source, date(2026, 11, 27), lines, "TEST",
@@ -169,7 +169,7 @@ class MoneyForwardTradePartnerPolicyTests(unittest.TestCase):
         result = MoneyForwardTradePartnerDescriptionPolicy(self.profile, self.context).apply((entry,))
         self.assertFalse(result.validation_results)
         descriptions = {
-            (line.metadata["moneyforward_source_row_number"], line.metadata["moneyforward_description"])
+            (line.metadata["journal_row_number"], line.metadata["journal_row_description"])
             for line in result.entries[0].lines
         }
         self.assertEqual(descriptions, {(2, "TEST / 取引先:PARTNER-A"), (3, "ROW2")})

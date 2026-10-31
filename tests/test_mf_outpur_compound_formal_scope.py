@@ -61,7 +61,7 @@ class OutpurCompoundFormalScopeTest(unittest.TestCase):
             lines.append(JournalLine(
                 Side(side), self.names[code], Decimal(amount), reference,
                 sub_account="SUB-C" if sub else None,
-                metadata={"moneyforward_source_row_number": row_number, "moneyforward_description": description},
+                metadata={"journal_row_number": row_number, "journal_row_description": description},
             ))
         return JournalEntry(
             id=f"synthetic-{index}", source_reference=reference, date=date(2026, 5, 27),

@@ -182,7 +182,7 @@ class MoneyForwardToJdlSyntheticE2ETests(unittest.TestCase):
             parsed = MoneyForwardInputAdapter().read(source, self.mf_profile)
             credit = [line for line in parsed[0].lines if line.side.value == "CREDIT"]
             self.assertEqual(
-                tuple(line.metadata["moneyforward_description"] for line in credit),
+                tuple(line.metadata["journal_row_description"] for line in credit),
                 descriptions,
             )
             output = root / "jdl.csv"

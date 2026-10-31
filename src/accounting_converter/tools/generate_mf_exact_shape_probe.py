@@ -232,7 +232,7 @@ def _confirmed(value) -> bool:
 def _physical_rows(entry):
     grouped = {}
     for line in entry.lines:
-        row = line.metadata.get("moneyforward_source_row_number")
+        row = line.metadata.get("journal_row_number")
         if not isinstance(row, int):
             raise ExactShapeProbeError("source physical row identity is missing")
         grouped.setdefault(row, {})[line.side] = line

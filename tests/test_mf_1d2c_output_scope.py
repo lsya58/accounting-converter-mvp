@@ -40,8 +40,8 @@ class MfExact1D2COutputTest(unittest.TestCase):
         )
 
     def entry(self) -> JournalEntry:
-        first = {"moneyforward_source_row_number": 2, "moneyforward_description": "ROW1"}
-        second = {"moneyforward_source_row_number": 3, "moneyforward_description": "ROW2"}
+        first = {"journal_row_number": 2, "journal_row_description": "ROW1"}
+        second = {"journal_row_number": 3, "journal_row_description": "ROW2"}
         return JournalEntry(
             id="synthetic", source_reference=self.source, date=date(2026, 5, 18),
             description="ROW1",

@@ -130,7 +130,7 @@ def prepare_and_generate(
             raise ExactShapeProbeError("unsupported subaccount policy")
     rows = {}
     for line in entry.lines:
-        row_number = line.metadata.get("moneyforward_source_row_number")
+        row_number = line.metadata.get("journal_row_number")
         if not isinstance(row_number, int):
             raise ExactShapeProbeError("source physical row identity is missing")
         rows.setdefault(row_number, {})[line.side.value] = line

@@ -310,7 +310,7 @@ class MoneyForwardReadyBatchAuditor:
             return False
         partner = next(iter(identities))
         if self._shape(entry) == (2, 2):
-            description = partners[0].metadata.get("moneyforward_description")
+            description = partners[0].metadata.get("journal_row_description")
             if not isinstance(description, str):
                 return False
         else:
@@ -436,7 +436,7 @@ class MoneyForwardReadyBatchAuditor:
                     line.tax_info.category if line.tax_info else None,
                     line.tax_info.invoice_classification if line.tax_info else None,
                     line.metadata.get("moneyforward_trade_partner"),
-                    line.metadata.get("moneyforward_description"),
+                    line.metadata.get("journal_row_description"),
                 )
                 for line in entry.lines
             ),

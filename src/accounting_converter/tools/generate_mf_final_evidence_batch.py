@@ -106,7 +106,7 @@ def _select(case_id: str, candidates) -> tuple[JournalEntry, JournalEntry, tuple
     raise FinalEvidenceBatchError(f"no current journal is blocked only by case {case_id}")
 
 
-def _probe_entry(case: ProbeCase, source: JournalEntry, mapped: JournalEntry, probe_date: date, context):
+def _probe_entry(case: ProbeCase, source: JournalEntry, mapped: JournalEntry, probe_date: date, context, profile=None):
     """Production tax literals, case markers, and (10D9C only) a probe-only subaccount."""
     substitutions = []
     lines = list(mapped.lines)
@@ -134,15 +134,17 @@ def _probe_entry(case: ProbeCase, source: JournalEntry, mapped: JournalEntry, pr
                 "reason": "JDL rejects blank subaccount; shape probe only, not the Human まとめ先 choice",
             })
     mapped = replace(mapped, lines=lines)
-    literal = ev.apply_tax_literals(source, mapped, f"PENDING:{case.pass_evidence_id}")
-    rows = sorted({line.metadata["moneyforward_source_row_number"] for line in literal.lines})
+    literal = ev.apply_tax_literals(
+        source, mapped, f"PENDING:{case.pass_evidence_id}", profile=profile, context=context
+    )
+    rows = sorted({line.metadata["journal_row_number"] for line in literal.lines})
     markers = {row: f"{case.marker}-R{position}" for position, row in enumerate(rows, start=1)}
     if len(rows) == 1:
         markers = {rows[0]: case.marker}
     marked_lines = [
         replace(line, metadata={
             **line.metadata,
-            "moneyforward_description": markers[line.metadata["moneyforward_source_row_number"]],
+            "journal_row_description": markers[line.metadata["journal_row_number"]],
         })
         for line in literal.lines
     ]
@@ -194,7 +196,7 @@ def generate(source: Path, company_store: Path, company_id: str, output_dir: Pat
     probe_entries, manifest_cases = [], []
     for case in CASES:
         source_entry, mapped_entry, _ = _select(case.case_id, candidates)
-        entry, substitutions = _probe_entry(case, source_entry, mapped_entry, probe_day, context)
+        entry, substitutions = _probe_entry(case, source_entry, mapped_entry, probe_day, context, profile)
         probe_entries.append(entry)
         manifest_cases.append({
             "case_id": case.case_id,
@@ -202,7 +204,7 @@ def generate(source: Path, company_store: Path, company_id: str, output_dir: Pat
             "purpose": case.purpose,
             "evidence_id_on_pass": case.pass_evidence_id,
             "shape": "%dD%dC" % _shape(source_entry),
-            "physical_rows": len({line.metadata["moneyforward_source_row_number"] for line in entry.lines}),
+            "physical_rows": len({line.metadata["journal_row_number"] for line in entry.lines}),
             "source_journal_content_sha256": stable_journal_identity(source_entry),
             "probe_substitutions": substitutions,
         })

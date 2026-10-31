@@ -57,6 +57,8 @@ MF→JDL→MF は、取引先・インボイス・タグ・メモが JDL に残�
 
 ## 次に作るもの（弥生実機待ちの間）
 
+> 2026-10-31 実施済み: [入力元に依存しない JDL target](mf_tax_capability_composition.md#入力元に依存しない-jdl-target2026-10-31)。
+
 **JDL 出力を入力元に依存させない**（大規模refactorではない）:
 
 - 物理行と行ごとの摘要を共通モデル（domain）の概念にし、MF・JDL・弥生の各 parser がそこへ詰める。JDL preflight は MF専用関数ではなくそれを読む。

@@ -21,7 +21,7 @@ from accounting_converter.application.moneyforward_description_replacement impor
 )
 from accounting_converter.profiles.jdl_official import jdl_ibex_cashbook_official_journal_import_spec
 from accounting_converter.tools import generate_mf_final_evidence_batch as batch
-from tests.test_mf_tax_capability_composition import context, entry
+from tests.test_mf_tax_capability_composition import context, entry, taxed_profile
 
 
 def two_d_one_c():
@@ -35,7 +35,7 @@ def two_d_one_c():
 class GenericCompoundTest(unittest.TestCase):
     def test_0877_shapes_are_released_and_others_stay_blocked(self) -> None:
         item = two_d_one_c()
-        result = ev.match_evidence_for_occurrence(item, item, context(), None)
+        result = ev.match_evidence_for_occurrence(item, item, context(), taxed_profile())
         self.assertIs(result.evidence.profile, JdlEvidenceProfile.MF_COMPOUND_TAX_EXCLUDED_PROPORTIONAL)
         self.assertIn(
             "EVID-MF-JDL-35-5-2D1C-PURCHASE10-ROUNDTRIP-001",
@@ -47,16 +47,16 @@ class GenericCompoundTest(unittest.TestCase):
             ("DEBIT", "8681", False, "課税仕入 10%", "400"),
             ("DEBIT", "8491", False, "課税仕入 10%", "400"),
         )
-        blocked = ev.match_evidence_for_occurrence(three_d_one_c, three_d_one_c, context(), None)
+        blocked = ev.match_evidence_for_occurrence(three_d_one_c, three_d_one_c, context(), taxed_profile())
         self.assertIsNone(blocked.evidence)
         self.assertIn("SHAPE_UNVERIFIED_IN_TAX_CONTEXT", blocked.mismatch_fields)
         with patch.dict(ev.VERIFIED_COMPOUND_SHAPES, {(3, 1): "EVID-TEST-3D1C"}):
-            released = ev.match_evidence_for_occurrence(three_d_one_c, three_d_one_c, context(), None)
+            released = ev.match_evidence_for_occurrence(three_d_one_c, three_d_one_c, context(), taxed_profile())
         self.assertIn("EVID-TEST-3D1C", released.evidence.supporting_evidence_ids)
 
     def test_generic_compound_rows_use_verified_literals(self) -> None:
         source = two_d_one_c()
-        literal = ev.apply_tax_literals(source, source, "PENDING:test")
+        literal = ev.apply_tax_literals(source, source, "PENDING:test", profile=taxed_profile(), context=context())
         literal.metadata[JDL_OUTPUT_METADATA_KEY] = JdlEvidenceProfile.MF_COMPOUND_TAX_EXCLUDED_PROPORTIONAL.value
         result = JdlOutputPreflight(context()).evaluate((literal,), jdl_ibex_35_5_output_profile())
         self.assertEqual(result.validation_results, ())
@@ -71,7 +71,7 @@ class GenericCompoundTest(unittest.TestCase):
 
     def test_generic_compound_rejects_unverified_literal(self) -> None:
         source = two_d_one_c()
-        literal = ev.apply_tax_literals(source, source, "PENDING:test")
+        literal = ev.apply_tax_literals(source, source, "PENDING:test", profile=taxed_profile(), context=context())
         literal.lines[2].tax_info.metadata["jdl_tax_input_method"] = "外税"
         literal.metadata[JDL_OUTPUT_METADATA_KEY] = JdlEvidenceProfile.MF_COMPOUND_TAX_EXCLUDED_PROPORTIONAL.value
         result = JdlOutputPreflight(context()).evaluate((literal,), jdl_ibex_35_5_output_profile())

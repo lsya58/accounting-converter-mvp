@@ -19,9 +19,7 @@ from accounting_converter.application.conversion import (
 )
 from accounting_converter.application.mapping_engine import MappingEngine
 from accounting_converter.application.mapping_review import MappingRequirementExtractor
-from accounting_converter.application.moneyforward_jdl_loss import (
-    moneyforward_verified_description_rows,
-)
+from accounting_converter.adapters.output.jdl.row_evidence import jdl_row_description_rows
 from accounting_converter.application.profile_preflight import mapping_rule_set_from_profile
 from accounting_converter.application.validation_pipeline import ValidationPipeline
 from accounting_converter.domain.conversion_profile import ConversionProfile
@@ -292,7 +290,7 @@ class FirstReleaseConversionWorkflow:
                 (5, 7),
                 (5, 8),
             }:
-                rows = moneyforward_verified_description_rows(entry)
+                rows = jdl_row_description_rows(entry)
                 profiles = {
                     (1, 3): JdlEvidenceProfile.COMPOUND_1D3C_LINE_DESCRIPTIONS,
                     (2, 2): JdlEvidenceProfile.COMPOUND_2D2C_LINE_DESCRIPTIONS,

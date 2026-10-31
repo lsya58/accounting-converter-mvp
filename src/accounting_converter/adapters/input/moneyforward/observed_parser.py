@@ -15,6 +15,7 @@ from accounting_converter.domain.journal import (
     SourceReference,
     TaxInfo,
 )
+from accounting_converter.domain.journal_rows import LINE_COUNTERPARTY_KEY
 from accounting_converter.domain.journal_identity import (
     JOURNAL_CONTENT_IDENTITY_KEY,
     journal_content_identity,
@@ -247,8 +248,9 @@ class MoneyForwardObservedParser:
             tax_info=tax_info,
             metadata={
                 **({"moneyforward_trade_partner": partner} if partner else {}),
-                "moneyforward_description": row.values[16],
-                "moneyforward_source_row_number": row.row_number,
+                **({LINE_COUNTERPARTY_KEY: partner} if partner else {}),
+                "journal_row_description": row.values[16],
+                "journal_row_number": row.row_number,
             },
         )
 

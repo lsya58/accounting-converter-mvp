@@ -18,6 +18,8 @@ from accounting_converter.adapters.output.jdl import (
 )
 from accounting_converter.adapters.output.jdl.preflight import JdlOutputPreflight
 from accounting_converter.application import moneyforward_tax_excluded_evidence as ev
+from accounting_converter.adapters.output.jdl.tax_semantics import JdlTaxSemantic
+from tests.support.confirmed_tax import with_confirmed_tax
 from accounting_converter.application.moneyforward_description_replacement import (
     description_requires_replacement,
 )
@@ -80,18 +82,19 @@ def entry(*lines, partner: bool = False, entry_id: str = "mf:synthetic:1") -> Jo
     built = []
     for index, (side, code, sub, tax, amount) in enumerate(lines):
         metadata = {
-            "moneyforward_source_row_number": 2 + index // 2,
-            "moneyforward_description": "TEST",
+            "journal_row_number": 2 + index // 2,
+            "journal_row_description": "TEST",
         }
         if partner and index == 0:
             metadata["moneyforward_trade_partner"] = "PARTNER-A"
+            metadata["journal_counterparty"] = "PARTNER-A"
         built.append(JournalLine(
             Side(side), ACCOUNTS[code], Decimal(amount), reference,
             sub_account=SUBS[code] if sub else None,
             tax_info=TaxInfo(category=tax) if tax else None,
             metadata=metadata,
         ))
-    rows = tuple(sorted({line.metadata["moneyforward_source_row_number"] for line in built}))
+    rows = tuple(sorted({line.metadata["journal_row_number"] for line in built}))
     return JournalEntry(
         entry_id, reference, date(2026, 5, 28), built, "TEST",
         metadata={
@@ -104,8 +107,12 @@ def entry(*lines, partner: bool = False, entry_id: str = "mf:synthetic:1") -> Jo
     )
 
 
+def taxed_profile():
+    return with_confirmed_tax(None, context())
+
+
 def match(item: JournalEntry):
-    return ev.match_evidence_for_occurrence(item, item, context(), None)
+    return ev.match_evidence_for_occurrence(item, item, context(), taxed_profile())
 
 
 class CapabilityCompositionTest(unittest.TestCase):
@@ -119,14 +126,17 @@ class CapabilityCompositionTest(unittest.TestCase):
 
     def test_account_independence_is_derived_from_real_evidence(self) -> None:
         caps = ev.LINE_CAPABILITIES
-        self.assertTrue(caps[("DEBIT", "課税仕入 10%")].account_independent)
-        self.assertTrue(caps[("DEBIT", "対象外")].account_independent)
-        self.assertTrue(caps[("CREDIT", "対象外")].account_independent)
-        self.assertEqual(caps[("CREDIT", "課税売上 10%")].verified_accounts, {"6121", "9251"})
-        self.assertFalse(caps[("CREDIT", "課税売上 10%")].account_independent)
-        self.assertEqual(caps[("DEBIT", "非課税仕入")].verified_accounts, {"8571"})
-        self.assertEqual(caps[("CREDIT", "非課税売上")].verified_accounts, {"9111"})
-        self.assertNotIn(("DEBIT", "対象外仕入"), caps)
+        purchase, sales = JdlTaxSemantic.PURCHASE_10_INTERNAL.value, JdlTaxSemantic.SALES_10_EXTERNAL.value
+        no_tax = JdlTaxSemantic.NO_TAX.value
+        self.assertTrue(caps[("DEBIT", purchase)].account_independent)
+        self.assertTrue(caps[("DEBIT", no_tax)].account_independent)
+        self.assertTrue(caps[("CREDIT", no_tax)].account_independent)
+        self.assertEqual(caps[("CREDIT", sales)].verified_accounts, {"6121", "9251"})
+        self.assertFalse(caps[("CREDIT", sales)].account_independent)
+        self.assertEqual(caps[("DEBIT", JdlTaxSemantic.NON_TAXABLE_PURCHASE.value)].verified_accounts, {"8571"})
+        self.assertEqual(caps[("CREDIT", JdlTaxSemantic.NON_TAXABLE_SALES.value)].verified_accounts, {"9111"})
+        # 対象外仕入 reaches JDL as the same blank literal as 対象外.
+        self.assertIn("8311", caps[("DEBIT", no_tax)].verified_accounts)
 
     def test_purchase_on_new_expense_account_is_composed(self) -> None:
         result = match(entry(
@@ -224,8 +234,8 @@ class CapabilityCompositionTest(unittest.TestCase):
         )
         routed = []
         for source in sources:
-            result = ev.match_evidence_for_occurrence(source, source, ctx, None)
-            mapped = ev.apply_verified_tax_semantics(source, source, ctx, None)
+            result = ev.match_evidence_for_occurrence(source, source, ctx, taxed_profile())
+            mapped = ev.apply_verified_tax_semantics(source, source, ctx, taxed_profile())
             mapped.metadata[JDL_OUTPUT_METADATA_KEY] = result.evidence.profile.value
             routed.append(mapped)
         preflight = JdlOutputPreflight(ctx).evaluate(routed, jdl_ibex_35_5_output_profile())

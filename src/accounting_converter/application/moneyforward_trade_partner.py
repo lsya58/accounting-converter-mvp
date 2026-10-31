@@ -199,7 +199,7 @@ class MoneyForwardTradePartnerDescriptionPolicy:
         source_description = entry.description
         if (debit_count, credit_count) == (2, 2):
             observed_description = partner_lines[0].metadata.get(
-                "moneyforward_description"
+                "journal_row_description"
             )
             if not isinstance(observed_description, str):
                 return entry, self._error(
@@ -222,15 +222,15 @@ class MoneyForwardTradePartnerDescriptionPolicy:
 
         lines = list(entry.lines)
         if (debit_count, credit_count) == (2, 2):
-            row_number = partner_lines[0].metadata.get("moneyforward_source_row_number")
+            row_number = partner_lines[0].metadata.get("journal_row_number")
             if not isinstance(row_number, int):
                 return entry, self._error(entry, "MF-JDL-PARTNER-ROW", "取引先を保持する行を確認できません。")
             lines = [
                 replace(
                     line,
-                    metadata={**line.metadata, "moneyforward_description": description},
+                    metadata={**line.metadata, "journal_row_description": description},
                 )
-                if line.metadata.get("moneyforward_source_row_number") == row_number
+                if line.metadata.get("journal_row_number") == row_number
                 else line
                 for line in lines
             ]

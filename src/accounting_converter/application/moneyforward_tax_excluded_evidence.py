@@ -14,6 +14,12 @@ from accounting_converter.adapters.output.jdl import (
     JdlTaxationMethod,
 )
 from accounting_converter.domain.journal import JournalEntry, JournalLine, Side, TaxInfo
+from accounting_converter.domain.journal_rows import has_counterparty
+from accounting_converter.adapters.output.jdl.tax_semantics import (
+    JDL_TAX_LITERALS,
+    JdlTaxSemantic,
+    semantic_for_target,
+)
 from accounting_converter.domain.mf_outpur_scope import (
     OUTPUR_SHAPE_EVIDENCE_IDS,
     OUTPUR_TAX_MAPPING_EVIDENCE_ID,
@@ -126,7 +132,9 @@ class MfTaxEvidenceRegistry:
         return matches[0] if len(matches) == 1 else None
 
 
-EVIDENCE = (
+# Evidence as recorded: the 4th field is the MF tax identity whose confirmed
+# Human mapping produced the JDL literal that JDL received.
+_RECORDED_EVIDENCE = (
     MfTaxExcludedPatternEvidence("EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P01-2D2C-PURCHASE-10-001", (("DEBIT","3231","","対象外"),("CREDIT","1311","0002","対象外"),("DEBIT","8681","","課税仕入 10%"),("CREDIT","1311","0002","対象外")), JdlEvidenceProfile.MF_COMPOUND_2D2C_TAX_EXCLUDED_PROPORTIONAL),
     MfTaxExcludedPatternEvidence("EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P02-OUT-3231-1311-SUB-001", (("DEBIT","3231","","対象外"),("CREDIT","1311","0002","対象外")), JdlEvidenceProfile.MF_NO_TAX_PROPORTIONAL_1111),
     MfTaxExcludedPatternEvidence("EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P03-OUT-3241-1311-SUB-001", (("DEBIT","3241","","対象外"),("CREDIT","1311","0002","対象外")), JdlEvidenceProfile.MF_NO_TAX_PROPORTIONAL_1111),
@@ -186,24 +194,63 @@ EVIDENCE = (
         JdlEvidenceProfile.MF_SALES10_EXCLUDED_PROPORTIONAL_1111,
     ),
 )
+# Mapping that was confirmed when each record was taken. Evidence is about the
+# JDL literal, so it is keyed by the target semantic, not by the source name.
+_RECORDED_TARGET_SEMANTIC = {
+    MF_PURCHASE_10: JdlTaxSemantic.PURCHASE_10_INTERNAL.value,
+    MF_OUT_OF_SCOPE: JdlTaxSemantic.NO_TAX.value,
+    MF_OUT_OF_SCOPE_PURCHASE: JdlTaxSemantic.NO_TAX.value,
+    MF_NON_TAXABLE_PURCHASE: JdlTaxSemantic.NON_TAXABLE_PURCHASE.value,
+    MF_NON_TAXABLE_SALES: JdlTaxSemantic.NON_TAXABLE_SALES.value,
+    MF_SALES_10: JdlTaxSemantic.SALES_10_EXTERNAL.value,
+}
+EVIDENCE = tuple(
+    replace(
+        item,
+        account_signature=tuple(
+            (side, account, subaccount, _RECORDED_TARGET_SEMANTIC[tax])
+            for side, account, subaccount, tax in item.account_signature
+        ),
+    )
+    for item in _RECORDED_EVIDENCE
+)
 EVIDENCE_REGISTRY = MfTaxEvidenceRegistry(EVIDENCE)
+# As recorded (MF tax identities), for audit and tests that rebuild MF sources.
+RECORDED_MF_EVIDENCE = _RECORDED_EVIDENCE
+UNMAPPED_TAX = "UNMAPPED"
+
+
+def target_tax_semantic(line: JournalLine, profile, context: JdlTargetContext) -> str:
+    """Source tax name -> confirmed Human mapping -> JDL target semantic.
+
+    Unconfirmed, stale (other Tax Context) or unknown mappings resolve to
+    UNMAPPED, which never matches Evidence.
+    """
+    category = line.tax_info.category if line.tax_info else ""
+    mapping = profile.tax_mappings.get(category) if profile is not None and category else None
+    if (
+        mapping is None
+        or mapping.status is not MappingStatus.USER_CONFIRMED
+        or mapping.metadata.get("jdl_tax_context_identity_sha256")
+        != tax_context_identity_sha256(context)
+    ):
+        return UNMAPPED_TAX
+    semantic = semantic_for_target(mapping.target_value, mapping.metadata.get("jdl_tax_scope"))
+    return semantic.value if semantic is not None else UNMAPPED_TAX
 
 # Composition is only allowed for these source tax identities. 対象外仕入 stays
 # exact-only because its Evidence is a single 1D1C pair plus three fixed shapes.
-COMPOSABLE_TAX_IDENTITIES = frozenset({
-    MF_OUT_OF_SCOPE, MF_PURCHASE_10, MF_SALES_10,
-    MF_NON_TAXABLE_PURCHASE, MF_NON_TAXABLE_SALES,
-})
+COMPOSABLE_TAX_IDENTITIES = frozenset(semantic.value for semantic in JdlTaxSemantic)
 # A tax line capability is treated as account-independent only when real
 # Evidence shows the same JDL representation surviving Import/re-export on at
 # least this many distinct target accounts on the same side. Otherwise it is
 # limited to the exact accounts that were verified.
 ACCOUNT_INDEPENDENCE_MIN_ACCOUNTS = 3
 TAXED_IDENTITY_PROFILES_1D1C = {
-    MF_PURCHASE_10: JdlEvidenceProfile.MF_TAX_EXCLUDED_PROPORTIONAL_1111,
-    MF_SALES_10: JdlEvidenceProfile.MF_SALES10_EXCLUDED_PROPORTIONAL_1111,
-    MF_NON_TAXABLE_PURCHASE: JdlEvidenceProfile.MF_NONPUR_PROPORTIONAL_1111,
-    MF_NON_TAXABLE_SALES: JdlEvidenceProfile.MF_NONSALE_PROPORTIONAL_1111,
+    JdlTaxSemantic.PURCHASE_10_INTERNAL.value: JdlEvidenceProfile.MF_TAX_EXCLUDED_PROPORTIONAL_1111,
+    JdlTaxSemantic.SALES_10_EXTERNAL.value: JdlEvidenceProfile.MF_SALES10_EXCLUDED_PROPORTIONAL_1111,
+    JdlTaxSemantic.NON_TAXABLE_PURCHASE.value: JdlEvidenceProfile.MF_NONPUR_PROPORTIONAL_1111,
+    JdlTaxSemantic.NON_TAXABLE_SALES.value: JdlEvidenceProfile.MF_NONSALE_PROPORTIONAL_1111,
 }
 # Shapes whose grouping/row order is verified in this Tax Context, with the
 # Evidence for that shape. 2D2C is P01 (one 課税仕入 10% debit row).
@@ -378,13 +425,11 @@ def match_evidence_for_occurrence(
             source_line.side.value,
             identity.account_code,
             identity.subaccount_code,
-            source_line.tax_info.category if source_line.tax_info else "",
+            target_tax_semantic(source_line, profile, context),
         )
         for source_line, identity in zip(source.lines, identities, strict=True)
     )
-    has_partner = any(
-        bool(line.metadata.get("moneyforward_trade_partner")) for line in source.lines
-    )
+    has_partner = has_counterparty(source)
     exact = EVIDENCE_REGISTRY.exact(
         signature,
         trade_partner=has_partner,
@@ -507,6 +552,9 @@ def compose_capabilities(
             # JDL rejected blank subaccounts on 1311/1551 when the master has
             # subaccounts. Only an explicit Human target subaccount can fix it.
             gaps.append("SUBACCOUNT_REQUIRED_BY_MASTER")
+        if tax == UNMAPPED_TAX:
+            gaps.append("TAX_MAPPING_UNCONFIRMED")
+            continue
         if tax not in COMPOSABLE_TAX_IDENTITIES:
             gaps.append("TAX_IDENTITY_NOT_COMPOSABLE")
             continue
@@ -518,15 +566,15 @@ def compose_capabilities(
             gaps.append("TAX_ACCOUNT_UNVERIFIED")
             continue
         support.extend(capability.evidence_ids)
-        if tax != MF_OUT_OF_SCOPE:
+        if tax != JdlTaxSemantic.NO_TAX.value:
             taxed.append((line, tax, subaccount))
         if (
-            tax == MF_SALES_10
+            tax == JdlTaxSemantic.SALES_10_EXTERNAL.value
             and not _tax_rounding_is_unambiguous(line.amount)
             and account not in SALES10_ROUNDING_VERIFIED_ACCOUNTS
         ):
             gaps.append("TAX_AMOUNT_ROUNDING_UNVERIFIED")
-        elif tax == MF_SALES_10 and not _tax_rounding_is_unambiguous(line.amount):
+        elif tax == JdlTaxSemantic.SALES_10_EXTERNAL.value and not _tax_rounding_is_unambiguous(line.amount):
             support.append(SALES10_ROUNDING_EVIDENCE_ID)
     generic_compound = shape in VERIFIED_COMPOUND_SHAPES
     if len(taxed) > 1 and not generic_compound:
@@ -540,7 +588,7 @@ def compose_capabilities(
     elif shape == (2, 2):
         if (
             len(taxed) != 1
-            or taxed[0][1] != MF_PURCHASE_10
+            or taxed[0][1] != JdlTaxSemantic.PURCHASE_10_INTERNAL.value
             or taxed[0][0].side is not Side.DEBIT
         ):
             gaps.append("SHAPE_TAX_COMBINATION_UNVERIFIED")
@@ -644,11 +692,18 @@ def apply_verified_tax_semantics(
     evidence = evidence_for_occurrence(source, mapped, context, profile)
     if evidence is None:
         return mapped
-    return apply_tax_literals(source, mapped, evidence.evidence_id)
+    return apply_tax_literals(
+        source, mapped, evidence.evidence_id, profile=profile, context=context
+    )
 
 
 def apply_tax_literals(
-    source: JournalEntry, mapped: JournalEntry, evidence_id: str
+    source: JournalEntry,
+    mapped: JournalEntry,
+    evidence_id: str,
+    *,
+    profile,
+    context: JdlTargetContext,
 ) -> JournalEntry:
     """Write the verified JDL tax literal for each MF tax identity.
 
@@ -658,23 +713,24 @@ def apply_tax_literals(
     """
     lines = []
     for source_line, mapped_line in zip(source.lines, mapped.lines, strict=True):
-        category = source_line.tax_info.category if source_line.tax_info else None
-        if category == MF_PURCHASE_10:
+        semantic = target_tax_semantic(source_line, profile, context)
+        if semantic == JdlTaxSemantic.PURCHASE_10_INTERNAL.value:
+            base = mapped_line.tax_info or TaxInfo()
             info = replace(
-                mapped_line.tax_info,
+                base,
                 category="10%",
                 rate=Decimal("10"),
                 tax_inclusion="INCLUDED",
                 tax_amount=ten_percent_tax_amount(mapped_line.amount),
                 metadata={
-                    **mapped_line.tax_info.metadata,
+                    **base.metadata,
                     "jdl_tax_scope": "仕　入",
                     "jdl_tax_input_method": "内税",
                     "jdl_evidence_id": evidence_id,
                 },
             )
             lines.append(replace(mapped_line, tax_info=info))
-        elif category == MF_SALES_10:
+        elif semantic == JdlTaxSemantic.SALES_10_EXTERNAL.value:
             # 0872 literal: 売　上 / 10% / 外税 / explicit tax amount.
             info = TaxInfo(
                 category="10%",
@@ -688,12 +744,15 @@ def apply_tax_literals(
                 },
             )
             lines.append(replace(mapped_line, tax_info=info))
-        elif category in {MF_NON_TAXABLE_PURCHASE, MF_NON_TAXABLE_SALES}:
+        elif semantic in {
+            JdlTaxSemantic.NON_TAXABLE_PURCHASE.value,
+            JdlTaxSemantic.NON_TAXABLE_SALES.value,
+        }:
             # 0870/0876 literal: 課区 only; 税区, 税入力方法 and tax amount blank.
             info = TaxInfo(
                 category="",
                 metadata={
-                    "jdl_tax_scope": TAX_MAPPING_SPECS[category][1],
+                    "jdl_tax_scope": JDL_TAX_LITERALS[JdlTaxSemantic(semantic)].scope,
                     "jdl_evidence_id": evidence_id,
                 },
             )

@@ -13,6 +13,8 @@ Current phase (counts live only in current_evidence_status.md):
 - The only critical path is the FY2027 real round-trip ("Remaining critical path" in current_evidence_status.md).
 - Other refactoring waits until the full 482 real acceptance.
 
+Design rule: JDL target Evidence is keyed by what JDL receives, never by the source format or source tax name (see the workflow document).
+
 Hard rules: never auto-confirm accounting judgments; never track `data/private/`; commit or push only when asked.
 
 Checks: `PYTHONPATH=src python3 -m unittest discover -s tests`, `PYTHONPATH=src python3 -m compileall -q src tests`, `git diff --check`, `git ls-files data/private | wc -l` must be 0.

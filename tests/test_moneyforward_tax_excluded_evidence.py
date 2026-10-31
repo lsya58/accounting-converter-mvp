@@ -22,6 +22,7 @@ from accounting_converter.adapters.output.jdl import (
     jdl_ibex_35_5_output_profile,
 )
 from accounting_converter.adapters.output.jdl.adapter import JDLOutputAdapter
+from accounting_converter.adapters.output.jdl.tax_semantics import JdlTaxSemantic
 from accounting_converter.adapters.output.jdl.validator import JDLOutputValidator
 from accounting_converter.application.conversion import (
     ConversionRequest,
@@ -30,17 +31,20 @@ from accounting_converter.application.conversion import (
 )
 from accounting_converter.application.moneyforward_tax_excluded_evidence import (
     BATCH_EVIDENCE_ID,
-    EVIDENCE,
     EVIDENCE_REGISTRY,
     MfTaxEvidenceRegistry,
     MfTaxExcludedPatternEvidence,
-    apply_verified_tax_semantics,
+    RECORDED_MF_EVIDENCE as EVIDENCE,
     confirmed_mapping_is_in_scope,
     confirmed_mapping_mismatch_fields,
     context_is_verified,
+    tax_context_identity_sha256,
+)
+from tests.support.confirmed_tax import (
+    with_confirmed_tax,
+    apply_verified_tax_semantics,
     evidence_for_occurrence,
     match_evidence_for_occurrence,
-    tax_context_identity_sha256,
 )
 from accounting_converter.application.moneyforward_conversion_workflow import (
     MoneyForwardConversionWorkflow,
@@ -81,12 +85,17 @@ from accounting_converter.profiles.known_formats import (
 )
 
 
+# The registry is keyed by JDL target semantics (what JDL received).
+PURCHASE = JdlTaxSemantic.PURCHASE_10_INTERNAL.value
+NO_TAX = JdlTaxSemantic.NO_TAX.value
+
+
 class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
     def test_1d2c_real_evidence_is_exact_and_not_generalized(self) -> None:
         signature = (
-            ("DEBIT", "7121", "", "課税仕入 10%"),
-            ("CREDIT", "3141", "", "対象外"),
-            ("CREDIT", "3271", "0002", "対象外"),
+            ("DEBIT", "7121", "", PURCHASE),
+            ("CREDIT", "3141", "", NO_TAX),
+            ("CREDIT", "3271", "0002", NO_TAX),
         )
         evidence = EVIDENCE_REGISTRY.exact(signature, trade_partner=False)
         self.assertIsNotNone(evidence)
@@ -98,7 +107,7 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
             JdlEvidenceProfile.MF_COMPOUND_1D2C_TAX_EXCLUDED_PROPORTIONAL,
         )
         self.assertIsNone(EVIDENCE_REGISTRY.exact(signature, trade_partner=True))
-        changed_sub = (*signature[:2], ("CREDIT", "3271", "0001", "対象外"))
+        changed_sub = (*signature[:2], ("CREDIT", "3271", "0001", NO_TAX))
         self.assertIsNone(EVIDENCE_REGISTRY.exact(changed_sub, trade_partner=False))
 
     def test_exact_pattern_activates_and_adds_tax_excluded_fields(self) -> None:
@@ -402,12 +411,12 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
         for pattern, debit_code in (("P05", "8471"), ("P07", "8481")):
             with self.subTest(pattern=pattern):
                 blank_signature = (
-                    ("DEBIT", debit_code, "", "課税仕入 10%"),
-                    ("CREDIT", "3181", "", "対象外"),
+                    ("DEBIT", debit_code, "", PURCHASE),
+                    ("CREDIT", "3181", "", NO_TAX),
                 )
                 subaccount_signature = (
-                    ("DEBIT", debit_code, "", "課税仕入 10%"),
-                    ("CREDIT", "3181", "0001", "対象外"),
+                    ("DEBIT", debit_code, "", PURCHASE),
+                    ("CREDIT", "3181", "0001", NO_TAX),
                 )
                 blank = EVIDENCE_REGISTRY.exact(
                     blank_signature, trade_partner=False
@@ -460,7 +469,7 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
                 mapped_lines = []
                 for side, account, subaccount, tax in expected.account_signature:
                     metadata = (
-                        {"moneyforward_trade_partner": "SYNTHETIC-PARTNER"}
+                        {"moneyforward_trade_partner": "SYNTHETIC-PARTNER", "journal_counterparty": "SYNTHETIC-PARTNER"}
                         if expected.trade_partner and not source_lines else {}
                     )
                     source_lines.append(JournalLine(
@@ -595,14 +604,14 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
                     if subaccount else None
                 )
                 metadata = (
-                    {"moneyforward_trade_partner": "SYNTHETIC-PARTNER"}
+                    {"moneyforward_trade_partner": "SYNTHETIC-PARTNER", "journal_counterparty": "SYNTHETIC-PARTNER"}
                     if evidence.trade_partner and index == 0 else {}
                 )
                 line_metadata = dict(metadata)
                 if pattern == "P01":
                     line_metadata.update({
-                        "moneyforward_source_row_number": occurrence * 10 + index // 2,
-                        "moneyforward_description": f"ROW-{index // 2 + 1}",
+                        "journal_row_number": occurrence * 10 + index // 2,
+                        "journal_row_description": f"ROW-{index // 2 + 1}",
                     })
                 lines.append(JournalLine(
                     Side(side), f"SOURCE-{account}", Decimal("100"), ref,
@@ -818,14 +827,10 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
             mapped.lines[1].account = "MISMATCH"
             entries.append(source)
             mapped_entries.append(mapped)
-        mapping = MappingValue(
-            "課税仕入 10%", "10%", MappingStatus.USER_CONFIRMED,
-            metadata={"jdl_evidence_id": "WRONG"},
-        )
-        profile = SimpleNamespace(
-            tax_mappings={"課税仕入 10%": mapping, "対象外": mapping},
-            account_mappings={},
-            subaccount_context_mappings={},
+        # Tax mappings are confirmed so that only the account mismatch remains.
+        profile = with_confirmed_tax(
+            SimpleNamespace(tax_mappings={}, account_mappings={}, subaccount_context_mappings={}),
+            context,
         )
 
         with patch(

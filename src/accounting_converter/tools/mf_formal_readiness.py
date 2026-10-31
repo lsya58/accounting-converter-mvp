@@ -105,9 +105,11 @@ def journal_blockers(source: Path, profile, context) -> list[tuple[object, froze
             gaps = set(match.mismatch_fields) - IDENTITY_NOISE
             if "SUBACCOUNT_REQUIRED_BY_MASTER" in gaps:
                 blockers.add("HUMAN:SUBACCOUNT_DEFAULT")
+            if "TAX_MAPPING_UNCONFIRMED" in gaps:
+                blockers.add("HUMAN:TAX_MAPPING")
             for gap in gaps & COMPOSITION_GAPS:
                 blockers.add(f"SYSTEM_EVIDENCE:{gap}")
-            unexplained = gaps - COMPOSITION_GAPS - {"SUBACCOUNT_REQUIRED_BY_MASTER"}
+            unexplained = gaps - COMPOSITION_GAPS - {"SUBACCOUNT_REQUIRED_BY_MASTER", "TAX_MAPPING_UNCONFIRMED"}
             if unexplained or not gaps:
                 blockers.add("SYSTEM_IMPLEMENTATION:" + ",".join(sorted(unexplained or match.mismatch_fields) or ["UNMATCHED"]))
         result.append((entry, frozenset(blockers)))
