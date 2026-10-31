@@ -3,10 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import datetime
 from decimal import ROUND_DOWN, Decimal, InvalidOperation
-import hashlib
 from typing import Sequence
 
 from accounting_converter.domain.journal import JournalEntry, JournalLine, Side, TaxInfo
+from accounting_converter.domain.journal_identity import stable_journal_identity
 from accounting_converter.domain.mf_outpur_scope import OUTPUR_SHAPE_EVIDENCE_IDS, outpur_target_signature
 from accounting_converter.domain.profile import FormatProfile
 from accounting_converter.domain.validation import Severity, ValidationResult
@@ -121,6 +121,9 @@ EVIDENCE_IDS = {
     JdlEvidenceProfile.MF_COMPOUND_1D2C_TAX_EXCLUDED_PROPORTIONAL: (
         "EVID-MF-JDL-35-5-1D2C-REAL-ROUNDTRIP-001"
     ),
+    JdlEvidenceProfile.MF_COMPOUND_TAX_EXCLUDED_PROPORTIONAL: (
+        "MF-JDL-35-5-TAX-EXCLUDED-PROPORTIONAL-CAPABILITY-COMPOSITION-V1"
+    ),
     JdlEvidenceProfile.MF_OUTPUR_COMPOUND_4D6C: OUTPUR_SHAPE_EVIDENCE_IDS[(4, 6)],
     JdlEvidenceProfile.MF_OUTPUR_COMPOUND_5D7C: OUTPUR_SHAPE_EVIDENCE_IDS[(5, 7)],
     JdlEvidenceProfile.MF_OUTPUR_COMPOUND_5D8C: OUTPUR_SHAPE_EVIDENCE_IDS[(5, 8)],
@@ -140,6 +143,11 @@ EVIDENCE_IDS = {
         "EVID-JDL-COMPOUND-5D8C-PER-ROW-DESCRIPTION-ROUNDTRIP-001"
     ),
 }
+# Content identity of the real 1D2C journal behind EVID-MF-JDL-35-5-1D2C-...
+# (file-name independent; the legacy id-hash was 6099ad2a…).
+MF_1D2C_JOURNAL_IDENTITY = (
+    "7580a0c6ea5bc10d613fa7c456702963a861da25f93839fa7037149b98c16047"
+)
 MULTIGROUP_EVIDENCE_ID = "EVID-JDL-GENERATOR-MULTIGROUP-SIMPLE-COMPOUND-001"
 SIMPLE_PLUS_SIMPLE_EVIDENCE_ID = "EVID-JDL-SIMPLE-PLUS-SIMPLE-RUNTIME-001"
 MIXED_BATCH_EVIDENCE_ID = "EVID-JDL-MIXED-BATCH-RUNTIME-001"
@@ -172,6 +180,7 @@ MF_TAX_EXCLUDED_PROPORTIONAL_FAMILY = frozenset({
     JdlEvidenceProfile.MF_NONSALE_PROPORTIONAL_1111,
     JdlEvidenceProfile.MF_COMPOUND_2D2C_TAX_EXCLUDED_PROPORTIONAL,
     JdlEvidenceProfile.MF_COMPOUND_1D2C_TAX_EXCLUDED_PROPORTIONAL,
+    JdlEvidenceProfile.MF_COMPOUND_TAX_EXCLUDED_PROPORTIONAL,
     *MF_OUTPUR_COMPOUND_PROFILES,
 })
 MIXED_BATCH_PROFILE_SEQUENCE = (
@@ -215,8 +224,15 @@ class JdlPreflightResult:
 
 
 class JdlOutputPreflight:
-    def __init__(self, context: JdlTargetContext) -> None:
+    def __init__(
+        self,
+        context: JdlTargetContext,
+        *,
+        probe_pending_shapes: frozenset[tuple[int, int, int]] = frozenset(),
+    ) -> None:
         self.context = context
+        # NOT_FOR_PRODUCTION probe generation only: extra physical-row shapes.
+        self.probe_pending_shapes = probe_pending_shapes
 
     def evaluate(
         self,
@@ -348,6 +364,7 @@ class JdlOutputPreflight:
             JdlEvidenceProfile.COMPOUND_2D2C_PURCHASE_10_TAXABLE_NO_SUBACCOUNT,
             JdlEvidenceProfile.MF_COMPOUND_2D2C_TAX_EXCLUDED_PROPORTIONAL,
             JdlEvidenceProfile.MF_COMPOUND_1D2C_TAX_EXCLUDED_PROPORTIONAL,
+            JdlEvidenceProfile.MF_COMPOUND_TAX_EXCLUDED_PROPORTIONAL,
             *MF_OUTPUR_COMPOUND_PROFILES,
             JdlEvidenceProfile.COMPOUND_2D1C_LINE_DESCRIPTIONS,
             JdlEvidenceProfile.COMPOUND_2D3C_LINE_DESCRIPTIONS,
@@ -400,6 +417,7 @@ class JdlOutputPreflight:
             JdlEvidenceProfile.COMPOUND_2D2C_PURCHASE_10_TAXABLE_NO_SUBACCOUNT,
             JdlEvidenceProfile.MF_COMPOUND_2D2C_TAX_EXCLUDED_PROPORTIONAL,
             JdlEvidenceProfile.MF_COMPOUND_1D2C_TAX_EXCLUDED_PROPORTIONAL,
+            JdlEvidenceProfile.MF_COMPOUND_TAX_EXCLUDED_PROPORTIONAL,
             *MF_OUTPUR_COMPOUND_PROFILES,
             JdlEvidenceProfile.COMPOUND_2D1C_LINE_DESCRIPTIONS,
             JdlEvidenceProfile.COMPOUND_2D3C_LINE_DESCRIPTIONS,
@@ -427,13 +445,17 @@ class JdlOutputPreflight:
                 return []
             physical_rows = None
         else:
-            physical_rows = moneyforward_verified_description_rows(entry)
+            physical_rows = moneyforward_verified_description_rows(
+                entry, additional_shapes=self.probe_pending_shapes
+            )
             shape = (
                 len(debit),
                 len(credit),
                 len(physical_rows) if physical_rows is not None else 0,
             )
-            if physical_rows is None or shape != expected_shapes[evidence]:
+            if physical_rows is None or (
+                evidence in expected_shapes and shape != expected_shapes[evidence]
+            ):
                 errors.append(self._error("JDL-OUT-COMPOUND-SHAPE", "Evidence profileと複合仕訳形状が一致しません。", "journal_structure", entry))
                 return []
         if not entry.is_balanced():
@@ -450,8 +472,7 @@ class JdlOutputPreflight:
             target_signature = tuple(account.target_master_code if account else "" for account in accounts)
             last_subaccount = self._subaccount_identity(second.credit)
             if (
-                hashlib.sha256(entry.id.encode("utf-8")).hexdigest()
-                != "6099ad2a91a878298c8fac68226f9cc5b6fd263cd5eb95ffd20daeacbe29e949"
+                stable_journal_identity(entry) != MF_1D2C_JOURNAL_IDENTITY
                 or target_signature != ("7121", "3141", "3271")
                 or first.debit is None or first.debit.sub_account
                 or first.credit is None or first.credit.sub_account
@@ -500,6 +521,15 @@ class JdlOutputPreflight:
             for row in physical_rows:
                 self._validate_optional_subaccount(row.debit, entry, errors)
                 self._validate_optional_subaccount(row.credit, entry, errors)
+        elif evidence is JdlEvidenceProfile.MF_COMPOUND_TAX_EXCLUDED_PROPORTIONAL:
+            assert physical_rows is not None
+            self._validate_excluded_proportional_context(entry, errors)
+            for row in physical_rows:
+                for line in (row.debit, row.credit):
+                    if line is None:
+                        continue
+                    self._validate_excluded_line_literal(line, entry, errors)
+                    self._validate_optional_subaccount(line, entry, errors)
         elif evidence is JdlEvidenceProfile.MF_COMPOUND_2D2C_TAX_EXCLUDED_PROPORTIONAL:
             assert physical_rows is not None
             taxed_rows = tuple(
@@ -931,6 +961,52 @@ class JdlOutputPreflight:
                         entry,
                     )
                 )
+
+    def _validate_excluded_proportional_context(
+        self, entry: JournalEntry, errors: list[ValidationResult]
+    ) -> None:
+        if (
+            self.context.tax_processing_mode is not JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED
+            or not self.context.standard_taxation_confirmed
+            or self.context.effective_input_tax_credit_method is not JdlInputTaxCreditMethod.PROPORTIONAL
+            or self.context.confirmation_state is not JdlContextConfirmationState.CONFIRMED
+            or self.context.provenance is not JdlContextProvenance.USER_CONFIRMED_RUNTIME_SNAPSHOT
+        ):
+            errors.append(self._error("JDL-OUT-TAX-COMPANY-PROFILE", "税抜・一括比例配分方式の確認が必要です。", "tax_processing", entry))
+
+    def _validate_excluded_line_literal(
+        self, line: JournalLine, entry: JournalEntry, errors: list[ValidationResult]
+    ) -> None:
+        """One line of a 税抜・一括比例配分 compound: blank, or one verified literal."""
+        if line.department:
+            errors.append(self._error("JDL-OUT-TAX-COMBINATION", "検証済み税profileに部門を併用できません。", "evidence_profile", entry))
+        info = line.tax_info
+        if not self._nonempty_tax(info):
+            return
+        assert info is not None
+        expected = {
+            (Side.DEBIT, TAX_SCOPE_PURCHASE): (TAX_CATEGORY_TEN_PERCENT, TAX_INPUT_METHOD_INTERNAL, True),
+            (Side.CREDIT, TAX_SCOPE_SALES_EXCLUDED): (TAX_CATEGORY_TEN_PERCENT, TAX_INPUT_METHOD_EXTERNAL, True),
+            (Side.DEBIT, TAX_SCOPE_NON_TAXABLE_PURCHASE): ("", "", False),
+            (Side.CREDIT, TAX_SCOPE_NON_TAXABLE_SALES): ("", "", False),
+        }.get((line.side, info.metadata.get("jdl_tax_scope")))
+        if (
+            expected is None
+            or (info.category or "") != expected[0]
+            or (info.metadata.get("jdl_tax_input_method") or "") != expected[1]
+            or info.metadata.get("jdl_transaction_account")
+            or info.reduced_rate is True
+        ):
+            errors.append(self._error("JDL-OUT-TAX-LITERAL", "検証済み課区・税区のexact literalが必要です。", "tax", entry))
+            return
+        if expected[2]:
+            observed = (line.amount * Decimal("10") / Decimal("110")).quantize(
+                Decimal("1"), rounding=ROUND_DOWN
+            )
+            if info.tax_amount != observed:
+                errors.append(self._error("JDL-OUT-TAX-AMOUNT-PATTERN", "明示消費税額が検証済み10%・端数切捨てpatternと一致しません。", "tax", entry))
+        elif info.tax_amount is not None or info.rate is not None:
+            errors.append(self._error("JDL-OUT-TAX-LITERAL", "検証済み課区・税区のexact literalが必要です。", "tax", entry))
 
     def _validate_non_taxable_proportional(
         self,

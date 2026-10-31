@@ -41,6 +41,8 @@ from accounting_converter.application.description_replacement import (
     replacement_is_valid,
 )
 from accounting_converter.application.moneyforward_description_replacement import (
+    description_issues,
+    description_replacement_candidate,
     observed_jdl_description,
     recommended_description_replacement,
     unsafe_description_positions,
@@ -1916,62 +1918,110 @@ class CompanyMappingUpdateDialog(QDialog):
             empty = QLabel("摘要・文字置換の確認はありません。")
             empty.setObjectName("muted")
             page_layout.addWidget(empty)
-        for item in self.review.descriptions:
+        self.description_bulk_candidates: dict[str, str] = {}
+        if self.review.descriptions:
+            intro = QLabel(
+                f"元の摘要ごとに1回確認すると、同じ摘要を使うすべての仕訳に適用します"
+                f"（{len(self.review.descriptions)}種類 / "
+                f"{sum(item.affected_journal_count for item in self.review.descriptions)}仕訳）。"
+                "候補は自動保存されません。"
+            )
+            intro.setWordWrap(True)
+            page_layout.addWidget(intro)
+            bulk = QPushButton("意味が変わらない候補（改行→空白・確認済み文字置換）をまとめて確認")
+            bulk.setToolTip("先頭32文字で切った候補は対象外です。1件ずつ確認してください。")
+            bulk.clicked.connect(self._confirm_safe_description_candidates)
+            page_layout.addWidget(bulk)
+        ordered = sorted(
+            self.review.descriptions,
+            key=lambda item: (-item.affected_journal_count, item.key),
+        )
+        for item in ordered:
             card = QFrame()
             card.setObjectName("card")
             card_layout = QVBoxLayout(card)
-            heading = QLabel("JDLでは正しく保存できない文字があります")
+            issues = description_issues(item.current_description)
+            heading = QLabel(" / ".join(issues) or "JDLでは正しく保存できない文字があります")
             heading.setObjectName("sectionTitle")
+            heading.setWordWrap(True)
             card_layout.addWidget(heading)
             affected = QLabel(f"この摘要を使う仕訳: {item.affected_journal_count}件")
             affected.setObjectName("muted")
             card_layout.addWidget(affected)
-            current = QLabel(f"現在: {item.current_description}")
+            current = QLabel(f"元の摘要: {item.current_description}")
             current.setWordWrap(True)
             card_layout.addWidget(current)
-            observed = observed_jdl_description(item.current_description)
-            changed = QLabel(f"このままJDLへ変換すると: {observed}")
-            changed.setObjectName("warningCard")
-            changed.setWordWrap(True)
-            card_layout.addWidget(changed)
-            guidance = QLabel(
-                "JDLで文字が変わることを実機で確認しています。意味を保つ"
-                "置き換え内容を確認してください。変換を保留する場合は未確認のまま閉じます。"
-            )
-            guidance.setObjectName("muted")
-            guidance.setWordWrap(True)
-            card_layout.addWidget(guidance)
+            if item.unsafe_positions:
+                observed = observed_jdl_description(item.current_description)
+                changed = QLabel(f"このままJDLへ変換すると: {observed}")
+                changed.setObjectName("warningCard")
+                changed.setWordWrap(True)
+                card_layout.addWidget(changed)
+                guidance = QLabel(
+                    "JDLで文字が変わることを実機で確認しています。意味を保つ"
+                    "置き換え内容を確認してください。変換を保留する場合は未確認のまま閉じます。"
+                )
+                guidance.setObjectName("muted")
+                guidance.setWordWrap(True)
+                card_layout.addWidget(guidance)
             replacement = QLineEdit()
-            replacement.setPlaceholderText("置き換え後の摘要（1〜32文字）")
+            replacement.setPlaceholderText("置き換え後の摘要（1〜32文字、改行なし）")
             recommended = recommended_description_replacement(
                 item.current_description
             )
+            candidate = description_replacement_candidate(item.current_description)
             if recommended is not None:
                 replacement.setText(recommended)
                 replacement.setToolTip("実機確認済みの推奨候補です。保存には確認が必要です。")
+            elif candidate is not None:
+                replacement.setText(candidate.value)
+                replacement.setToolTip(candidate.label)
+            if candidate is not None:
+                note = QLabel(f"候補: {candidate.label}")
+                note.setObjectName("muted" if candidate.bulk_confirmable else "warningCard")
+                note.setWordWrap(True)
+                card_layout.addWidget(note)
+                if candidate.bulk_confirmable:
+                    self.description_bulk_candidates[item.key] = candidate.value
+            preview = QLabel()
+            preview.setObjectName("muted")
+            preview.setWordWrap(True)
             confirmation = QCheckBox("この置き換え内容を確認しました")
-            confirmation.setEnabled(
-                replacement_is_valid(replacement.text())
-                and not unsafe_description_positions(replacement.text())
-            )
+
+            def refresh(_text="", field=replacement, check=confirmation, label=preview):
+                value = field.text()
+                valid = replacement_is_valid(value) and not unsafe_description_positions(value)
+                label.setText(
+                    f"JDLに出力される摘要: {value}（{len(value)}文字）"
+                    if valid else "1〜32文字・改行なし・JDLで保持できる文字で入力してください"
+                )
+                check.setEnabled(valid)
+
+            refresh()
             replacement.textChanged.connect(
-                lambda text, field=replacement, check=confirmation: (
+                lambda text, check=confirmation, update=refresh: (
                     check.setChecked(False),
-                    check.setEnabled(
-                        replacement_is_valid(field.text())
-                        and not unsafe_description_positions(field.text())
-                    ),
+                    update(),
                     self._update_action(),
                 )
             )
             confirmation.stateChanged.connect(self._update_action)
             card_layout.addWidget(replacement)
+            card_layout.addWidget(preview)
             card_layout.addWidget(confirmation)
             self.description_controls[item.key] = (replacement, confirmation)
             page_layout.addWidget(card)
         page_layout.addStretch(1)
         scroll.setWidget(page)
         return scroll
+
+    def _confirm_safe_description_candidates(self) -> None:
+        """Check only untouched candidates that cannot drop meaning."""
+        for key, value in self.description_bulk_candidates.items():
+            field, check = self.description_controls[key]
+            if field.text() == value and check.isEnabled():
+                check.setChecked(True)
+        self._update_action()
 
     def _tax_tab(self, tax_message: str) -> QWidget:
         page = QWidget()
@@ -3333,6 +3383,11 @@ class TaxMappingConfirmationDialog(QDialog):
                 card_layout = QVBoxLayout(card)
                 card_layout.addWidget(QLabel(f"MFの税区分: {item.source_value}"))
                 card_layout.addWidget(QLabel(f"JDLでの扱い: {item.target_display}"))
+                if item.evidence_id:
+                    evidence = QLabel(f"実機Evidence: {item.evidence_id}")
+                    evidence.setObjectName("muted")
+                    evidence.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+                    card_layout.addWidget(evidence)
                 if item.affected_row_count:
                     card_layout.addWidget(
                         QLabel(f"この税区分を使う入力行: {item.affected_row_count}行")

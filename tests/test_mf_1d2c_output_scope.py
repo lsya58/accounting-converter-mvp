@@ -5,7 +5,6 @@ import tempfile
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
-from unittest.mock import patch
 
 from accounting_converter.adapters.output.jdl import (
     JDL_OUTPUT_METADATA_KEY, JDLOutputAdapter, JDLOutputValidator,
@@ -13,7 +12,8 @@ from accounting_converter.adapters.output.jdl import (
     JdlInputTaxCreditMethod, JdlSubaccountIdentity, JdlTargetContext,
     JdlTaxationMethod, jdl_ibex_35_5_output_profile,
 )
-from accounting_converter.adapters.output.jdl.preflight import JdlOutputPreflight
+from accounting_converter.domain.journal_identity import JOURNAL_CONTENT_IDENTITY_KEY
+from accounting_converter.adapters.output.jdl.preflight import MF_1D2C_JOURNAL_IDENTITY, JdlOutputPreflight
 from accounting_converter.domain.journal import JournalEntry, JournalLine, Side, SourceReference, TaxInfo
 from accounting_converter.profiles.jdl_official import JdlTaxProcessingMode
 
@@ -56,6 +56,7 @@ class MfExact1D2COutputTest(unittest.TestCase):
                             sub_account="補助A", metadata=second),
             ],
             metadata={
+                JOURNAL_CONTENT_IDENTITY_KEY: MF_1D2C_JOURNAL_IDENTITY,
                 JDL_OUTPUT_METADATA_KEY: JdlEvidenceProfile.MF_COMPOUND_1D2C_TAX_EXCLUDED_PROPORTIONAL.value,
                 "physical_row_numbers": (2, 3),
                 "moneyforward_descriptions": (
@@ -66,11 +67,7 @@ class MfExact1D2COutputTest(unittest.TestCase):
         )
 
     def evaluate(self, entry: JournalEntry):
-        with patch("accounting_converter.adapters.output.jdl.preflight.hashlib.sha256") as digest:
-            digest.return_value.hexdigest.return_value = (
-                "6099ad2a91a878298c8fac68226f9cc5b6fd263cd5eb95ffd20daeacbe29e949"
-            )
-            return JdlOutputPreflight(self.context).evaluate((entry,), jdl_ibex_35_5_output_profile())
+        return JdlOutputPreflight(self.context).evaluate((entry,), jdl_ibex_35_5_output_profile())
 
     def test_exact_verified_two_row_output(self) -> None:
         entry = self.entry()
@@ -78,12 +75,7 @@ class MfExact1D2COutputTest(unittest.TestCase):
         self.assertTrue(result.supported, [item.rule_id for item in result.validation_results])
         self.assertEqual([row.identifier_flag for row in result.plan.rows], ["1110", "1101"])
         self.assertEqual(len(result.plan.rows), 2)
-        with tempfile.TemporaryDirectory() as directory, patch(
-            "accounting_converter.adapters.output.jdl.preflight.hashlib.sha256"
-        ) as digest:
-            digest.return_value.hexdigest.return_value = (
-                "6099ad2a91a878298c8fac68226f9cc5b6fd263cd5eb95ffd20daeacbe29e949"
-            )
+        with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "candidate.csv"
             profile = jdl_ibex_35_5_output_profile()
             JDLOutputAdapter(self.context).write((entry,), output, profile)
@@ -102,9 +94,8 @@ class MfExact1D2COutputTest(unittest.TestCase):
 
     def test_different_journal_identity_cannot_borrow_evidence(self) -> None:
         entry = self.entry()
-        with patch("accounting_converter.adapters.output.jdl.preflight.hashlib.sha256") as digest:
-            digest.return_value.hexdigest.return_value = "different"
-            result = JdlOutputPreflight(self.context).evaluate((entry,), jdl_ibex_35_5_output_profile())
+        entry.metadata[JOURNAL_CONTENT_IDENTITY_KEY] = "0" * 64
+        result = self.evaluate(entry)
         self.assertFalse(result.supported)
         self.assertIn("JDL-OUT-1D2C-EXACT-SCOPE", {item.rule_id for item in result.validation_results})
 

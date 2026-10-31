@@ -15,6 +15,10 @@ from accounting_converter.domain.journal import (
     SourceReference,
     TaxInfo,
 )
+from accounting_converter.domain.journal_identity import (
+    JOURNAL_CONTENT_IDENTITY_KEY,
+    journal_content_identity,
+)
 from accounting_converter.profiles.known_formats import MONEYFORWARD_JOURNAL_EXPORT_HEADER
 
 
@@ -175,6 +179,11 @@ class MoneyForwardObservedParser:
                     {"row_number": row.row_number, "value": row.values[18]}
                     for row in rows if row.values[18]
                 ),
+                JOURNAL_CONTENT_IDENTITY_KEY: journal_content_identity(
+                    "moneyforward_cloud_journal_export_observed",
+                    entry_date.isoformat(),
+                    tuple(self._content_row(row) for row in rows),
+                ),
                 "transaction_number_scope": "SOURCE_FILE_LOCAL",
                 "production_registry_enabled": False,
             },
@@ -182,6 +191,14 @@ class MoneyForwardObservedParser:
         if not entry.is_balanced():
             raise MoneyForwardObservedParserError("journal group is not balanced")
         return entry
+
+    def _content_row(self, row: MoneyForwardObservedRow) -> tuple[str, ...]:
+        """Row content without file/row/transaction numbering; amounts normalized."""
+        values = list(row.values[2:19])
+        for index in (6, 13):  # debit amount, credit amount within values[2:19]
+            if values[index]:
+                values[index] = str(self._parse_amount(values[index]))
+        return tuple(values)
 
     def _build_line(
         self,

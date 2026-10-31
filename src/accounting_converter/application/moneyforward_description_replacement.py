@@ -60,6 +60,62 @@ def description_requires_replacement(description: str) -> bool:
     )
 
 
+def description_issues(description: str) -> tuple[str, ...]:
+    """Human-readable reasons why JDL cannot keep this description as-is."""
+    issues = []
+    if len(description) > JDL_DESCRIPTION_LIMIT:
+        issues.append(f"32文字を超えています（{len(description)}文字）")
+    if has_control_character(description):
+        issues.append("改行などの制御文字を含みます")
+    if unsafe_description_positions(description):
+        issues.append("JDLでは正しく保存できない文字があります")
+    return tuple(issues)
+
+
+@dataclass(frozen=True)
+class DescriptionReplacementCandidate:
+    value: str
+    kind: str
+    label: str
+    # True only when the candidate cannot drop meaning: exact Evidence-backed
+    # character replacement and/or line breaks turned into spaces.
+    bulk_confirmable: bool
+
+
+def description_replacement_candidate(
+    description: str,
+) -> DescriptionReplacementCandidate | None:
+    """Suggest a replacement for Human review. Never saved without confirmation."""
+    text = "".join(
+        JDL_OBSERVED_DESCRIPTION_REPLACEMENTS.get(character, character)
+        for character in description
+    )
+    text = " ".join(
+        "".join(" " if ord(c) < 0x20 or ord(c) == 0x7F else c for c in text).split()
+    )
+    if not text or unsafe_description_positions(text):
+        return None
+    if len(text) <= JDL_DESCRIPTION_LIMIT:
+        if not replacement_is_valid(text):
+            return None
+        kind = "EXACT" if not has_control_character(description) else "WHITESPACE"
+        label = (
+            "実機確認済みの文字置換"
+            if kind == "EXACT"
+            else "改行を空白に置き換えた候補"
+        )
+        return DescriptionReplacementCandidate(text, kind, label, True)
+    truncated = text[:JDL_DESCRIPTION_LIMIT].rstrip()
+    if not replacement_is_valid(truncated):
+        return None
+    return DescriptionReplacementCandidate(
+        truncated,
+        "TRUNCATED",
+        "先頭32文字の候補です。省略された部分を確認し、必要なら書き換えてください",
+        False,
+    )
+
+
 def recommended_description_replacement(description: str) -> str | None:
     """Return only a Human-review candidate proven by scoped JDL Evidence."""
     replacement = "".join(

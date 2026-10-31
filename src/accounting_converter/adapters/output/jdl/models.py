@@ -66,6 +66,11 @@ class JdlEvidenceProfile(str, Enum):
     MF_COMPOUND_1D2C_TAX_EXCLUDED_PROPORTIONAL = (
         "EVIDENCED_MF_COMPOUND_1D2C_TAX_EXCLUDED_PROPORTIONAL"
     )
+    # Generic compound in the 税抜・一括比例配分 Context; each shape is gated by
+    # its own Evidence in capability composition, never by this profile alone.
+    MF_COMPOUND_TAX_EXCLUDED_PROPORTIONAL = (
+        "EVIDENCED_MF_COMPOUND_TAX_EXCLUDED_PROPORTIONAL"
+    )
     MF_OUTPUR_COMPOUND_4D6C = "EVIDENCED_MF_OUTPUR_COMPOUND_4D6C"
     MF_OUTPUR_COMPOUND_5D7C = "EVIDENCED_MF_OUTPUR_COMPOUND_5D7C"
     MF_OUTPUR_COMPOUND_5D8C = "EVIDENCED_MF_OUTPUR_COMPOUND_5D8C"

@@ -95,7 +95,7 @@ class MoneyForwardTradePartnerPolicyTests(unittest.TestCase):
         stale = self._profile("stale")
         cases = (
             (MoneyForwardTradePartnerDescriptionPolicy(unresolved, self.context), self._entry(), "MF-JDL-PARTNER-POLICY"),
-            (MoneyForwardTradePartnerDescriptionPolicy(stale, self.context), self._entry(), "MF-JDL-PARTNER-POLICY"),
+            (MoneyForwardTradePartnerDescriptionPolicy(stale, replace(self.context, version="35.6")), self._entry(), "MF-JDL-PARTNER-POLICY"),
             (MoneyForwardTradePartnerDescriptionPolicy(self.profile, self.context), self._entry(compound=True), "MF-JDL-PARTNER-SHAPE"),
             (MoneyForwardTradePartnerDescriptionPolicy(self.profile, self.context), self._entry(credit_partner="PARTNER-A"), "MF-JDL-PARTNER-IDENTITY"),
             (MoneyForwardTradePartnerDescriptionPolicy(self.profile, self.context), self._entry(credit_partner="PARTNER-B"), "MF-JDL-PARTNER-IDENTITY"),
@@ -103,6 +103,43 @@ class MoneyForwardTradePartnerPolicyTests(unittest.TestCase):
         for policy, entry, rule in cases:
             with self.subTest(rule=rule):
                 self.assertEqual(policy.apply((entry,)).validation_results[0].rule_id, rule)
+
+    def test_legacy_policy_survives_tax_and_master_changes_but_not_version(self) -> None:
+        legacy = self._profile("hash-of-an-older-35-5-context")
+        changed = replace(
+            self.context,
+            tax_processing_mode=JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED,
+            account_master=(*self.context.account_master, JdlAccountIdentity("B", "1002", "B", "B")),
+        )
+        self.assertFalse(
+            MoneyForwardTradePartnerDescriptionPolicy(legacy, changed)
+            .apply((self._entry(),)).validation_results
+        )
+        for other in (
+            replace(changed, version="35.6"),
+            replace(changed, product="JDL IBEX 会計"),
+        ):
+            with self.subTest(product=other.product, version=other.version):
+                result = MoneyForwardTradePartnerDescriptionPolicy(legacy, other).apply(
+                    (self._entry(),)
+                )
+                self.assertEqual(
+                    result.validation_results[0].rule_id, "MF-JDL-PARTNER-POLICY"
+                )
+        wrong_evidence = replace(
+            legacy,
+            loss_policy_mappings={
+                TRADE_PARTNER_LOSS_POLICY_KEY: replace(
+                    legacy.loss_policy_mappings[TRADE_PARTNER_LOSS_POLICY_KEY],
+                    metadata={"jdl_context_sha256": "x", "jdl_evidence_id": "OTHER"},
+                )
+            },
+        )
+        self.assertEqual(
+            MoneyForwardTradePartnerDescriptionPolicy(wrong_evidence, changed)
+            .apply((self._entry(),)).validation_results[0].rule_id,
+            "MF-JDL-PARTNER-POLICY",
+        )
 
     def test_transform_is_idempotent_without_string_search(self) -> None:
         policy = MoneyForwardTradePartnerDescriptionPolicy(self.profile, self.context)
@@ -227,8 +264,14 @@ class MoneyForwardTradePartnerPolicyTests(unittest.TestCase):
         )
         upgraded = upgrade_trade_partner_policy(policy, self.context, new_context)
         self.assertIn(TRADE_PARTNER_CAPABILITY_KEY, upgraded.metadata)
+        # A legacy hash for another 35.5 Context keeps the 35.5 Evidence capability.
+        self.assertIn(
+            TRADE_PARTNER_CAPABILITY_KEY,
+            upgrade_trade_partner_policy(policy, new_context, self.context).metadata,
+        )
+        old_version = replace(self.context, version="35.6")
         self.assertEqual(
-            upgrade_trade_partner_policy(policy, new_context, self.context), policy
+            upgrade_trade_partner_policy(policy, old_version, self.context), policy
         )
         self.assertEqual(
             upgrade_trade_partner_policy(

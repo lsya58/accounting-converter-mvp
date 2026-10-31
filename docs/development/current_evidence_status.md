@@ -41,32 +41,35 @@
 ## 482-journal dataset
 
 - Logical journals: 482 / physical rows: 639 / period 2025-11-01 through 2026-10-30
-- 判定方式: 完全一致Evidenceを優先し、ない場合は [capability composition](../design/mf_tax_capability_composition.md)（shape × 行ごとの税 × 科目・補助 × 摘要）
-- 2026-10-31 再計算（保存済みCompanySettingのコピー、本番設定は未変更）:
+- 判定: 完全一致Evidence優先、なければ [capability composition](../design/mf_tax_capability_composition.md)
+- 再計算: `PYTHONPATH=src python3 -m accounting_converter.tools.mf_formal_readiness --source … --company-store … --company-id …`（保存済み設定は変更しない）
 
-| 状態 | 仕訳 |
-|---|---:|
-| 保存済み設定のまま | BLOCKED。税Human 4項目未確認、税Evidence 143、摘要置換 68 |
-| 税4項目をHumanが確認した場合 | route通過 416（完全一致277・組み合わせ139）、BLOCK 66 |
-| うち摘要置換が不要な分 | 371。実設定コピーで formal output SUCCESS、出力strict reparse 371/507、税額pattern違反0 |
+### 2026-10-31 staged readiness（保存済みCompanySettingのコピー）
 
-### Current action owners（税4項目確認後のシミュレーション）
+| Stage | READY journals | physical rows |
+|---|---:|---:|
+| 保存済みのまま | 330 | 350 |
+| Human 税4項目確認後 | 371 | 507 |
+| Human 補助なし2件（1311・1551まとめ先）後 | 383 | 519 |
+| final Evidence batch PASS後 | 406 | 563 |
+| Human 摘要置換確認後 | 482 | 639 |
+
+371件は税4項目を一時copyで確認した状態で formal output SUCCESS（regression baseline）。
+
+### Owners（保存済みのまま）
 
 | Owner | Item | Journals |
 |---|---|---:|
-| `HUMAN` | 税区分4項目（対象外仕入・非課税仕入・非課税売上・課税売上10%）。Evidenceのある候補を確認するだけ | 保存済み設定では全税関連 |
-| `HUMAN` | 普通預金1311 / MF補助なし → JDLまとめ先補助。親科目のみは実機拒否済み | 43 |
-| `HUMAN` | 売掛金1551 / MF補助なし → JDLまとめ先補助（10D9C） | 1 |
-| `HUMAN` | 32文字超・改行入り摘要の置換文（約55種類） | 68 |
-| `SYSTEM_EVIDENCE` | 2D1C（対象外 + 課税仕入10% / 普通預金） | 10 |
-| `SYSTEM_EVIDENCE` | 課税売上10%で切捨てと四捨五入が分かれる金額 | 9 |
-| `SYSTEM_EVIDENCE` | 課税売上10% on 9251 | 2 |
-| `SYSTEM_EVIDENCE` | 2D3C（課税仕入10%が2行） | 1 |
-| `SYSTEM_EVIDENCE` | 10D9C（売掛金1551のHuman補助が先） | 1 |
+| `HUMAN` | 税区分4項目（Evidence付き候補を1画面で確認） | 88 |
+| `HUMAN` | まとめ先補助 2項目（普通預金 43、売掛金 1） | 44 |
+| `HUMAN` | 摘要置換 63グループ（改行のみ8・32文字超55） | 76 |
+| `SYSTEM_EVIDENCE` | [final batch](../../tests/evidence/e2e/mf_482_final_evidence_batch_pending/README.md)の5 case | 23 |
+| `SYSTEM_IMPLEMENTATION` | なし（1D2Cのファイル名依存は内容hash identityで解消） | 0 |
 
-- 取引先optional 47件は、旧形式（context hash）の取引先方針が税設定・master更新のたびに失効していたbug。capability境界（製品・版・出力形式）で判定するよう修正し、0件になった。Human再確認は不要。
-- 1D2C exact route は journal id（ファイル名を含む）の hash で照合している。MF CSV を別名で再出力すると1件BLOCKされる。SYSTEM_IMPLEMENTATION として要改善。
-- 課税売上10%の`売一種`は現会社のImportで失敗済み。現会社のliteralは`売　上`/10%/外税。
+### Full 482 E2E の前提（Human準備）
+
+- 482件のうち378件は2026-05-31決算期、104件は2026-06-01以降で翌期。JDL 0514（令和8年5月31日決算）の会計期間外は取り込めない可能性が高く、期ごとにImport・再Exportする前提で準備する。
+- JDL 0514 には既に13件の実E2E（2026-01-07〜10、482件と同じ仕訳）と probe（2026-05-18〜05-29）が入っている。full Import 前に、これらを含まない状態（probe前backupからの復元、または別の検証用会社）を用意しないと、重複と再Export上の余分な行になる。
 
 Humanが解決できるmappingと、開発側のEvidence取得待ちをUI・supportで混同しないこと。Tax Evidence待ちを追加Human確認で解決させてはならない。
 

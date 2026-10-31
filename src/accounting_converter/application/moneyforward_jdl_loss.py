@@ -119,7 +119,13 @@ def moneyforward_1d3c_row_descriptions(
 
 def moneyforward_verified_description_rows(
     entry: JournalEntry,
+    *,
+    additional_shapes: frozenset[tuple[int, int, int]] = frozenset(),
 ) -> tuple[MoneyForwardPhysicalRow, ...] | None:
+    """Physical rows with per-row descriptions for a verified shape.
+
+    additional_shapes is only for NOT_FOR_PRODUCTION probe generation.
+    """
     grouped: dict[int, dict[Side, JournalLine]] = {}
     descriptions: dict[int, str] = {}
     for line in entry.lines:
@@ -153,7 +159,7 @@ def moneyforward_verified_description_rows(
         sum(Side.CREDIT in grouped[number] for number in row_numbers),
         len(row_numbers),
     )
-    if shape not in VERIFIED_DESCRIPTION_SHAPES:
+    if shape not in VERIFIED_DESCRIPTION_SHAPES | additional_shapes:
         return None
     return tuple(
         MoneyForwardPhysicalRow(

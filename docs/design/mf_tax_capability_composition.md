@@ -1,6 +1,6 @@
 # MF→JDL 税抜・一括比例配分 capability composition
 
-最終更新: 2026-10-31
+最終更新: 2026-10-31（final phase監査を追記）
 
 対象: JDL IBEX 出納帳 35.5 / 課税・税抜・原則課税・一括比例配分方式（Tax Context identity `a300dc87…`）。コードは `application/moneyforward_tax_excluded_evidence.py`。
 
@@ -46,3 +46,20 @@
 ## 対象外
 
 2D1C・2D3C・10D9C、課税売上10%の9251、端数が曖昧な課税売上10%は、Evidenceを取るまで `SYSTEM_EVIDENCE` として BLOCK を維持する。必要な probe は直積ではなく、足りない capability ごとに1件ずつにする。
+
+## 「3科目以上で科目非依存」ルールの監査（2026-10-31）
+
+- **性質**: 製品の恒久ルールではなく、保守的な経験則（heuristic）。3という値に実機上の特別な意味はない。
+- **何を前提にしているか**: JDL IBEX 出納帳 35.5 のCSV Importは、行に明示した課区・税区・税入力方法・消費税額をそのまま保持し、科目masterの既定税区分で上書きしない、という観測。課区blankの行（対象外）も、BS科目だけでなくPL科目（8441、8311）でblankのまま再Exportされた。
+- **Evidence上の根拠**: 借方 課税仕入10%は5科目、対象外は貸借それぞれ5科目以上で、反例は0件。逆に、補助blankの扱いは科目依存だった（3181は親科目のみで通り、1311・1551はImport拒否）。そのため補助は capability として独立させ、blank補助は科目に補助があれば常にHumanへ戻す。
+- **範囲**: 1つのTax Context（Tax Context identity単位）の中だけで有効。別の会社・税設定・JDL版へは持ち越さない。
+- **より良いルールへの変更条件**: 税区分ごとに「科目masterの既定税区分と異なる科目」でのPASSを1件以上含めば、件数3でなく1+1で十分と言える。現状は科目masterの既定税区分を取得していないため、件数による保守的判定を残す。
+- **反例が出たら**: そのsideと税区分のcapabilityを確認済み科目だけに即時縮退する（`ACCOUNT_INDEPENDENCE_MIN_ACCOUNTS`を上げるのではなく、該当keyを除外する）。
+
+## 汎用複合仕訳（2026-10-31 追加）
+
+`MF_COMPOUND_TAX_EXCLUDED_PROPORTIONAL` は、この Tax Context の複合仕訳を1つの serializer で出力する。各行は blank か、検証済み4 literal（仕　入/10%/内税、売　上/10%/外税、非仕入、非売上）のどれかでなければならない。形ごとの出力可否は `VERIFIED_COMPOUND_SHAPES` で決め、実機Evidence登録前の形（2D1C・2D3C・10D9C）は `PENDING_COMPOUND_SHAPE_EVIDENCE` に置いて BLOCK を維持する。
+
+## Evidence identity
+
+Evidenceに結び付ける仕訳identityは `domain/journal_identity.py` の内容hash（日付・各行の科目/補助/部門/取引先/税/金額/摘要/タグ/メモ）を使う。ファイル名・path・行番号・MF取引Noは含めない。同じ仕訳をMFから別名で再出力しても同じidentity、内容が1つでも変われば別identityになる。

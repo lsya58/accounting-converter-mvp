@@ -200,6 +200,14 @@ COMPOSABLE_SHAPES = {
     (1, 1): BATCH_EVIDENCE_ID,
     (2, 2): "EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P01-2D2C-PURCHASE-10-001",
 }
+# Other compound shapes in this Context use one generic serializer. A shape is
+# released only after its own real round trip; until then it stays PENDING.
+VERIFIED_COMPOUND_SHAPES: dict[tuple[int, int], str] = {}
+PENDING_COMPOUND_SHAPE_EVIDENCE = {
+    (2, 1): "EVID-MF-JDL-35-5-2D1C-PURCHASE10-ROUNDTRIP-001",
+    (2, 3): "EVID-MF-JDL-35-5-2D3C-PURCHASE10-ROUNDTRIP-001",
+    (10, 9): "EVID-MF-JDL-35-5-10D9C-ROUNDTRIP-001",
+}
 TRADE_PARTNER_DESCRIPTION_EVIDENCE = {
     (1, 1): "EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P04-PARTNER-001",
     (2, 2): "EVID-MF-JDL-TRADE-PARTNER-2D2C-TAXABLE-NO-SUBACCOUNT-DESCRIPTION-ROUNDTRIP-001",
@@ -457,7 +465,7 @@ def compose_capabilities(
     support: list[str] = []
     debit_count = sum(row[0] == "DEBIT" for row in signature)
     shape = (debit_count, len(signature) - debit_count)
-    shape_evidence = COMPOSABLE_SHAPES.get(shape)
+    shape_evidence = COMPOSABLE_SHAPES.get(shape) or VERIFIED_COMPOUND_SHAPES.get(shape)
     if shape_evidence is None:
         gaps.append("SHAPE_UNVERIFIED_IN_TAX_CONTEXT")
     else:
@@ -490,7 +498,8 @@ def compose_capabilities(
             taxed.append((line, tax, subaccount))
         if tax == MF_SALES_10 and not _tax_rounding_is_unambiguous(line.amount):
             gaps.append("TAX_AMOUNT_ROUNDING_UNVERIFIED")
-    if len(taxed) > 1:
+    generic_compound = shape in VERIFIED_COMPOUND_SHAPES
+    if len(taxed) > 1 and not generic_compound:
         gaps.append("MULTIPLE_TAXED_LINES_UNVERIFIED")
     profile: JdlEvidenceProfile | None = None
     if shape == (1, 1) and len(taxed) <= 1:
@@ -507,6 +516,8 @@ def compose_capabilities(
             gaps.append("SHAPE_TAX_COMBINATION_UNVERIFIED")
         else:
             profile = JdlEvidenceProfile.MF_COMPOUND_2D2C_TAX_EXCLUDED_PROPORTIONAL
+    elif generic_compound:
+        profile = JdlEvidenceProfile.MF_COMPOUND_TAX_EXCLUDED_PROPORTIONAL
     if has_partner:
         partner_evidence = TRADE_PARTNER_DESCRIPTION_EVIDENCE.get(shape)
         if partner_evidence is None:
@@ -603,6 +614,18 @@ def apply_verified_tax_semantics(
     evidence = evidence_for_occurrence(source, mapped, context, profile)
     if evidence is None:
         return mapped
+    return apply_tax_literals(source, mapped, evidence.evidence_id)
+
+
+def apply_tax_literals(
+    source: JournalEntry, mapped: JournalEntry, evidence_id: str
+) -> JournalEntry:
+    """Write the verified JDL tax literal for each MF tax identity.
+
+    Callers decide whether the journal may use these literals; probe generation
+    calls this directly with a PENDING Evidence ID, production only through
+    apply_verified_tax_semantics.
+    """
     lines = []
     for source_line, mapped_line in zip(source.lines, mapped.lines, strict=True):
         category = source_line.tax_info.category if source_line.tax_info else None
@@ -617,7 +640,7 @@ def apply_verified_tax_semantics(
                     **mapped_line.tax_info.metadata,
                     "jdl_tax_scope": "仕　入",
                     "jdl_tax_input_method": "内税",
-                    "jdl_evidence_id": evidence.evidence_id,
+                    "jdl_evidence_id": evidence_id,
                 },
             )
             lines.append(replace(mapped_line, tax_info=info))
@@ -631,7 +654,7 @@ def apply_verified_tax_semantics(
                 metadata={
                     "jdl_tax_scope": "売　上",
                     "jdl_tax_input_method": "外税",
-                    "jdl_evidence_id": evidence.evidence_id,
+                    "jdl_evidence_id": evidence_id,
                 },
             )
             lines.append(replace(mapped_line, tax_info=info))
@@ -641,7 +664,7 @@ def apply_verified_tax_semantics(
                 category="",
                 metadata={
                     "jdl_tax_scope": TAX_MAPPING_SPECS[category][1],
-                    "jdl_evidence_id": evidence.evidence_id,
+                    "jdl_evidence_id": evidence_id,
                 },
             )
             lines.append(replace(mapped_line, tax_info=info))
