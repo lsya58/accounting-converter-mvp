@@ -210,7 +210,7 @@ class MoneyForwardConversionWorkflow:
             for item in trade_partner_result.validation_results
         )
         reasons.extend(
-            "摘要にJDLで保持できない文字があります。会社設定で置換内容を確認してください。"
+            "摘要にJDLで保持できない文字・改行、または32文字を超える摘要があります。会社設定で置換内容を確認してください。"
             for _item in description_result.validation_results
         )
         mapping_engine = MappingEngine(mapping_rule_set_from_profile(profile))
@@ -630,7 +630,7 @@ class MoneyForwardConversionWorkflow:
         if field == "description":
             return "未検証の複数摘要を含む仕訳があります。"
         if field == "description_character":
-            return "摘要にJDLで保持できない文字があります。会社設定で置換内容を確認してください。"
+            return "摘要にJDLで保持できない文字・改行、または32文字を超える摘要があります。会社設定で置換内容を確認してください。"
         return "JDLへ安全に保持できない項目が含まれています。"
 
     @staticmethod

@@ -62,7 +62,36 @@ def trade_partner_policy_context_matches(metadata, context: object) -> bool:
     legacy = hashlib.sha256(
         JdlTargetContextLoader().to_json_text(context).encode("utf-8")
     ).hexdigest()
-    return metadata.get("jdl_context_sha256") == legacy
+    if metadata.get("jdl_context_sha256") == legacy:
+        return True
+    # Policies saved before the capability key existed only carry a whole-context
+    # hash, which changes on every unrelated tax/master update. Such a policy
+    # could only be confirmed against the 35.5 1D1C Evidence, so it keeps the
+    # same capability boundary as a newly saved one: valid while the target
+    # format/product/version still equal that Evidence's capability.
+    current = trade_partner_target_capability_sha256(context)
+    return bool(
+        metadata.get("jdl_context_sha256")
+        and metadata.get("jdl_evidence_id") == TRADE_PARTNER_1D1C_EVIDENCE_ID
+        and current is not None
+        and current == _legacy_evidence_capability_sha256()
+    )
+
+
+def _legacy_evidence_capability_sha256() -> str | None:
+    from types import SimpleNamespace
+
+    from accounting_converter.profiles.known_formats import (
+        jdl_ibex_cashbook_official_journal_import_schema_definition,
+    )
+
+    return trade_partner_target_capability_sha256(SimpleNamespace(
+        target_format_identity=(
+            jdl_ibex_cashbook_official_journal_import_schema_definition().identity
+        ),
+        product="JDL IBEX 出納帳",
+        version="35.5",
+    ))
 
 
 def upgrade_trade_partner_policy(mapping, old_context: object, new_context: object):

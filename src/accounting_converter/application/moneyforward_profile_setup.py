@@ -24,6 +24,7 @@ from accounting_converter.application.jdl_master_observation import (
 )
 from accounting_converter.application.moneyforward_tax_excluded_evidence import (
     BATCH_EVIDENCE_ID as TAX_EXCLUDED_PROPORTIONAL_BATCH_EVIDENCE_ID,
+    TAX_MAPPING_SPECS,
     confirmed_mapping_is_in_scope as tax_excluded_mapping_is_in_scope,
     context_is_verified as tax_excluded_proportional_context_verified,
     tax_context_identity_sha256 as tax_excluded_context_identity_sha256,
@@ -582,6 +583,18 @@ class MoneyForwardProfileSetupService:
                 ),
                 "対象外仕入": (
                     "", "対象外（CSV税欄は空欄・税額0）", "", OUTPUR_TAX_MAPPING_EVIDENCE_ID,
+                ),
+                "非課税仕入": (
+                    "", "非課税仕入（課区 非仕入）", "非仕入",
+                    TAX_MAPPING_SPECS["非課税仕入"][2],
+                ),
+                "非課税売上": (
+                    "", "非課税売上（課区 非売上）", "非売上",
+                    TAX_MAPPING_SPECS["非課税売上"][2],
+                ),
+                "課税売上 10%": (
+                    "10%", "売上 / 10%（外税）", "売　上",
+                    TAX_MAPPING_SPECS["課税売上 10%"][2],
                 ),
             }
         else:

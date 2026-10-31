@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from decimal import Decimal, ROUND_DOWN
+from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
 import hashlib
 import json
 
@@ -13,7 +13,7 @@ from accounting_converter.adapters.output.jdl import (
     JdlTargetContext,
     JdlTaxationMethod,
 )
-from accounting_converter.domain.journal import JournalEntry, Side
+from accounting_converter.domain.journal import JournalEntry, JournalLine, Side, TaxInfo
 from accounting_converter.domain.mf_outpur_scope import (
     OUTPUR_SHAPE_EVIDENCE_IDS,
     OUTPUR_TAX_MAPPING_EVIDENCE_ID,
@@ -34,6 +34,29 @@ from accounting_converter.profiles.jdl_official import JdlTaxProcessingMode
 
 
 BATCH_EVIDENCE_ID = "EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-BATCH-001"
+NONPUR_3181_EVIDENCE_ID = "EVID-MF-JDL-35-5-NONPUR-8571-3181-SUB0001-001"
+NONPUR_1311_EVIDENCE_ID = "EVID-MF-JDL-35-5-NONPUR-8571-1311-SUB0002-001"
+NONSALE_EVIDENCE_ID = "EVID-MF-JDL-35-5-NONSALE-1311-SUB0002-9111-001"
+SALES10_EVIDENCE_ID = "EVID-MF-JDL-35-5-SALES10-1111-6121-ROUNDTRIP-001"
+COMPOSITION_ROUTE_ID = "MF-JDL-35-5-TAX-EXCLUDED-PROPORTIONAL-CAPABILITY-COMPOSITION-V1"
+
+MF_SALES_10 = "課税売上 10%"
+MF_PURCHASE_10 = "課税仕入 10%"
+MF_NON_TAXABLE_PURCHASE = "非課税仕入"
+MF_NON_TAXABLE_SALES = "非課税売上"
+MF_OUT_OF_SCOPE = "対象外"
+MF_OUT_OF_SCOPE_PURCHASE = "対象外仕入"
+
+# Human tax mapping in this Context: MF identity -> (JDL 税区, JDL 課区, Evidence
+# that verified this exact JDL literal by real Import and re-export).
+TAX_MAPPING_SPECS: dict[str, tuple[str, str, str]] = {
+    MF_PURCHASE_10: ("10%", "仕　入", BATCH_EVIDENCE_ID),
+    MF_OUT_OF_SCOPE: ("", "", BATCH_EVIDENCE_ID),
+    MF_OUT_OF_SCOPE_PURCHASE: ("", "", OUTPUR_TAX_MAPPING_EVIDENCE_ID),
+    MF_NON_TAXABLE_PURCHASE: ("", "非仕入", NONPUR_3181_EVIDENCE_ID),
+    MF_NON_TAXABLE_SALES: ("", "非売上", NONSALE_EVIDENCE_ID),
+    MF_SALES_10: ("10%", "売　上", SALES10_EVIDENCE_ID),
+}
 
 
 def tax_context_identity_sha256(context: JdlTargetContext) -> str:
@@ -56,6 +79,8 @@ class MfTaxExcludedPatternEvidence:
     account_signature: tuple[tuple[str, str, str, str], ...]
     profile: JdlEvidenceProfile
     trade_partner: bool = False
+    # Set only for a composed route: the real Evidence behind each capability.
+    supporting_evidence_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -125,8 +150,97 @@ EVIDENCE = (
         OUTPUR_SHAPE_EVIDENCE_IDS[(5, 8)], outpur_signature((5, 8)),
         JdlEvidenceProfile.MF_OUTPUR_COMPOUND_5D8C,
     ),
+    MfTaxExcludedPatternEvidence(
+        NONPUR_3181_EVIDENCE_ID,
+        (("DEBIT", "8571", "", MF_NON_TAXABLE_PURCHASE),
+         ("CREDIT", "3181", "0001", MF_OUT_OF_SCOPE)),
+        JdlEvidenceProfile.MF_NONPUR_PROPORTIONAL_1111,
+    ),
+    MfTaxExcludedPatternEvidence(
+        NONPUR_1311_EVIDENCE_ID,
+        (("DEBIT", "8571", "", MF_NON_TAXABLE_PURCHASE),
+         ("CREDIT", "1311", "0002", MF_OUT_OF_SCOPE)),
+        JdlEvidenceProfile.MF_NONPUR_PROPORTIONAL_1111,
+    ),
+    MfTaxExcludedPatternEvidence(
+        NONSALE_EVIDENCE_ID,
+        (("DEBIT", "1311", "0002", MF_OUT_OF_SCOPE),
+         ("CREDIT", "9111", "", MF_NON_TAXABLE_SALES)),
+        JdlEvidenceProfile.MF_NONSALE_PROPORTIONAL_1111,
+    ),
+    MfTaxExcludedPatternEvidence(
+        SALES10_EVIDENCE_ID,
+        (("DEBIT", "1111", "", MF_OUT_OF_SCOPE),
+         ("CREDIT", "6121", "", MF_SALES_10)),
+        JdlEvidenceProfile.MF_SALES10_EXCLUDED_PROPORTIONAL_1111,
+    ),
 )
 EVIDENCE_REGISTRY = MfTaxEvidenceRegistry(EVIDENCE)
+
+# Composition is only allowed for these source tax identities. 対象外仕入 stays
+# exact-only because its Evidence is a single 1D1C pair plus three fixed shapes.
+COMPOSABLE_TAX_IDENTITIES = frozenset({
+    MF_OUT_OF_SCOPE, MF_PURCHASE_10, MF_SALES_10,
+    MF_NON_TAXABLE_PURCHASE, MF_NON_TAXABLE_SALES,
+})
+# A tax line capability is treated as account-independent only when real
+# Evidence shows the same JDL representation surviving Import/re-export on at
+# least this many distinct target accounts on the same side. Otherwise it is
+# limited to the exact accounts that were verified.
+ACCOUNT_INDEPENDENCE_MIN_ACCOUNTS = 3
+TAXED_IDENTITY_PROFILES_1D1C = {
+    MF_PURCHASE_10: JdlEvidenceProfile.MF_TAX_EXCLUDED_PROPORTIONAL_1111,
+    MF_SALES_10: JdlEvidenceProfile.MF_SALES10_EXCLUDED_PROPORTIONAL_1111,
+    MF_NON_TAXABLE_PURCHASE: JdlEvidenceProfile.MF_NONPUR_PROPORTIONAL_1111,
+    MF_NON_TAXABLE_SALES: JdlEvidenceProfile.MF_NONSALE_PROPORTIONAL_1111,
+}
+# Shapes whose grouping/row order is verified in this Tax Context, with the
+# Evidence for that shape. 2D2C is P01 (one 課税仕入 10% debit row).
+COMPOSABLE_SHAPES = {
+    (1, 1): BATCH_EVIDENCE_ID,
+    (2, 2): "EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P01-2D2C-PURCHASE-10-001",
+}
+TRADE_PARTNER_DESCRIPTION_EVIDENCE = {
+    (1, 1): "EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P04-PARTNER-001",
+    (2, 2): "EVID-MF-JDL-TRADE-PARTNER-2D2C-TAXABLE-NO-SUBACCOUNT-DESCRIPTION-ROUNDTRIP-001",
+}
+
+
+@dataclass(frozen=True)
+class TaxLineCapability:
+    side: str
+    source_tax: str
+    verified_accounts: frozenset[str]
+    evidence_ids: tuple[str, ...]
+
+    @property
+    def account_independent(self) -> bool:
+        return len(self.verified_accounts) >= ACCOUNT_INDEPENDENCE_MIN_ACCOUNTS
+
+    def covers(self, account_code: str) -> bool:
+        return self.account_independent or account_code in self.verified_accounts
+
+
+def _line_capabilities() -> dict[tuple[str, str], TaxLineCapability]:
+    accounts: dict[tuple[str, str], set[str]] = {}
+    evidence_ids: dict[tuple[str, str], list[str]] = {}
+    for item in EVIDENCE:
+        for side, account, _subaccount, tax in item.account_signature:
+            if tax not in COMPOSABLE_TAX_IDENTITIES or not account:
+                continue
+            accounts.setdefault((side, tax), set()).add(account)
+            ids = evidence_ids.setdefault((side, tax), [])
+            if item.evidence_id not in ids:
+                ids.append(item.evidence_id)
+    return {
+        key: TaxLineCapability(
+            key[0], key[1], frozenset(accounts[key]), tuple(evidence_ids[key])
+        )
+        for key in accounts
+    }
+
+
+LINE_CAPABILITIES = _line_capabilities()
 
 
 def context_is_verified(context: JdlTargetContext) -> bool:
@@ -147,22 +261,14 @@ def confirmed_mapping_is_in_scope(
     context: JdlTargetContext,
 ) -> bool:
     """Check the Human tax choice against this narrow Evidence family."""
-    expected = {
-        "課税仕入 10%": ("10%", "仕　入"),
-        "対象外": ("", ""),
-        "対象外仕入": ("", ""),
-    }.get(source_tax_category)
-    evidence_id = (
-        OUTPUR_TAX_MAPPING_EVIDENCE_ID
-        if source_tax_category == "対象外仕入" else BATCH_EVIDENCE_ID
-    )
+    spec = TAX_MAPPING_SPECS.get(source_tax_category)
     return bool(
-        expected is not None
+        spec is not None
         and mapping is not None
         and mapping.status is MappingStatus.USER_CONFIRMED
         and (mapping.target_value, mapping.metadata.get("jdl_tax_scope", ""))
-        == expected
-        and mapping.metadata.get("jdl_evidence_id") == evidence_id
+        == spec[:2]
+        and mapping.metadata.get("jdl_evidence_id") == spec[2]
         and mapping.metadata.get("jdl_tax_processing_mode")
         == context.tax_processing_mode.value
         and context_is_verified(context)
@@ -176,15 +282,9 @@ def confirmed_mapping_mismatch_fields(
     mapping: MappingValue | None,
     context: JdlTargetContext,
 ) -> tuple[str, ...]:
-    expected = {
-        "課税仕入 10%": ("10%", "仕　入"),
-        "対象外": ("", ""),
-        "対象外仕入": ("", ""),
-    }.get(source_tax_category)
-    evidence_id = (
-        OUTPUR_TAX_MAPPING_EVIDENCE_ID
-        if source_tax_category == "対象外仕入" else BATCH_EVIDENCE_ID
-    )
+    spec = TAX_MAPPING_SPECS.get(source_tax_category)
+    expected = spec[:2] if spec is not None else None
+    evidence_id = spec[2] if spec is not None else None
     mismatches: list[str] = []
     if not context_is_verified(context):
         mismatches.append("TAX_CONTEXT")
@@ -273,6 +373,20 @@ def match_evidence_for_occurrence(
             exact.evidence_id,
             _pattern_id(exact),
         )
+    composition_gaps: tuple[str, ...] = ()
+    if not identity_mismatches:
+        composed, composition_gaps = compose_capabilities(
+            source, signature, has_partner=has_partner, context=context
+        )
+        if composed is not None:
+            return MfTaxEvidenceMatchResult(
+                composed,
+                signature,
+                composed.account_signature,
+                (),
+                composed.evidence_id,
+                "COMPOSED",
+            )
 
     candidates = tuple(
         item for item in EVIDENCE
@@ -294,7 +408,7 @@ def match_evidence_for_occurrence(
         ),
         default=None,
     )
-    mismatches = list(identity_mismatches)
+    mismatches = [*identity_mismatches, *composition_gaps]
     if expected is None:
         mismatches.append("SHAPE_MISMATCH")
     else:
@@ -323,6 +437,111 @@ def match_evidence_for_occurrence(
         tuple(dict.fromkeys(mismatches)),
         expected.evidence_id if expected is not None else None,
         _pattern_id(expected) if expected is not None else None,
+    )
+
+
+def compose_capabilities(
+    source: JournalEntry,
+    signature: tuple[tuple[str, str, str, str], ...],
+    *,
+    has_partner: bool,
+    context: JdlTargetContext,
+) -> tuple[MfTaxExcludedPatternEvidence | None, tuple[str, ...]]:
+    """Release a journal only when every independent capability has Evidence.
+
+    Formal READY = shape AND every tax line AND account/subaccount AND
+    description (trade partner). Each part cites the real JDL Evidence behind
+    it; anything without Evidence returns a gap code instead.
+    """
+    gaps: list[str] = []
+    support: list[str] = []
+    debit_count = sum(row[0] == "DEBIT" for row in signature)
+    shape = (debit_count, len(signature) - debit_count)
+    shape_evidence = COMPOSABLE_SHAPES.get(shape)
+    if shape_evidence is None:
+        gaps.append("SHAPE_UNVERIFIED_IN_TAX_CONTEXT")
+    else:
+        support.append(shape_evidence)
+    taxed: list[tuple[JournalLine, str, str]] = []
+    for line, (side, account, subaccount, tax) in zip(
+        source.lines, signature, strict=True
+    ):
+        if not account:
+            gaps.append("ACCOUNT_CODE_MISMATCH")
+            continue
+        if subaccount in {"", PARENT_ONLY_CANONICAL_SUBACCOUNT} and any(
+            item.parent_account_code == account for item in context.subaccounts
+        ):
+            # JDL rejected blank subaccounts on 1311/1551 when the master has
+            # subaccounts. Only an explicit Human target subaccount can fix it.
+            gaps.append("SUBACCOUNT_REQUIRED_BY_MASTER")
+        if tax not in COMPOSABLE_TAX_IDENTITIES:
+            gaps.append("TAX_IDENTITY_NOT_COMPOSABLE")
+            continue
+        capability = LINE_CAPABILITIES.get((side, tax))
+        if capability is None:
+            gaps.append("TAX_SIDE_UNVERIFIED")
+            continue
+        if not capability.covers(account):
+            gaps.append("TAX_ACCOUNT_UNVERIFIED")
+            continue
+        support.extend(capability.evidence_ids)
+        if tax != MF_OUT_OF_SCOPE:
+            taxed.append((line, tax, subaccount))
+        if tax == MF_SALES_10 and not _tax_rounding_is_unambiguous(line.amount):
+            gaps.append("TAX_AMOUNT_ROUNDING_UNVERIFIED")
+    if len(taxed) > 1:
+        gaps.append("MULTIPLE_TAXED_LINES_UNVERIFIED")
+    profile: JdlEvidenceProfile | None = None
+    if shape == (1, 1) and len(taxed) <= 1:
+        profile = (
+            TAXED_IDENTITY_PROFILES_1D1C[taxed[0][1]]
+            if taxed else JdlEvidenceProfile.MF_NO_TAX_PROPORTIONAL_1111
+        )
+    elif shape == (2, 2):
+        if (
+            len(taxed) != 1
+            or taxed[0][1] != MF_PURCHASE_10
+            or taxed[0][0].side is not Side.DEBIT
+        ):
+            gaps.append("SHAPE_TAX_COMBINATION_UNVERIFIED")
+        else:
+            profile = JdlEvidenceProfile.MF_COMPOUND_2D2C_TAX_EXCLUDED_PROPORTIONAL
+    if has_partner:
+        partner_evidence = TRADE_PARTNER_DESCRIPTION_EVIDENCE.get(shape)
+        if partner_evidence is None:
+            gaps.append("TRADE_PARTNER_SHAPE_UNVERIFIED")
+        elif shape == (2, 2) and taxed and taxed[0][2]:
+            support.append(
+                "EVID-MF-JDL-TRADE-PARTNER-2D2C-TAXABLE-DESCRIPTION-ROUNDTRIP-001"
+            )
+        else:
+            support.append(partner_evidence)
+    if gaps or profile is None:
+        return None, tuple(dict.fromkeys(gaps or ["SHAPE_TAX_COMBINATION_UNVERIFIED"]))
+    return (
+        MfTaxExcludedPatternEvidence(
+            COMPOSITION_ROUTE_ID,
+            signature,
+            profile,
+            has_partner,
+            tuple(dict.fromkeys(support)),
+        ),
+        (),
+    )
+
+
+def _tax_rounding_is_unambiguous(amount: Decimal) -> bool:
+    """Only amounts where floor and half-up agree match the verified 1100->100."""
+    raw = amount * Decimal("10") / Decimal("110")
+    return raw.quantize(Decimal("1"), rounding=ROUND_DOWN) == raw.quantize(
+        Decimal("1"), rounding=ROUND_HALF_UP
+    )
+
+
+def ten_percent_tax_amount(amount: Decimal) -> Decimal:
+    return (amount * Decimal("10") / Decimal("110")).quantize(
+        Decimal("1"), rounding=ROUND_DOWN
     )
 
 
@@ -386,19 +605,42 @@ def apply_verified_tax_semantics(
         return mapped
     lines = []
     for source_line, mapped_line in zip(source.lines, mapped.lines, strict=True):
-        if source_line.tax_info and source_line.tax_info.category == "課税仕入 10%":
+        category = source_line.tax_info.category if source_line.tax_info else None
+        if category == MF_PURCHASE_10:
             info = replace(
                 mapped_line.tax_info,
                 category="10%",
                 rate=Decimal("10"),
                 tax_inclusion="INCLUDED",
-                tax_amount=(mapped_line.amount * Decimal("10") / Decimal("110")).quantize(
-                    Decimal("1"), rounding=ROUND_DOWN
-                ),
+                tax_amount=ten_percent_tax_amount(mapped_line.amount),
                 metadata={
                     **mapped_line.tax_info.metadata,
                     "jdl_tax_scope": "仕　入",
                     "jdl_tax_input_method": "内税",
+                    "jdl_evidence_id": evidence.evidence_id,
+                },
+            )
+            lines.append(replace(mapped_line, tax_info=info))
+        elif category == MF_SALES_10:
+            # 0872 literal: 売　上 / 10% / 外税 / explicit tax amount.
+            info = TaxInfo(
+                category="10%",
+                rate=Decimal("10"),
+                tax_inclusion="EXCLUDED",
+                tax_amount=ten_percent_tax_amount(mapped_line.amount),
+                metadata={
+                    "jdl_tax_scope": "売　上",
+                    "jdl_tax_input_method": "外税",
+                    "jdl_evidence_id": evidence.evidence_id,
+                },
+            )
+            lines.append(replace(mapped_line, tax_info=info))
+        elif category in {MF_NON_TAXABLE_PURCHASE, MF_NON_TAXABLE_SALES}:
+            # 0870/0876 literal: 課区 only; 税区, 税入力方法 and tax amount blank.
+            info = TaxInfo(
+                category="",
+                metadata={
+                    "jdl_tax_scope": TAX_MAPPING_SPECS[category][1],
                     "jdl_evidence_id": evidence.evidence_id,
                 },
             )

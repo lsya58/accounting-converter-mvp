@@ -28,6 +28,7 @@ from accounting_converter.application.moneyforward_description_replacement impor
     MF_DESCRIPTION_REPLACEMENT_POLICY,
     MoneyForwardDescriptionReviewItem,
     moneyforward_description_replacement_key,
+    description_requires_replacement,
     unsafe_description_positions,
 )
 from accounting_converter.application.moneyforward_jdl_loss import MoneyForwardToJdlLossRule
@@ -433,7 +434,7 @@ class CompanyMappingUpdateService:
             return {
                 item["row_number"] for item in descriptions
                 if field == "description"
-                or unsafe_description_positions(item["value"])
+                or description_requires_replacement(item["value"])
             }
         if field in {"tag", "memo"}:
             key = "moneyforward_tags" if field == "tag" else "moneyforward_memos"
@@ -783,7 +784,7 @@ class CompanyMappingUpdateService:
             )
             for description in descriptions:
                 unsafe = unsafe_description_positions(description)
-                if not unsafe:
+                if not description_requires_replacement(description):
                     continue
                 key = moneyforward_description_replacement_key(description)
                 mapping = profile.loss_policy_mappings.get(key)

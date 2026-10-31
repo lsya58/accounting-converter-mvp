@@ -4,7 +4,9 @@ from dataclasses import dataclass, replace
 from typing import Sequence
 
 from accounting_converter.application.description_replacement import (
+    JDL_DESCRIPTION_LIMIT,
     description_sha256,
+    has_control_character,
     replacement_is_valid,
 )
 from accounting_converter.application.journal_route import JournalRouteResult
@@ -42,6 +44,19 @@ def unsafe_description_positions(description: str) -> tuple[int, ...]:
         index
         for index, character in enumerate(description)
         if character in JDL_OBSERVED_NON_ROUNDTRIP_CHARACTERS
+    )
+
+
+def description_requires_replacement(description: str) -> bool:
+    """JDL cannot keep this text as-is: a non-round-trip character, a line
+    break/control character, or more than 32 characters.
+
+    No automatic truncation: the Human confirms a replacement per description.
+    """
+    return (
+        bool(unsafe_description_positions(description))
+        or has_control_character(description)
+        or len(description) > JDL_DESCRIPTION_LIMIT
     )
 
 
@@ -86,7 +101,7 @@ class MoneyForwardDescriptionReplacementPolicy:
         replacements: dict[str, str] = {}
         errors: list[ValidationResult] = []
         for description in descriptions:
-            if not unsafe_description_positions(description):
+            if not description_requires_replacement(description):
                 continue
             key = moneyforward_description_replacement_key(description)
             mapping = self._profile.loss_policy_mappings.get(key)

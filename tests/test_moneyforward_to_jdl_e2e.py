@@ -219,9 +219,10 @@ class MoneyForwardToJdlSyntheticE2ETests(unittest.TestCase):
                 {"16": JdlEvidenceProfile.COMPOUND_1D3C_LINE_DESCRIPTIONS},
             )
 
-        self.assertEqual(result.status, ConversionStatus.BLOCKED_BY_OUTPUT_PREFLIGHT)
+        # Over-32 descriptions now stop before output as a Human replacement item.
+        self.assertEqual(result.status, ConversionStatus.BLOCKED_BY_BUSINESS_VALIDATION)
         self.assertTrue(
-            any(item.rule_id == "JDL-OUT-DESCRIPTION-LENGTH" for item in result.validation_results)
+            any(item.field == "description_character" for item in result.validation_results)
         )
         self.assertFalse(output.exists())
 

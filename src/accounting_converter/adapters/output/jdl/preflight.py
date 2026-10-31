@@ -42,6 +42,9 @@ TAX_CATEGORY_REDUCED_EIGHT_PERCENT = "軽減8%"
 TAX_SCOPE_NON_TAXABLE_PURCHASE = "非仕入"
 TAX_SCOPE_NON_TAXABLE_SALES = "非売上"
 TAX_INPUT_METHOD_INTERNAL = "内税"
+TAX_INPUT_METHOD_EXTERNAL = "外税"
+# Current-company literal from self-export 0871, verified by 0872 round trip.
+TAX_SCOPE_SALES_EXCLUDED = "売　上"
 EVIDENCE_IDS = {
     JdlEvidenceProfile.BASIC_1111: "EVID-JDL-GENERATOR-1111-001",
     JdlEvidenceProfile.BASIC_1000: "EVID-JDL-GENERATOR-1000-001",
@@ -86,6 +89,15 @@ EVIDENCE_IDS = {
     ),
     JdlEvidenceProfile.MF_NO_TAX_PROPORTIONAL_1111: (
         "EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-BATCH-001"
+    ),
+    JdlEvidenceProfile.MF_SALES10_EXCLUDED_PROPORTIONAL_1111: (
+        "EVID-MF-JDL-35-5-SALES10-1111-6121-ROUNDTRIP-001"
+    ),
+    JdlEvidenceProfile.MF_NONPUR_PROPORTIONAL_1111: (
+        "EVID-MF-JDL-35-5-NONPUR-8571-3181-SUB0001-001"
+    ),
+    JdlEvidenceProfile.MF_NONSALE_PROPORTIONAL_1111: (
+        "EVID-MF-JDL-35-5-NONSALE-1311-SUB0002-9111-001"
     ),
     JdlEvidenceProfile.COMPOUND_1D3C: (
         "EVID-JDL-GENERATOR-COMPOUND-1110-1100-1101-001"
@@ -152,6 +164,16 @@ MF_OUTPUR_COMPOUND_PROFILES = {
     JdlEvidenceProfile.MF_OUTPUR_COMPOUND_5D7C: (5, 7),
     JdlEvidenceProfile.MF_OUTPUR_COMPOUND_5D8C: (5, 8),
 }
+MF_TAX_EXCLUDED_PROPORTIONAL_FAMILY = frozenset({
+    JdlEvidenceProfile.MF_TAX_EXCLUDED_PROPORTIONAL_1111,
+    JdlEvidenceProfile.MF_NO_TAX_PROPORTIONAL_1111,
+    JdlEvidenceProfile.MF_SALES10_EXCLUDED_PROPORTIONAL_1111,
+    JdlEvidenceProfile.MF_NONPUR_PROPORTIONAL_1111,
+    JdlEvidenceProfile.MF_NONSALE_PROPORTIONAL_1111,
+    JdlEvidenceProfile.MF_COMPOUND_2D2C_TAX_EXCLUDED_PROPORTIONAL,
+    JdlEvidenceProfile.MF_COMPOUND_1D2C_TAX_EXCLUDED_PROPORTIONAL,
+    *MF_OUTPUR_COMPOUND_PROFILES,
+})
 MIXED_BATCH_PROFILE_SEQUENCE = (
     JdlEvidenceProfile.BASIC_1111,
     JdlEvidenceProfile.BASIC_1111,
@@ -610,6 +632,33 @@ class JdlOutputPreflight:
             )
             self._validate_optional_subaccount(debit, entry, errors)
             self._validate_optional_subaccount(credit, entry, errors)
+        elif evidence is JdlEvidenceProfile.MF_SALES10_EXCLUDED_PROPORTIONAL_1111:
+            self._validate_tax(
+                debit, credit, entry, included=False, errors=errors,
+                tax_side=Side.CREDIT,
+                expected_scope=TAX_SCOPE_SALES_EXCLUDED,
+                allow_opposite_subaccount=True,
+                expected_credit_method="PROPORTIONAL",
+                expected_input_method=TAX_INPUT_METHOD_EXTERNAL,
+            )
+            self._validate_optional_subaccount(debit, entry, errors)
+        elif evidence in {
+            JdlEvidenceProfile.MF_NONPUR_PROPORTIONAL_1111,
+            JdlEvidenceProfile.MF_NONSALE_PROPORTIONAL_1111,
+        }:
+            self._validate_non_taxable_proportional(
+                debit, credit, entry, errors,
+                tax_side=(
+                    Side.DEBIT
+                    if evidence is JdlEvidenceProfile.MF_NONPUR_PROPORTIONAL_1111
+                    else Side.CREDIT
+                ),
+                expected_scope=(
+                    TAX_SCOPE_NON_TAXABLE_PURCHASE
+                    if evidence is JdlEvidenceProfile.MF_NONPUR_PROPORTIONAL_1111
+                    else TAX_SCOPE_NON_TAXABLE_SALES
+                ),
+            )
         elif evidence is JdlEvidenceProfile.MF_NO_TAX_PROPORTIONAL_1111:
             self._require_tax_mode(JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED, entry, errors)
             if self.context.effective_input_tax_credit_method.value != "PROPORTIONAL":
@@ -784,6 +833,7 @@ class JdlOutputPreflight:
         allow_opposite_subaccount: bool = False,
         expected_credit_method: str = "INDIVIDUAL",
         expected_mapping_evidence_id: str | None = None,
+        expected_input_method: str = TAX_INPUT_METHOD_INTERNAL,
     ) -> None:
         expected_mode = (
             JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED
@@ -863,8 +913,8 @@ class JdlOutputPreflight:
         if included:
             if method not in {None, ""} or info.tax_amount is not None:
                 errors.append(self._error("JDL-OUT-TAX-INCLUDED-FIELDS", "税込profileでは税入力方法・消費税を出力しません。", "tax", entry))
-        elif method != TAX_INPUT_METHOD_INTERNAL or info.tax_amount is None:
-            errors.append(self._error("JDL-OUT-TAX-EXCLUDED-FIELDS", "税抜profileには内税と明示消費税額が必要です。", "tax", entry))
+        elif method != expected_input_method or info.tax_amount is None:
+            errors.append(self._error("JDL-OUT-TAX-EXCLUDED-FIELDS", "税抜profileには検証済み税入力方法と明示消費税額が必要です。", "tax", entry))
         elif info.tax_amount < 0 or info.tax_amount != info.tax_amount.to_integral_value():
             errors.append(self._error("JDL-OUT-TAX-AMOUNT", "消費税額は0以上の整数円で指定してください。", "tax", entry))
         else:
@@ -881,6 +931,44 @@ class JdlOutputPreflight:
                         entry,
                     )
                 )
+
+    def _validate_non_taxable_proportional(
+        self,
+        debit: JournalLine,
+        credit: JournalLine,
+        entry: JournalEntry,
+        errors: list[ValidationResult],
+        *,
+        tax_side: Side,
+        expected_scope: str,
+    ) -> None:
+        """0870/0876 literal: 課区 only, with 税区/税入力方法/消費税 all blank."""
+        self._require_tax_mode(JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED, entry, errors)
+        if (
+            not self.context.standard_taxation_confirmed
+            or self.context.effective_input_tax_credit_method.value != "PROPORTIONAL"
+        ):
+            errors.append(self._error("JDL-OUT-TAX-COMPANY-PROFILE", "一括比例配分方式の確認が必要です。", "tax_processing", entry))
+        tax_line = debit if tax_side is Side.DEBIT else credit
+        opposite_line = credit if tax_side is Side.DEBIT else debit
+        if debit.department or credit.department:
+            errors.append(self._error("JDL-OUT-TAX-COMBINATION", "検証済み税profileに部門を併用できません。", "evidence_profile", entry))
+        info = tax_line.tax_info
+        if (
+            info is None
+            or info.category
+            or info.metadata.get("jdl_tax_scope") != expected_scope
+            or info.metadata.get("jdl_tax_input_method")
+            or info.tax_amount is not None
+            or info.rate is not None
+            or info.reduced_rate is True
+            or info.metadata.get("jdl_transaction_account")
+        ):
+            errors.append(self._error("JDL-OUT-TAX-LITERAL", "検証済み課区・税区のexact literalが必要です。", "tax", entry))
+        if self._nonempty_tax(opposite_line.tax_info):
+            errors.append(self._error("JDL-OUT-OPPOSITE-TAX", "Evidence対象外sideの課税値は使用できません。", "tax", entry))
+        self._validate_optional_subaccount(debit, entry, errors)
+        self._validate_optional_subaccount(credit, entry, errors)
 
     def _validate_file_combination(
         self,
@@ -905,6 +993,14 @@ class JdlOutputPreflight:
         if profiles == MF_TAX_EXCLUDED_PROPORTIONAL_13_SEQUENCE:
             return
         if profiles == MF_OUTPUR_COMPOUND_11_SEQUENCE:
+            return
+        if (
+            set(profiles) <= MF_TAX_EXCLUDED_PROPORTIONAL_FAMILY
+            and self.context.tax_processing_mode is JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED
+            and self.context.effective_input_tax_credit_method is JdlInputTaxCreditMethod.PROPORTIONAL
+        ):
+            # Groups are independent in JDL Import: the mixed 13-group and
+            # 11-group batches in this Context both passed strict re-export.
             return
         if len(profiles) == 1:
             return

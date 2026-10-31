@@ -35,6 +35,7 @@ class MoneyForwardPhysicalRow:
     description: str
 from accounting_converter.domain.validation import Severity, ValidationResult
 from accounting_converter.application.moneyforward_description_replacement import (
+    description_requires_replacement,
     unsafe_description_positions,
 )
 
@@ -57,7 +58,10 @@ class MoneyForwardToJdlLossRule:
         }
         if len(descriptions) > 1 and moneyforward_verified_description_rows(entry) is None:
             fields.add("description")
-        if any(unsafe_description_positions(value) for value in descriptions):
+        if any(
+            description_requires_replacement(value)
+            for value in (*descriptions, entry.description or "")
+        ):
             fields.add("description_character")
 
         for line in entry.lines:
@@ -90,7 +94,7 @@ class MoneyForwardToJdlLossRule:
             source_reference=entry.source_reference,
             field=field,
             message=(
-                "摘要にJDLで保持できない文字があります。"
+                "摘要にJDLで保持できない文字、または32文字を超える摘要があります。"
                 if field == "description_character"
                 else "Money Forward入力にJDL Output v0で保持できない項目があります。"
             ),
