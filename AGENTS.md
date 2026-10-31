@@ -11,7 +11,7 @@ Current phase (counts live only in current_evidence_status.md):
 - MF→JDL Evidence acquisition is finished. Do not generate new probes.
 - Do not re-acquire FY2026 Evidence or repeat real JDL operations 0873–0878 for the same scope.
 - The only critical path is the FY2027 real round-trip ("Remaining critical path" in current_evidence_status.md).
-- Other refactoring waits until the full 482 real acceptance.
+- Foundation freeze (see docs/product/開発ロードマップ.md): no abstraction or renaming ahead of real need until a real Yayoi CSV or an external office's data arrives. Bug fixes and pilot-driven fixes are fine.
 
 Design rule: JDL target Evidence is keyed by what JDL receives, never by the source format or source tax name (see the workflow document).
 
