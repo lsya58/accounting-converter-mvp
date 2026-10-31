@@ -45,7 +45,7 @@
 
 ## 対象外
 
-2D1C・2D3C・10D9C、課税売上10%の9251、端数が曖昧な課税売上10%は、Evidenceを取るまで `SYSTEM_EVIDENCE` として BLOCK を維持する。必要な probe は直積ではなく、足りない capability ごとに1件ずつにする。
+2026-10-31 の 0877 で、2D1C・2D3C・10D9C・課税売上10%の9251・6121の端数ケースは実機検証済み。課税売上10%は 6121・9251 に限定（科目非依存とはみなさない）、端数が分かれる金額は 6121 のみ。これ以外の新しい組合せは、足りない capability ごとに1件ずつ probe を作る（直積にしない）。
 
 ## 「3科目以上で科目非依存」ルールの監査（2026-10-31）
 
@@ -58,7 +58,7 @@
 
 ## 汎用複合仕訳（2026-10-31 追加）
 
-`MF_COMPOUND_TAX_EXCLUDED_PROPORTIONAL` は、この Tax Context の複合仕訳を1つの serializer で出力する。各行は blank か、検証済み4 literal（仕　入/10%/内税、売　上/10%/外税、非仕入、非売上）のどれかでなければならない。形ごとの出力可否は `VERIFIED_COMPOUND_SHAPES` で決め、実機Evidence登録前の形（2D1C・2D3C・10D9C）は `PENDING_COMPOUND_SHAPE_EVIDENCE` に置いて BLOCK を維持する。
+`MF_COMPOUND_TAX_EXCLUDED_PROPORTIONAL` は、この Tax Context の複合仕訳を1つの serializer で出力する。各行は blank か、検証済み4 literal（仕　入/10%/内税、売　上/10%/外税、非仕入、非売上）のどれかでなければならない。形ごとの出力可否は `VERIFIED_COMPOUND_SHAPES` で決める。2D1C・2D3C・10D9C は 0877 で実機検証済み。新しい形は `PENDING_COMPOUND_SHAPE_EVIDENCE` に置き、実機Evidenceが出るまで BLOCK を維持する。
 
 ## Evidence identity
 

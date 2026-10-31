@@ -122,7 +122,8 @@ class CapabilityCompositionTest(unittest.TestCase):
         self.assertTrue(caps[("DEBIT", "課税仕入 10%")].account_independent)
         self.assertTrue(caps[("DEBIT", "対象外")].account_independent)
         self.assertTrue(caps[("CREDIT", "対象外")].account_independent)
-        self.assertEqual(caps[("CREDIT", "課税売上 10%")].verified_accounts, {"6121"})
+        self.assertEqual(caps[("CREDIT", "課税売上 10%")].verified_accounts, {"6121", "9251"})
+        self.assertFalse(caps[("CREDIT", "課税売上 10%")].account_independent)
         self.assertEqual(caps[("DEBIT", "非課税仕入")].verified_accounts, {"8571"})
         self.assertEqual(caps[("CREDIT", "非課税売上")].verified_accounts, {"9111"})
         self.assertNotIn(("DEBIT", "対象外仕入"), caps)
@@ -153,12 +154,13 @@ class CapabilityCompositionTest(unittest.TestCase):
         cases = {
             "TAX_ACCOUNT_UNVERIFIED": entry(
                 ("DEBIT", "1311", True, "対象外", "1100"),
-                ("CREDIT", "9251", False, "課税売上 10%", "1100"),
+                ("CREDIT", "9111", False, "課税売上 10%", "1100"),
             ),
             "TAX_AMOUNT_ROUNDING_UNVERIFIED": entry(
                 # 1106 * 10 / 110 = 100.54...: floor 100, half-up 101.
+                # Rounding is verified on 6121 only (0877), not on 9251.
                 ("DEBIT", "1551", True, "対象外", "1106"),
-                ("CREDIT", "6121", False, "課税売上 10%", "1106"),
+                ("CREDIT", "9251", False, "課税売上 10%", "1106"),
             ),
             "SUBACCOUNT_REQUIRED_BY_MASTER": entry(
                 ("DEBIT", "1311", False, "対象外", "1100"),
@@ -169,9 +171,10 @@ class CapabilityCompositionTest(unittest.TestCase):
                 ("CREDIT", "1311", True, "対象外", "1100"),
             ),
             "SHAPE_UNVERIFIED_IN_TAX_CONTEXT": entry(
-                ("DEBIT", "3561", False, "対象外", "500"),
+                ("DEBIT", "3561", False, "対象外", "300"),
                 ("CREDIT", "1311", True, "対象外", "1100"),
-                ("DEBIT", "8681", False, "課税仕入 10%", "600"),
+                ("DEBIT", "8681", False, "課税仕入 10%", "400"),
+                ("DEBIT", "8491", False, "課税仕入 10%", "400"),
             ),
         }
         for gap, item in cases.items():
@@ -179,6 +182,21 @@ class CapabilityCompositionTest(unittest.TestCase):
                 result = match(item)
                 self.assertIsNone(result.evidence)
                 self.assertIn(gap, result.mismatch_fields)
+
+    def test_0877_sales10_rounding_and_9251_are_released(self) -> None:
+        rounding = match(entry(
+            ("DEBIT", "1551", True, "対象外", "1106"),
+            ("CREDIT", "6121", False, "課税売上 10%", "1106"),
+        ))
+        self.assertIn(ev.SALES10_ROUNDING_EVIDENCE_ID, rounding.evidence.supporting_evidence_ids)
+        second_account = match(entry(
+            ("DEBIT", "1311", True, "対象外", "1100"),
+            ("CREDIT", "9251", False, "課税売上 10%", "1100"),
+        ))
+        self.assertIs(
+            second_account.evidence.profile,
+            JdlEvidenceProfile.MF_SALES10_EXCLUDED_PROPORTIONAL_1111,
+        )
 
     def test_2d2c_with_one_purchase_row_uses_p01_shape(self) -> None:
         result = match(entry(

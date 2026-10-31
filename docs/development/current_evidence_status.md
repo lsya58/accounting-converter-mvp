@@ -19,7 +19,7 @@
 |---|---|---|
 | JDL→JDL | `VERIFIED_BY_REAL_IMPORT`, frozen | 1,158 journals / 1,271 rows。実Import PASS。会計判断reviewとbatch re-export strict comparisonは未完了 |
 | MF→JDL READY batch | `VERIFIED_BY_REAL_IMPORT_AND_REEXPORT` | 13 journals / 14 rows、P01-P07、unexpected diff 0、silent loss 0 |
-| MF→JDL 482 dataset | Expansion in progress | capability compositionで416/482がEvidence上通過（保存済み設定では税4項目のHuman確認待ち）。摘要置換が済んだ371件は実設定コピーでformal出力SUCCESS。full batch atomic outputはBLOCK |
+| MF→JDL 482 dataset | `READY_FOR_FULL_REAL_E2E` | 保存済みCompanySettingで482/482 formal READY。期別formal CSV（FY2026-05: 378、FY2027-05: 104）生成済み。full Import・再Export未実施 |
 | 弥生→JDL | Limited regression route | AE19 direct export由来の限定scope。拡張は後順位 |
 
 ## Key Evidence IDs
@@ -42,34 +42,32 @@
 
 - Logical journals: 482 / physical rows: 639 / period 2025-11-01 through 2026-10-30
 - 判定: 完全一致Evidence優先、なければ [capability composition](../design/mf_tax_capability_composition.md)
-- 再計算: `PYTHONPATH=src python3 -m accounting_converter.tools.mf_formal_readiness --source … --company-store … --company-id …`（保存済み設定は変更しない）
+- 再計算: `tools/mf_formal_readiness.py`、期別出力: `tools/mf_formal_output_by_period.py`（どちらも保存済み設定を変更しない）
 
-### 2026-10-31 staged readiness（保存済みCompanySettingのコピー）
+### 2026-10-31 再計算（0877 Evidence接続後、保存済みCompanySetting）
 
-| Stage | READY journals | physical rows |
-|---|---:|---:|
-| 保存済みのまま | 330 | 350 |
-| Human 税4項目確認後 | 371 | 507 |
-| Human 補助なし2件（1311・1551まとめ先）後 | 383 | 519 |
-| final Evidence batch PASS後 | 406 | 563 |
-| Human 摘要置換確認後 | 482 | 639 |
+| Owner | Journals |
+|---|---:|
+| READY | 482（639 rows） |
+| HUMAN | 0 |
+| SYSTEM_EVIDENCE | 0 |
+| SYSTEM_IMPLEMENTATION | 0 |
 
-371件は税4項目を一時copyで確認した状態で formal output SUCCESS（regression baseline）。
+Human設定は保存済み設定を直接確認: 税6項目すべて `USER_CONFIRMED`（Evidence ID付き）、普通預金・売掛金の補助なし→まとめ先補助 `DEFAULT_TARGET_SUBACCOUNT`、摘要置換66件（必要63グループ+過去の髙置換、未解決0）、取引先方針確認済み。Optional検出83仕訳はすべてHuman確認済みの摘要置換で解消済み（未解決0）。
 
-### Owners（保存済みのまま）
+### Formal output（private、未Import）
 
-| Owner | Item | Journals |
-|---|---|---:|
-| `HUMAN` | 税区分4項目（Evidence付き候補を1画面で確認） | 88 |
-| `HUMAN` | まとめ先補助 2項目（普通預金 43、売掛金 1） | 44 |
-| `HUMAN` | 摘要置換 63グループ（改行のみ8・32文字超55） | 76 |
-| `SYSTEM_EVIDENCE` | [final batch](../../tests/evidence/e2e/mf_482_final_evidence_batch_pending/README.md)の5 case | 23 |
-| `SYSTEM_IMPLEMENTATION` | なし（1D2Cのファイル名依存は内容hash identityで解消） | 0 |
+| File | Period | Journals | Rows | Debit = Credit |
+|---|---|---:|---:|---:|
+| `data/private/mf_482_formal_output/mf_formal_jdl_FY2026-05.csv` | 2025-11-01〜2026-05-31 | 378 | 479 | 24,740,332 |
+| `data/private/mf_482_formal_output/mf_formal_jdl_FY2027-05.csv` | 2026-06-01〜2026-10-30 | 104 | 160 | 4,053,397 |
 
-### Full 482 E2E の前提（Human準備）
+いずれも READY → SUCCESS、CP932・BOMなし・CRLF・30列・strict reparse PASS。
 
-- 482件のうち378件は2026-05-31決算期、104件は2026-06-01以降で翌期。JDL 0514（令和8年5月31日決算）の会計期間外は取り込めない可能性が高く、期ごとにImport・再Exportする前提で準備する。
-- JDL 0514 には既に13件の実E2E（2026-01-07〜10、482件と同じ仕訳）と probe（2026-05-18〜05-29）が入っている。full Import 前に、これらを含まない状態（probe前backupからの復元、または別の検証用会社）を用意しないと、重複と再Export上の余分な行になる。
+### Full 482 E2E の前提
+
+- JDL 0514 は令和8年5月期。FY2027-05 の104件は翌期データが必要。翌期の科目・補助masterが現CompanySettingと同じことを、翌期の科目一覧で確認してからImportする（違えば master diff で影響項目だけ再確認）。
+- 0514 には13件の実E2E（482件と同じ仕訳）と probe（2026-05-18〜29）がある。full Import は probe 前の状態または専用の検証用会社に対して行う。
 
 Humanが解決できるmappingと、開発側のEvidence取得待ちをUI・supportで混同しないこと。Tax Evidence待ちを追加Human確認で解決させてはならない。
 

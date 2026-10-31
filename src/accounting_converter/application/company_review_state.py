@@ -30,6 +30,7 @@ class CompanyReviewWorkQueue:
     other_optional_affected_rows: int
     optional_affected_journals: int
     unsupported_journals: int
+    optional_detected_journals: int = 0
 
 
 def build_company_review_work_queue(
@@ -82,4 +83,5 @@ def build_company_review_work_queue(
         other_optional_affected_rows=review.other_optional_row_count,
         optional_affected_journals=review.optional_field_blocker_count,
         unsupported_journals=review.unsupported_shape_count,
+        optional_detected_journals=review.optional_field_detected_count,
     )

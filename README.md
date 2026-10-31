@@ -18,9 +18,9 @@
 | Money Forward→JDL | 実案件13仕訳・14物理行で実JDL Import、同期間再Export、strict comparisonに成功。予期しない差分0、silent loss 0 |
 | 弥生→JDL | AE19 direct export由来の限定入力経路を回帰維持。対応拡大は後順位 |
 
-482仕訳の実データでは、現在のformal scope見込みは480件（99.59%）です。これは482件一括の実機往復検証を意味しません。未検証の1D2Cと10D9Cが各1件あり、atomic設計により全体出力は停止します。
+482仕訳の実データは、保存済み会社設定で482/482がformal READYです（2026-10-31）。会計年度ごとのformal CSV（2026年5月期378件、2027年5月期104件）を生成済みで、JDLへの一括Import・再Exportによるfull round-tripは未実施です。
 
-詳細は[ドキュメント案内](docs/README.md)、現在のEvidence境界は[Current Evidence Status](docs/development/current_evidence_status.md)、LP原稿は[LP Content](docs/marketing/lp_content.md)を参照してください。
+開発の進め方は[Evidence-driven 開発ワークフロー](docs/development/mf_jdl_evidence_driven_workflow.md)（AI agentは[AGENTS.md](AGENTS.md)）。詳細は[ドキュメント案内](docs/README.md)、現在のEvidence境界は[Current Evidence Status](docs/development/current_evidence_status.md)、LP原稿は[LP Content](docs/marketing/lp_content.md)を参照してください。
 
 ## 開発
 

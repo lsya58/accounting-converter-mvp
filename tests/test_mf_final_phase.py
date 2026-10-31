@@ -33,15 +33,26 @@ def two_d_one_c():
 
 
 class GenericCompoundTest(unittest.TestCase):
-    def test_pending_shape_stays_blocked_until_its_evidence_is_registered(self) -> None:
+    def test_0877_shapes_are_released_and_others_stay_blocked(self) -> None:
         item = two_d_one_c()
         result = ev.match_evidence_for_occurrence(item, item, context(), None)
-        self.assertIsNone(result.evidence)
-        self.assertIn("SHAPE_UNVERIFIED_IN_TAX_CONTEXT", result.mismatch_fields)
-        with patch.dict(ev.VERIFIED_COMPOUND_SHAPES, {(2, 1): "EVID-TEST-2D1C"}):
-            result = ev.match_evidence_for_occurrence(item, item, context(), None)
         self.assertIs(result.evidence.profile, JdlEvidenceProfile.MF_COMPOUND_TAX_EXCLUDED_PROPORTIONAL)
-        self.assertIn("EVID-TEST-2D1C", result.evidence.supporting_evidence_ids)
+        self.assertIn(
+            "EVID-MF-JDL-35-5-2D1C-PURCHASE10-ROUNDTRIP-001",
+            result.evidence.supporting_evidence_ids,
+        )
+        three_d_one_c = entry(
+            ("DEBIT", "3561", False, "対象外", "300"),
+            ("CREDIT", "1311", True, "対象外", "1100"),
+            ("DEBIT", "8681", False, "課税仕入 10%", "400"),
+            ("DEBIT", "8491", False, "課税仕入 10%", "400"),
+        )
+        blocked = ev.match_evidence_for_occurrence(three_d_one_c, three_d_one_c, context(), None)
+        self.assertIsNone(blocked.evidence)
+        self.assertIn("SHAPE_UNVERIFIED_IN_TAX_CONTEXT", blocked.mismatch_fields)
+        with patch.dict(ev.VERIFIED_COMPOUND_SHAPES, {(3, 1): "EVID-TEST-3D1C"}):
+            released = ev.match_evidence_for_occurrence(three_d_one_c, three_d_one_c, context(), None)
+        self.assertIn("EVID-TEST-3D1C", released.evidence.supporting_evidence_ids)
 
     def test_generic_compound_rows_use_verified_literals(self) -> None:
         source = two_d_one_c()
@@ -138,3 +149,31 @@ class CaseCompareTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FullE2eCompareTest(unittest.TestCase):
+    def test_same_day_reorder_is_reported_separately_from_content_diffs(self) -> None:
+        from accounting_converter.tools import mf_full_e2e_compare as full
+
+        first, second = _row("1111", "A"), _row("1111", "B", amount="2200", tax="200")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            candidate = _write(root / "c.csv", [first, second])
+            same = full.compare(candidate, _write(root / "same.csv", [first, second]))
+            swapped = full.compare(candidate, _write(root / "swap.csv", [second, first]))
+            changed_row = list(second)
+            changed_row[12] = "199"
+            changed = full.compare(candidate, _write(root / "chg.csv", [first, changed_row]))
+        self.assertTrue(same["strict_passed"])
+        self.assertFalse(swapped["strict_passed"])
+        self.assertTrue(swapped["content_match"]["content_equal_ignoring_same_day_order"])
+        self.assertEqual(swapped["content_match"]["dates_with_order_only_difference"], ["20260529"])
+        self.assertFalse(changed["content_match"]["content_equal_ignoring_same_day_order"])
+
+
+class DiagnosticSourceOfTruthTest(unittest.TestCase):
+    def test_verified_shapes_include_exact_and_0877_shapes(self) -> None:
+        shapes = ev.verified_mf_shapes()
+        for shape in ((1, 1), (1, 2), (2, 2), (2, 1), (2, 3), (10, 9), (4, 6), (5, 7), (5, 8)):
+            self.assertIn(shape, shapes)
+        self.assertNotIn((3, 1), shapes)

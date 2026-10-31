@@ -59,11 +59,11 @@ class ProbeCase:
 
 
 CASES = (
-    ProbeCase("2D1C", "EV482-2D1C", ev.PENDING_COMPOUND_SHAPE_EVIDENCE[(2, 1)],
+    ProbeCase("2D1C", "EV482-2D1C", ev.VERIFIED_COMPOUND_SHAPES[(2, 1)],
               "2D1C row layout: taxed 課税仕入10% debit row with blank credit side"),
-    ProbeCase("2D3C", "EV482-2D3C", ev.PENDING_COMPOUND_SHAPE_EVIDENCE[(2, 3)],
+    ProbeCase("2D3C", "EV482-2D3C", ev.VERIFIED_COMPOUND_SHAPES[(2, 3)],
               "2D3C row layout with two taxed 課税仕入10% debit lines"),
-    ProbeCase("10D9C", "EV482-10D9C", ev.PENDING_COMPOUND_SHAPE_EVIDENCE[(10, 9)],
+    ProbeCase("10D9C", "EV482-10D9C", ev.VERIFIED_COMPOUND_SHAPES[(10, 9)],
               "10D9C grouping, 10 physical rows, row order and row descriptions"),
     ProbeCase("S10ROUND", "EV482-S10ROUND", "EVID-MF-JDL-35-5-SALES10-ROUNDING-6121-ROUNDTRIP-001",
               "課税売上10% on 6121 where floor and half-up differ: explicit floor tax kept"),

@@ -23,6 +23,7 @@ VERIFIED_DESCRIPTION_SHAPES = frozenset(
         (5, 7, 12),
         (5, 8, 8),
         (5, 8, 13),
+        (10, 9, 10),  # 0877 10D9C row descriptions, strict PASS
     }
 )
 

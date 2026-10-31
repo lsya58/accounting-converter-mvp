@@ -1,6 +1,6 @@
 # ドキュメント案内
 
-最終更新: 2026-10-29
+最終更新: 2026-10-31
 
 ## 製品・利用者向け
 
@@ -22,6 +22,9 @@
 ## 開発・Evidence・運用
 
 - [Current Evidence Status](development/current_evidence_status.md): 現在のroute、Evidence ID、blockerの正本
+- [Evidence-driven 開発ワークフロー](development/mf_jdl_evidence_driven_workflow.md): 進め方と判断基準。AI coding agent向けの手順を含む
+- [JDL実機検証履歴](development/jdl_real_evidence_log.md): 実機操作の履歴。Humanへ依頼する前に確認
+- [Capability composition 設計](design/mf_tax_capability_composition.md): Evidenceを組み合わせて出力可否を決める方式
 - `design/`: 設計と実装境界
 - `research/`: 調査時点の観測・履歴。現在値は上記statusを優先
 - `tests/evidence/`: privacy-safeなEvidence原本

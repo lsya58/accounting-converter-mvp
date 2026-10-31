@@ -55,6 +55,8 @@ from accounting_converter.domain.profile import FormatProfile
 from accounting_converter.infrastructure.jdl_account_pdf_draft import JdlAccountPdfDraftStore
 from accounting_converter.infrastructure.jdl_target_context_loader import JdlTargetContextLoader
 from accounting_converter.profiles.known_formats import moneyforward_cloud_journal_export_observed_schema
+from accounting_converter.application.moneyforward_tax_excluded_evidence import verified_mf_shapes
+from accounting_converter.application.moneyforward_description_replacement import MoneyForwardDescriptionReplacementPolicy
 
 
 @dataclass(frozen=True)
@@ -145,6 +147,8 @@ class CompanyMappingUpdateReview:
     optional_field_row_counts: tuple[tuple[str, int], ...] = ()
     other_optional_journal_count: int = 0
     other_optional_row_count: int = 0
+    # Journals with any optional field before Human-confirmed replacements.
+    optional_field_detected_count: int = 0
 
 
 class CompanyMappingUpdateService:
@@ -364,7 +368,11 @@ class CompanyMappingUpdateService:
             include_confirmed=include_confirmed,
             blank_subaccount_journals=blank_subaccount_journals,
         )
-        verified_shapes = {(1, 1), (1, 3), (2, 1), (2, 2), (2, 3), (4, 6), (5, 7), (5, 8)}
+        # Exempt-context compound shapes plus every shape with MF tax-excluded
+        # Evidence (exact, composed, generic compound). Single source of truth.
+        verified_shapes = {(1, 1), (1, 3), (2, 1), (2, 2), (2, 3), (4, 6), (5, 7), (5, 8)} | set(
+            verified_mf_shapes()
+        )
         unsupported_shape_count = sum(
             (
                 sum(line.side is Side.DEBIT for line in entry.lines),
@@ -373,8 +381,13 @@ class CompanyMappingUpdateService:
             not in verified_shapes
             for entry in entries
         )
-        loss_results = ValidationPipeline((MoneyForwardToJdlLossRule(),)).validate(
+        detected_results = ValidationPipeline((MoneyForwardToJdlLossRule(),)).validate(
             entries
+        )
+        # Blockers are what remains after Human-confirmed description
+        # replacements, exactly as the formal workflow applies them.
+        loss_results = ValidationPipeline((MoneyForwardToJdlLossRule(),)).validate(
+            MoneyForwardDescriptionReplacementPolicy(profile).apply(entries).entries
         )
         optional_rows: dict[str, set[tuple[str, int]]] = defaultdict(set)
         by_id = {entry.id: entry for entry in entries}
@@ -425,6 +438,7 @@ class CompanyMappingUpdateService:
             tuple(sorted((field, len(rows)) for field, rows in optional_rows.items())),
             len(other_journals),
             len(other_rows),
+            len({item.journal_id for item in detected_results if item.journal_id}),
         )
 
     @staticmethod

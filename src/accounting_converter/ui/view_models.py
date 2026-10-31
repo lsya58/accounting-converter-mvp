@@ -278,6 +278,35 @@ def _friendly_guidance(state: AppState) -> str:
     return state.user_message
 
 
+# "0" means evaluated with no problem; these mean "not judged yet" and say when.
+NOT_EVALUATED_FORMAL = "未評価（保存先を選ぶと最終判定します）"
+NOT_EVALUATED_REVIEW = "未評価（会社設定の確認を開くと集計します）"
+
+
+def _next_actions(state: AppState, queue, summary) -> tuple[str, ...]:
+    """What the user does next, per area. Counts only, no accounting values."""
+    def status(count: int | None, todo: str) -> str:
+        if count is None:
+            return "未評価"
+        return "完了" if count == 0 else todo.format(count)
+
+    lines = [
+        f"科目: {status(state.pending_account_confirmations, '{}件の確認が必要')}",
+        f"補助科目: {status(state.pending_subaccount_confirmations, '{}件の確認が必要')}",
+        f"税区分: {status(queue.tax_human_settings if queue else state.pending_tax_confirmations, '{}件の確認が必要')}",
+        f"摘要: {status(queue.description_settings if queue else None, '{}種類の置換確認が必要')}",
+        f"取引先: {status(queue.trade_partner_policy_settings if queue else None, '扱いの確認が必要')}",
+        f"未対応の仕訳構成: {status(queue.unsupported_journals if queue else None, '{}仕訳（開発側の実機確認待ち。利用者の操作は不要）')}",
+    ]
+    if summary is None:
+        lines.append("最終判定: 未実行。上の確認が完了していれば、保存先を選ぶと最終判定します")
+    elif summary.readiness.value == "READY":
+        lines.append("最終判定: 変換できます")
+    else:
+        lines.append("最終判定: 変換できません。上記と「Formal出力条件未一致」を確認してください")
+    return tuple(lines)
+
+
 def support_diagnostic_text(
     state: AppState,
     app_version: str,
@@ -298,7 +327,7 @@ def support_diagnostic_text(
         "未評価（税の確認が必要）"
         if queue is not None
         and (queue.tax_human_settings or queue.tax_evidence_settings)
-        else str(summary.tax_evidence_blocker_count) if summary else "未評価"
+        else str(summary.tax_evidence_blocker_count) if summary else NOT_EVALUATED_FORMAL
     )
     readiness = present_main_screen(state).status_text
     error_category = (
@@ -325,24 +354,26 @@ def support_diagnostic_text(
         ("仕訳数", str(recognition.journal_count) if recognition and recognition.journal_count is not None else "未確認"),
         ("科目確認", str(state.pending_account_confirmations)),
         ("補助科目確認（設定項目）", str(state.pending_subaccount_confirmations)),
-        ("補助科目確認（影響仕訳）", str(queue.subaccount_affected_journals) if queue else "未評価"),
-        ("補助科目確認（識別子）", ", ".join(queue.subaccount_review_ids) if queue else "未評価"),
+        ("補助科目確認（影響仕訳）", str(queue.subaccount_affected_journals) if queue else NOT_EVALUATED_REVIEW),
+        ("補助科目確認（識別子）", (", ".join(queue.subaccount_review_ids) or "なし") if queue else NOT_EVALUATED_REVIEW),
         ("税区分確認", str(queue.tax_human_settings if queue else state.pending_tax_confirmations)),
-        ("税区分（入力で観測）", str(queue.tax_observed) if queue else "未評価"),
-        ("税区分（実機Evidence待ち）", str(queue.tax_evidence_settings) if queue else "未評価"),
-        ("税区分（Evidence待ち入力行）", str(queue.tax_evidence_rows) if queue else "未評価"),
+        ("税区分（入力で観測）", str(queue.tax_observed) if queue else NOT_EVALUATED_REVIEW),
+        ("税区分（実機Evidence待ち）", str(queue.tax_evidence_settings) if queue else NOT_EVALUATED_REVIEW),
+        ("税区分（Evidence待ち入力行）", str(queue.tax_evidence_rows) if queue else NOT_EVALUATED_REVIEW),
         ("未対応仕訳構成", str(summary.unsupported_shape_count if summary else state.unsupported_shape_count)),
         ("税Evidence条件未一致", tax_evidence_result),
-        ("取引先保持方針（未確認設定）", str(queue.trade_partner_policy_settings) if queue else "未評価"),
-        ("取引先情報（影響仕訳）", str(queue.trade_partner_affected_journals) if queue else "未評価"),
-        ("取引先情報（入力物理行）", str(queue.trade_partner_affected_rows) if queue else "未評価"),
-        ("入力optional検出（仕訳）", str(queue.optional_affected_journals) if queue else "未評価"),
-        ("保持方法未確認（formal判定）", str(summary.optional_field_blocker_count) if summary else "未評価"),
-        ("その他optional（影響仕訳）", str(queue.other_optional_affected_journals) if queue else "未評価"),
-        ("その他optional（入力物理行）", str(queue.other_optional_affected_rows) if queue else "未評価"),
-        ("その他optional（Human確認待ち設定）", str(queue.description_settings) if queue else "未評価"),
-        ("その他optional blocker（検出件数）", str(queue.other_optional_field_occurrences) if queue else "未評価"),
-        ("Formal出力条件未一致", str(summary.formal_output_blocker_count if summary else 0)),
+        ("取引先保持方針（未確認設定）", str(queue.trade_partner_policy_settings) if queue else NOT_EVALUATED_REVIEW),
+        ("取引先情報（未解決仕訳）", str(queue.trade_partner_affected_journals) if queue else NOT_EVALUATED_REVIEW),
+        ("取引先情報（未解決入力物理行）", str(queue.trade_partner_affected_rows) if queue else NOT_EVALUATED_REVIEW),
+        ("入力optional検出（仕訳）", str(queue.optional_detected_journals) if queue else NOT_EVALUATED_REVIEW),
+        ("入力optional未解決（仕訳）", str(queue.optional_affected_journals) if queue else NOT_EVALUATED_REVIEW),
+        ("保持方法未確認（formal判定）", str(summary.optional_field_blocker_count) if summary else NOT_EVALUATED_FORMAL),
+        ("その他optional未解決（影響仕訳）", str(queue.other_optional_affected_journals) if queue else NOT_EVALUATED_REVIEW),
+        ("その他optional未解決（入力物理行）", str(queue.other_optional_affected_rows) if queue else NOT_EVALUATED_REVIEW),
+        ("その他optional（Human確認待ち設定）", str(queue.description_settings) if queue else NOT_EVALUATED_REVIEW),
+        ("その他optional blocker（未解決件数）", str(queue.other_optional_field_occurrences) if queue else NOT_EVALUATED_REVIEW),
+        ("Formal出力条件未一致", str(summary.formal_output_blocker_count) if summary else NOT_EVALUATED_FORMAL),
+        ("最終判定（formal）", summary.readiness.value if summary else NOT_EVALUATED_FORMAL),
         ("JDL科目一覧", "設定済み" if state.jdl_master_configured else "未設定"),
         ("JDL科目一覧の状態", state.jdl_master_state),
         ("最終状態", readiness),
@@ -358,8 +389,9 @@ def support_diagnostic_text(
         if summary and summary.formal_output_blocker_details
         else ()
     )
+    next_actions = ("次の操作:", *(f"- {line}" for line in _next_actions(state, queue, summary)))
     return "会計データ変換 サポート診断\n" + "\n".join(
         f"{label}: {value}" for label, value in rows
     ) + ("\n" + "\n".join(details) if details else "") + (
         "\n" + "\n".join(formal_details) if formal_details else ""
-    )
+    ) + "\n" + "\n".join(next_actions)

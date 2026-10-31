@@ -38,6 +38,11 @@ NONPUR_3181_EVIDENCE_ID = "EVID-MF-JDL-35-5-NONPUR-8571-3181-SUB0001-001"
 NONPUR_1311_EVIDENCE_ID = "EVID-MF-JDL-35-5-NONPUR-8571-1311-SUB0002-001"
 NONSALE_EVIDENCE_ID = "EVID-MF-JDL-35-5-NONSALE-1311-SUB0002-9111-001"
 SALES10_EVIDENCE_ID = "EVID-MF-JDL-35-5-SALES10-1111-6121-ROUNDTRIP-001"
+SALES10_9251_EVIDENCE_ID = "EVID-MF-JDL-35-5-SALES10-9251-ROUNDTRIP-001"
+SALES10_ROUNDING_EVIDENCE_ID = "EVID-MF-JDL-35-5-SALES10-ROUNDING-6121-ROUNDTRIP-001"
+# 0877: JDL kept an explicit floor tax (364458 -> 33132, half-up would be 33133)
+# on 6121. Only this account is verified for floor/half-up-divergent amounts.
+SALES10_ROUNDING_VERIFIED_ACCOUNTS = frozenset({"6121"})
 COMPOSITION_ROUTE_ID = "MF-JDL-35-5-TAX-EXCLUDED-PROPORTIONAL-CAPABILITY-COMPOSITION-V1"
 
 MF_SALES_10 = "課税売上 10%"
@@ -174,6 +179,12 @@ EVIDENCE = (
          ("CREDIT", "6121", "", MF_SALES_10)),
         JdlEvidenceProfile.MF_SALES10_EXCLUDED_PROPORTIONAL_1111,
     ),
+    MfTaxExcludedPatternEvidence(
+        SALES10_9251_EVIDENCE_ID,
+        (("DEBIT", "3181", "0001", MF_OUT_OF_SCOPE),
+         ("CREDIT", "9251", "", MF_SALES_10)),
+        JdlEvidenceProfile.MF_SALES10_EXCLUDED_PROPORTIONAL_1111,
+    ),
 )
 EVIDENCE_REGISTRY = MfTaxEvidenceRegistry(EVIDENCE)
 
@@ -202,12 +213,13 @@ COMPOSABLE_SHAPES = {
 }
 # Other compound shapes in this Context use one generic serializer. A shape is
 # released only after its own real round trip; until then it stays PENDING.
-VERIFIED_COMPOUND_SHAPES: dict[tuple[int, int], str] = {}
-PENDING_COMPOUND_SHAPE_EVIDENCE = {
+# Verified by the 0877 final batch (2026-05-29, strict PASS per case).
+VERIFIED_COMPOUND_SHAPES: dict[tuple[int, int], str] = {
     (2, 1): "EVID-MF-JDL-35-5-2D1C-PURCHASE10-ROUNDTRIP-001",
     (2, 3): "EVID-MF-JDL-35-5-2D3C-PURCHASE10-ROUNDTRIP-001",
     (10, 9): "EVID-MF-JDL-35-5-10D9C-ROUNDTRIP-001",
 }
+PENDING_COMPOUND_SHAPE_EVIDENCE: dict[tuple[int, int], str] = {}
 TRADE_PARTNER_DESCRIPTION_EVIDENCE = {
     (1, 1): "EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P04-PARTNER-001",
     (2, 2): "EVID-MF-JDL-TRADE-PARTNER-2D2C-TAXABLE-NO-SUBACCOUNT-DESCRIPTION-ROUNDTRIP-001",
@@ -227,6 +239,18 @@ class TaxLineCapability:
 
     def covers(self, account_code: str) -> bool:
         return self.account_independent or account_code in self.verified_accounts
+
+
+def verified_mf_shapes() -> frozenset[tuple[int, int]]:
+    """(debit, credit) shapes with real JDL Evidence in this Tax Context."""
+    exact = {
+        (
+            sum(row[0] == "DEBIT" for row in item.account_signature),
+            sum(row[0] == "CREDIT" for row in item.account_signature),
+        )
+        for item in EVIDENCE
+    }
+    return frozenset(exact | set(COMPOSABLE_SHAPES) | set(VERIFIED_COMPOUND_SHAPES))
 
 
 def _line_capabilities() -> dict[tuple[str, str], TaxLineCapability]:
@@ -496,8 +520,14 @@ def compose_capabilities(
         support.extend(capability.evidence_ids)
         if tax != MF_OUT_OF_SCOPE:
             taxed.append((line, tax, subaccount))
-        if tax == MF_SALES_10 and not _tax_rounding_is_unambiguous(line.amount):
+        if (
+            tax == MF_SALES_10
+            and not _tax_rounding_is_unambiguous(line.amount)
+            and account not in SALES10_ROUNDING_VERIFIED_ACCOUNTS
+        ):
             gaps.append("TAX_AMOUNT_ROUNDING_UNVERIFIED")
+        elif tax == MF_SALES_10 and not _tax_rounding_is_unambiguous(line.amount):
+            support.append(SALES10_ROUNDING_EVIDENCE_ID)
     generic_compound = shape in VERIFIED_COMPOUND_SHAPES
     if len(taxed) > 1 and not generic_compound:
         gaps.append("MULTIPLE_TAXED_LINES_UNVERIFIED")
