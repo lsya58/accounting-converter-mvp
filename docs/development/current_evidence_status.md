@@ -19,7 +19,7 @@
 |---|---|---|
 | JDL→JDL | `VERIFIED_BY_REAL_IMPORT`, frozen | 1,158 journals / 1,271 rows。実Import PASS。会計判断reviewとbatch re-export strict comparisonは未完了 |
 | MF→JDL READY batch | `VERIFIED_BY_REAL_IMPORT_AND_REEXPORT` | 13 journals / 14 rows、P01-P07、unexpected diff 0、silent loss 0 |
-| MF→JDL 482 dataset | `READY_FOR_FULL_REAL_E2E` | 保存済みCompanySettingで482/482 formal READY。期別formal CSV（FY2026-05: 378、FY2027-05: 104）生成済み。full Import・再Export未実施 |
+| MF→JDL 482 dataset | FY2026-05 `VERIFIED_BY_REAL_IMPORT_AND_REEXPORT` / FY2027-05 READY | 482/482 formal READY。当期378件はclean targetへの実Import・期間全体再Exportでstrict PASS（0878）。翌期104件は翌期データ待ち |
 | 弥生→JDL | Limited regression route | AE19 direct export由来の限定scope。拡張は後順位 |
 
 ## Key Evidence IDs
@@ -64,7 +64,11 @@ Human設定は保存済み設定を直接確認: 税6項目すべて `USER_CONFI
 
 いずれも READY → SUCCESS、CP932・BOMなし・CRLF・30列・strict reparse PASS。
 
-### Full 482 E2E の前提
+### Full 482 E2E
+
+- 2026-10-31: FY2026-05 の378件は [full round-trip](../../tests/evidence/e2e/mf_482_full_roundtrip/README.md) PASS（0878、unexpected 0、silent loss 0）。
+
+### 残り（翌期）
 
 - JDL 0514 は令和8年5月期。FY2027-05 の104件は翌期データが必要。翌期の科目・補助masterが現CompanySettingと同じことを、翌期の科目一覧で確認してからImportする（違えば master diff で影響項目だけ再確認）。
 - 0514 には13件の実E2E（482件と同じ仕訳）と probe（2026-05-18〜29）がある。full Import は probe 前の状態または専用の検証用会社に対して行う。
