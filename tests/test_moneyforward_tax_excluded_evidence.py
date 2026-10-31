@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unittest
-from datetime import date
+from datetime import date, timedelta
 from datetime import datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
@@ -473,7 +473,7 @@ class MoneyForwardTaxExcludedEvidenceTests(unittest.TestCase):
                         tax_info=TaxInfo(tax), metadata=metadata,
                     ))
                 source = JournalEntry(
-                    f"j{index}", ref, date(2026, 4, 19 + index), source_lines,
+                    f"j{index}", ref, date(2026, 4, 19) + timedelta(days=index), source_lines,
                     "SYNTHETIC",
                 )
                 mapped = JournalEntry(
