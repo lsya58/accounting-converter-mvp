@@ -12,6 +12,7 @@ from accounting_converter.adapters.output.jdl import (
     JdlSimplifiedBusinessCategory,
     JdlSubaccountIdentity,
     JdlTaxationMethod,
+    JdlTaxRounding,
     JdlTargetContext,
     JdlTargetContextBuilder,
 )
@@ -33,6 +34,12 @@ from accounting_converter.profiles.known_formats import (
 )
 
 
+# Duplicate-name items are already excluded from the draft's selectable targets.
+NAME_CONFLICTS_EXCLUDED_FROM_TARGETS = frozenset(
+    {"PRINTED_ACCOUNT_NAME_CONFLICT", "SUBACCOUNT_NAME_CONFLICT"}
+)
+
+
 class CompanyTaxContextConfirmationError(ValueError):
     pass
 
@@ -45,6 +52,9 @@ class JdlTaxContextSelection:
         JdlInputTaxCreditMethod.UNCONFIRMED
     )
     simplified_business_category: JdlSimplifiedBusinessCategory | None = None
+    # JDL 端数処理 as the Human read it; UNCONFIRMED keeps the old behavior.
+    sales_tax_rounding: JdlTaxRounding = JdlTaxRounding.UNCONFIRMED
+    purchase_tax_rounding: JdlTaxRounding = JdlTaxRounding.UNCONFIRMED
 
 
 @dataclass(frozen=True)
@@ -86,6 +96,8 @@ class CompanyTaxContextConfirmationService:
                     JdlSimplifiedBusinessCategory(payload["simplified_business_category"])
                     if payload.get("simplified_business_category") else None
                 ),
+                sales_tax_rounding=JdlTaxRounding(payload.get("sales_tax_rounding", "UNCONFIRMED")),
+                purchase_tax_rounding=JdlTaxRounding(payload.get("purchase_tax_rounding", "UNCONFIRMED")),
             )
         except (KeyError, TypeError, ValueError):
             return None
@@ -117,7 +129,10 @@ class CompanyTaxContextConfirmationService:
         previous_context = None
         if self.drafts.is_draft(draft_path):
             draft = self.drafts.load(draft_path)
-            if draft.observation.conflicts:
+            if any(
+                item.category not in NAME_CONFLICTS_EXCLUDED_FROM_TARGETS
+                for item in draft.observation.conflicts
+            ):
                 raise CompanyTaxContextConfirmationError(
                     "JDL printed master contains unresolved conflicts"
                 )
@@ -179,6 +194,8 @@ class CompanyTaxContextConfirmationService:
             taxation_method=selection.taxation_method,
             input_tax_credit_method=selection.input_tax_credit_method,
             simplified_business_category=selection.simplified_business_category,
+            sales_tax_rounding=selection.sales_tax_rounding,
+            purchase_tax_rounding=selection.purchase_tax_rounding,
             confirmation_state=JdlContextConfirmationState.CONFIRMED,
             provenance=JdlContextProvenance.USER_CONFIRMED_RUNTIME_SNAPSHOT,
             no_fuzzy_matching=True,
@@ -210,6 +227,8 @@ class CompanyTaxContextConfirmationService:
                             selection.simplified_business_category.value
                             if selection.simplified_business_category else None
                         ),
+                        "sales_tax_rounding": selection.sales_tax_rounding.value,
+                        "purchase_tax_rounding": selection.purchase_tax_rounding.value,
                     },
                 )
                 return PendingTaxContextConfirmation(selection, tuple(rule_ids))

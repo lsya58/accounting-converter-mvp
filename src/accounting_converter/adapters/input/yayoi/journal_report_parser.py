@@ -269,6 +269,7 @@ class YayoiJournalReportParser:
         reference = SourceReference(file_name, first.number, first.get("伝票No."))
         lines: list[JournalLine] = []
         optional: dict[str, int] = defaultdict(int)
+        optional_values: list[tuple[int, str, str]] = []
         for row in rows:
             row_lines = 0
             # 請求書区分 / 仕入税額控除 are row-level columns but describe the side
@@ -292,6 +293,7 @@ class YayoiJournalReportParser:
             for name in OPTIONAL_FIELDS:
                 if row.get(name):
                     optional[name] += 1
+                    optional_values.append((row.number, name, row.get(name)))
             if row.get("調整") not in OBSERVED_ADJUSTMENT:
                 issues.append(YayoiJournalReportIssue("ADJUSTMENT_UNOBSERVED", row.number))
             if row.get("タイプ") not in OBSERVED_TYPE:
@@ -321,6 +323,7 @@ class YayoiJournalReportParser:
                 "yayoi_type": tuple(dict.fromkeys(row.get("タイプ") for row in rows)),
                 "yayoi_journal_numbers": tuple(row.get("仕訳番号") for row in rows),
                 "yayoi_optional_fields": dict(optional),
+                "yayoi_optional_values": tuple(optional_values),
             },
         )
         if not entry.is_balanced():

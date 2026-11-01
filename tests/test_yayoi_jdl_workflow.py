@@ -144,7 +144,7 @@ class YayoiJdlWorkflowTest(unittest.TestCase):
 
     def test_unverified_or_unrepresentable_information_blocks(self) -> None:
         cases = {
-            "SYSTEM_EVIDENCE:EXPLICIT_TAX_AMOUNT_UNVERIFIED": details(half_up=True),
+            "HUMAN:JDL_TAX_ROUNDING_SETTING": details(half_up=True),
             "SYSTEM_EVIDENCE:CLOSING_ENTRY_REPRESENTATION": details(closing="本決"),
             "HUMAN:DESCRIPTION_REPLACEMENT": details(long_description=True),
         }
@@ -162,6 +162,53 @@ class YayoiJdlWorkflowTest(unittest.TestCase):
                 self.assertIs(prepared.summary.readiness, FirstReleaseReadiness.BLOCKED)
                 self.assertIsNone(workflow.execute(prepared))
                 self.assertFalse(output.exists())
+
+    def test_explicit_tax_is_safe_only_when_keep_and_recompute_agree(self) -> None:
+        from decimal import Decimal as D
+
+        from accounting_converter.adapters.output.jdl import JdlTaxRounding as R
+        from accounting_converter.application.moneyforward_tax_excluded_evidence import explicit_tax_gap
+
+        purchase = JdlTaxSemantic.PURCHASE_10_INTERNAL.value
+        sales = JdlTaxSemantic.SALES_10_EXTERNAL.value
+        base = context()
+
+        def gap(explicit, amount, tax, sales_rounding=R.UNCONFIRMED, purchase_rounding=R.UNCONFIRMED):
+            target = replace(base, sales_tax_rounding=sales_rounding, purchase_tax_rounding=purchase_rounding)
+            return explicit_tax_gap(D(explicit), D(amount), tax, target)
+
+        # No fraction: every setting agrees, nothing to confirm.
+        self.assertIsNone(gap(100, 1100, purchase))
+        # 1106 -> floor 100 / half-up 101 / ceiling 101.
+        self.assertEqual(gap(100, 1106, purchase), "JDL_TAX_ROUNDING_UNCONFIRMED")
+        self.assertIsNone(gap(100, 1106, purchase, purchase_rounding=R.FLOOR))
+        self.assertEqual(gap(100, 1106, purchase, purchase_rounding=R.HALF_UP), "EXPLICIT_TAX_KEEP_UNVERIFIED")
+        self.assertEqual(gap(101, 1106, purchase, purchase_rounding=R.HALF_UP),
+                         "EXPLICIT_TAX_COMPANY_ROUNDING_UNVERIFIED")
+        self.assertEqual(gap(101, 1106, purchase, purchase_rounding=R.FLOOR), "EXPLICIT_TAX_AMOUNT_UNVERIFIED")
+        # Sales and purchase settings are independent.
+        self.assertIsNone(gap(100, 1106, sales, sales_rounding=R.FLOOR, purchase_rounding=R.HALF_UP))
+        self.assertEqual(gap(100, 1106, sales, sales_rounding=R.CEILING, purchase_rounding=R.FLOOR),
+                         "EXPLICIT_TAX_KEEP_UNVERIFIED")
+        # Purchase-credit ratio applied (80%): matches no rounding rule.
+        self.assertEqual(gap(80, 1100, purchase, purchase_rounding=R.FLOOR), "EXPLICIT_TAX_AMOUNT_UNVERIFIED")
+        # Untaxed lines must carry 0.
+        self.assertIsNone(gap(0, 1106, JdlTaxSemantic.NO_TAX.value))
+        self.assertEqual(gap(5, 1106, JdlTaxSemantic.NO_TAX.value), "EXPLICIT_TAX_AMOUNT_UNVERIFIED")
+
+    def test_rounding_setting_survives_save_and_load_and_is_omitted_when_unset(self) -> None:
+        from accounting_converter.adapters.output.jdl import JdlTaxRounding as R
+
+        loader = JdlTargetContextLoader()
+        unset = loader.to_json_text(context())
+        self.assertNotIn("tax_rounding", unset)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "context.json"
+            path.write_text(loader.to_json_text(
+                replace(context(), sales_tax_rounding=R.CEILING, purchase_tax_rounding=R.HALF_UP)
+            ), encoding="utf-8")
+            loaded = loader.load(path)
+        self.assertEqual((loaded.sales_tax_rounding, loaded.purchase_tax_rounding), (R.CEILING, R.HALF_UP))
 
     def test_description_replacement_is_saved_and_reused(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -293,20 +293,66 @@ class JdlAccountListPdfTextParserTests(unittest.TestCase):
         )
         self.assertEqual(duplicate.completeness, JdlMasterCompleteness.PARTIAL_MASTER)
 
-    def test_subaccount_cannot_continue_across_page_boundary(self) -> None:
+    def test_subaccount_list_continues_across_page_boundary(self) -> None:
+        # Observed in a real JDL account list: a parent's subaccounts continue
+        # at the top of the next page without repeating the parent row.
         pages = list(self._pages())
         pages[0] = JdlAccountListTextPage(
             1,
             self._page_header(1)
-            + "         1211- 架空親科目A                   借架空親A ○\n",
+            + "         1211- 架空親科目A                   借架空親A ○\n"
+            + "             -0001 架空補助A                借\n",
         )
         pages[1] = JdlAccountListTextPage(
             2,
             self._page_header(2)
-            + "             -0001 架空補助A                借\n",
+            + "             -0002 架空補助B                借\n"
+            + "  1311  架空科目B                   借架空B ○\n",
         )
-        with self.assertRaises(JdlAccountListPdfParseError):
-            self._parse(tuple(pages))
+        result = self._parse(tuple(pages))
+        self.assertEqual(
+            [(item.parent_account_code, item.code) for item in result.subaccounts],
+            [("1211", "0001"), ("1211", "0002")],
+        )
+
+    def test_page_continuation_is_fail_closed(self) -> None:
+        parent = "         1211- 架空親科目A                   借架空親A ○\n"
+        cases = {
+            # Previous page did not end inside a subaccount list.
+            "no_open_parent": (parent + "  1311  架空科目B                   借架空B ○\n",
+                               "             -0002 架空補助B                借\n"),
+            # Codes must keep increasing across the break.
+            "code_not_increasing": (parent + "             -0005 架空補助A                借\n",
+                                    "             -0002 架空補助B                借\n"),
+            # Balance side must match the carried parent.
+            "balance_mismatch": (parent, "             -0001 架空補助B                貸\n"),
+        }
+        for name, (first, second) in cases.items():
+            with self.subTest(name):
+                pages = list(self._pages())
+                pages[0] = JdlAccountListTextPage(1, self._page_header(1) + first)
+                pages[1] = JdlAccountListTextPage(2, self._page_header(2) + second)
+                with self.assertRaises(JdlAccountListPdfParseError):
+                    self._parse(tuple(pages))
+
+    def test_same_name_under_two_codes_is_recorded_and_not_selectable(self) -> None:
+        pages = list(self._pages())
+        pages[0] = JdlAccountListTextPage(
+            1,
+            self._page_header(1)
+            + "  3997  架空同名科目                 貸架空同 ○\n"
+            + "  3998  架空同名科目                 貸架空同 ○\n"
+            + "         1211- 架空親科目A                   借架空親A ○\n"
+            + "             -0001 架空同名補助              借\n"
+            + "             -0002 架空同名補助              借\n"
+            + "             -0003 架空補助C                借\n",
+        )
+        result = self._parse(tuple(pages))
+        categories = {item.category for item in result.conflicts}
+        self.assertEqual(categories, {"PRINTED_ACCOUNT_NAME_CONFLICT", "SUBACCOUNT_NAME_CONFLICT"})
+        self.assertNotIn("架空同名科目", {item.name for item in result.printed_accounts})
+        self.assertEqual([item.code for item in result.subaccounts], ["0003"])
+        self.assertEqual(result.completeness, JdlMasterCompleteness.PARTIAL_MASTER)
 
     def test_malformed_subaccount_delimiter_is_blocked(self) -> None:
         pages = list(self._pages())

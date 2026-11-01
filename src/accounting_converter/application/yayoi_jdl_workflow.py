@@ -12,18 +12,16 @@ Context or mappings.
 """
 from __future__ import annotations
 
+import hashlib
+import json
+from decimal import Decimal
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
-from accounting_converter.adapters.input.yayoi.journal_report_adapter import (
-    YayoiJournalReportInputAdapter,
-    YayoiJournalReportStructuralValidator,
-    yayoi_journal_report_input_profile,
-)
-from accounting_converter.adapters.input.yayoi.journal_report_parser import YayoiJournalReportParser
 from accounting_converter.adapters.output.jdl import (
     ExplicitJdlEvidenceRoutePolicy,
+    JdlEvidenceProfile,
     JdlTargetContext,
     jdl_ibex_35_5_output_profile,
 )
@@ -50,9 +48,25 @@ from accounting_converter.domain.journal import JournalEntry
 from accounting_converter.domain.mapping import MappingStatus
 from accounting_converter.domain.validation import BalanceRule, Severity, ValidationResult
 from accounting_converter.infrastructure.adapter_registry import production_adapter_registry
+from accounting_converter.adapters.output.jdl.tax_semantics import JdlTaxSemantic
+from accounting_converter.domain.journal import Side
+from accounting_converter.application.yayoi_review import (
+    DEPARTMENT_FIELD,
+    candidate_semantic,
+    NON_RETAINED_VALUES_KEY,
+    confirmed_optional_fields,
+    field_of,
+    non_retained_values,
+)
+from accounting_converter.domain.journal_identity import JOURNAL_CONTENT_IDENTITY_KEY
+from accounting_converter.domain.journal_rows import LINE_ROW_DESCRIPTION_KEY, LINE_ROW_KEY, ROW_ORDER_KEY
+from accounting_converter.application.yayoi_sources import (
+    YayoiSourceFormat,
+    detect_format,
+    format_for_identity_key,
+)
 from accounting_converter.profiles.known_formats import (
     jdl_ibex_cashbook_official_journal_import_schema_definition,
-    yayoi_journal_report_generic_identity,
 )
 
 ROUTE_ID = "YAYOI-REPORT-JDL-COMPOSED-V1"
@@ -61,18 +75,33 @@ SOURCE_FORMAT_LABEL = "弥生 仕訳日記帳（汎用形式）"
 # Composition gaps that only a Human can resolve; every other gap needs JDL Evidence.
 HUMAN_GAPS = {"TAX_MAPPING_UNCONFIRMED", "SUBACCOUNT_REQUIRED_BY_MASTER", "ACCOUNT_CODE_MISMATCH",
               "ACCOUNT_IDENTITY_MISMATCH", "SUBACCOUNT_CODE_MISMATCH"}
+ACCOUNT_DIAGNOSTIC_GAPS = {"ACCOUNT_CODE_MISMATCH", "ACCOUNT_IDENTITY_MISMATCH", "SUBACCOUNT_CODE_MISMATCH",
+                           "PARENT_ONLY_REPRESENTATION_MISMATCH"}
 IGNORED_DIAGNOSTIC_GAPS = {"TAX_CATEGORY_MISMATCH", "SHAPE_MISMATCH", "EVIDENCE_SCOPE_CHANGED_BY_MASTER"}
 
 
+# Evidence gaps a probe may cover: journal structure x tax only. Account,
+# tax-literal and rounding questions are never probed with this.
+PROBE_GAPS = frozenset({"SYSTEM_EVIDENCE:SHAPE_TAX_COMBINATION_UNVERIFIED"})
+
+
 class YayoiToJdlLossRule:
-    """Blocks Yayoi information that JDL output cannot keep or that is unconfirmed."""
+    """Blocks Yayoi information that JDL output cannot keep, unless the Human
+    confirmed an audit-only policy for that field (see yayoi_review)."""
 
     rule_id = "YAYOI-JDL-LOSS"
 
+    def __init__(self, confirmed_fields: frozenset[str] = frozenset()) -> None:
+        self.confirmed_fields = confirmed_fields
+
     def validate(self, entry: JournalEntry) -> list[ValidationResult]:
         fields = []
-        if entry.metadata.get("yayoi_optional_fields"):
+        present = {field_of(name) for _, name, _ in non_retained_values(entry)}
+        unconfirmed = present - self.confirmed_fields
+        if unconfirmed - {DEPARTMENT_FIELD}:
             fields.append("optional_field")  # 付箋 / 仕訳メモ / 期日 / 番号 / 生成元
+        if DEPARTMENT_FIELD in unconfirmed:
+            fields.append("department")  # JDL company without departments
         if entry.metadata.get("yayoi_closing"):
             fields.append("closing_entry")  # 決算区分: no proven JDL representation
         if any(description_requires_replacement(value) for value in journal_descriptions(entry)):
@@ -99,6 +128,19 @@ class YayoiJdlAssessment:
     parse_issue_codes: tuple[str, ...]
     entry_count: int
     detail_rows: int
+    # field -> journals whose values are not written to JDL (audit file only).
+    non_retained_journals: dict | None = None
+    # Blockers that follow from the journal structure if the Human confirms the
+    # natural tax candidate; not counted as current blockers.
+    likely_blockers: dict | None = None
+
+    def likely_blocker_counts(self) -> dict[str, int]:
+        return dict(Counter(b for blockers in (self.likely_blockers or {}).values() for b in blockers))
+
+    @property
+    def information_fully_retained(self) -> bool:
+        """True only when nothing from the source is left out of the JDL file."""
+        return not self.non_retained_journals
 
     @property
     def ready_journals(self) -> int:
@@ -137,7 +179,8 @@ class YayoiJournalReportJdlWorkflow:
         profile: ConversionProfile | None,
         context: JdlTargetContext | None,
     ) -> YayoiJdlAssessment:
-        parsed = YayoiJournalReportParser().diagnose(input_path)
+        source_format = self._source_format(input_path, profile)
+        parsed = source_format.diagnose(input_path)
         entries = parsed.entries
         blockers: dict[str, set[str]] = {entry.id: set() for entry in entries}
         if profile is None or context is None:
@@ -150,15 +193,22 @@ class YayoiJournalReportJdlWorkflow:
         if description_policy is not None:
             replaced = description_policy.apply(entries)
             entries = replaced.entries
-        loss = YayoiToJdlLossRule()
+        confirmed_fields = frozenset(confirmed_optional_fields(profile)) if profile is not None else frozenset()
+        loss = YayoiToJdlLossRule(confirmed_fields)
+        non_retained: Counter = Counter()
+        for entry in entries:
+            for field in {field_of(name) for _, name, _ in non_retained_values(entry)}:
+                non_retained[field] += 1
         for entry in entries:
             for result in loss.validate(entry):
                 blockers[entry.id].add({
                     "description_character": "HUMAN:DESCRIPTION_REPLACEMENT",
                     "optional_field": "HUMAN:OPTIONAL_FIELD_POLICY",
                     "closing_entry": "SYSTEM_EVIDENCE:CLOSING_ENTRY_REPRESENTATION",
+                    "department": "HUMAN:DEPARTMENT_POLICY",
                 }[result.field])
         assignments = {}
+        likely: dict[str, set[str]] = {entry.id: set() for entry in entries}
         if profile is not None and context is not None and self._identity_matches(profile):
             requirements = MappingRequirementExtractor().extract(entries, profile)
             unresolved_accounts = {r.source_value for r in requirements.accounts if r.requires_confirmation}
@@ -182,10 +232,24 @@ class YayoiJournalReportJdlWorkflow:
                     if match.evidence is not None:
                         assignments[entry.id] = match.evidence.profile
                         continue
-                    gaps = set(match.mismatch_fields) - IGNORED_DIAGNOSTIC_GAPS
+                    # Account problems come from the line identities themselves; the
+                    # matcher's account codes compare against the nearest exact
+                    # Evidence and are diagnostics once composition has run.
+                    identity_gaps = {
+                        field
+                        for line, mapped_line in zip(entry.lines, mapped_entry.lines, strict=True)
+                        for field in ev.canonical_target_identity(
+                            source_account=line.account, source_subaccount=line.sub_account,
+                            side=line.side.value, mapped_account=mapped_line.account,
+                            mapped_subaccount=mapped_line.sub_account, context=context, profile=profile,
+                        ).mismatch_fields
+                    }
+                    gaps = (set(match.mismatch_fields) - IGNORED_DIAGNOSTIC_GAPS - ACCOUNT_DIAGNOSTIC_GAPS) | identity_gaps
                     for gap in gaps:
                         if gap in {"TAX_MAPPING_UNCONFIRMED"}:
                             blockers[entry.id].add("HUMAN:TAX_MAPPING")
+                        elif gap == "JDL_TAX_ROUNDING_UNCONFIRMED":
+                            blockers[entry.id].add("HUMAN:JDL_TAX_ROUNDING_SETTING")
                         elif gap == "SUBACCOUNT_REQUIRED_BY_MASTER":
                             blockers[entry.id].add("HUMAN:SUBACCOUNT_DEFAULT")
                         elif gap in HUMAN_GAPS:
@@ -194,12 +258,19 @@ class YayoiJournalReportJdlWorkflow:
                             blockers[entry.id].add(f"SYSTEM_EVIDENCE:{gap}")
                     if not gaps:
                         blockers[entry.id].add("SYSTEM_IMPLEMENTATION:UNMATCHED")
+                    # The matcher skips composition while an account is unmapped;
+                    # shape x tax does not depend on accounts, so check it anyway.
+                    current, candidate = structural_evidence_gaps(entry, profile, context)
+                    blockers[entry.id].update(f"SYSTEM_EVIDENCE:{gap}" for gap in current)
+                    likely[entry.id].update(f"SYSTEM_EVIDENCE:{gap}" for gap in candidate)
         return YayoiJdlAssessment(
             {key: frozenset(value) for key, value in blockers.items()},
             assignments,
-            tuple(issue.code for issue in parsed.issues),
+            parsed.issue_codes,
             len(entries),
             parsed.detail_rows,
+            dict(non_retained),
+            {key: frozenset(value) for key, value in likely.items() if value},
         )
 
     def prepare(
@@ -216,26 +287,32 @@ class YayoiJournalReportJdlWorkflow:
             reasons.append("弥生の仕訳日記帳ファイルを選択してください。")
         if output_path is None:
             reasons.append("保存先を選択してください。")
-        elif output_path.exists():
-            reasons.append("既存のファイルは上書きしません。別の保存先を選択してください。")
+        elif output_path.exists() or audit_path_for(output_path).exists() or pending_audit_path_for(output_path).exists():
+            reasons.append("既存のファイル（正式CSVまたは監査記録）は上書きしません。別の保存先を選択してください。")
         if profile is None or context is None:
             reasons.append("対象のJDL会社設定（科目一覧と税設定）がありません。")
         elif not company_setting_validated:
             reasons.append("会社設定を確認できません。")
         elif not self._identity_matches(profile):
-            reasons.append("会社設定の入力元が弥生の仕訳日記帳ではありません。")
+            reasons.append("会社設定の入力元が弥生（仕訳日記帳またはインポート形式）ではありません。")
         if input_path is None:
             return self._blocked(None, output_path, profile, reasons)
+        source_format = self._source_format(input_path, profile)
+        if profile is not None and self._identity_matches(profile) and detect_format(input_path) is not source_format:
+            reasons.append("選択したファイルの形式が会社設定の入力元と一致しません。")
         assessment = self.assess(input_path, profile, context)
+        confirmed_fields = frozenset(confirmed_optional_fields(profile)) if profile is not None else frozenset()
         if assessment.parse_issue_codes:
-            reasons.append("弥生の仕訳日記帳を安全に読み込めませんでした。")
+            reasons.append(f"{source_format.label}として安全に読み込めませんでした。")
         messages = {
             "HUMAN:ACCOUNT_MAPPING": "未確認の科目対応があります。",
             "HUMAN:SUBACCOUNT_MAPPING": "未確認の補助科目対応があります。",
             "HUMAN:SUBACCOUNT_DEFAULT": "補助なしの仕訳のまとめ先補助を確認してください。",
             "HUMAN:TAX_MAPPING": "税区分の確認が必要です。",
             "HUMAN:DESCRIPTION_REPLACEMENT": "JDLに入らない摘要があります。置き換え内容を確認してください。",
-            "HUMAN:OPTIONAL_FIELD_POLICY": "付箋などJDLに保持先のない情報があります。",
+            "HUMAN:OPTIONAL_FIELD_POLICY": "生成元・付箋などJDLに保持先のない情報があります。意味と扱い（JDLへは出さず監査記録に残す）を確認してください。",
+            "HUMAN:DEPARTMENT_POLICY": "部門を含む仕訳があります。対象のJDL会社は部門を使わない設定のため、意味と扱い（JDLへは出さず監査記録に残す）を確認してください。",
+            "HUMAN:JDL_TAX_ROUNDING_SETTING": "JDL会社の消費税の端数処理（売上・仕入）を設定してください。",
         }
         for blocker in sorted({b for v in assessment.journal_blockers.values() for b in v}):
             if blocker in messages:
@@ -250,7 +327,7 @@ class YayoiJournalReportJdlWorkflow:
             readiness=FirstReleaseReadiness.BLOCKED if reasons else FirstReleaseReadiness.READY,
             blocking_reasons=tuple(reasons),
             source_name=input_path.name,
-            source_format=SOURCE_FORMAT_LABEL,
+            source_format=source_format.label,
             profile_name=profile.profile_name if profile is not None else None,
             unresolved_mapping_count=sum(
                 n for b, n in counts.items() if b.startswith("HUMAN:") and "MAPPING" in b
@@ -271,10 +348,10 @@ class YayoiJournalReportJdlWorkflow:
             ExplicitJdlEvidenceRoutePolicy(assessment.assignments, route_id=ROUTE_ID),
         )
         service = ConversionService(
-            input_adapter=YayoiJournalReportInputAdapter(),
-            structural_validator=YayoiJournalReportStructuralValidator(),
+            input_adapter=_AuditOnlyFieldsRemovedAdapter(source_format.adapter(), confirmed_fields),
+            structural_validator=source_format.validator(),
             mapping_engine=MappingEngine(mapping_rule_set_from_profile(profile)),
-            business_validator=ValidationPipeline((BalanceRule(), YayoiToJdlLossRule())),
+            business_validator=ValidationPipeline((BalanceRule(), YayoiToJdlLossRule(confirmed_fields))),
             output_adapter=None,
             output_validator=None,
             journal_route_policy=route,
@@ -284,7 +361,7 @@ class YayoiJournalReportJdlWorkflow:
         request = ConversionRequest(
             input_path=input_path,
             output_path=output_path,
-            input_profile=yayoi_journal_report_input_profile(),
+            input_profile=source_format.input_profile(),
             output_profile=jdl_ibex_35_5_output_profile(),
             overwrite=False,
             conversion_profile=profile,
@@ -292,20 +369,129 @@ class YayoiJournalReportJdlWorkflow:
         )
         return FirstReleasePreparedConversion(summary, request, service)
 
+    def prepare_probe(
+        self,
+        *,
+        input_path: Path,
+        output_path: Path,
+        profile: ConversionProfile,
+        context: JdlTargetContext,
+        probe_gaps: frozenset[str] = PROBE_GAPS,
+    ) -> tuple[FirstReleasePreparedConversion, tuple[str, ...]]:
+        """NOT_FOR_PRODUCTION probe of the journals blocked ONLY by probe_gaps.
+
+        Every Human mapping of those journals must already be confirmed, so
+        the probe uses the company's real JDL accounts; nothing is guessed.
+        For a test company restored from a backup only. Returns the prepared
+        conversion and the probed journal ids (empty → nothing to probe).
+        """
+        if "NOT_FOR_PRODUCTION" not in output_path.name:
+            raise ValueError("probe output name must contain NOT_FOR_PRODUCTION")
+        assessment = self.assess(input_path, profile, context)
+        source_format = self._source_format(input_path, profile)
+        carries_extra = {entry.id for entry in source_format.read(input_path) if non_retained_values(entry)}
+        probe_ids = tuple(
+            key for key, blockers in assessment.journal_blockers.items()
+            if blockers and blockers <= probe_gaps and key not in carries_extra  # probes carry no audit
+        )
+        reasons = [] if probe_ids else ["人の確認がすべて済み、構成×税の実機検証だけが残っている仕訳はありません。"]
+        if output_path.exists():
+            reasons.append("既存のファイルは上書きしません。")
+        summary = FirstReleaseSummary(
+            readiness=FirstReleaseReadiness.BLOCKED if reasons else FirstReleaseReadiness.READY,
+            blocking_reasons=tuple(reasons),
+            source_name=input_path.name,
+            source_format=f"{source_format.label}（NOT_FOR_PRODUCTION probe）",
+            profile_name=profile.profile_name,
+        )
+        if reasons:
+            return FirstReleasePreparedConversion(summary), probe_ids
+        confirmed_fields = frozenset(confirmed_optional_fields(profile))
+        output_lookup = self.registry.get_exact_output(
+            jdl_ibex_cashbook_official_journal_import_schema_definition().identity
+        )
+        assignments = {key: JdlEvidenceProfile.MF_COMPOUND_TAX_EXCLUDED_PROPORTIONAL for key in probe_ids}
+        service = ConversionService(
+            input_adapter=_SyntheticProbeValues(_OnlyJournals(
+                _AuditOnlyFieldsRemovedAdapter(source_format.adapter(), confirmed_fields), frozenset(probe_ids)
+            ), profile, context),
+            structural_validator=source_format.validator(),
+            mapping_engine=MappingEngine(mapping_rule_set_from_profile(profile)),
+            business_validator=ValidationPipeline((BalanceRule(), YayoiToJdlLossRule(confirmed_fields))),
+            output_adapter=None,
+            output_validator=None,
+            journal_route_policy=_DescriptionAndEvidenceRoutePolicy(
+                DescriptionReplacementPolicy(profile),
+                ExplicitJdlEvidenceRoutePolicy(assignments, route_id=f"{ROUTE_ID}-NOT_FOR_PRODUCTION-PROBE"),
+            ),
+            post_mapping_transform=_ProbeTaxLiteralsTransform(profile, context),
+            runtime_output_factory=output_lookup.registration.runtime_factory,
+        )
+        request = ConversionRequest(
+            input_path=input_path,
+            output_path=output_path,
+            input_profile=source_format.input_profile(),
+            output_profile=jdl_ibex_35_5_output_profile(),
+            overwrite=False,
+            conversion_profile=profile,
+            target_runtime_context=context,
+        )
+        return FirstReleasePreparedConversion(summary, request, service), probe_ids
+
     @staticmethod
     def execute(prepared: FirstReleasePreparedConversion):
+        """Formal CSV plus, when anything is left out of JDL, its audit file.
+
+        The audit file is part of the formal result: if it cannot be written,
+        the CSV is removed and the run fails.
+        """
         if (
             prepared.summary.readiness is not FirstReleaseReadiness.READY
             or prepared.request is None
             or prepared.conversion_service is None
         ):
             return None
-        return prepared.conversion_service.convert(prepared.request)
+        request = prepared.request
+        output = Path(request.output_path)
+        if "NOT_FOR_PRODUCTION" in output.name:  # probe: its journals carry nothing outside JDL
+            return prepared.conversion_service.convert(request)
+        pending = begin_non_retained_audit(request.input_path, output, request.conversion_profile)
+        try:
+            result = prepared.conversion_service.convert(request)
+        except Exception:
+            if pending is not None:
+                pending.unlink(missing_ok=True)
+            raise
+        if result.status.value != "SUCCESS" or result.output_path is None:
+            if pending is not None:
+                pending.unlink(missing_ok=True)
+            return result
+        try:
+            finish_non_retained_audit(output)
+            check = verify_non_retained_audit(request.input_path, output, request.conversion_profile)
+            if check["verdict"] not in {"PASS", "NOT_NEEDED"}:
+                raise RuntimeError("audit record does not match the formal CSV")
+        except Exception:
+            # Never leave a formal CSV without its audit record.
+            output.unlink(missing_ok=True)
+            audit_path_for(output).unlink(missing_ok=True)
+            pending_audit_path_for(output).unlink(missing_ok=True)
+            raise
+        return result
+
+    @staticmethod
+    def _source_format(input_path: Path, profile: ConversionProfile | None) -> YayoiSourceFormat:
+        """The CompanySetting decides the format; without one, the file content does."""
+        configured = (
+            format_for_identity_key(profile.source_format_identity.stable_key)
+            if profile is not None else None
+        )
+        return configured or detect_format(input_path)
 
     @staticmethod
     def _identity_matches(profile: ConversionProfile) -> bool:
         return (
-            profile.source_format_identity.stable_key == yayoi_journal_report_generic_identity().stable_key
+            format_for_identity_key(profile.source_format_identity.stable_key) is not None
             and profile.target_format_identity.stable_key
             == jdl_ibex_cashbook_official_journal_import_schema_definition().identity.stable_key
         )
@@ -317,3 +503,238 @@ class YayoiJournalReportJdlWorkflow:
             blocking_reasons=tuple(reasons),
             source_format=SOURCE_FORMAT_LABEL,
         ))
+
+
+def structural_evidence_gaps(entry: JournalEntry, profile, context) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """(current, likely) shape x tax gaps, independent of account mapping.
+
+    current: every tax line has a confirmed mapping. likely: some line has only
+    the natural candidate, so the gap appears if the Human confirms it.
+    """
+    debit = sum(line.side is Side.DEBIT for line in entry.lines)
+    shape = (debit, len(entry.lines) - debit)
+    taxed = []
+    confirmed = True
+    for line in entry.lines:
+        value = ev.target_tax_semantic(line, profile, context) if line.tax_info else JdlTaxSemantic.NO_TAX.value
+        if value == ev.UNMAPPED_TAX:
+            confirmed = False
+            semantic = candidate_semantic(line.tax_info.category)
+            value = semantic.value if semantic is not None else None
+        if value is None:
+            continue  # no candidate: already a Human tax blocker
+        if value != JdlTaxSemantic.NO_TAX.value:
+            taxed.append((line.side.value, value))
+    gaps = ev.shape_tax_combination_gaps(shape, tuple(taxed))
+    return (gaps, ()) if confirmed else ((), gaps)
+
+
+PROBE_PENDING_EVIDENCE_ID = "PENDING-YAYOI-JDL-SHAPE-TAX-PROBE-NOT_FOR_PRODUCTION"
+
+
+class _ProbeTaxLiteralsTransform:
+    """Probe only: write the confirmed JDL tax literals under a PENDING Evidence ID."""
+
+    def __init__(self, profile, context) -> None:
+        self._profile, self._context = profile, context
+
+    def apply(self, source_entries, mapped_entries) -> JournalRouteResult:
+        return JournalRouteResult(tuple(
+            ev.apply_tax_literals(source, mapped, PROBE_PENDING_EVIDENCE_ID, profile=self._profile, context=self._context)
+            for source, mapped in zip(source_entries, mapped_entries, strict=True)
+        ))
+
+
+PROBE_DESCRIPTION = "検証用NOT_FOR_PRODUCTION"
+
+
+class _SyntheticProbeValues:
+    """Probe journals keep their structure, date and confirmed JDL accounts,
+    but get synthetic amounts and descriptions (no customer amounts or text).
+
+    Only for journals whose lines are all untaxed and whose physical rows each
+    hold exactly one debit and one credit; anything else is refused.
+    """
+
+    def __init__(self, inner, profile, context) -> None:
+        self._inner, self._profile, self._context = inner, profile, context
+
+    def supports(self, path, profile) -> bool:
+        return self._inner.supports(path, profile)
+
+    def record_count(self, path, profile) -> int:
+        return self._inner.record_count(path, profile)
+
+    def read(self, path, profile):
+        entries = []
+        for entry in self._inner.read(path, profile):
+            rows: dict[int, list] = {}
+            for line in entry.lines:
+                rows.setdefault(int(line.metadata[LINE_ROW_KEY]), []).append(line)
+                semantic = ev.target_tax_semantic(line, self._profile, self._context) if line.tax_info else None
+                if line.tax_info and semantic != JdlTaxSemantic.NO_TAX.value:
+                    raise ValueError("synthetic probe supports untaxed lines only")
+            if any(sorted(line.side.value for line in row) != ["CREDIT", "DEBIT"] for row in rows.values()):
+                raise ValueError("synthetic probe needs one debit and one credit per row")
+            amount_by_row = {row: Decimal(1000 * index) for index, row in enumerate(sorted(rows), 1)}
+            lines = [
+                replace(line, amount=amount_by_row[int(line.metadata[LINE_ROW_KEY])],
+                        metadata={**line.metadata, LINE_ROW_DESCRIPTION_KEY: PROBE_DESCRIPTION})
+                for line in entry.lines
+            ]
+            entries.append(replace(entry, lines=lines, description=PROBE_DESCRIPTION))
+        return entries
+
+
+class _OnlyJournals:
+    def __init__(self, inner, ids: frozenset[str]) -> None:
+        self._inner, self._ids = inner, ids
+
+    def supports(self, path, profile) -> bool:
+        return self._inner.supports(path, profile)
+
+    def record_count(self, path, profile) -> int:
+        return self._inner.record_count(path, profile)
+
+    def read(self, path, profile):
+        return [entry for entry in self._inner.read(path, profile) if entry.id in self._ids]
+
+
+class _AuditOnlyFieldsRemovedAdapter:
+    """Input adapter that leaves audit-only fields out of the journal lines.
+
+    Only for fields the Human confirmed as audit-only. The removed values stay
+    in the entry metadata for the audit file and for the loss rule.
+    """
+
+    def __init__(self, inner, confirmed_fields: frozenset[str]) -> None:
+        self._inner = inner
+        self._confirmed = confirmed_fields
+
+    def supports(self, path, profile) -> bool:
+        return self._inner.supports(path, profile)
+
+    def record_count(self, path, profile) -> int:
+        return self._inner.record_count(path, profile)
+
+    def read(self, path, profile):
+        entries = []
+        for entry in self._inner.read(path, profile):
+            values = non_retained_values(entry)
+            if DEPARTMENT_FIELD in self._confirmed and any(line.department for line in entry.lines):
+                entry = replace(
+                    entry,
+                    lines=[replace(line, department=None) for line in entry.lines],
+                    metadata={**entry.metadata, NON_RETAINED_VALUES_KEY: values},
+                )
+            entries.append(entry)
+        return entries
+
+
+def audit_path_for(output_path: Path) -> Path:
+    return output_path.with_name(output_path.name + ".audit.json")
+
+
+def pending_audit_path_for(output_path: Path) -> Path:
+    return output_path.with_name(output_path.name + ".audit.json.pending")
+
+
+AUDIT_SCHEMA = "yayoi-jdl-non-retained-audit-v1"
+
+
+def expected_non_retained(source: Path, profile) -> list[dict]:
+    """One record per source journal that has values JDL will not hold, in source order."""
+    source_format = format_for_identity_key(profile.source_format_identity.stable_key) or detect_format(source)
+    records = []
+    for entry in source_format.read(source):
+        values = non_retained_values(entry)
+        if values:
+            records.append({
+                "source_journal_content_sha256": entry.metadata.get(JOURNAL_CONTENT_IDENTITY_KEY),
+                "date": entry.date.isoformat(),
+                "source_rows": list(entry.metadata.get(ROW_ORDER_KEY, ())),
+                "not_in_jdl": [{"row": row, "field": name, "value": value} for row, name, value in values],
+            })
+    return records
+
+
+def _atomic_json(path: Path, payload: dict) -> None:
+    temp = path.with_name(path.name + ".tmp")
+    temp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temp.replace(path)
+
+
+def begin_non_retained_audit(source: Path, output: Path, profile) -> Path | None:
+    """Before the CSV exists: write the audit as .pending (no output hash yet).
+
+    If the run stops after the CSV is written, the .pending file shows that the
+    pair is incomplete; verify_non_retained_audit then fails.
+    """
+    records = expected_non_retained(source, profile)
+    if not records:
+        return None
+    for path in (audit_path_for(output), pending_audit_path_for(output)):
+        if path.exists():
+            raise FileExistsError("audit file already exists")
+    pending = pending_audit_path_for(output)
+    _atomic_json(pending, {
+        "schema": AUDIT_SCHEMA,
+        "source_file": source.name,
+        "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+        "jdl_output_file": output.name,
+        "jdl_output_sha256": None,
+        "information_fully_retained": False,
+        "field_meanings_confirmed_by_human": confirmed_optional_fields(profile),
+        "journal_count": len(records),
+        "value_count": sum(len(item["not_in_jdl"]) for item in records),
+        "journals": records,
+    })
+    return pending
+
+
+def finish_non_retained_audit(output: Path) -> Path | None:
+    pending = pending_audit_path_for(output)
+    if not pending.exists():
+        return None
+    payload = json.loads(pending.read_text(encoding="utf-8"))
+    payload["jdl_output_sha256"] = hashlib.sha256(output.read_bytes()).hexdigest()
+    final = audit_path_for(output)
+    _atomic_json(final, payload)
+    pending.unlink()
+    return final
+
+
+def verify_non_retained_audit(source: Path, output: Path, profile) -> dict:
+    """Separate verdict for the information JDL does not hold.
+
+    NOT_NEEDED: nothing left out. PASS: the audit exists, is final, belongs to
+    this source and this CSV, and lists exactly the expected values.
+    """
+    expected = expected_non_retained(source, profile)
+    final, pending = audit_path_for(output), pending_audit_path_for(output)
+    if not expected:
+        ok = not final.exists() and not pending.exists()
+        return {"verdict": "NOT_NEEDED" if ok else "FAIL", "expected_journals": 0}
+    result = {"expected_journals": len(expected),
+              "expected_values": sum(len(item["not_in_jdl"]) for item in expected),
+              "final_present": final.exists(), "pending_left": pending.exists()}
+    if not final.exists() or pending.exists():
+        result["verdict"] = "FAIL"
+        return result
+    payload = json.loads(final.read_text(encoding="utf-8"))
+    checks = {
+        "schema": payload.get("schema") == AUDIT_SCHEMA,
+        "source_sha256": payload.get("source_sha256") == hashlib.sha256(source.read_bytes()).hexdigest(),
+        "output_sha256": payload.get("jdl_output_sha256") == hashlib.sha256(output.read_bytes()).hexdigest(),
+        "journal_count": payload.get("journal_count") == len(payload.get("journals", ())) == len(expected),
+        "records_equal": payload.get("journals") == expected,
+        "one_record_per_journal": len({item["source_journal_content_sha256"] for item in payload.get("journals", ())})
+        == len(payload.get("journals", ())),
+    }
+    result.update(checks)
+    result["verdict"] = "PASS" if all(checks.values()) else "FAIL"
+    return result
+
+
+# The workflow handles both Yayoi source formats.
+YayoiJdlWorkflow = YayoiJournalReportJdlWorkflow

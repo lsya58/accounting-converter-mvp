@@ -69,7 +69,8 @@ YAYOI_ACCOUNTING_05_OFFICIAL_IMPORT_COLUMNS: tuple[
     YayoiOfficialColumnDefinition(20, "タイプ", data_type="数字"),
     YayoiOfficialColumnDefinition(21, "生成元", data_type="文字"),
     YayoiOfficialColumnDefinition(22, "仕訳メモ", data_type="文字"),
-    YayoiOfficialColumnDefinition(23, "付箋1", max_length=1, data_type="数字"),
+    # Official: 3 digits, values 0-5 (0 = no sticky note). Re-checked 2026-11-01.
+    YayoiOfficialColumnDefinition(23, "付箋1", max_length=3, data_type="数字"),
     YayoiOfficialColumnDefinition(24, "付箋2", data_type="数字"),
     YayoiOfficialColumnDefinition(25, "調整", data_type="文字"),
 )

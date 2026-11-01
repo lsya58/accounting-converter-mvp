@@ -19,6 +19,7 @@ from .models import (
     JdlDepartmentIdentity,
     JdlInputTaxCreditMethod,
     JdlSimplifiedBusinessCategory,
+    JdlTaxRounding,
     JdlSubaccountIdentity,
     JdlTaxationMethod,
     JdlTargetContext,
@@ -58,6 +59,8 @@ class JdlTargetContextBuilder:
         taxation_method: JdlTaxationMethod = JdlTaxationMethod.UNCONFIRMED,
         input_tax_credit_method: JdlInputTaxCreditMethod = JdlInputTaxCreditMethod.UNCONFIRMED,
         simplified_business_category: JdlSimplifiedBusinessCategory | None = None,
+        sales_tax_rounding: JdlTaxRounding = JdlTaxRounding.UNCONFIRMED,
+        purchase_tax_rounding: JdlTaxRounding = JdlTaxRounding.UNCONFIRMED,
     ) -> JdlTargetContextBuildResult:
         accounts = tuple(account_master)
         context = JdlTargetContext(
@@ -75,6 +78,8 @@ class JdlTargetContextBuilder:
             taxation_method=taxation_method,
             input_tax_credit_method=input_tax_credit_method,
             simplified_business_category=simplified_business_category,
+            sales_tax_rounding=sales_tax_rounding,
+            purchase_tax_rounding=purchase_tax_rounding,
             no_fuzzy_matching=no_fuzzy_matching,
             no_automatic_replacement=no_automatic_replacement,
             confirmation_state=confirmation_state,

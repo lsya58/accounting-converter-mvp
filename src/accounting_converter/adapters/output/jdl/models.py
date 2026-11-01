@@ -104,6 +104,15 @@ class JdlInputTaxCreditMethod(str, Enum):
     PROPORTIONAL = "PROPORTIONAL"
 
 
+class JdlTaxRounding(str, Enum):
+    """JDL company setting 端数処理 for consumption tax (売上 / 仕入 separately)."""
+
+    UNCONFIRMED = "UNCONFIRMED"
+    FLOOR = "FLOOR"  # 切り捨て
+    HALF_UP = "HALF_UP"  # 四捨五入
+    CEILING = "CEILING"  # 切り上げ
+
+
 class JdlSimplifiedBusinessCategory(str, Enum):
     FIRST = "FIRST"
     SECOND = "SECOND"
@@ -166,6 +175,11 @@ class JdlTargetContext:
         JdlContextConfirmationState.UNCONFIRMED
     )
     provenance: JdlContextProvenance = JdlContextProvenance.UNCONFIRMED
+    # Human-transcribed JDL 端数処理. Not part of the Tax Context identity: it
+    # does not change which JDL tax literal a source tax maps to, only which
+    # explicit tax amounts are safe to hand to JDL.
+    sales_tax_rounding: JdlTaxRounding = JdlTaxRounding.UNCONFIRMED
+    purchase_tax_rounding: JdlTaxRounding = JdlTaxRounding.UNCONFIRMED
 
     def privacy_safe_summary(self) -> dict[str, str | int]:
         return {

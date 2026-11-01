@@ -153,7 +153,7 @@ class JdlAccountPdfDraftStore:
         blocking_conflicts = tuple(
             item
             for item in observation.conflicts
-            if item.category.startswith("PRINTED_ACCOUNT_")
+            if item.category == "PRINTED_ACCOUNT_CODE_CONFLICT"
         )
         if blocking_conflicts:
             raise JdlAccountPdfDraftError(

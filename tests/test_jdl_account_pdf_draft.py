@@ -140,10 +140,19 @@ class JdlAccountPdfDraftTests(unittest.TestCase):
         duplicate_name_store = JdlAccountPdfDraftStore(
             _SyntheticPdfExtractor(tuple(duplicate_name_pages))
         )
-        with self.assertRaises(JdlAccountPdfDraftError):
-            duplicate_name_store.import_pdf(
-                self.pdf, self.root / "duplicate-name.json"
-            )
+        # The same name under two codes exists in real JDL masters. It is
+        # imported, recorded as a conflict, and neither code is selectable.
+        imported = duplicate_name_store.import_pdf(
+            self.pdf, self.root / "duplicate-name.json"
+        )
+        self.assertIn(
+            "PRINTED_ACCOUNT_NAME_CONFLICT",
+            {item.category for item in imported.observation.conflicts},
+        )
+        self.assertNotIn(
+            "架空科目001",
+            {item.name for item in imported.observation.printed_accounts},
+        )
 
     def test_subaccount_conflict_is_preserved_without_blocking_account_review(self) -> None:
         pages = list(self.pages)

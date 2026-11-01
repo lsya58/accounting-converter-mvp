@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
+from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP, ROUND_UP
 import hashlib
 import json
 
@@ -12,6 +12,7 @@ from accounting_converter.adapters.output.jdl import (
     JdlInputTaxCreditMethod,
     JdlTargetContext,
     JdlTaxationMethod,
+    JdlTaxRounding,
 )
 from accounting_converter.domain.journal import JournalEntry, JournalLine, Side, TaxInfo
 from accounting_converter.domain.journal_rows import has_counterparty
@@ -569,21 +570,10 @@ def compose_capabilities(
         if tax != JdlTaxSemantic.NO_TAX.value:
             taxed.append((line, tax, subaccount))
         explicit = line.tax_info.tax_amount if line.tax_info else None
-        if explicit is not None and (
-            tax not in {
-                JdlTaxSemantic.PURCHASE_10_INTERNAL.value,
-                JdlTaxSemantic.SALES_10_EXTERNAL.value,
-            }
-            and explicit != 0
-            or tax in {
-                JdlTaxSemantic.PURCHASE_10_INTERNAL.value,
-                JdlTaxSemantic.SALES_10_EXTERNAL.value,
-            }
-            and explicit != ten_percent_tax_amount(line.amount)
-        ):
-            # JDL kept explicit floor amounts (0872, 0877). Other explicit
-            # amounts (half-up rounding, purchase-credit ratios) are unverified.
-            gaps.append("EXPLICIT_TAX_AMOUNT_UNVERIFIED")
+        if explicit is not None:
+            gap = explicit_tax_gap(explicit, line.amount, tax, context)
+            if gap is not None:
+                gaps.append(gap)
         if (
             tax == JdlTaxSemantic.SALES_10_EXTERNAL.value
             and not _tax_rounding_is_unambiguous(line.amount)
@@ -593,8 +583,12 @@ def compose_capabilities(
         elif tax == JdlTaxSemantic.SALES_10_EXTERNAL.value and not _tax_rounding_is_unambiguous(line.amount):
             support.append(SALES10_ROUNDING_EVIDENCE_ID)
     generic_compound = shape in VERIFIED_COMPOUND_SHAPES
-    if len(taxed) > 1 and not generic_compound:
-        gaps.append("MULTIPLE_TAXED_LINES_UNVERIFIED")
+    gaps.extend(
+        gap for gap in shape_tax_combination_gaps(
+            shape, tuple((line.side.value, tax) for line, tax, _ in taxed)
+        )
+        if gap != "SHAPE_UNVERIFIED_IN_TAX_CONTEXT"  # already checked above
+    )
     profile: JdlEvidenceProfile | None = None
     if shape == (1, 1) and len(taxed) <= 1:
         profile = (
@@ -602,13 +596,7 @@ def compose_capabilities(
             if taxed else JdlEvidenceProfile.MF_NO_TAX_PROPORTIONAL_1111
         )
     elif shape == (2, 2):
-        if (
-            len(taxed) != 1
-            or taxed[0][1] != JdlTaxSemantic.PURCHASE_10_INTERNAL.value
-            or taxed[0][0].side is not Side.DEBIT
-        ):
-            gaps.append("SHAPE_TAX_COMBINATION_UNVERIFIED")
-        else:
+        if "SHAPE_TAX_COMBINATION_UNVERIFIED" not in gaps:
             profile = JdlEvidenceProfile.MF_COMPOUND_2D2C_TAX_EXCLUDED_PROPORTIONAL
     elif generic_compound:
         profile = JdlEvidenceProfile.MF_COMPOUND_TAX_EXCLUDED_PROPORTIONAL
@@ -634,6 +622,73 @@ def compose_capabilities(
         ),
         (),
     )
+
+
+def shape_tax_combination_gaps(
+    shape: tuple[int, int], taxed: tuple[tuple[str, str], ...]
+) -> tuple[str, ...]:
+    """Which shape x taxed-line combinations have real JDL Evidence.
+
+    taxed: (side, JDL tax semantic) of every line that is not NO_TAX. Depends
+    only on the journal's structure and tax semantics, not on account mapping,
+    so it can be checked before the Human has mapped the accounts.
+    """
+    gaps = []
+    if shape not in COMPOSABLE_SHAPES and shape not in VERIFIED_COMPOUND_SHAPES:
+        gaps.append("SHAPE_UNVERIFIED_IN_TAX_CONTEXT")
+    if len(taxed) > 1 and shape not in VERIFIED_COMPOUND_SHAPES:
+        gaps.append("MULTIPLE_TAXED_LINES_UNVERIFIED")
+    # 2D2C Evidence (P01) has exactly one debit 課税仕入 10% line.
+    if shape == (2, 2) and taxed != (("DEBIT", JdlTaxSemantic.PURCHASE_10_INTERNAL.value),):
+        gaps.append("SHAPE_TAX_COMBINATION_UNVERIFIED")
+    return tuple(gaps)
+
+
+_ROUNDING = {
+    JdlTaxRounding.FLOOR: ROUND_DOWN,
+    JdlTaxRounding.HALF_UP: ROUND_HALF_UP,
+    JdlTaxRounding.CEILING: ROUND_UP,
+}
+
+
+def company_rounded_tax(amount: Decimal, rounding: JdlTaxRounding) -> Decimal:
+    """10% tax included in a gross amount, rounded by a JDL company 端数処理 setting."""
+    return (amount * Decimal("10") / Decimal("110")).quantize(Decimal("1"), rounding=_ROUNDING[rounding])
+
+
+def explicit_tax_gap(explicit: Decimal, amount: Decimal, tax: str, context: JdlTargetContext) -> str | None:
+    """Whether an explicit source tax amount can be handed to JDL unchanged.
+
+    Evidence: JDL accepted and re-exported explicit amounts equal to the floor
+    value (0872, 0877), on a company whose 端数処理 setting was not recorded.
+    So it is unknown whether JDL keeps an explicit amount or recomputes it with
+    the target company's setting. A value is safe only when both readings give
+    the same result: explicit == floor == the target company's rounding.
+    """
+    if tax == JdlTaxSemantic.PURCHASE_10_INTERNAL.value:
+        rounding = context.purchase_tax_rounding
+    elif tax == JdlTaxSemantic.SALES_10_EXTERNAL.value:
+        rounding = context.sales_tax_rounding
+    else:
+        return None if explicit == 0 else "EXPLICIT_TAX_AMOUNT_UNVERIFIED"
+    floor = ten_percent_tax_amount(amount)
+    every_rounding = {company_rounded_tax(amount, item) for item in _ROUNDING}
+    if every_rounding == {explicit}:
+        return None  # no fraction: every setting gives this value
+    if rounding is JdlTaxRounding.UNCONFIRMED:
+        return "JDL_TAX_ROUNDING_UNCONFIRMED"
+    company = company_rounded_tax(amount, rounding)
+    if explicit == floor == company:
+        return None
+    if explicit == company:
+        # Matches the target setting but not the verified floor values: safe
+        # if JDL keeps or recomputes with the setting; unproven otherwise.
+        return "EXPLICIT_TAX_COMPANY_ROUNDING_UNVERIFIED"
+    if explicit == floor:
+        # JDL may recompute with the company setting and change the amount.
+        return "EXPLICIT_TAX_KEEP_UNVERIFIED"
+    # Neither rule (e.g. purchase-credit ratio applied, or a source-side rule).
+    return "EXPLICIT_TAX_AMOUNT_UNVERIFIED"
 
 
 def _tax_rounding_is_unambiguous(amount: Decimal) -> bool:

@@ -13,11 +13,12 @@ from __future__ import annotations
 
 import uuid
 from collections import Counter, defaultdict
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Sequence
 
-from accounting_converter.adapters.output.jdl import JdlTargetContext
+from accounting_converter.adapters.output.jdl import JdlTargetContext, JdlTaxRounding
 from accounting_converter.adapters.output.jdl.tax_semantics import JDL_TAX_LITERALS, JdlTaxSemantic
 from accounting_converter.application import moneyforward_tax_excluded_evidence as ev
 from accounting_converter.application.company_mapping_update import CompanyMappingUpdateService
@@ -83,11 +84,12 @@ class YayoiTaxIdentityItem:
     credit_lines: int
     journals: int
     explicit_tax_lines: int
-    explicit_tax_unverified_lines: int  # explicit amount differs from the verified floor rule
+    explicit_tax_unverified_lines: int  # explicit amount not proven to survive JDL unchanged
     candidate: JdlTaxSemantic | None
     mapping_state: str
     confirmed_semantic: JdlTaxSemantic | None
     evidence_state: str
+    explicit_tax_gaps: dict = field(default_factory=dict)  # gap code -> lines
 
 
 @dataclass(frozen=True)
@@ -132,7 +134,9 @@ def review_source(
     entries: Sequence[JournalEntry],
     profile: ConversionProfile | None = None,
     context: JdlTargetContext | None = None,
+    rounding=None,
 ) -> YayoiSourceReview:
+    """rounding: object with sales/purchase_tax_rounding; defaults to the context's."""
     has_target = context is not None
     accounts: dict[str, Counter] = defaultdict(Counter)
     account_journals: dict[str, set] = defaultdict(set)
@@ -141,6 +145,7 @@ def review_source(
     taxes: dict[str, Counter] = defaultdict(Counter)
     tax_journals: dict[str, set] = defaultdict(set)
     tax_attributes: dict[str, tuple[str, str, str]] = {}
+    explicit_values: dict[str, list[tuple]] = defaultdict(list)
     for entry in entries:
         for line in entry.lines:
             accounts[line.account][line.side.value] += 1
@@ -162,8 +167,7 @@ def review_source(
             )
             if info.tax_amount is not None:
                 taxes[identity]["explicit"] += 1
-                if info.tax_amount != ev.ten_percent_tax_amount(line.amount):
-                    taxes[identity]["explicit_unverified"] += 1
+                explicit_values[identity].append((info.tax_amount, line.amount))
     tax_items = []
     for identity, counts in sorted(taxes.items(), key=lambda item: -sum(item[1].values())):
         mapping = profile.tax_mappings.get(identity) if profile is not None else None
@@ -177,6 +181,13 @@ def review_source(
             value = ev.target_tax_semantic(sample_line, profile, context)
             confirmed = JdlTaxSemantic(value) if value != ev.UNMAPPED_TAX else None
         semantic = confirmed or candidate_semantic(identity)
+        gaps = Counter(
+            ev.explicit_tax_gap(tax_amount, amount, semantic.value, context or rounding or _UNSET_ROUNDING)
+            if semantic is not None else "NO_SEMANTIC"
+            for tax_amount, amount in explicit_values[identity]
+        )
+        gaps.pop(None, None)
+        counts["explicit_unverified"] = sum(gaps.values())
         tax_items.append(YayoiTaxIdentityItem(
             identity=identity,
             base=tax_attributes[identity][0],
@@ -186,9 +197,8 @@ def review_source(
             credit_lines=counts["CREDIT"],
             journals=len(tax_journals[identity]),
             explicit_tax_lines=counts["explicit"],
-            explicit_tax_unverified_lines=counts["explicit_unverified"] if semantic in {
-                JdlTaxSemantic.PURCHASE_10_INTERNAL, JdlTaxSemantic.SALES_10_EXTERNAL,
-            } else counts["explicit"],
+            explicit_tax_unverified_lines=counts["explicit_unverified"],
+            explicit_tax_gaps=dict(gaps),
             candidate=candidate_semantic(identity),
             mapping_state=state,
             confirmed_semantic=confirmed,
@@ -223,8 +233,7 @@ def _evidence_state(semantic: JdlTaxSemantic | None, counts: Counter) -> str:
     for side in ("DEBIT", "CREDIT"):
         if counts[side] and (side, semantic.value) not in ev.LINE_CAPABILITIES:
             return "SIDE_PENDING"
-    taxed = semantic in {JdlTaxSemantic.PURCHASE_10_INTERNAL, JdlTaxSemantic.SALES_10_EXTERNAL}
-    if (taxed and counts["explicit_unverified"]) or (not taxed and counts["explicit"]):
+    if counts["explicit_unverified"]:
         return "EXPLICIT_TAX_PENDING"
     return "AVAILABLE"
 
@@ -238,6 +247,12 @@ def _subaccount_mapping(profile, parent, sub):
     return None
 
 
+# Without a target company the JDL 端数処理 is unknown.
+_UNSET_ROUNDING = SimpleNamespace(
+    sales_tax_rounding=JdlTaxRounding.UNCONFIRMED, purchase_tax_rounding=JdlTaxRounding.UNCONFIRMED
+)
+
+
 class _EmptyProfile:
     loss_policy_mappings: dict = {}
 
@@ -249,6 +264,7 @@ def create_yayoi_profile(
     store: ConversionProfileStore,
     display_name: str,
     entries: Sequence[JournalEntry],
+    source_format=None,
 ) -> ConversionProfile:
     """Company-scoped Yayoi → JDL profile; every tax identity starts UNRESOLVED."""
     if not display_name.strip():
@@ -261,14 +277,14 @@ def create_yayoi_profile(
     profile = ConversionProfile(
         profile_id=f"yayoi-jdl-{uuid.uuid4().hex}",
         profile_name=f"{display_name.strip()} 弥生 → JDL",
-        source_format_identity=yayoi_journal_report_generic_identity(),
+        source_format_identity=(source_format.identity() if source_format else yayoi_journal_report_generic_identity()),
         target_format_identity=jdl_ibex_cashbook_official_journal_import_schema_definition().identity,
         tax_mappings={
             identity: MappingValue(identity, None, MappingStatus.UNRESOLVED) for identity in identities
         },
         created_at=now,
         updated_at=now,
-        notes="弥生 仕訳日記帳（汎用形式）から作成。科目・補助・税区分は対象JDL会社の確認後に明示確認する。",
+        notes=f"{source_format.label if source_format else '弥生 仕訳日記帳（汎用形式）'}から作成。科目・補助・税区分は対象JDL会社の確認後に明示確認する。",
     )
     return store.create(profile)
 
@@ -318,3 +334,69 @@ def save_description_replacement(
         },
     )
     return store.update(replace(profile, loss_policy_mappings=policies, updated_at=datetime.now(timezone.utc)))
+
+
+# Yayoi information with no place in the target JDL company (部門 when JDL has
+# no departments, 生成元, 付箋, 仕訳メモ, 期日, 番号). JDL cannot hold it, so
+# the only formal option is: not written to JDL, and every original value is
+# written to an audit file next to the formal CSV (yayoi_jdl_workflow). A
+# policy is never inferred; it needs the Human's statement of what the field
+# means in this company's data.
+OPTIONAL_FIELD_POLICY_PREFIX = "yayoi_optional_field:"
+NOT_RETAINED_RECORDED_IN_AUDIT = "NOT_RETAINED_RECORDED_IN_AUDIT"
+DEPARTMENT_FIELD = "部門"
+
+
+def optional_field_policy_key(field_name: str) -> str:
+    return f"{OPTIONAL_FIELD_POLICY_PREFIX}{field_name}"
+
+
+def confirm_optional_field_policy(
+    store: ConversionProfileStore,
+    profile_id: str,
+    field_name: str,
+    meaning: str,
+) -> ConversionProfile:
+    if not meaning.strip():
+        raise ValueError("項目の意味（何の情報か）を記入してください。")
+    profile = store.get(profile_id)
+    key = optional_field_policy_key(field_name)
+    policies = dict(profile.loss_policy_mappings)
+    policies[key] = MappingValue(
+        key, NOT_RETAINED_RECORDED_IN_AUDIT, MappingStatus.USER_CONFIRMED,
+        metadata={"field": field_name, "meaning": meaning.strip()},
+    )
+    return store.update(replace(profile, loss_policy_mappings=policies, updated_at=datetime.now(timezone.utc)))
+
+
+def confirmed_optional_fields(profile) -> dict[str, str]:
+    """field -> Human-stated meaning, for confirmed audit-only policies."""
+    result = {}
+    for key, value in (getattr(profile, "loss_policy_mappings", None) or {}).items():
+        if (
+            key.startswith(OPTIONAL_FIELD_POLICY_PREFIX)
+            and value.status is MappingStatus.USER_CONFIRMED
+            and value.target_value == NOT_RETAINED_RECORDED_IN_AUDIT
+            and str(value.metadata.get("meaning", "")).strip()
+        ):
+            result[key[len(OPTIONAL_FIELD_POLICY_PREFIX):]] = str(value.metadata["meaning"])
+    return result
+
+
+NON_RETAINED_VALUES_KEY = "yayoi_non_retained_values"
+
+
+def non_retained_values(entry) -> tuple[tuple[int, str, str], ...]:
+    """(row, field, value) of everything in this journal that JDL will not hold."""
+    if NON_RETAINED_VALUES_KEY in entry.metadata:  # already removed from the lines
+        return tuple(entry.metadata[NON_RETAINED_VALUES_KEY])
+    values = list(entry.metadata.get("yayoi_optional_values", ()))
+    for line in entry.lines:
+        if line.department:
+            row = int(line.metadata.get("journal_row_number", line.source_reference.row_number))
+            values.append((row, f"{DEPARTMENT_FIELD}({line.side.value})", line.department))
+    return tuple(values)
+
+
+def field_of(name: str) -> str:
+    return DEPARTMENT_FIELD if name.startswith(DEPARTMENT_FIELD) else name

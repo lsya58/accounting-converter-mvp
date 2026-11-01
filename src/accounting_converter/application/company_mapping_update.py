@@ -1117,14 +1117,11 @@ class CompanyMappingUpdateService:
     @staticmethod
     def _entries(path: Path, source_identity_key: str | None = None):
         """Read the source CSV with the adapter of the CompanySetting's source format."""
-        from accounting_converter.adapters.input.yayoi.journal_report_adapter import (
-            YayoiJournalReportInputAdapter,
-            yayoi_journal_report_input_profile,
-        )
-        from accounting_converter.profiles.known_formats import yayoi_journal_report_generic_identity
+        from accounting_converter.application.yayoi_sources import format_for_identity_key
 
-        if source_identity_key == yayoi_journal_report_generic_identity().stable_key:
-            return tuple(YayoiJournalReportInputAdapter().read(path, yayoi_journal_report_input_profile()))
+        yayoi_format = format_for_identity_key(source_identity_key)
+        if yayoi_format is not None:
+            return yayoi_format.read(path)
         schema = moneyforward_cloud_journal_export_observed_schema()
         profile = FormatProfile("Money Forward", "Money Forward クラウド会計", "UNKNOWN", schema.identity.stable_key, "cp932")
         return tuple(MoneyForwardInputAdapter().read(path, profile))

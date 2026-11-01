@@ -133,7 +133,7 @@ class AccountMappingReviewService:
 
         items: list[AccountMappingReviewItem] = []
         account_conflict = any(
-            item.category.startswith("PRINTED_ACCOUNT_")
+            item.category == "PRINTED_ACCOUNT_CODE_CONFLICT"
             for item in master.conflicts
         )
         for requirement in requirements.accounts:

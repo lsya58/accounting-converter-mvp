@@ -231,9 +231,24 @@ class YayoiToJdlTargetTest(unittest.TestCase):
         details = [detail("令和08年05月10日", 1, debit=(FEE, "", "課対仕入内10%", 1106, 101),
                           credit=(BANK, "銀行A", OUTSIDE, 1106, None), invoice="適格", credit_ratio="100%")]
         purchase = self.entries(details)[0]
-        result = ev.match_evidence_for_occurrence(purchase, purchase, context(), profile())
-        self.assertIsNone(result.evidence)
-        self.assertIn("EXPLICIT_TAX_AMOUNT_UNVERIFIED", result.mismatch_fields)
+        from dataclasses import replace
+
+        from accounting_converter.adapters.output.jdl import JdlTaxRounding
+
+        expected = {
+            # JDL 端数処理 unknown: Human must record it first.
+            JdlTaxRounding.UNCONFIRMED: "JDL_TAX_ROUNDING_UNCONFIRMED",
+            # Matches the target setting, but only floor values are proven.
+            JdlTaxRounding.HALF_UP: "EXPLICIT_TAX_COMPANY_ROUNDING_UNVERIFIED",
+            # Matches neither the target setting nor floor.
+            JdlTaxRounding.FLOOR: "EXPLICIT_TAX_AMOUNT_UNVERIFIED",
+        }
+        for rounding, gap in expected.items():
+            with self.subTest(rounding=rounding):
+                target = replace(context(), purchase_tax_rounding=rounding)
+                result = ev.match_evidence_for_occurrence(purchase, purchase, target, profile())
+                self.assertIsNone(result.evidence)
+                self.assertIn(gap, result.mismatch_fields)
 
 
 if __name__ == "__main__":

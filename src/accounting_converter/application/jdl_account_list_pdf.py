@@ -87,6 +87,10 @@ class JdlAccountListPdfTextParser:
         accounts: list[JdlPrintedAccount] = []
         subaccounts: list[JdlObservedSubaccount] = []
         uncoded_count = 0
+        # A parent's subaccount list may continue on the next page. The parent
+        # is carried over only when the previous page ended inside that list
+        # and the next page's first data row is a subaccount with a higher code.
+        carried: tuple[tuple[str, str, str], str] | None = None
         for page in page_items:
             lines = page.text.splitlines()
             if not self._has_expected_header(lines):
@@ -98,19 +102,36 @@ class JdlAccountListPdfTextParser:
                     f"page {page.page_number} のpage番号を確認できません。"
                 )
             parent: tuple[str, str, str] | None = None
+            last_subaccount_code = ""
+            seen_data_row = False
+            # Parent of the last data row on this page (footers do not clear it).
+            tail_parent: tuple[str, str, str] | None = None
             for line in lines:
                 parent_row = self._PARENT_ROW.match(line)
                 if parent_row:
+                    seen_data_row = True
                     account = self._printed_account(parent_row)
                     accounts.append(account)
                     parent = (account.code, account.name, account.normal_balance)
+                    tail_parent = parent
+                    last_subaccount_code = ""
                     continue
                 subaccount = self._SUBACCOUNT_ROW.match(line)
                 if subaccount:
+                    if (
+                        parent is None
+                        and not seen_data_row
+                        and carried is not None
+                        and subaccount.group("code") > carried[1]
+                    ):
+                        parent = carried[0]
+                        tail_parent = parent
+                    seen_data_row = True
                     if parent is None:
                         raise JdlAccountListPdfParseError(
                             f"page {page.page_number} に親未解決の補助候補行があります。"
                         )
+                    last_subaccount_code = subaccount.group("code")
                     balance = (
                         "DEBIT"
                         if subaccount.group("balance") == "借"
@@ -134,7 +155,16 @@ class JdlAccountListPdfTextParser:
                     raise JdlAccountListPdfParseError(
                         f"page {page.page_number} に形式不正な補助候補行があります。"
                     )
+                if not line.strip() or not (
+                    self._CODED_ROW.match(line) or self._UNCODED_ROW.match(line)
+                    or "○" in line or "×" in line
+                ):
+                    # Headers, page numbers and footers are not data rows.
+                    parent = None
+                    continue
+                seen_data_row = True
                 parent = None
+                tail_parent = None
                 coded = self._CODED_ROW.match(line)
                 if coded:
                     accounts.append(self._printed_account(coded))
@@ -154,6 +184,7 @@ class JdlAccountListPdfTextParser:
                     raise JdlAccountListPdfParseError(
                         f"page {page.page_number} に解析不能な科目候補行があります。"
                     )
+            carried = (tail_parent, last_subaccount_code) if tail_parent is not None else None
 
         if not accounts:
             raise JdlAccountListPdfParseError("code付き科目行がありません。")
@@ -260,15 +291,34 @@ class JdlAccountListPdfTextParser:
             for count in subaccount_identity_counts.values()
             if count > 1
         )
+        # JDL identifies accounts by code, so the same name may legitimately
+        # appear under two codes (e.g. a current and a fixed liability). This
+        # app selects targets by name, so such names are not selectable: they
+        # are excluded and recorded, never resolved by guessing a code.
+        duplicated_names = {
+            name for name, codes in name_values.items() if len(codes) > 1
+        }
+        duplicated_subaccounts = {
+            key for key, codes in subaccount_names.items() if len(codes) > 1
+        }
+        printed_accounts = tuple(
+            item for item in observation.printed_accounts
+            if item.name not in duplicated_names
+        )
+        subaccounts = tuple(
+            item for item in observation.subaccounts
+            if (item.parent_account_code, item.name) not in duplicated_subaccounts
+            and item.parent_account_name not in duplicated_names
+        )
         if conflicts:
             return JdlMasterObservation(
                 accounts=observation.accounts,
-                subaccounts=observation.subaccounts,
+                subaccounts=subaccounts,
                 departments=observation.departments,
                 sources=observation.sources,
                 conflicts=tuple(conflicts),
                 completeness=JdlMasterCompleteness.PARTIAL_MASTER,
-                printed_accounts=observation.printed_accounts,
+                printed_accounts=printed_accounts,
                 excluded_uncoded_printed_row_count=(
                     observation.excluded_uncoded_printed_row_count
                 ),

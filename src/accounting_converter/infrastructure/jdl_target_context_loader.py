@@ -10,6 +10,7 @@ from accounting_converter.adapters.output.jdl import (
     JdlDepartmentIdentity,
     JdlInputTaxCreditMethod,
     JdlSimplifiedBusinessCategory,
+    JdlTaxRounding,
     JdlSubaccountIdentity,
     JdlTaxationMethod,
     JdlTargetContext,
@@ -66,6 +67,11 @@ class JdlTargetContextLoader:
             "no_fuzzy_matching": context.no_fuzzy_matching,
             "no_automatic_replacement": context.no_automatic_replacement,
         }
+        # Written only when confirmed, so existing context files keep their bytes.
+        for key in ("sales_tax_rounding", "purchase_tax_rounding"):
+            value = getattr(context, key)
+            if value is not JdlTaxRounding.UNCONFIRMED:
+                payload[key] = value.value
         return json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 
     def load(self, path: Path) -> JdlTargetContext:
@@ -130,6 +136,12 @@ class JdlTargetContextLoader:
                     payload["confirmation_state"]
                 ),
                 provenance=JdlContextProvenance(payload["provenance"]),
+                sales_tax_rounding=JdlTaxRounding(
+                    payload.get("sales_tax_rounding", JdlTaxRounding.UNCONFIRMED.value)
+                ),
+                purchase_tax_rounding=JdlTaxRounding(
+                    payload.get("purchase_tax_rounding", JdlTaxRounding.UNCONFIRMED.value)
+                ),
                 no_fuzzy_matching=bool(payload.get("no_fuzzy_matching", False)),
                 no_automatic_replacement=bool(
                     payload.get("no_automatic_replacement", False)
