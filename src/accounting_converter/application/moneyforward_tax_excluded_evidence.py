@@ -568,6 +568,22 @@ def compose_capabilities(
         support.extend(capability.evidence_ids)
         if tax != JdlTaxSemantic.NO_TAX.value:
             taxed.append((line, tax, subaccount))
+        explicit = line.tax_info.tax_amount if line.tax_info else None
+        if explicit is not None and (
+            tax not in {
+                JdlTaxSemantic.PURCHASE_10_INTERNAL.value,
+                JdlTaxSemantic.SALES_10_EXTERNAL.value,
+            }
+            and explicit != 0
+            or tax in {
+                JdlTaxSemantic.PURCHASE_10_INTERNAL.value,
+                JdlTaxSemantic.SALES_10_EXTERNAL.value,
+            }
+            and explicit != ten_percent_tax_amount(line.amount)
+        ):
+            # JDL kept explicit floor amounts (0872, 0877). Other explicit
+            # amounts (half-up rounding, purchase-credit ratios) are unverified.
+            gaps.append("EXPLICIT_TAX_AMOUNT_UNVERIFIED")
         if (
             tax == JdlTaxSemantic.SALES_10_EXTERNAL.value
             and not _tax_rounding_is_unambiguous(line.amount)
@@ -626,6 +642,17 @@ def _tax_rounding_is_unambiguous(amount: Decimal) -> bool:
     return raw.quantize(Decimal("1"), rounding=ROUND_DOWN) == raw.quantize(
         Decimal("1"), rounding=ROUND_HALF_UP
     )
+
+
+def _target_tax_amount(source_line: JournalLine, mapped_line: JournalLine) -> Decimal:
+    """Explicit source tax is carried as given; otherwise the verified floor rule.
+
+    Composition blocks explicit amounts that differ from the verified rule, so
+    in formal output both branches yield the same value; carrying the source
+    value keeps the source's own amount authoritative.
+    """
+    explicit = source_line.tax_info.tax_amount if source_line.tax_info else None
+    return explicit if explicit is not None else ten_percent_tax_amount(mapped_line.amount)
 
 
 def ten_percent_tax_amount(amount: Decimal) -> Decimal:
@@ -721,7 +748,7 @@ def apply_tax_literals(
                 category="10%",
                 rate=Decimal("10"),
                 tax_inclusion="INCLUDED",
-                tax_amount=ten_percent_tax_amount(mapped_line.amount),
+                tax_amount=_target_tax_amount(source_line, mapped_line),
                 metadata={
                     **base.metadata,
                     "jdl_tax_scope": "仕　入",
@@ -736,7 +763,7 @@ def apply_tax_literals(
                 category="10%",
                 rate=Decimal("10"),
                 tax_inclusion="EXCLUDED",
-                tax_amount=ten_percent_tax_amount(mapped_line.amount),
+                tax_amount=_target_tax_amount(source_line, mapped_line),
                 metadata={
                     "jdl_tax_scope": "売　上",
                     "jdl_tax_input_method": "外税",

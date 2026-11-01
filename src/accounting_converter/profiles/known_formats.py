@@ -257,6 +257,22 @@ def moneyforward_cloud_journal_export_observed_schema() -> SchemaDefinition:
     )
 
 
+def yayoi_journal_report_generic_identity() -> FormatIdentity:
+    """Yayoi 「仕訳日記帳」 report exported in 汎用形式 (observed, 31 columns).
+
+    A report export, distinct from the Yayoi import format and its 25-field
+    identity. See docs/design/yayoi_journal_report_source.md.
+    """
+    return FormatIdentity(
+        vendor="弥生",
+        product="弥生会計",
+        format_name="仕訳日記帳 汎用形式 Observed 31-column",
+        direction=FormatDirection.INPUT,
+        evidence_level=EvidenceLevel.OBSERVED,
+        notes="Observed report export; product edition and version unknown.",
+    )
+
+
 def yayoi_desktop_import_25_documented_schema() -> SchemaDefinition:
     spec = yayoi_accounting_05_official_import_spec()
     fields = tuple(

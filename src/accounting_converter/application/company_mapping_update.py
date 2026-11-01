@@ -29,6 +29,7 @@ from accounting_converter.application.moneyforward_description_replacement impor
     MoneyForwardDescriptionReviewItem,
     moneyforward_description_replacement_key,
     description_requires_replacement,
+    journal_descriptions,
     unsafe_description_positions,
 )
 from accounting_converter.application.moneyforward_jdl_loss import MoneyForwardToJdlLossRule
@@ -169,7 +170,7 @@ class CompanyMappingUpdateService:
         profile = self.profile_store.get(setting.conversion_profile_id)
         context_path = self.company_store.context_path(setting)
         master = self._master_observation(context_path)
-        entries = self._entries(source_path)
+        entries = self._entries(source_path, profile.source_format_identity.stable_key)
         subaccount_journals: dict[MappingKey, set[str]] = defaultdict(set)
         blank_subaccount_journals: dict[str, set[str]] = defaultdict(set)
         for entry in entries:
@@ -611,7 +612,7 @@ class CompanyMappingUpdateService:
         master = self._master_observation(review.context_path)
         requirements = (
             MappingRequirementExtractor().extract(
-                self._entries(review.source_path), old
+                self._entries(review.source_path, old.source_format_identity.stable_key), old
             )
             if review.source_path is not None
             else None
@@ -791,12 +792,7 @@ class CompanyMappingUpdateService:
         values: dict[str, str] = {}
         positions: dict[str, tuple[int, ...]] = {}
         for entry in entries:
-            descriptions = [entry.description or ""]
-            descriptions.extend(
-                str(item.get("value", ""))
-                for item in entry.metadata.get("moneyforward_descriptions", ())
-            )
-            for description in descriptions:
+            for description in journal_descriptions(entry):
                 unsafe = unsafe_description_positions(description)
                 if not description_requires_replacement(description):
                     continue
@@ -1119,7 +1115,16 @@ class CompanyMappingUpdateService:
         )
 
     @staticmethod
-    def _entries(path: Path):
+    def _entries(path: Path, source_identity_key: str | None = None):
+        """Read the source CSV with the adapter of the CompanySetting's source format."""
+        from accounting_converter.adapters.input.yayoi.journal_report_adapter import (
+            YayoiJournalReportInputAdapter,
+            yayoi_journal_report_input_profile,
+        )
+        from accounting_converter.profiles.known_formats import yayoi_journal_report_generic_identity
+
+        if source_identity_key == yayoi_journal_report_generic_identity().stable_key:
+            return tuple(YayoiJournalReportInputAdapter().read(path, yayoi_journal_report_input_profile()))
         schema = moneyforward_cloud_journal_export_observed_schema()
         profile = FormatProfile("Money Forward", "Money Forward クラウド会計", "UNKNOWN", schema.identity.stable_key, "cp932")
         return tuple(MoneyForwardInputAdapter().read(path, profile))

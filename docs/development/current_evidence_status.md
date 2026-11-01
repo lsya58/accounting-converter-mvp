@@ -31,6 +31,20 @@ PASS条件: 104/104 journals、160/160 rows、missing 0、extra 0、unexpected 0
 
 会計期間はconverterのcapabilityとは別のtarget条件です。期外の日付をJDLが拒否しても、converterの失敗ではありません。
 
+## 弥生 → JDL（2026-11-01 第2フェーズ時点）
+
+実データ1件（顧問先1社の「仕訳日記帳」汎用形式、2,514仕訳・7,232行）を取得。状態は次のとおりで、**弥生対応済みではない**。
+
+| 段階 | 状態 |
+|---|---|
+| source format identified | 済み（[仕様](../design/yayoi_journal_report_source.md)） |
+| parser implemented | 済み（`adapters/input/yayoi/journal_report_parser.py`、2,514/2,514 厳密に読み込み） |
+| domain normalized | 済み（2,514/2,514 が共通の行の意味まで解決） |
+| mapping pending | 対象JDL会社の科目一覧・税設定がなく、税マッピング未確認（HUMAN 2,514） |
+| target Evidence pending | 素直な候補を仮定しても919仕訳が実機Evidence不足 |
+| workflow | 接続済み（`application/yayoi_jdl_workflow.py`。会社設定・科目/補助/摘要の確認・税区分の確認と部分保存・Evidence 判定・正式出力）。Windows 画面は未変更 |
+| real E2E | 未実施。FORMAL READY 0 |
+
 ## Evidence policy
 
 - 最高水準は、実JDL Importと同期間re-exportのstrict semantic comparison

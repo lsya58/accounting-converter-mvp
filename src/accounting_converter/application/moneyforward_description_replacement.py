@@ -11,6 +11,7 @@ from accounting_converter.application.description_replacement import (
 )
 from accounting_converter.application.journal_route import JournalRouteResult
 from accounting_converter.domain.journal import JournalEntry
+from accounting_converter.domain.journal_rows import LINE_ROW_DESCRIPTION_KEY
 from accounting_converter.domain.mapping import MappingStatus
 from accounting_converter.domain.validation import Severity, ValidationResult
 
@@ -45,6 +46,19 @@ def unsafe_description_positions(description: str) -> tuple[int, ...]:
         for index, character in enumerate(description)
         if character in JDL_OBSERVED_NON_ROUNDTRIP_CHARACTERS
     )
+
+
+def journal_descriptions(entry: JournalEntry) -> tuple[str, ...]:
+    """Every description the target will write: journal and per-row (any source)."""
+    values = [entry.description or ""]
+    values.extend(
+        str(item.get("value", ""))
+        for item in entry.metadata.get("moneyforward_descriptions", ())
+    )
+    values.extend(
+        str(line.metadata.get(LINE_ROW_DESCRIPTION_KEY, "")) for line in entry.lines
+    )
+    return tuple(dict.fromkeys(value for value in values if value))
 
 
 def description_requires_replacement(description: str) -> bool:
@@ -202,12 +216,7 @@ class MoneyForwardDescriptionReplacementPolicy:
 
     @staticmethod
     def _descriptions(entry: JournalEntry) -> tuple[str, ...]:
-        values = [entry.description or ""]
-        values.extend(
-            str(item.get("value", ""))
-            for item in entry.metadata.get("moneyforward_descriptions", ())
-        )
-        return tuple(dict.fromkeys(value for value in values if value))
+        return journal_descriptions(entry)
 
     @staticmethod
     def _mapping_is_valid(mapping, description: str) -> bool:
