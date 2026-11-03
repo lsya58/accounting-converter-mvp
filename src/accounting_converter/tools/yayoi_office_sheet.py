@@ -3,7 +3,9 @@
 write: one CSV (UTF-8 with BOM, opens in Excel) listing every decision the
        office must make, what the current candidate is, and what to do in JDL.
        Written only under data/private. Nothing is confirmed by writing it.
-apply: reads the sheet back and saves ONLY rows the office filled in:
+apply: first checks the WHOLE sheet against the current JDL master (any
+       invalid, contradictory or stale row stops everything; nothing is saved),
+       then saves ONLY rows the office filled in, all-or-nothing:
          判断 = OK      → accept the shown candidate
          JDLコード      → use that JDL code (must exist in the company's JDL list)
          意味           → required for 部門 / 生成元 / 付箋 policies
@@ -26,6 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from accounting_converter.adapters.output.jdl.tax_semantics import JdlTaxSemantic
+from accounting_converter.application import moneyforward_tax_excluded_evidence as ev
 from accounting_converter.application.yayoi_jdl_workflow import YayoiJdlWorkflow
 from accounting_converter.application.yayoi_review import (
     DEPARTMENT_FIELD,
@@ -162,87 +165,216 @@ def write(args) -> int:
     return 0
 
 
+class SheetCheckError(ValueError):
+    def __init__(self, problems: list[tuple[int, str]]) -> None:
+        super().__init__(f"{len(problems)} problem(s)")
+        self.problems = problems
+
+
+def _decision(record) -> str:
+    return record["【記入】判断"].strip().upper()
+
+
+def check_sheet(raw: bytes, source: Path, profile, context) -> list[dict]:
+    """Validate the whole sheet against the CURRENT JDL master. Raises SheetCheckError
+    with (sheet row number, reason) for every problem; writes nothing.
+
+    Returns the planned decisions (one per filled row) for apply_plan.
+    """
+    problems: list[tuple[int, str]] = []
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise SheetCheckError([(0, "UTF-8で読めない（Excelで別の文字コードで保存された可能性）")])
+    rows = list(csv.reader(io.StringIO(text)))
+    if not rows or tuple(rows[0]) != HEADER:
+        raise SheetCheckError([(1, "見出し行が違う（列の追加・削除・並べ替え）")])
+    expected = build_rows(source, profile, context)
+    if len(rows) - 1 != len(expected):
+        raise SheetCheckError([(0, f"行数が現在のJDLマスター用と違う（{len(rows) - 1}行 / 期待{len(expected)}行）")])
+    system_columns = [index for index, name in enumerate(HEADER) if not name.startswith("【記入】")]
+    for number, (row, want) in enumerate(zip(rows[1:], expected), 2):
+        if len(row) != len(HEADER):
+            problems.append((number, "列数が違う"))
+            continue
+        if any(row[index] != str(want[index]) for index in system_columns):
+            problems.append((number, "記入欄以外が現在のJDLマスターから作ったシートと違う（古いシートか編集済み）"))
+    if problems:
+        raise SheetCheckError(problems)
+
+    by_code = {item.target_master_code: item for item in context.account_master}
+    records = [dict(zip(HEADER, row)) for row in rows[1:]]
+    plan: list[dict] = []
+    account_codes: dict[str, str] = {
+        name: value.metadata.get("target_code", "") for name, value in profile.account_mappings.items()
+        if value.status is MappingStatus.USER_CONFIRMED
+    }
+    for number, record in enumerate(records, 2):
+        kind, key, decision = record["区分"], record["キー"], _decision(record)
+        code = record["【記入】JDLコード"].strip()
+        candidate_code = record["現在の候補"].split(" ", 1)[0] if record["現在の候補"].strip() else ""
+        if decision not in {"", "OK"}:
+            problems.append((number, "判断は OK か空欄だけ"))
+            continue
+        if not decision and not code:
+            plan.append({"row": number, "kind": kind, "action": "unfilled"})
+            continue
+        if kind == "科目":
+            if code and (not code.isdigit() or len(code) != 4):
+                problems.append((number, "JDLコードは4桁の数字"))
+                continue
+            if decision == "OK" and code and candidate_code and code != candidate_code:
+                problems.append((number, "OKと、候補と違うJDLコードが両方ある"))
+                continue
+            target_code = code or candidate_code
+            if not target_code:
+                problems.append((number, "候補がないのにOKだけ（JDLコードが必要）"))
+                continue
+            if target_code not in by_code:
+                problems.append((number, "JDLコードが現在のJDL科目一覧にない"))
+                continue
+            account_codes[key] = target_code
+            plan.append({"row": number, "kind": kind, "key": key, "code": target_code})
+        elif kind == "補助科目":
+            plan.append({"row": number, "kind": kind, "key": key, "code": code, "decision": decision,
+                         "candidate_code": candidate_code, "parent": record["親科目（補助のみ）"],
+                         "name": record["弥生の内容"]})
+        elif kind == "税区分":
+            if decision != "OK" or code:
+                problems.append((number, "税区分は OK だけ（コード欄は空欄）"))
+                continue
+            if candidate_semantic(key) is None:
+                problems.append((number, "税区分に候補がない"))
+                continue
+            plan.append({"row": number, "kind": kind, "key": key})
+        elif kind == "JDLに入らない情報":
+            meaning = record["【記入】意味・メモ"].strip() or record["現在の候補"].strip()
+            if decision != "OK" or code or not meaning:
+                problems.append((number, "OK と意味（説明）が必要（コード欄は空欄）"))
+                continue
+            plan.append({"row": number, "kind": kind, "key": key, "meaning": meaning})
+        else:
+            problems.append((number, "区分が不明"))
+    # Subaccounts are checked after all parent decisions are known.
+    for item in plan:
+        if item["kind"] != "補助科目" or "action" in item:
+            continue
+        parent_code = account_codes.get(item["parent"])
+        if not parent_code:
+            problems.append((item["row"], "親科目が確定していない（同じシートで親科目を確定してください）"))
+            continue
+        code = item["code"]
+        if code and (not code.isdigit() or len(code) != 4):
+            problems.append((item["row"], "補助コードは先頭の0を含む4桁の数字"))
+            continue
+        if item["decision"] == "OK" and code and item["candidate_code"] and code != item["candidate_code"]:
+            problems.append((item["row"], "OKと、候補と違う補助コードが両方ある"))
+            continue
+        code = code or item["candidate_code"]
+        matches = [sub for sub in context.subaccounts
+                   if sub.parent_account_code == parent_code and sub.target_master_code == code]
+        if not code or len(matches) != 1:
+            problems.append((item["row"], "確定した親科目の下に、そのJDL補助コードがない"))
+            continue
+        item["target"] = matches[0]
+    if any(item["kind"] == "税区分" for item in plan) and not ev.context_is_verified(context):
+        problems.append((0, "JDL税設定が実機Evidenceのある設定ではない"))
+    if problems:
+        raise SheetCheckError(problems)
+    for item in plan:
+        if item["kind"] == "科目" and "action" not in item:
+            item["target"] = by_code[item["code"]]
+    return plan
+
+
+def _snapshot(paths: list[Path]) -> dict[Path, bytes | None]:
+    files: dict[Path, bytes | None] = {}
+    for root in paths:
+        for path in root.rglob("*"):
+            if path.is_file():
+                files[path] = path.read_bytes()
+    return files
+
+
+def _restore(paths: list[Path], snapshot: dict[Path, bytes | None]) -> None:
+    for root in paths:
+        for path in root.rglob("*"):
+            if path.is_file() and path not in snapshot:
+                path.unlink()
+    for path, data in snapshot.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+
+
 def apply(args) -> int:
     raw = args.sheet.read_bytes()
     sheet_sha = hashlib.sha256(raw).hexdigest()
-    records = list(csv.DictReader(io.StringIO(raw.decode("utf-8-sig"))))
     profiles, companies = _store(args.company_store)
     resolved = companies.resolve(args.company_id)
     context = resolved.context
-    if context is None:
-        raise SystemExit("company setting is not confirmed yet")
+    if context is None or not resolved.available:
+        raise SystemExit("company setting is not available")
+    try:
+        plan = check_sheet(raw, args.source, resolved.profile, context)
+    except SheetCheckError as error:
+        print(json.dumps({"check": "FAIL", "applied": False,
+                          "problems": [{"sheet_row": row, "reason": reason} for row, reason in error.problems]},
+                         ensure_ascii=False, indent=1))
+        return 2
+    unfilled = sum(1 for item in plan if item.get("action") == "unfilled")
+    if getattr(args, "check", False):
+        print(json.dumps({"check": "PASS", "applied": False, "unfilled_rows": unfilled,
+                          "planned": dict(Counter(item["kind"] for item in plan if "action" not in item))},
+                         ensure_ascii=False, indent=1))
+        return 0
+    store_paths = [args.company_store / "profiles", args.company_store / "companies" / args.company_id]
+    snapshot = _snapshot(store_paths)
+    if getattr(args, "backup_dir", None):
+        for path, data in snapshot.items():
+            target = args.backup_dir / path.relative_to(args.company_store)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
     profile_id = resolved.profile.profile_id
-    by_code = {item.target_master_code: item for item in context.account_master}
-    counts: Counter = Counter()
-    errors: Counter = Counter()
-    profile = profiles.get(profile_id)
-    accounts = dict(profile.account_mappings)
-    subs = dict(profile.subaccount_context_mappings)
     now = datetime.now(timezone.utc).isoformat()
-    for record in records:
-        kind, key = record["区分"], record["キー"]
-        decision = record["【記入】判断"].strip().upper()
-        code = record["【記入】JDLコード"].strip()
-        meaning = record["【記入】意味・メモ"].strip()
-        if not decision and not code:
-            counts[f"{kind}:unfilled"] += 1
-            continue
-        if kind == "科目":
-            target_code = code or (record["現在の候補"].split(" ", 1)[0] if decision == "OK" else "")
-            target = by_code.get(target_code)
-            if target is None:
-                errors["科目:JDLコードが科目一覧にない"] += 1
-                continue
-            accounts[key] = MappingValue(key, target.mapping_value, MappingStatus.USER_CONFIRMED, metadata={
-                "target_code": target.target_master_code, "target_printed_name": target.mapping_value,
-                "target_formal_name": target.target_formal_name, "confirmed_via": "office_sheet",
-                "office_sheet_sha256": sheet_sha, "confirmed_at": now})
-            counts["科目:confirmed"] += 1
-        elif kind == "補助科目":
-            parent = record["親科目（補助のみ）"]
-            parent_mapping = accounts.get(parent)
-            parent_code = parent_mapping.metadata.get("target_code") if parent_mapping else None
-            if not code and decision == "OK":
-                code = record["現在の候補"].split(" ", 1)[0]
-            matches = [item for item in context.subaccounts
-                       if item.parent_account_code == parent_code and item.target_master_code == code.zfill(4)]
-            if not code or len(matches) != 1:
-                errors["補助科目:親科目未確定またはJDL補助コードが一覧にない"] += 1
-                continue
-            target = matches[0]
-            subs[MappingKey(MappingType.SUBACCOUNT, record["弥生の内容"], parent)] = MappingValue(
-                record["弥生の内容"], target.output_name, MappingStatus.USER_CONFIRMED, parent_account=parent,
-                metadata={"output_code": target.output_code, "target_code": target.target_master_code,
-                          "output_name": target.output_name, "confirmed_via": "office_sheet",
-                          "office_sheet_sha256": sheet_sha, "confirmed_at": now})
-            counts["補助科目:confirmed"] += 1
-        elif kind == "税区分":
-            semantic = candidate_semantic(key)
-            if decision != "OK" or semantic is None:
-                errors["税区分:OK以外または候補なし"] += 1
-                continue
-            counts["税区分:confirmed"] += 1
-        elif kind == "JDLに入らない情報":
-            if decision != "OK" or not (meaning or record["現在の候補"].strip()):
-                errors["JDLに入らない情報:OKと意味の両方が必要"] += 1
-                continue
-            counts["JDLに入らない情報:confirmed"] += 1
-    profiles.update(replace(profile, account_mappings=accounts, subaccount_context_mappings=subs,
-                            updated_at=datetime.now(timezone.utc)))
-    for record in records:
-        decision = record["【記入】判断"].strip().upper()
-        if record["区分"] == "税区分" and decision == "OK" and candidate_semantic(record["キー"]) is not None:
-            confirm_tax_identity(profiles, profile_id, context, record["キー"], candidate_semantic(record["キー"]))
-        meaning = record["【記入】意味・メモ"].strip() or record["現在の候補"].strip()
-        if record["区分"] == "JDLに入らない情報" and decision == "OK" and meaning:
-            confirm_optional_field_policy(profiles, profile_id, record["キー"], meaning)
-    companies.replace_profile(args.company_id, profile_id)
-    resolved = companies.resolve(args.company_id)
+    meta = {"confirmed_via": "office_sheet", "office_sheet_sha256": sheet_sha, "confirmed_at": now}
+    try:
+        profile = profiles.get(profile_id)
+        accounts = dict(profile.account_mappings)
+        subs = dict(profile.subaccount_context_mappings)
+        filled = [item for item in plan if "action" not in item]
+        for item in filled:
+            if item["kind"] == "科目":
+                target = item["target"]
+                accounts[item["key"]] = MappingValue(item["key"], target.mapping_value, MappingStatus.USER_CONFIRMED,
+                                                     metadata={"target_code": target.target_master_code,
+                                                               "target_printed_name": target.mapping_value,
+                                                               "target_formal_name": target.target_formal_name, **meta})
+            elif item["kind"] == "補助科目":
+                target = item["target"]
+                subs[MappingKey(MappingType.SUBACCOUNT, item["name"], item["parent"])] = MappingValue(
+                    item["name"], target.output_name, MappingStatus.USER_CONFIRMED, parent_account=item["parent"],
+                    metadata={"output_code": target.output_code, "target_code": target.target_master_code,
+                              "output_name": target.output_name, **meta})
+        profiles.update(replace(profile, account_mappings=accounts, subaccount_context_mappings=subs,
+                                updated_at=datetime.now(timezone.utc)))
+        for item in filled:
+            if item["kind"] == "税区分":
+                confirm_tax_identity(profiles, profile_id, context, item["key"], candidate_semantic(item["key"]))
+            elif item["kind"] == "JDLに入らない情報":
+                confirm_optional_field_policy(profiles, profile_id, item["key"], item["meaning"])
+        companies.replace_profile(args.company_id, profile_id)
+        resolved = companies.resolve(args.company_id)
+        if not resolved.available:
+            raise RuntimeError("company setting is not available after apply")
+    except Exception:
+        _restore(store_paths, snapshot)  # nothing half-applied stays behind
+        raise
     assessment = YayoiJdlWorkflow().assess(args.source, resolved.profile, resolved.context)
     print(json.dumps({
-        "applied": dict(counts), "rejected": dict(errors),
+        "check": "PASS", "applied": True, "unfilled_rows": unfilled,
+        "applied_by_kind": dict(Counter(item["kind"] for item in plan if "action" not in item)),
         "ready_journals": assessment.ready_journals, "total_journals": assessment.entry_count,
-        "by_blocker": assessment.blocker_counts(),
+        "by_owner": assessment.owner_counts(), "by_blocker": assessment.blocker_counts(),
         "likely_after_tax_confirmation": assessment.likely_blocker_counts(),
         "information_fully_retained": assessment.information_fully_retained,
     }, ensure_ascii=False, indent=1))
@@ -259,6 +391,8 @@ def main() -> int:
         command.add_argument("--company-id", required=True)
     sub.choices["write"].add_argument("--output", type=Path, required=True)
     sub.choices["apply"].add_argument("--sheet", type=Path, required=True)
+    sub.choices["apply"].add_argument("--check", action="store_true", help="validate only; never writes")
+    sub.choices["apply"].add_argument("--backup-dir", type=Path, help="copy the store here before writing")
     args = parser.parse_args()
     return write(args) if args.command == "write" else apply(args)
 

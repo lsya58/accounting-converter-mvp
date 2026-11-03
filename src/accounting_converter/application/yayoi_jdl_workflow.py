@@ -82,7 +82,17 @@ IGNORED_DIAGNOSTIC_GAPS = {"TAX_CATEGORY_MISMATCH", "SHAPE_MISMATCH", "EVIDENCE_
 
 # Evidence gaps a probe may cover: journal structure x tax only. Account,
 # tax-literal and rounding questions are never probed with this.
-PROBE_GAPS = frozenset({"SYSTEM_EVIDENCE:SHAPE_TAX_COMBINATION_UNVERIFIED"})
+PROBE_GAPS = frozenset({
+    "SYSTEM_EVIDENCE:SHAPE_TAX_COMBINATION_UNVERIFIED",  # case B: untaxed 2D2C
+    "SYSTEM_EVIDENCE:TAX_ACCOUNT_UNVERIFIED",  # case A: 1D1C 課税売上10% on an unverified account
+})
+PROBE_CASE_UNTAXED_COMPOUND = "B_UNTAXED_COMPOUND"
+PROBE_CASE_SALES10_ACCOUNT = "A_SALES10_ACCOUNT"
+# Synthetic 課税売上10% amount for case A. The verified JDL literal (0872) is
+# 売　上 / 10% / 外税 with the tax-included amount and tax = floor(amount*10/110);
+# 3300 has no fraction (300 exactly), so the rounding setting plays no part.
+PROBE_SALES10_AMOUNT = Decimal("3300")
+PROBE_SALES10_TAX = Decimal("300")
 
 
 class YayoiToJdlLossRule:
@@ -369,6 +379,44 @@ class YayoiJournalReportJdlWorkflow:
         )
         return FirstReleasePreparedConversion(summary, request, service)
 
+    def probe_cases(self, input_path: Path, profile, context, probe_gaps: frozenset[str] = PROBE_GAPS) -> dict:
+        """journal id -> (case, JDL serializer profile) for journals that may be probed.
+
+        Only the two narrow cases below, only when every other check passed
+        (all Human mappings confirmed), and never for a journal carrying
+        information outside JDL. Anything else is left out.
+        """
+        assessment = self.assess(input_path, profile, context)
+        source_format = self._source_format(input_path, profile)
+        entries = {entry.id: entry for entry in source_format.read(input_path)}
+        cases = {}
+        for key, blockers in assessment.journal_blockers.items():
+            entry = entries[key]
+            if not blockers or not blockers <= probe_gaps or non_retained_values(entry):
+                continue
+            semantics = [
+                (line.side, ev.target_tax_semantic(line, profile, context) if line.tax_info else JdlTaxSemantic.NO_TAX.value)
+                for line in entry.lines
+            ]
+            rows: dict[int, list] = {}
+            for line in entry.lines:
+                rows.setdefault(int(line.metadata[LINE_ROW_KEY]), []).append(line.side.value)
+            one_pair_per_row = all(sorted(sides) == ["CREDIT", "DEBIT"] for sides in rows.values())
+            if (
+                blockers == {"SYSTEM_EVIDENCE:SHAPE_TAX_COMBINATION_UNVERIFIED"}
+                and all(value == JdlTaxSemantic.NO_TAX.value for _, value in semantics)
+                and one_pair_per_row
+            ):
+                cases[key] = (PROBE_CASE_UNTAXED_COMPOUND, JdlEvidenceProfile.MF_COMPOUND_TAX_EXCLUDED_PROPORTIONAL)
+            elif (
+                blockers == {"SYSTEM_EVIDENCE:TAX_ACCOUNT_UNVERIFIED"}
+                and len(rows) == 1 and one_pair_per_row
+                and semantics == [(Side.DEBIT, JdlTaxSemantic.NO_TAX.value),
+                                  (Side.CREDIT, JdlTaxSemantic.SALES_10_EXTERNAL.value)]
+            ):
+                cases[key] = (PROBE_CASE_SALES10_ACCOUNT, JdlEvidenceProfile.MF_SALES10_EXCLUDED_PROPORTIONAL_1111)
+        return cases
+
     def prepare_probe(
         self,
         *,
@@ -387,13 +435,9 @@ class YayoiJournalReportJdlWorkflow:
         """
         if "NOT_FOR_PRODUCTION" not in output_path.name:
             raise ValueError("probe output name must contain NOT_FOR_PRODUCTION")
-        assessment = self.assess(input_path, profile, context)
         source_format = self._source_format(input_path, profile)
-        carries_extra = {entry.id for entry in source_format.read(input_path) if non_retained_values(entry)}
-        probe_ids = tuple(
-            key for key, blockers in assessment.journal_blockers.items()
-            if blockers and blockers <= probe_gaps and key not in carries_extra  # probes carry no audit
-        )
+        cases = self.probe_cases(input_path, profile, context, probe_gaps)
+        probe_ids = tuple(cases)
         reasons = [] if probe_ids else ["人の確認がすべて済み、構成×税の実機検証だけが残っている仕訳はありません。"]
         if output_path.exists():
             reasons.append("既存のファイルは上書きしません。")
@@ -410,7 +454,7 @@ class YayoiJournalReportJdlWorkflow:
         output_lookup = self.registry.get_exact_output(
             jdl_ibex_cashbook_official_journal_import_schema_definition().identity
         )
-        assignments = {key: JdlEvidenceProfile.MF_COMPOUND_TAX_EXCLUDED_PROPORTIONAL for key in probe_ids}
+        assignments = {key: evidence for key, (_, evidence) in cases.items()}
         service = ConversionService(
             input_adapter=_SyntheticProbeValues(_OnlyJournals(
                 _AuditOnlyFieldsRemovedAdapter(source_format.adapter(), confirmed_fields), frozenset(probe_ids)
@@ -569,19 +613,29 @@ class _SyntheticProbeValues:
         entries = []
         for entry in self._inner.read(path, profile):
             rows: dict[int, list] = {}
+            sales = None
             for line in entry.lines:
                 rows.setdefault(int(line.metadata[LINE_ROW_KEY]), []).append(line)
                 semantic = ev.target_tax_semantic(line, self._profile, self._context) if line.tax_info else None
-                if line.tax_info and semantic != JdlTaxSemantic.NO_TAX.value:
-                    raise ValueError("synthetic probe supports untaxed lines only")
+                if semantic == JdlTaxSemantic.SALES_10_EXTERNAL.value and line.side is Side.CREDIT:
+                    sales = line
+                elif line.tax_info and semantic != JdlTaxSemantic.NO_TAX.value:
+                    raise ValueError("synthetic probe supports untaxed lines and one 課税売上10% line only")
             if any(sorted(line.side.value for line in row) != ["CREDIT", "DEBIT"] for row in rows.values()):
                 raise ValueError("synthetic probe needs one debit and one credit per row")
+            if sales is not None and len(entry.lines) != 2:
+                raise ValueError("synthetic 課税売上10% probe is 1D1C only")
             amount_by_row = {row: Decimal(1000 * index) for index, row in enumerate(sorted(rows), 1)}
-            lines = [
-                replace(line, amount=amount_by_row[int(line.metadata[LINE_ROW_KEY])],
-                        metadata={**line.metadata, LINE_ROW_DESCRIPTION_KEY: PROBE_DESCRIPTION})
-                for line in entry.lines
-            ]
+            lines = []
+            for line in entry.lines:
+                amount = PROBE_SALES10_AMOUNT if sales is not None else amount_by_row[int(line.metadata[LINE_ROW_KEY])]
+                tax_info = line.tax_info
+                if line is sales:
+                    tax_info = replace(line.tax_info, tax_amount=PROBE_SALES10_TAX)
+                elif tax_info is not None and tax_info.tax_amount is not None:
+                    tax_info = replace(tax_info, tax_amount=Decimal("0"))
+                lines.append(replace(line, amount=amount, tax_info=tax_info,
+                                     metadata={**line.metadata, LINE_ROW_DESCRIPTION_KEY: PROBE_DESCRIPTION}))
             entries.append(replace(entry, lines=lines, description=PROBE_DESCRIPTION))
         return entries
 
@@ -728,7 +782,8 @@ def verify_non_retained_audit(source: Path, output: Path, profile) -> dict:
         "output_sha256": payload.get("jdl_output_sha256") == hashlib.sha256(output.read_bytes()).hexdigest(),
         "journal_count": payload.get("journal_count") == len(payload.get("journals", ())) == len(expected),
         "records_equal": payload.get("journals") == expected,
-        "one_record_per_journal": len({item["source_journal_content_sha256"] for item in payload.get("journals", ())})
+        # Identical journals share a content hash, so one-to-one is by source rows.
+        "one_record_per_journal": len({tuple(item["source_rows"]) for item in payload.get("journals", ())})
         == len(payload.get("journals", ())),
     }
     result.update(checks)

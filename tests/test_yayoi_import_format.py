@@ -7,6 +7,7 @@ import io
 import json
 import tempfile
 import unittest
+from unittest import mock
 from collections import Counter
 from dataclasses import replace
 from decimal import Decimal
@@ -211,69 +212,207 @@ class HiddenEvidenceGapTest(unittest.TestCase):
     """A shape x tax gap must show even while accounts are still unmapped."""
 
     def _source(self, root):
+        # 2D2C with a 課税売上10% credit line: not covered by any 2D2C Evidence.
         return write_import(root, [
-            row("2110", 9, "R.08/05/20", (YAYOI["supplies"], "", OUTSIDE, 500, 0), (YAYOI["bank"], "口座A", OUTSIDE, 500, 0), "振替"),
+            row("2110", 9, "R.08/05/20", (YAYOI["supplies"], "", OUTSIDE, 2200, 0), (YAYOI["sales"], "", SALES, 2200, 200), "振替"),
             row("2101", 9, "R.08/05/20", (YAYOI["fee"], "", OUTSIDE, 300, 0), (YAYOI["cash"], "", OUTSIDE, 300, 0), "振替"),
         ])
 
-    def test_all_untaxed_2d2c_is_not_covered_by_the_2d2c_evidence(self):
+    def test_unverified_2d2c_combination_is_reported_before_accounts_are_mapped(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             company = Company(root, "company-h", self._source(root), IMPORT, floor_context())
-            # Nothing confirmed: the gap is reported as likely, not current.
             first = company.assess()
             self.assertEqual(first.likely_blocker_counts(), {"SYSTEM_EVIDENCE:SHAPE_TAX_COMBINATION_UNVERIFIED": 1})
             self.assertNotIn("SYSTEM_EVIDENCE:SHAPE_TAX_COMBINATION_UNVERIFIED", first.blocker_counts())
-            # Tax confirmed, accounts still unmapped: now a current blocker.
-            confirm_tax_identity(company.profiles, company.profile.profile_id, company.context, OUTSIDE,
-                                 JdlTaxSemantic.NO_TAX)
+            for identity, semantic in ((OUTSIDE, JdlTaxSemantic.NO_TAX), (SALES, JdlTaxSemantic.SALES_10_EXTERNAL)):
+                confirm_tax_identity(company.profiles, company.profile.profile_id, company.context, identity, semantic)
             company.companies.replace_profile(company.company_id, company.profile.profile_id)
             self.assertIn("SYSTEM_EVIDENCE:SHAPE_TAX_COMBINATION_UNVERIFIED", company.assess().blocker_counts())
-            # Everything confirmed: still blocked, never READY.
             company.confirm_all()
             final = company.assess()
             self.assertEqual(final.ready_journals, 0)
             self.assertIn("SYSTEM_EVIDENCE:SHAPE_TAX_COMBINATION_UNVERIFIED", final.blocker_counts())
 
 
-class ProbeTest(unittest.TestCase):
-    def test_probe_contains_only_journals_blocked_solely_by_the_shape_tax_gap(self):
+class UntaxedCompoundEvidenceTest(unittest.TestCase):
+    """EVID-YAYOI-JDL-35-5-2D2C-NO-TAX-ROUNDTRIP-001: two rows of one debit + one credit, all untaxed."""
+
+    def _company(self, root, rows):
+        company = Company(root, "company-p", write_import(root, journals() + rows), IMPORT, floor_context())
+        company.confirm_all()
+        return company
+
+    def test_two_paired_rows_are_ready_and_need_no_probe(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            source = write_import(root, journals() + [
+            company = self._company(root, [
                 row("2110", 9, "R.08/05/20", (YAYOI["supplies"], "", OUTSIDE, 500, 0), (YAYOI["bank"], "口座A", OUTSIDE, 500, 0), "振替"),
                 row("2101", 9, "R.08/05/20", (YAYOI["fee"], "", OUTSIDE, 300, 0), (YAYOI["cash"], "", OUTSIDE, 300, 0), "振替"),
             ])
-            company = Company(root, "company-p", source, IMPORT, floor_context())
+            self.assertEqual(company.assess().ready_journals, 4)
             resolved = company.resolved()
-            workflow = YayoiJdlWorkflow()
             with self.assertRaises(ValueError):
-                workflow.prepare_probe(input_path=source, output_path=root / "probe.csv",
-                                       profile=resolved.profile, context=resolved.context)
-            # Mappings not confirmed yet: nothing may be probed.
-            prepared, ids = workflow.prepare_probe(input_path=source, output_path=root / "p_NOT_FOR_PRODUCTION.csv",
-                                                   profile=resolved.profile, context=resolved.context)
+                YayoiJdlWorkflow().prepare_probe(input_path=company.source, output_path=root / "probe.csv",
+                                                 profile=resolved.profile, context=resolved.context)
+            prepared, ids = YayoiJdlWorkflow().prepare_probe(
+                input_path=company.source, output_path=root / "p_NOT_FOR_PRODUCTION.csv",
+                profile=resolved.profile, context=resolved.context)
             self.assertEqual(ids, ())
-            self.assertIsNone(workflow.execute(prepared))
-            company.confirm_all()
-            resolved = company.resolved()
-            output = root / "p_NOT_FOR_PRODUCTION.csv"
-            prepared, ids = workflow.prepare_probe(input_path=source, output_path=output,
-                                                   profile=resolved.profile, context=resolved.context)
-            self.assertEqual(len(ids), 1)
-            result = workflow.execute(prepared)
+            output = root / "formal.csv"
+            formal = YayoiJdlWorkflow().prepare(input_path=company.source, output_path=output, profile=resolved.profile,
+                                                context=resolved.context, company_setting_validated=True)
+            self.assertIs(formal.summary.readiness, FirstReleaseReadiness.READY, formal.summary.blocking_reasons)
+            result = YayoiJdlWorkflow().execute(formal)
             self.assertEqual(result.status.value, "SUCCESS", [v.rule_id for v in result.validation_results])
-            rows = [r for r in csv.reader(io.StringIO(output.read_bytes().decode("cp932"))) if r[0][:1].isdigit()]
-            self.assertEqual([r[0] for r in rows], ["1110", "1101"])
-            # Structure and accounts are real; amounts and descriptions are synthetic.
-            self.assertEqual([(r[3], r[13]) for r in rows], [("8491", "1311"), ("8681", "1111")])
-            self.assertEqual([(r[11], r[21]) for r in rows], [("1000", "1000"), ("2000", "2000")])
+
+    def test_four_single_side_rows_are_not_covered(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            company = self._company(root, [
+                row("2110", 9, "R.08/05/20", (YAYOI["supplies"], "", OUTSIDE, 500, 0), None, "振替"),
+                row("2100", 9, "R.08/05/20", None, (YAYOI["bank"], "口座A", OUTSIDE, 500, 0), "振替"),
+                row("2100", 9, "R.08/05/20", (YAYOI["fee"], "", OUTSIDE, 300, 0), None, "振替"),
+                row("2101", 9, "R.08/05/20", None, (YAYOI["cash"], "", OUTSIDE, 300, 0), "振替"),
+            ])
+            assessment = company.assess()
+            self.assertEqual(assessment.ready_journals, 3)
+            self.assertIn("SYSTEM_EVIDENCE:SHAPE_TAX_COMBINATION_UNVERIFIED", assessment.blocker_counts())
+
+
+class ProbeSalesAccountAndCompoundTest(unittest.TestCase):
+    """Case A (課税売上10% on an unverified account) and case B (untaxed 2D2C) in one probe."""
+
+    OTHER_SALES = "雑売上Y"
+
+    def _company(self, root, extra_rows=()):
+        source = write_import(root, journals() + [
+            row("2000", 7, "R.08/05/15", (YAYOI["cash"], "", OUTSIDE, 5500, 0), (self.OTHER_SALES, "", SALES, 5500, 500), "売上"),
+            row("2110", 9, "R.08/05/20", (YAYOI["supplies"], "", OUTSIDE, 500, 0), (YAYOI["bank"], "口座A", OUTSIDE, 500, 0), "振替"),
+            row("2101", 9, "R.08/05/20", (YAYOI["fee"], "", OUTSIDE, 300, 0), (YAYOI["cash"], "", OUTSIDE, 300, 0), "振替"),
+            *extra_rows,
+        ])
+        company = Company(root, "company-ab", source, IMPORT, floor_context())
+        company.confirm_all()
+        profile = company.profiles.get(company.profile.profile_id)
+        accounts = dict(profile.account_mappings)
+        accounts[self.OTHER_SALES] = MappingValue(self.OTHER_SALES, ACCOUNTS["9111"], MappingStatus.USER_CONFIRMED,
+                                                  metadata={"target_code": "9111", "target_printed_name": ACCOUNTS["9111"],
+                                                            "target_formal_name": ACCOUNTS["9111"]})
+        company.profiles.update(replace(profile, account_mappings=accounts))
+        company.companies.replace_profile(company.company_id, company.profile.profile_id)
+        return company
+
+    def test_sales10_is_never_generalized_by_account_count(self):
+        from accounting_converter.application import moneyforward_tax_excluded_evidence as ev
+
+        widened = ev.TaxLineCapability("CREDIT", "JDL_SALES_10_EXTERNAL", frozenset({"6121", "9251", "6122"}), ())
+        self.assertFalse(widened.account_independent)
+        self.assertFalse(widened.covers("6123"))
+        self.assertTrue(widened.covers("6122"))
+        current = ev.LINE_CAPABILITIES[("CREDIT", "JDL_SALES_10_EXTERNAL")]
+        self.assertEqual(current.verified_accounts, frozenset({"6121", "9251"}))  # 6122 stays PENDING
+        with tempfile.TemporaryDirectory() as directory:
+            counts = self._company(Path(directory)).assess().blocker_counts()
+        self.assertEqual(counts.get("SYSTEM_EVIDENCE:TAX_ACCOUNT_UNVERIFIED"), 1)
+
+    def test_one_probe_holds_both_cases_and_nothing_else(self):
+        from types import SimpleNamespace
+
+        from accounting_converter.tools import yayoi_formal_output, yayoi_probe_check
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            # A third unverified journal (3D3C) must not enter the probe.
+            company = self._company(root, extra_rows=[
+                row("2110", 11, "R.08/05/25", (YAYOI["supplies"], "", OUTSIDE, 100, 0), (YAYOI["cash"], "", OUTSIDE, 100, 0), "x"),
+                row("2100", 11, "R.08/05/25", (YAYOI["supplies"], "", OUTSIDE, 200, 0), (YAYOI["cash"], "", OUTSIDE, 200, 0), "x"),
+                row("2101", 11, "R.08/05/25", (YAYOI["supplies"], "", OUTSIDE, 300, 0), (YAYOI["cash"], "", OUTSIDE, 300, 0), "x"),
+            ])
+            cases = YayoiJdlWorkflow().probe_cases(company.source, company.resolved().profile, company.resolved().context)
+            # The untaxed 2D2C is verified now, so only case A remains to probe.
+            self.assertEqual(sorted(case for case, _ in cases.values()), ["A_SALES10_ACCOUNT"])
+            private = root / "data" / "private"
+            private.mkdir(parents=True)
+            probe = private / "probe_NOT_FOR_PRODUCTION.csv"
+            with mock.patch("sys.argv", ["x", "--source", str(company.source), "--company-store", str(root),
+                                         "--company-id", "company-ab", "--output", str(probe), "--probe"]):
+                self.assertEqual(yayoi_formal_output.main(), 0)
+            rows = [r for r in csv.reader(io.StringIO(probe.read_bytes().decode("cp932"))) if r[0][:1].isdigit()]
+            self.assertEqual(len(rows), 1)  # A: 1 row
+            sales = next(r for r in rows if r[13] == "9111")
+            self.assertEqual((sales[0], sales[11], sales[21]), ("1111", "3300", "3300"))
+            self.assertEqual((sales[18], sales[19], sales[20], sales[22]), ("売\u3000上", "10%", "外税", "300"))
+            self.assertEqual(sales[12], "")  # untaxed debit side carries no tax
             self.assertEqual({r[23] for r in rows}, {"検証用NOT_FOR_PRODUCTION"})
-            self.assertFalse(audit_path_for(output).exists())
-            # The formal path still refuses the whole file.
-            formal = workflow.prepare(input_path=source, output_path=root / "formal.csv", profile=resolved.profile,
-                                      context=resolved.context, company_setting_validated=True)
+            self.assertFalse(audit_path_for(probe).exists())
+            manifest = json.loads(yayoi_probe_check.manifest_path_for(probe).read_text(encoding="utf-8"))
+            self.assertEqual(manifest["status"], "PENDING_REAL_JDL_IMPORT")
+            self.assertEqual(sorted(c["physical_rows"] for c in manifest["cases"]), [1])
+            # Each case is judged on its own.
+            both = yayoi_probe_check.check(probe, probe, manifest)
+            self.assertEqual({k: v["verdict"] for k, v in both["cases"].items()}, {"A_SALES10_ACCOUNT": "PASS"})
+            tampered = private / "reexport.csv"
+            tampered.write_bytes(probe.read_bytes().replace(b",3300,300,", b",3300,301,", 1))
+            one = yayoi_probe_check.check(probe, tampered, manifest)
+            self.assertEqual({k: v["verdict"] for k, v in one["cases"].items()}, {"A_SALES10_ACCOUNT": "FAIL"})
+            # Formal output is still refused (case A is not READY).
+            formal = YayoiJdlWorkflow().prepare(input_path=company.source, output_path=private / "formal.csv",
+                                                profile=company.resolved().profile, context=company.resolved().context,
+                                                company_setting_validated=True)
             self.assertIs(formal.summary.readiness, FirstReleaseReadiness.BLOCKED)
+
+
+class Sales6122ExactEvidenceTest(unittest.TestCase):
+    """EVID-YAYOI-JDL-35-5-SALES10-1111-6122-ROUNDTRIP-001 is exact-only."""
+
+    CAFE = "カフェ売上Y"
+
+    def _company(self, root, debit, amount, tax, target="6122"):
+        from accounting_converter.adapters.output.jdl import JdlAccountIdentity
+
+        base = floor_context()
+        extra = (JdlAccountIdentity("架空カフェ売上", "6122", "架空カ", "架空カフェ売上"),
+                 JdlAccountIdentity("架空その他売上", "6123", "架空そ", "架空その他売上"))
+        target_context = replace(base, accounts=base.accounts | {item.mapping_value for item in extra},
+                                 account_master=base.account_master + extra)
+        source = write_import(root, journals() + [
+            row("2000", 7, "R.08/05/15", debit + ("", OUTSIDE, amount, 0), (self.CAFE, "", SALES, amount, tax), "売上"),
+        ])
+        company = Company(root, "company-6122", source, IMPORT, target_context)
+        company.confirm_all()
+        profile = company.profiles.get(company.profile.profile_id)
+        accounts = dict(profile.account_mappings)
+        name = {"6122": "架空カフェ売上", "6123": "架空その他売上"}[target]
+        accounts[self.CAFE] = MappingValue(self.CAFE, name, MappingStatus.USER_CONFIRMED, metadata={
+            "target_code": target, "target_printed_name": name, "target_formal_name": name})
+        company.profiles.update(replace(profile, account_mappings=accounts))
+        company.companies.replace_profile(company.company_id, company.profile.profile_id)
+        return company
+
+    def blockers(self, **kwargs):
+        with tempfile.TemporaryDirectory() as directory:
+            return self._company(Path(directory), **kwargs).assess().blocker_counts()
+
+    def test_only_the_verified_signature_is_released(self):
+        from accounting_converter.application import moneyforward_tax_excluded_evidence as ev
+
+        cash = (YAYOI["cash"],)
+        self.assertEqual(self.blockers(debit=cash, amount=3300, tax=300), {})
+        # Same credit account, another debit account: not covered (exact-only).
+        self.assertIn("SYSTEM_EVIDENCE:TAX_ACCOUNT_UNVERIFIED",
+                      self.blockers(debit=(YAYOI["supplies"],), amount=3300, tax=300))
+        # Floor and half-up differ (1106 -> 100.5...): the exact Evidence had no
+        # fraction and rounding is verified only on 6121, so it stays blocked.
+        fraction = self.blockers(debit=cash, amount=1106, tax=100)
+        self.assertTrue(fraction and all(key.startswith("SYSTEM_EVIDENCE:") for key in fraction), fraction)
+        # Another unverified sales account stays blocked.
+        self.assertIn("SYSTEM_EVIDENCE:TAX_ACCOUNT_UNVERIFIED",
+                      self.blockers(debit=cash, amount=3300, tax=300, target="6123"))
+        # The per-account sales capability is unchanged; 6122 does not widen it.
+        self.assertEqual(ev.LINE_CAPABILITIES[("CREDIT", "JDL_SALES_10_EXTERNAL")].verified_accounts,
+                         frozenset({"6121", "9251"}))
+        self.assertFalse(ev.LINE_CAPABILITIES[("CREDIT", "JDL_SALES_10_EXTERNAL")].account_independent)
 
 
 class NonRetainedInformationTest(unittest.TestCase):
@@ -367,6 +506,27 @@ class NonRetainedInformationTest(unittest.TestCase):
             output.write_bytes(output.read_bytes() + b"\r\n")
             self.assertEqual(verify_non_retained_audit(company.source, output, resolved.profile)["verdict"], "FAIL")
 
+    def test_identical_journals_each_get_their_own_audit_record(self):
+        from accounting_converter.application.yayoi_jdl_workflow import verify_non_retained_audit
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            twice = journals(origin="取込")[:1] * 2  # same content, same voucher, same day
+            twice[1] = list(twice[1])
+            twice[1][1] = "2"  # only the voucher number differs
+            company = Company(root, "company-d2", write_import(root, twice + journals()[1:]), IMPORT, floor_context())
+            company.confirm_all()
+            confirm_optional_field_policy(company.profiles, company.profile.profile_id, "生成元", "架空の意味")
+            company.companies.replace_profile(company.company_id, company.profile.profile_id)
+            resolved = company.resolved()
+            output = root / "out.csv"
+            result = YayoiJdlWorkflow().execute(YayoiJdlWorkflow().prepare(
+                input_path=company.source, output_path=output, profile=resolved.profile,
+                context=resolved.context, company_setting_validated=True))
+            self.assertEqual(result.status.value, "SUCCESS")
+            check = verify_non_retained_audit(company.source, output, resolved.profile)
+            self.assertEqual((check["verdict"], check["expected_journals"]), ("PASS", 2))
+
     def test_nothing_left_out_means_no_audit_and_full_retention(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -454,6 +614,94 @@ class OfficeSheetTest(unittest.TestCase):
             self.assertTrue(meaning.startswith("弥生の生成元"))
             saved = company.profiles.get(company.profile.profile_id).account_mappings
             self.assertTrue(all(v.metadata["confirmed_via"] == "office_sheet" for v in saved.values()))
+
+
+class OfficeSheetSafetyTest(unittest.TestCase):
+    def setUp(self):
+        from types import SimpleNamespace
+
+        from accounting_converter.tools import yayoi_office_sheet as sheet
+
+        self.sheet = sheet
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.source = write_import(self.root, journals(origin="取込"))
+        self.company = Company(self.root, "company-x", self.source, IMPORT, floor_context())
+        self.args = lambda path, **kw: SimpleNamespace(source=self.source, company_store=self.root,
+                                                       company_id="company-x", sheet=path, **kw)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def filled(self):
+        rows = []
+        for row in self.sheet.build_rows(self.source, self.company.resolved().profile, self.company.resolved().context):
+            row = list(row)
+            if row[1] == "科目":
+                row[10] = TARGET[next(k for k, v in YAYOI.items() if v == row[2])]
+            elif row[1] == "補助科目":
+                row[10] = "0002"
+            else:
+                row[9] = "ok"  # lowercase from Excel is accepted
+            rows.append(row)
+        return rows
+
+    def write(self, rows):
+        path = self.root / "sheet.csv"
+        buffer = io.StringIO(newline="")
+        csv.writer(buffer).writerows([self.sheet.HEADER, *rows])
+        path.write_bytes(buffer.getvalue().encode("utf-8-sig"))
+        return path
+
+    def store_bytes(self):
+        return {p: p.read_bytes() for p in self.root.rglob("*") if p.is_file() and p.suffix == ".json"}
+
+    def test_any_bad_row_stops_everything(self):
+        rows = self.filled()
+        rows[0][10] = "9999"  # not in the JDL list
+        before = self.store_bytes()
+        self.assertEqual(self.sheet.apply(self.args(self.write(rows))), 2)
+        self.assertEqual(self.store_bytes(), before)
+
+    def test_ok_with_a_different_code_is_a_contradiction(self):
+        (self.root / "named").mkdir()
+        self.source = write_import(self.root / "named", [
+            row("2000", 1, "R.08/05/10", ("現金", "", OUTSIDE, 100, 0), ("手数料", "", OUTSIDE, 100, 0), "x")])
+        self.company = Company(self.root / "named", "company-x", self.source, IMPORT, floor_context())
+        self.root = self.root / "named"
+        rows = [list(item) for item in self.sheet.build_rows(
+            self.source, self.company.resolved().profile, self.company.resolved().context)]
+        cash = next(item for item in rows if item[2] == "現金")
+        self.assertTrue(cash[6].startswith("1111"))
+        cash[9], cash[10] = "OK", "8681"
+        before = self.store_bytes()
+        self.assertEqual(self.sheet.apply(self.args(self.write(rows))), 2)
+        self.assertEqual(self.store_bytes(), before)
+
+    def test_sheet_for_another_master_is_refused(self):
+        rows = self.filled()
+        rows[0][6] = "8888 古い候補"  # system column differs from the current master
+        self.assertEqual(self.sheet.apply(self.args(self.write(rows))), 2)
+
+    def test_check_only_never_writes(self):
+        before = self.store_bytes()
+        self.assertEqual(self.sheet.apply(self.args(self.write(self.filled()), check=True)), 0)
+        self.assertEqual(self.store_bytes(), before)
+
+    def test_failure_while_saving_rolls_everything_back(self):
+        from unittest import mock
+
+        before = self.store_bytes()
+        with mock.patch.object(self.sheet, "confirm_optional_field_policy", side_effect=OSError("disk")):
+            with self.assertRaises(OSError):
+                self.sheet.apply(self.args(self.write(self.filled())))
+        self.assertEqual(self.store_bytes(), before)
+
+    def test_valid_sheet_applies_completely_with_backup(self):
+        backup = self.root / "backup"
+        self.assertEqual(self.sheet.apply(self.args(self.write(self.filled()), backup_dir=backup)), 0)
+        self.assertTrue(any(backup.rglob("*.json")))
+        self.assertEqual(self.company.assess().ready_journals, 3)
 
 
 class CompanySeparationTest(unittest.TestCase):

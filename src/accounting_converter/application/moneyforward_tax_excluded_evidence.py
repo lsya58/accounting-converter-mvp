@@ -15,7 +15,7 @@ from accounting_converter.adapters.output.jdl import (
     JdlTaxRounding,
 )
 from accounting_converter.domain.journal import JournalEntry, JournalLine, Side, TaxInfo
-from accounting_converter.domain.journal_rows import has_counterparty
+from accounting_converter.domain.journal_rows import has_counterparty, journal_physical_rows
 from accounting_converter.adapters.output.jdl.tax_semantics import (
     JDL_TAX_LITERALS,
     JdlTaxSemantic,
@@ -50,6 +50,11 @@ SALES10_ROUNDING_EVIDENCE_ID = "EVID-MF-JDL-35-5-SALES10-ROUNDING-6121-ROUNDTRIP
 # 0877: JDL kept an explicit floor tax (364458 -> 33132, half-up would be 33133)
 # on 6121. Only this account is verified for floor/half-up-divergent amounts.
 SALES10_ROUNDING_VERIFIED_ACCOUNTS = frozenset({"6121"})
+# Yayoi → JDL real round trip 2026-11-03 (ACT test company, one probe file):
+# A: 1D1C 1111/no-sub -> 6122/no-sub, 売　上/10%/外税, amount without fraction.
+# B: 2D2C, every line untaxed, two physical rows of one debit + one credit.
+SALES10_6122_EVIDENCE_ID = "EVID-YAYOI-JDL-35-5-SALES10-1111-6122-ROUNDTRIP-001"
+UNTAXED_2D2C_EVIDENCE_ID = "EVID-YAYOI-JDL-35-5-2D2C-NO-TAX-ROUNDTRIP-001"
 COMPOSITION_ROUTE_ID = "MF-JDL-35-5-TAX-EXCLUDED-PROPORTIONAL-CAPABILITY-COMPOSITION-V1"
 
 MF_SALES_10 = "課税売上 10%"
@@ -205,6 +210,18 @@ _RECORDED_TARGET_SEMANTIC = {
     MF_NON_TAXABLE_SALES: JdlTaxSemantic.NON_TAXABLE_SALES.value,
     MF_SALES_10: JdlTaxSemantic.SALES_10_EXTERNAL.value,
 }
+# Exact-only Evidence recorded directly in JDL target semantics (not from MF).
+# Exact-only: it releases this signature and does NOT add its accounts to the
+# per-line capabilities used by composition.
+_EXACT_ONLY_EVIDENCE = (
+    MfTaxExcludedPatternEvidence(
+        SALES10_6122_EVIDENCE_ID,
+        (("DEBIT", "1111", "", JdlTaxSemantic.NO_TAX.value),
+         ("CREDIT", "6122", "", JdlTaxSemantic.SALES_10_EXTERNAL.value)),
+        JdlEvidenceProfile.MF_SALES10_EXCLUDED_PROPORTIONAL_1111,
+    ),
+)
+EXACT_ONLY_EVIDENCE_IDS = frozenset(item.evidence_id for item in _EXACT_ONLY_EVIDENCE)
 EVIDENCE = tuple(
     replace(
         item,
@@ -214,7 +231,7 @@ EVIDENCE = tuple(
         ),
     )
     for item in _RECORDED_EVIDENCE
-)
+) + _EXACT_ONLY_EVIDENCE
 EVIDENCE_REGISTRY = MfTaxEvidenceRegistry(EVIDENCE)
 # As recorded (MF tax identities), for audit and tests that rebuild MF sources.
 RECORDED_MF_EVIDENCE = _RECORDED_EVIDENCE
@@ -247,6 +264,9 @@ COMPOSABLE_TAX_IDENTITIES = frozenset(semantic.value for semantic in JdlTaxSeman
 # least this many distinct target accounts on the same side. Otherwise it is
 # limited to the exact accounts that were verified.
 ACCOUNT_INDEPENDENCE_MIN_ACCOUNTS = 3
+# Never generalized by the account count: 課税売上10% is valid only on the exact
+# JDL accounts with their own real Evidence (6121, 9251; 6122 is PENDING).
+ACCOUNT_SPECIFIC_ONLY = frozenset({("CREDIT", "JDL_SALES_10_EXTERNAL")})
 TAXED_IDENTITY_PROFILES_1D1C = {
     JdlTaxSemantic.PURCHASE_10_INTERNAL.value: JdlEvidenceProfile.MF_TAX_EXCLUDED_PROPORTIONAL_1111,
     JdlTaxSemantic.SALES_10_EXTERNAL.value: JdlEvidenceProfile.MF_SALES10_EXCLUDED_PROPORTIONAL_1111,
@@ -283,6 +303,8 @@ class TaxLineCapability:
 
     @property
     def account_independent(self) -> bool:
+        if (self.side, self.source_tax) in ACCOUNT_SPECIFIC_ONLY:
+            return False
         return len(self.verified_accounts) >= ACCOUNT_INDEPENDENCE_MIN_ACCOUNTS
 
     def covers(self, account_code: str) -> bool:
@@ -305,6 +327,8 @@ def _line_capabilities() -> dict[tuple[str, str], TaxLineCapability]:
     accounts: dict[tuple[str, str], set[str]] = {}
     evidence_ids: dict[tuple[str, str], list[str]] = {}
     for item in EVIDENCE:
+        if item.evidence_id in EXACT_ONLY_EVIDENCE_IDS:
+            continue
         for side, account, _subaccount, tax in item.account_signature:
             if tax not in COMPOSABLE_TAX_IDENTITIES or not account:
                 continue
@@ -442,7 +466,7 @@ def match_evidence_for_occurrence(
             for field in identity.mismatch_fields
         )
     )
-    if exact is not None and not identity_mismatches:
+    if exact is not None and not identity_mismatches and not tax_amount_gaps(source, signature, context):
         return MfTaxEvidenceMatchResult(
             exact,
             signature,
@@ -596,8 +620,17 @@ def compose_capabilities(
             if taxed else JdlEvidenceProfile.MF_NO_TAX_PROPORTIONAL_1111
         )
     elif shape == (2, 2):
+        if not taxed and len(signature) == 4 and not _two_paired_rows(source):
+            # The untaxed 2D2C Evidence is two rows of one debit + one credit.
+            gaps.append("SHAPE_TAX_COMBINATION_UNVERIFIED")
         if "SHAPE_TAX_COMBINATION_UNVERIFIED" not in gaps:
-            profile = JdlEvidenceProfile.MF_COMPOUND_2D2C_TAX_EXCLUDED_PROPORTIONAL
+            if taxed:
+                profile = JdlEvidenceProfile.MF_COMPOUND_2D2C_TAX_EXCLUDED_PROPORTIONAL
+            else:
+                profile = JdlEvidenceProfile.MF_COMPOUND_TAX_EXCLUDED_PROPORTIONAL
+                # Cite the untaxed 2D2C round trip, not P01 (a taxed 2D2C).
+                support = [item for item in support if item != COMPOSABLE_SHAPES[(2, 2)]]
+                support.append(UNTAXED_2D2C_EVIDENCE_ID)
     elif generic_compound:
         profile = JdlEvidenceProfile.MF_COMPOUND_TAX_EXCLUDED_PROPORTIONAL
     if has_partner:
@@ -624,6 +657,29 @@ def compose_capabilities(
     )
 
 
+def tax_amount_gaps(source: JournalEntry, signature, context: JdlTargetContext) -> tuple[str, ...]:
+    """Amount conditions that hold for exact Evidence too (same rules as composition).
+
+    Explicit source tax must survive JDL unchanged under either reading (kept or
+    recomputed with the company's rounding), and 課税売上10% amounts where floor
+    and half-up differ are verified only on SALES10_ROUNDING_VERIFIED_ACCOUNTS.
+    """
+    gaps = []
+    for line, (_, account, _, tax) in zip(source.lines, signature, strict=True):
+        explicit = line.tax_info.tax_amount if line.tax_info else None
+        if explicit is not None:
+            gap = explicit_tax_gap(explicit, line.amount, tax, context)
+            if gap is not None:
+                gaps.append(gap)
+        if (
+            tax == JdlTaxSemantic.SALES_10_EXTERNAL.value
+            and not _tax_rounding_is_unambiguous(line.amount)
+            and account not in SALES10_ROUNDING_VERIFIED_ACCOUNTS
+        ):
+            gaps.append("TAX_AMOUNT_ROUNDING_UNVERIFIED")
+    return tuple(gaps)
+
+
 def shape_tax_combination_gaps(
     shape: tuple[int, int], taxed: tuple[tuple[str, str], ...]
 ) -> tuple[str, ...]:
@@ -638,10 +694,17 @@ def shape_tax_combination_gaps(
         gaps.append("SHAPE_UNVERIFIED_IN_TAX_CONTEXT")
     if len(taxed) > 1 and shape not in VERIFIED_COMPOUND_SHAPES:
         gaps.append("MULTIPLE_TAXED_LINES_UNVERIFIED")
-    # 2D2C Evidence (P01) has exactly one debit 課税仕入 10% line.
-    if shape == (2, 2) and taxed != (("DEBIT", JdlTaxSemantic.PURCHASE_10_INTERNAL.value),):
+    # 2D2C Evidence: P01 (exactly one debit 課税仕入 10% line) and the Yayoi
+    # untaxed 2D2C (no taxed line; its two-row structure is checked by the caller).
+    if shape == (2, 2) and taxed not in VERIFIED_2D2C_TAXED:
         gaps.append("SHAPE_TAX_COMBINATION_UNVERIFIED")
     return tuple(gaps)
+
+
+VERIFIED_2D2C_TAXED = {
+    (("DEBIT", JdlTaxSemantic.PURCHASE_10_INTERNAL.value),): "EVID-MF-JDL-TAX-EXCLUDED-PROPORTIONAL-P01-2D2C-PURCHASE-10-001",
+    (): UNTAXED_2D2C_EVIDENCE_ID,
+}
 
 
 _ROUNDING = {
@@ -689,6 +752,13 @@ def explicit_tax_gap(explicit: Decimal, amount: Decimal, tax: str, context: JdlT
         return "EXPLICIT_TAX_KEEP_UNVERIFIED"
     # Neither rule (e.g. purchase-credit ratio applied, or a source-side rule).
     return "EXPLICIT_TAX_AMOUNT_UNVERIFIED"
+
+
+def _two_paired_rows(entry: JournalEntry) -> bool:
+    rows = journal_physical_rows(entry)
+    return rows is not None and len(rows) == 2 and all(
+        row.debit is not None and row.credit is not None for row in rows
+    )
 
 
 def _tax_rounding_is_unambiguous(amount: Decimal) -> bool:

@@ -16,12 +16,44 @@ from pathlib import Path
 
 from accounting_converter.application.first_release_workflow import FirstReleaseReadiness
 from accounting_converter.application.yayoi_jdl_workflow import (
+    PROBE_CASE_SALES10_ACCOUNT,
+    PROBE_CASE_UNTAXED_COMPOUND,
     YayoiJdlWorkflow,
     audit_path_for,
     verify_non_retained_audit,
 )
 from accounting_converter.infrastructure.company_setting_store import CompanySettingStore
+from accounting_converter.tools.mf_full_e2e_compare import _groups, _rows
+from accounting_converter.tools.yayoi_probe_check import manifest_path_for
 from accounting_converter.infrastructure.conversion_profile_store import ConversionProfileStore
+
+
+PENDING_EVIDENCE_IDS = {
+    PROBE_CASE_SALES10_ACCOUNT: "PENDING:EVID-YAYOI-JDL-35-5-SALES10-{debit}-{credit}-ROUNDTRIP-001",
+    PROBE_CASE_UNTAXED_COMPOUND: "PENDING:EVID-YAYOI-JDL-35-5-2D2C-NO-TAX-ROUNDTRIP-001",
+}
+
+
+def write_probe_manifest(probe: Path, ids, cases) -> dict:
+    """Which probe journal is which case, so each case is judged on its own."""
+    groups = _groups(_rows(probe))
+    if len(groups) != len(ids):
+        raise RuntimeError("probe journal count does not match the planned cases")
+    items = []
+    for index, (key, group) in enumerate(zip(ids, groups)):
+        case = cases[key][0]
+        items.append({
+            "case": case,
+            "journal_index": index,
+            "physical_rows": len(group),
+            "date": group[0][2],
+            "pending_evidence_id": PENDING_EVIDENCE_IDS[case].format(debit=group[0][3], credit=group[0][13]),
+        })
+    payload = {"probe_file": probe.name, "probe_sha256": hashlib.sha256(probe.read_bytes()).hexdigest(),
+               "status": "PENDING_REAL_JDL_IMPORT", "cases": items}
+    path = manifest_path_for(probe)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    return payload
 
 
 def main() -> int:
@@ -38,12 +70,20 @@ def main() -> int:
     resolved = CompanySettingStore(args.company_store / "companies", profiles).resolve(args.company_id)
     workflow = YayoiJdlWorkflow()
     if args.probe:
+        cases = workflow.probe_cases(args.source, resolved.profile, resolved.context)
         prepared, ids = workflow.prepare_probe(input_path=args.source, output_path=args.output,
                                                profile=resolved.profile, context=resolved.context)
         result = workflow.execute(prepared)
         ok = result is not None and result.status.value == "SUCCESS"
+        manifest = None
+        if ok:
+            manifest = write_probe_manifest(args.output, ids, cases)
         print(json.dumps({"probe_written": ok, "probe_journals": len(ids),
+                          "cases": [item["case"] for item in manifest["cases"]] if manifest else [],
+                          "rows": result.output_record_count if ok else 0,
                           "reasons": list(prepared.summary.blocking_reasons),
+                          "errors": sorted({v.rule_id for v in result.validation_results
+                                            if v.severity.value == "ERROR"}) if result else [],
                           "output_sha256": hashlib.sha256(args.output.read_bytes()).hexdigest() if ok else None},
                          ensure_ascii=False, indent=1))
         return 0 if ok else 1
