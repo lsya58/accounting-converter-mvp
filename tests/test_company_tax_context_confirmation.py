@@ -474,7 +474,7 @@ class CompanyTaxContextConfirmationTests(unittest.TestCase):
                 self.service.confirm_taxable_included("company-1", confirmed=True)
         self.assertEqual(self.companies.get("company-1").conversion_profile_id, "profile-1")
 
-    def test_overlong_subaccount_saves_tax_selection_but_keeps_master_blocked(self) -> None:
+    def test_overlong_subaccount_is_recorded_unusable_without_blocking_the_company(self) -> None:
         source = self.root / "overlong.pdf"
         source.write_bytes(b"synthetic-overlong")
         draft = self.root / "overlong.json"
@@ -503,25 +503,36 @@ class CompanyTaxContextConfirmationTests(unittest.TestCase):
             ),
             confirmed=True,
         )
-        self.assertIsInstance(result, PendingTaxContextConfirmation)
-        self.assertEqual(result.blocking_rule_ids, ("JDL-CONTEXT-SUBACCOUNT-PARENT",))
-        self.assertIsNone(self.service.current_context("company-overlong"))
+        # The long name is kept as an unusable subaccount; nothing else is held back.
+        self.assertNotIsInstance(result, PendingTaxContextConfirmation)
+        context = self.service.current_context("company-overlong")
+        self.assertIsNotNone(context)
+        self.assertTrue(self.companies.resolve("company-overlong").available)
+        self.assertEqual(context.subaccounts, ())
         self.assertEqual(
-            self.service.pending_selection("company-overlong").input_tax_credit_method,
-            JdlInputTaxCreditMethod.PROPORTIONAL,
+            [(item.parent_account_code, item.code, item.reason) for item in context.unusable_subaccounts],
+            [("2001", "0001", "NAME_EXCEEDS_JDL_IMPORT_FIELD")],
         )
-        self.assertFalse(self.companies.resolve("company-overlong").available)
-        self.assertIn(
-            "JDL_TAX_SELECTION_SAVED_MASTER_BLOCKED",
-            self.companies.resolve("company-overlong").reason_codes,
+        # JDL still requires a subaccount on that parent.
+        self.assertTrue(context.parent_has_subaccounts(code="2001"))
+        self.assertFalse(context.parent_has_subaccounts(code="1001"))
+        # The same master read again is not a master change.
+        from accounting_converter.application.jdl_master_identity import (
+            observed_master_identity_sha256,
+            target_context_master_identity_sha256,
         )
+
         self.assertEqual(
-            CompanyTaxContextConfirmationService(self.companies, self.profiles)
-            .pending_selection("company-overlong").taxation_method,
-            JdlTaxationMethod.STANDARD,
+            target_context_master_identity_sha256(context),
+            observed_master_identity_sha256(JdlAccountPdfDraftStore().load(draft).observation),
         )
-        self.companies.context_path(self.companies.get("company-overlong")).write_bytes(b"changed")
-        self.assertIsNone(self.service.pending_selection("company-overlong"))
+        # Saved and loaded unchanged; contexts without unusable subaccounts keep their bytes.
+        reloaded = self.service.contexts.load(self.companies.context_path(self.companies.get("company-overlong")))
+        self.assertEqual(reloaded.unusable_subaccounts, context.unusable_subaccounts)
+        from dataclasses import replace as _replace
+
+        self.assertNotIn("unusable_subaccounts", self.service.contexts.to_json_text(
+            _replace(context, unusable_subaccounts=())))
 
     def test_post_save_refresh_failure_is_not_reported_as_persistence_failure(self) -> None:
         controller = AccountingConverterController(

@@ -704,6 +704,100 @@ class OfficeSheetSafetyTest(unittest.TestCase):
         self.assertEqual(self.company.assess().ready_journals, 3)
 
 
+class OfficeSheetDescriptionAndUnusableTest(unittest.TestCase):
+    """Report-format company: description rows, candidate kinds, unusable subaccounts."""
+
+    LONG = "架空の長い補助名称ですよ"  # 12 full-width characters: does not fit the JDL field
+
+    def setUp(self):
+        from types import SimpleNamespace
+
+        from accounting_converter.adapters.output.jdl import JdlUnusableSubaccount
+        from accounting_converter.application.yayoi_sources import REPORT
+        from accounting_converter.tools import yayoi_office_sheet as sheet
+        from tests.test_yayoi_jdl_workflow import TARGET as WT, YAYOI as WY, details
+
+        self.codes = {WY[key]: WT[key] for key in WY} | {"現金": "1111"}
+
+        self.sheet = sheet
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        rows = details(long_description=True) + [
+            detail("令和08年05月12日", 3, debit=("現金", "", OUTSIDE, 500, None),
+                   credit=(WY["bank"], self.LONG, OUTSIDE, 500, None), description="振替", number=3),
+        ]
+        self.source = write(self.root, build(rows))
+        base = floor_context()
+        target = replace(base, unusable_subaccounts=(JdlUnusableSubaccount(
+            "普通預金", "1311", "0099", self.LONG, "NAME_EXCEEDS_JDL_IMPORT_FIELD"),))
+        self.company = Company(self.root, "company-r", self.source, REPORT, target)
+        self.args = lambda path, **kw: SimpleNamespace(source=self.source, company_store=self.root,
+                                                       company_id="company-r", sheet=path, **kw)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def rows(self):
+        resolved = self.company.resolved()
+        return [list(row) for row in self.sheet.build_rows(self.source, resolved.profile, resolved.context)]
+
+    def write(self, rows):
+        path = self.root / "sheet.csv"
+        buffer = io.StringIO(newline="")
+        csv.writer(buffer).writerows([self.sheet.HEADER, *rows])
+        path.write_bytes(buffer.getvalue().encode("utf-8-sig"))
+        return path
+
+    def test_kinds_and_description_rows(self):
+        rows = self.rows()
+        by_kind = {row[1]: row for row in rows}
+        self.assertEqual(by_kind["摘要"][3], "手数料" * 12)
+        self.assertTrue(by_kind["摘要"][13].startswith("候補:"))
+        cash = next(row for row in rows if row[1] == "科目" and row[2] == "現金")
+        self.assertEqual(cash[13], "同名")
+        long_sub = next(row for row in rows if row[1] == "補助科目" and row[3] == self.LONG)
+        self.assertEqual((long_sub[6], long_sub[13]), ("", "選択不可（JDL補助名が取込欄を超える）"))
+        self.assertTrue(all(row[9] == row[10] == row[11] == "" for row in rows))  # nothing pre-approved
+
+    def test_truncated_candidate_needs_written_text_and_rules_apply(self):
+        rows = self.rows()
+        description = next(row for row in rows if row[1] == "摘要")
+        description[9] = "OK"  # the candidate is a truncation: OK alone is not enough
+        before = {p: p.read_bytes() for p in self.root.rglob("*.json")}
+        self.assertEqual(self.sheet.apply(self.args(self.write(rows))), 2)
+        description[9], description[11] = "", "改" + "行\nあり"
+        self.assertEqual(self.sheet.apply(self.args(self.write(rows))), 2)
+        description[11] = "振込手数料"
+        self.assertEqual(self.sheet.apply(self.args(self.write(rows), check=True)), 0)
+        self.assertEqual({p: p.read_bytes() for p in self.root.rglob("*.json")}, before)
+
+    def test_unusable_subaccount_cannot_be_chosen_and_parent_still_needs_one(self):
+        rows = self.rows()
+        for row in rows:
+            if row[1] == "科目":
+                row[10] = self.codes[row[2]]
+            elif row[1] == "補助科目":
+                row[10] = "0099" if row[3] == self.LONG else "0002"
+            elif row[1] == "摘要":
+                row[11] = "振込手数料"
+            else:
+                row[9] = "OK"
+        before = {p: p.read_bytes() for p in self.root.rglob("*.json")}
+        self.assertEqual(self.sheet.apply(self.args(self.write(rows))), 2)
+        self.assertEqual({p: p.read_bytes() for p in self.root.rglob("*.json")}, before)
+        # Leaving the long subaccount unmapped keeps that journal blocked; the others are fine.
+        for row in rows:
+            if row[1] == "補助科目" and row[3] == self.LONG:
+                row[10] = ""
+        self.assertEqual(self.sheet.apply(self.args(self.write(rows))), 0)
+        assessment = self.company.assess()
+        self.assertEqual(assessment.ready_journals, 2)
+        self.assertEqual(assessment.blocker_counts(), {"HUMAN:SUBACCOUNT_MAPPING": 1})
+        context = self.company.resolved().context
+        self.assertTrue(context.parent_has_subaccounts(code="1311"))
+        self.assertNotIn("0099", {sub.target_master_code for sub in context.subaccounts})
+
+
 class CompanySeparationTest(unittest.TestCase):
     def test_two_companies_never_share_settings(self):
         with tempfile.TemporaryDirectory() as directory:

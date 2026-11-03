@@ -262,6 +262,8 @@ class YayoiJournalReportJdlWorkflow:
                             blockers[entry.id].add("HUMAN:JDL_TAX_ROUNDING_SETTING")
                         elif gap == "SUBACCOUNT_REQUIRED_BY_MASTER":
                             blockers[entry.id].add("HUMAN:SUBACCOUNT_DEFAULT")
+                        elif gap == "SUBACCOUNT_CODE_MISMATCH":
+                            blockers[entry.id].add("HUMAN:SUBACCOUNT_MAPPING")
                         elif gap in HUMAN_GAPS:
                             blockers[entry.id].add("HUMAN:ACCOUNT_MAPPING")
                         else:

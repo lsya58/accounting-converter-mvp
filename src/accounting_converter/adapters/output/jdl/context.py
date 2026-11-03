@@ -20,6 +20,7 @@ from .models import (
     JdlInputTaxCreditMethod,
     JdlSimplifiedBusinessCategory,
     JdlTaxRounding,
+    JdlUnusableSubaccount,
     JdlSubaccountIdentity,
     JdlTaxationMethod,
     JdlTargetContext,
@@ -61,6 +62,7 @@ class JdlTargetContextBuilder:
         simplified_business_category: JdlSimplifiedBusinessCategory | None = None,
         sales_tax_rounding: JdlTaxRounding = JdlTaxRounding.UNCONFIRMED,
         purchase_tax_rounding: JdlTaxRounding = JdlTaxRounding.UNCONFIRMED,
+        unusable_subaccounts: Iterable[JdlUnusableSubaccount] = (),
     ) -> JdlTargetContextBuildResult:
         accounts = tuple(account_master)
         context = JdlTargetContext(
@@ -80,6 +82,7 @@ class JdlTargetContextBuilder:
             simplified_business_category=simplified_business_category,
             sales_tax_rounding=sales_tax_rounding,
             purchase_tax_rounding=purchase_tax_rounding,
+            unusable_subaccounts=tuple(unusable_subaccounts),
             no_fuzzy_matching=no_fuzzy_matching,
             no_automatic_replacement=no_automatic_replacement,
             confirmation_state=confirmation_state,
@@ -315,6 +318,21 @@ class JdlTargetContextValidator:
                     self._error(
                         "JDL-CONTEXT-SUBACCOUNT-PARENT",
                         "補助科目と親勘定科目の確認済み関係が不正です。",
+                        "subaccount_master",
+                    )
+                )
+        usable_codes = set(codes)
+        for item in context.unusable_subaccounts:
+            if (
+                (item.parent_account, item.parent_account_code) not in accounts
+                or not self._numeric(item.code, 4)
+                or (item.parent_account_code, item.code) in usable_codes
+                or not item.reason
+            ):
+                errors.append(
+                    self._error(
+                        "JDL-CONTEXT-UNUSABLE-SUBACCOUNT",
+                        "選択できない補助科目の記録が不正です。",
                         "subaccount_master",
                     )
                 )

@@ -31,22 +31,26 @@ PASS条件: 104/104 journals、160/160 rows、missing 0、extra 0、unexpected 0
 
 会計期間はconverterのcapabilityとは別のtarget条件です。期外の日付をJDLが拒否しても、converterの失敗ではありません。
 
-## 弥生 → JDL（2026-11-01 2社時点）
+## 弥生 → JDL（2026-11-03 時点）
 
-顧問先2社の実データとJDL科目一覧PDFを取得。**弥生対応済みではない**（FORMAL READY 両社 0）。顧客の値はここに書かない。
+顧問先2社の実データとJDL科目一覧PDFを取得。顧客の値はここに書かない。
+
+- **会社B（弥生インポート形式）**: 80仕訳の実機全件往復 PASS（`EVID-YAYOI-JDL-35-5-COMPANYB-202603-FULL-ROUNDTRIP-001`）
+- **会社A（仕訳日記帳 汎用形式）**: 正式変換は未完了（FORMAL READY 0）
+- **弥生対応全体は完了ではない**: Windows 画面は未対応で、操作は CLI と private の確認シートで行う
 
 | 段階 | 会社A（仕訳日記帳 汎用形式） | 会社B（弥生インポート形式） |
 |---|---|---|
 | 仕訳 / 行 | 2,514 / 7,232（12か月） | 80 / 86（1か月） |
 | 厳密な読み込み・共通の行の意味 | 2,514 / 2,514 | 80 / 80 |
 | JDL科目一覧の読込 | 読込済み（科目99・補助289。同名2組・同名補助2組は選択不可として除外） | 読込済み（科目91・補助0） |
-| 会社設定（Tax Context） | **保留**: JDL側の補助名9件が取込欄（全角10字）を超えるため確定できない（既存の安全側の扱い） | 確定済み（private store、税抜・原則・一括比例・端数 売上/仕入とも切捨て） |
+| 会社設定（Tax Context） | 確定済み（2026-11-03）。JDL補助名9件は取込欄（全角10字）を超えるため「選択不可の補助」として記録（使える補助は280件。親科目は補助必須のまま） | 確定済み（private store、税抜・原則・一括比例・端数 売上/仕入とも切捨て） |
 | 端数処理（Human転記） | 売上 切上げ / 仕入 四捨五入 | 売上 切捨て / 仕入 切捨て |
-| 現在のブロッカー | HUMAN 2,514（会社設定の保留が全件） | 0（確認シート35行を反映済み） |
+| 現在のブロッカー | HUMAN 2,514（科目・補助・税区分・摘要の確認）。SYSTEM_EVIDENCE 8（決算7・形2。他の形の不足は確認後に表に出る） | 0（確認シート35行を反映済み） |
 | JDLに入らない情報 | 付箋 2 | 部門 34・生成元 35・付箋1 35（同じ35仕訳）。JDLへは出さず監査記録に残す扱い（Human確認が必要）。完全保持は宣言しない |
 | SYSTEM_EVIDENCE（素直な候補・各社の端数を仮定） | 951仕訳 | 0（2026-11-03 実機で 6122売上 と 対象外2D2C を確認） |
-| 確認シート反映後の正式READY（2026-11-03） | — | **80/80**（HUMAN 0・SYSTEM_EVIDENCE 0・SYSTEM_IMPLEMENTATION 0）。正式CSVの生成と実機往復は未実施。JDLに入らない部門34・生成元35・付箋1 35は監査記録で保全するため、完全保持ではない |
-| FORMAL READY | 0 | 0 |
+| 正式READY | 0 | **80/80**（HUMAN 0・SYSTEM_EVIDENCE 0・SYSTEM_IMPLEMENTATION 0） |
+| 正式CSV・実機往復 | 未実施 | **PASS**（2026-11-03。80/80仕訳・86/86行、既知正規化454セルのみ、監査記録104値 PASS）。部門・生成元・付箋1は監査記録で保全するため、完全保持ではない |
 
 明示税額は「JDLがそのまま保持する」と「JDLが会社の端数設定で計算し直す」のどちらでも同じ値になる場合だけ通す（明示税額 = 切捨て値 = 対象会社の端数処理の値）。端数処理が未設定なら HUMAN。0877 の実機では切捨て値が保持されたが、その会社の端数設定が記録されていないため、保持か再計算かは未確定（[仕様](../design/yayoi_journal_report_source.md#端数処理と明示税額2社)）。
 
@@ -66,7 +70,7 @@ PASS条件: 104/104 journals、160/160 rows、missing 0、extra 0、unexpected 0
 | JDL→JDL | `VERIFIED_BY_REAL_IMPORT`, frozen | 1,158 journals / 1,271 rows。実Import PASS。会計判断reviewとbatch re-export strict comparisonは未完了 |
 | MF→JDL READY batch | `VERIFIED_BY_REAL_IMPORT_AND_REEXPORT` | 13 journals / 14 rows、P01-P07、unexpected diff 0、silent loss 0 |
 | MF→JDL 482 dataset | 上の Canonical current state を参照 | FY2026-05 real round-trip VERIFIED、FY2027-05 PENDING |
-| 弥生→JDL | 実データ2社で接続済み・未検証 | 仕訳日記帳 汎用形式とインポート形式。実機Import未実施。上の弥生の節を参照 |
+| 弥生→JDL | 会社B（インポート形式）は `VERIFIED_BY_REAL_IMPORT_AND_REEXPORT`。会社A（仕訳日記帳 汎用形式）は未検証 | 会社B 80仕訳の全件往復 PASS。会社Aは会社設定保留中。上の弥生の節を参照 |
 
 ## Key Evidence IDs
 

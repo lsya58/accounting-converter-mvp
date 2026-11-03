@@ -11,6 +11,7 @@ from accounting_converter.adapters.output.jdl import (
     JdlInputTaxCreditMethod,
     JdlSimplifiedBusinessCategory,
     JdlTaxRounding,
+    JdlUnusableSubaccount,
     JdlSubaccountIdentity,
     JdlTaxationMethod,
     JdlTargetContext,
@@ -68,6 +69,8 @@ class JdlTargetContextLoader:
             "no_automatic_replacement": context.no_automatic_replacement,
         }
         # Written only when confirmed, so existing context files keep their bytes.
+        if context.unusable_subaccounts:
+            payload["unusable_subaccounts"] = [item.__dict__ for item in context.unusable_subaccounts]
         for key in ("sales_tax_rounding", "purchase_tax_rounding"):
             value = getattr(context, key)
             if value is not JdlTaxRounding.UNCONFIRMED:
@@ -138,6 +141,10 @@ class JdlTargetContextLoader:
                 provenance=JdlContextProvenance(payload["provenance"]),
                 sales_tax_rounding=JdlTaxRounding(
                     payload.get("sales_tax_rounding", JdlTaxRounding.UNCONFIRMED.value)
+                ),
+                unusable_subaccounts=tuple(
+                    JdlUnusableSubaccount(**item)
+                    for item in payload.get("unusable_subaccounts", [])
                 ),
                 purchase_tax_rounding=JdlTaxRounding(
                     payload.get("purchase_tax_rounding", JdlTaxRounding.UNCONFIRMED.value)

@@ -885,12 +885,7 @@ class JdlOutputPreflight:
             or (tax_line.sub_account and not allow_tax_side_subaccount)
         ):
             errors.append(self._error("JDL-OUT-TAX-COMBINATION", "検証済み税profileに補助・部門を併用できません。", "evidence_profile", entry))
-        configured_subaccounts = tuple(
-            item
-            for item in self.context.subaccounts
-            if item.parent_account == tax_line.account
-        )
-        if configured_subaccounts and not tax_line.sub_account:
+        if self.context.parent_has_subaccounts(name=tax_line.account) and not tax_line.sub_account:
             errors.append(
                 self._error(
                     "JDL-OUT-TARGET-SUBACCOUNT-REQUIRED",

@@ -113,6 +113,24 @@ class JdlTaxRounding(str, Enum):
     CEILING = "CEILING"  # 切り上げ
 
 
+@dataclass(frozen=True)
+class JdlUnusableSubaccount:
+    """A subaccount registered in the JDL master that this app cannot write.
+
+    Kept so the master stays complete (fingerprint, "parent requires a
+    subaccount"), but never offered or accepted as a mapping target.
+    """
+
+    parent_account: str
+    parent_account_code: str
+    code: str
+    name: str
+    reason: str
+
+
+UNUSABLE_SUBACCOUNT_NAME_TOO_LONG = "NAME_EXCEEDS_JDL_IMPORT_FIELD"
+
+
 class JdlSimplifiedBusinessCategory(str, Enum):
     FIRST = "FIRST"
     SECOND = "SECOND"
@@ -180,6 +198,17 @@ class JdlTargetContext:
     # explicit tax amounts are safe to hand to JDL.
     sales_tax_rounding: JdlTaxRounding = JdlTaxRounding.UNCONFIRMED
     purchase_tax_rounding: JdlTaxRounding = JdlTaxRounding.UNCONFIRMED
+    # In the JDL master but not selectable (see JdlUnusableSubaccount).
+    unusable_subaccounts: tuple[JdlUnusableSubaccount, ...] = ()
+
+    def parent_has_subaccounts(self, *, code: str | None = None, name: str | None = None) -> bool:
+        """JDL requires a subaccount on a parent with any registered subaccount,
+        including ones this app cannot write."""
+        return any(
+            (code is not None and item.parent_account_code == code)
+            or (name is not None and item.parent_account == name)
+            for item in (*self.subaccounts, *self.unusable_subaccounts)
+        )
 
     def privacy_safe_summary(self) -> dict[str, str | int]:
         return {

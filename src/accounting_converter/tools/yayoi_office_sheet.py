@@ -22,6 +22,7 @@ import csv
 import hashlib
 import io
 import json
+import unicodedata
 from collections import Counter
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -37,6 +38,14 @@ from accounting_converter.application.yayoi_review import (
     confirm_tax_identity,
     field_of,
     non_retained_values,
+    review_source,
+    save_description_replacement,
+)
+from accounting_converter.application.description_replacement import replacement_is_valid
+from accounting_converter.application.moneyforward_description_replacement import (
+    description_issues,
+    description_replacement_candidate,
+    unsafe_description_positions,
 )
 from accounting_converter.application.yayoi_sources import detect_format, format_for_identity_key
 from accounting_converter.domain.mapping import MappingKey, MappingStatus, MappingType, MappingValue
@@ -45,7 +54,16 @@ from accounting_converter.infrastructure.conversion_profile_store import Convers
 from accounting_converter.tools.generate_mf_exact_shape_probe import _atomic_write
 
 HEADER = ("No", "区分", "キー", "弥生の内容", "親科目（補助のみ）", "影響仕訳数", "現在の候補",
-          "判断の選択肢", "JDLでの操作", "【記入】判断", "【記入】JDLコード", "【記入】意味・メモ", "注意")
+          "判断の選択肢", "JDLでの操作", "【記入】判断", "【記入】JDLコード", "【記入】意味・メモ", "注意",
+          "候補の種類")
+KIND_SAME = "同名"
+KIND_NORMALIZED = "表記違い（全角半角・空白のみ違う）"
+KIND_NONE = "候補なし"
+KIND_UNUSABLE = "選択不可（JDL補助名が取込欄を超える）"
+
+
+def _normalized(value: str) -> str:
+    return "".join(unicodedata.normalize("NFKC", value).split())
 SEMANTIC_LABEL = {
     JdlTaxSemantic.NO_TAX: "対象外（税なし）",
     JdlTaxSemantic.PURCHASE_10_INTERNAL: "課税仕入 10% 内税",
@@ -73,9 +91,19 @@ def build_rows(source: Path, profile, context) -> list[tuple]:
     rows = []
     sales_accounts = {line.account for entry in entries for line in entry.lines
                       if line.tax_info and candidate_semantic(line.tax_info.category) is JdlTaxSemantic.SALES_10_EXTERNAL}
+    accounts_by_normalized = {}
+    for item in context.account_master:
+        accounts_by_normalized.setdefault(_normalized(item.mapping_value), []).append(item)
     for name in sorted({line.account for entry in entries for line in entry.lines}):
         exact = accounts_by_name.get(name, [])
-        candidate = f"{exact[0].target_master_code} {exact[0].target_formal_name}" if len(exact) == 1 else ""
+        loose = accounts_by_normalized.get(_normalized(name), [])
+        if len(exact) == 1:
+            pick, kind = exact[0], KIND_SAME
+        elif len(loose) == 1:
+            pick, kind = loose[0], KIND_NORMALIZED
+        else:
+            pick, kind = None, KIND_NONE
+        candidate = f"{pick.target_master_code} {pick.target_formal_name}" if pick else ""
         note = ""
         if name in sales_accounts:
             note = ("売上10%の行あり。会計上正しいJDL科目を選んでください。"
@@ -86,7 +114,7 @@ def build_rows(source: Path, profile, context) -> list[tuple]:
             "候補でよければ OK / 別のJDL科目ならコードを記入" if candidate else
             "使うJDL科目のコードを記入（JDLにない場合は先にJDLで科目登録）",
             "なし" if candidate else "JDLに無ければ科目登録",
-            note,
+            note, kind,
         ))
     pairs = sorted({(line.account, line.sub_account) for entry in entries for line in entry.lines if line.sub_account})
     for parent, sub in pairs:
@@ -94,7 +122,19 @@ def build_rows(source: Path, profile, context) -> list[tuple]:
         parent_code = parent_candidates[0].target_master_code if len(parent_candidates) == 1 else None
         same = [item for item in context.subaccounts
                 if item.parent_account_code == parent_code and item.output_name == sub]
-        candidate = f"{same[0].target_master_code} {same[0].output_name}" if len(same) == 1 else ""
+        loose = [item for item in context.subaccounts
+                 if item.parent_account_code == parent_code and _normalized(item.output_name) == _normalized(sub)]
+        # Flag a same-name unusable subaccount even when the parent has no candidate yet.
+        unusable = [item for item in context.unusable_subaccounts
+                    if (parent_code is None or item.parent_account_code == parent_code)
+                    and _normalized(item.name) == _normalized(sub)]
+        if len(same) == 1:
+            pick, kind = same[0], KIND_SAME
+        elif len(loose) == 1:
+            pick, kind = loose[0], KIND_NORMALIZED
+        else:
+            pick, kind = None, KIND_UNUSABLE if unusable else KIND_NONE
+        candidate = f"{pick.target_master_code} {pick.output_name}" if pick else ""
         rows.append((
             "補助科目", f"{parent}｜{sub}", sub, parent,
             journals(lambda line, p=parent, s=sub: line.account == p and line.sub_account == s), candidate,
@@ -102,7 +142,9 @@ def build_rows(source: Path, profile, context) -> list[tuple]:
             "JDLに補助を登録してその補助コードを記入（弥生の補助がJDLに残る）",
             "なし" if candidate else "JDLで親科目の下に補助を登録",
             "親科目だけで出す方法は、補助の情報がJDLに残らないため現在は選べません"
-            + ("（このJDL会社は補助が0件）" if not subs_by_parent else ""),
+            + ("（このJDL会社は補助が0件）" if not subs_by_parent else "")
+            + ("。同じ名前のJDL補助は名前が長すぎて取込に使えないため、選べません" if kind == KIND_UNUSABLE else ""),
+            kind,
         ))
     for identity in sorted({line.tax_info.category for entry in entries for line in entry.lines
                             if line.tax_info and line.tax_info.category}):
@@ -112,7 +154,7 @@ def build_rows(source: Path, profile, context) -> list[tuple]:
             journals(lambda line, i=identity: bool(line.tax_info) and line.tax_info.category == i),
             SEMANTIC_LABEL.get(semantic, "（候補なし）") if semantic else "（候補なし）",
             "候補でよければ OK" if semantic else "候補がないため実機の書き方確認が先",
-            "なし", "",
+            "なし", "", KIND_SAME if semantic else KIND_NONE,
         ))
     values_by_field: dict[str, set[str]] = {}
     for entry in entries:
@@ -126,8 +168,22 @@ def build_rows(source: Path, profile, context) -> list[tuple]:
             "なし",
             "このJDL会社は部門なし。JDLで部門を使う場合は会社設定の変更が必要（今回は対象外）"
             if field == DEPARTMENT_FIELD else "",
+            "説明",
         ))
-    return [(index, *row[:8], "", "", "", row[8]) for index, row in enumerate(rows, 1)]
+    for item in review_source(entries, profile, context).descriptions:
+        original = item.current_description
+        suggestion = description_replacement_candidate(original)
+        rows.append((
+            "摘要", f"desc:{item.original_description_sha256[:16]}", original, "", item.affected_journal_count,
+            suggestion.value if suggestion else "",
+            "置換文を【記入】意味・メモに書く（32文字以内）"
+            + ("。候補でよければ OK" if suggestion and suggestion.kind != "TRUNCATED" else ""),
+            "なし",
+            " / ".join(description_issues(original))
+            + "。同じ元の摘要はすべての仕訳・行で同じ置換になる。仕訳ごとに変える必要があれば記入せず連絡",
+            f"候補: {suggestion.label}" if suggestion else KIND_NONE,
+        ))
+    return [(index, *row[:8], "", "", "", row[8], row[9]) for index, row in enumerate(rows, 1)]
 
 
 # Official 弥生インポート形式: 生成元 values listed on the spec page; 付箋 0-5.
@@ -216,7 +272,7 @@ def check_sheet(raw: bytes, source: Path, profile, context) -> list[dict]:
         if decision not in {"", "OK"}:
             problems.append((number, "判断は OK か空欄だけ"))
             continue
-        if not decision and not code:
+        if not decision and not code and not (kind == "摘要" and record["【記入】意味・メモ"].strip()):
             plan.append({"row": number, "kind": kind, "action": "unfilled"})
             continue
         if kind == "科目":
@@ -247,6 +303,30 @@ def check_sheet(raw: bytes, source: Path, profile, context) -> list[dict]:
                 problems.append((number, "税区分に候補がない"))
                 continue
             plan.append({"row": number, "kind": kind, "key": key})
+        elif kind == "摘要":
+            original = record["弥生の内容"]
+            written = record["【記入】意味・メモ"]
+            suggestion = description_replacement_candidate(original)
+            if code:
+                problems.append((number, "摘要の行はコード欄を空欄に"))
+                continue
+            if written.strip():
+                if decision == "OK" and suggestion and written != suggestion.value:
+                    problems.append((number, "OKと、候補と違う置換文が両方ある"))
+                    continue
+                replacement = written
+            elif decision == "OK" and suggestion and suggestion.kind != "TRUNCATED":
+                replacement = suggestion.value
+            elif decision == "OK":
+                problems.append((number, "切り詰め候補・候補なしはOKだけでは確定できない（置換文を記入）"))
+                continue
+            else:
+                problems.append((number, "置換文が空"))
+                continue
+            if not replacement_is_valid(replacement) or unsafe_description_positions(replacement):
+                problems.append((number, "置換文がJDLで使えない（1〜32文字・改行なし・CP932で表せる文字）"))
+                continue
+            plan.append({"row": number, "kind": kind, "original": original, "replacement": replacement})
         elif kind == "JDLに入らない情報":
             meaning = record["【記入】意味・メモ"].strip() or record["現在の候補"].strip()
             if decision != "OK" or code or not meaning:
@@ -273,6 +353,10 @@ def check_sheet(raw: bytes, source: Path, profile, context) -> list[dict]:
         code = code or item["candidate_code"]
         matches = [sub for sub in context.subaccounts
                    if sub.parent_account_code == parent_code and sub.target_master_code == code]
+        if code and any(sub.parent_account_code == parent_code and sub.code == code
+                        for sub in context.unusable_subaccounts):
+            problems.append((item["row"], "選択不可の補助（JDL補助名が取込欄を超える）。別の補助を選ぶか連絡"))
+            continue
         if not code or len(matches) != 1:
             problems.append((item["row"], "確定した親科目の下に、そのJDL補助コードがない"))
             continue
@@ -362,6 +446,8 @@ def apply(args) -> int:
                 confirm_tax_identity(profiles, profile_id, context, item["key"], candidate_semantic(item["key"]))
             elif item["kind"] == "JDLに入らない情報":
                 confirm_optional_field_policy(profiles, profile_id, item["key"], item["meaning"])
+            elif item["kind"] == "摘要":
+                save_description_replacement(profiles, profile_id, item["original"], item["replacement"])
         companies.replace_profile(args.company_id, profile_id)
         resolved = companies.resolve(args.company_id)
         if not resolved.available:

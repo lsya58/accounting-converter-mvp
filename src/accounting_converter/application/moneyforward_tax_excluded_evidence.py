@@ -571,9 +571,7 @@ def compose_capabilities(
         if not account:
             gaps.append("ACCOUNT_CODE_MISMATCH")
             continue
-        if subaccount in {"", PARENT_ONLY_CANONICAL_SUBACCOUNT} and any(
-            item.parent_account_code == account for item in context.subaccounts
-        ):
+        if subaccount in {"", PARENT_ONLY_CANONICAL_SUBACCOUNT} and context.parent_has_subaccounts(code=account):
             # JDL rejected blank subaccounts on 1311/1551 when the master has
             # subaccounts. Only an explicit Human target subaccount can fix it.
             gaps.append("SUBACCOUNT_REQUIRED_BY_MASTER")

@@ -27,7 +27,7 @@ def target_context_master_identity_sha256(context) -> str:
         (item.target_master_code, item.target_formal_name, item.target_name)
         for item in context.account_master
     )
-    subaccounts = (
+    subaccounts = [
         (
             item.parent_account_code,
             item.parent_account,
@@ -35,7 +35,12 @@ def target_context_master_identity_sha256(context) -> str:
             item.target_name or item.output_name,
         )
         for item in context.subaccounts
-    )
+    ]
+    # Unusable subaccounts are still part of the JDL master.
+    subaccounts += [
+        (item.parent_account_code, item.parent_account, item.code, item.name)
+        for item in context.unusable_subaccounts
+    ]
     return _master_identity_sha256(accounts, subaccounts)
 
 

@@ -13,6 +13,8 @@ from accounting_converter.adapters.output.jdl import (
     JdlSubaccountIdentity,
     JdlTaxationMethod,
     JdlTaxRounding,
+    JdlUnusableSubaccount,
+    UNUSABLE_SUBACCOUNT_NAME_TOO_LONG,
     JdlTargetContext,
     JdlTargetContextBuilder,
 )
@@ -150,6 +152,10 @@ class CompanyTaxContextConfirmationService:
                 for item in draft.observation.printed_accounts
                 if item.enabled
             )
+            printed_subaccounts = tuple(
+                item for item in draft.observation.subaccounts
+                if item.evidence_scope == "PRINTED_EXPLICIT_PARENT"
+            )
             subaccounts = tuple(
                 JdlSubaccountIdentity(
                     parent_account=item.parent_account_name,
@@ -161,8 +167,22 @@ class CompanyTaxContextConfirmationService:
                     parent_account_code=item.parent_account_code,
                     target_name=item.name,
                 )
-                for item in draft.observation.subaccounts
-                if item.evidence_scope == "PRINTED_EXPLICIT_PARENT"
+                for item in printed_subaccounts
+                if jdl_subaccount_name_fits(item.name)
+            )
+            # Names longer than the JDL import field cannot be written. They stay
+            # recorded (master stays complete) but are never selectable; nothing
+            # is shortened or renamed.
+            unusable_subaccounts = tuple(
+                JdlUnusableSubaccount(
+                    parent_account=item.parent_account_name,
+                    parent_account_code=item.parent_account_code,
+                    code=item.code,
+                    name=item.name,
+                    reason=UNUSABLE_SUBACCOUNT_NAME_TOO_LONG,
+                )
+                for item in printed_subaccounts
+                if not jdl_subaccount_name_fits(item.name)
             )
             departments = ()
             department_processing_enabled = False
@@ -171,6 +191,7 @@ class CompanyTaxContextConfirmationService:
             previous_context = current
             account_master = current.account_master
             subaccounts = current.subaccounts
+            unusable_subaccounts = current.unusable_subaccounts
             departments = current.departments
             department_processing_enabled = current.department_processing_enabled
         build_args = dict(
@@ -181,6 +202,7 @@ class CompanyTaxContextConfirmationService:
             version="35.5",
             account_master=account_master,
             subaccounts=subaccounts,
+            unusable_subaccounts=unusable_subaccounts,
             departments=departments,
             tax_processing_mode=selection.tax_processing_mode,
             department_processing_enabled=department_processing_enabled,
@@ -204,34 +226,6 @@ class CompanyTaxContextConfirmationService:
         result = JdlTargetContextBuilder().build(**build_args)
         if not result.success or result.context is None:
             rule_ids = sorted({item.rule_id for item in result.validation_results})
-            overlong = tuple(
-                item for item in subaccounts if not jdl_subaccount_name_fits(item.output_name)
-            )
-            if (
-                previous_context is None
-                and rule_ids == ["JDL-CONTEXT-SUBACCOUNT-PARENT"]
-                and overlong
-                and JdlTargetContextBuilder().build(
-                    **{**build_args, "subaccounts": tuple(
-                        item for item in subaccounts if item not in overlong
-                    )}
-                ).success
-            ):
-                self.company_store.save_pending_tax_confirmation(
-                    company_setting_id,
-                    {
-                        "tax_processing_mode": selection.tax_processing_mode.value,
-                        "taxation_method": selection.taxation_method.value,
-                        "input_tax_credit_method": selection.input_tax_credit_method.value,
-                        "simplified_business_category": (
-                            selection.simplified_business_category.value
-                            if selection.simplified_business_category else None
-                        ),
-                        "sales_tax_rounding": selection.sales_tax_rounding.value,
-                        "purchase_tax_rounding": selection.purchase_tax_rounding.value,
-                    },
-                )
-                return PendingTaxContextConfirmation(selection, tuple(rule_ids))
             raise CompanyTaxContextConfirmationError(
                 "JDL printed master cannot be promoted safely: "
                 + ", ".join(rule_ids)
