@@ -1436,6 +1436,7 @@ class AccountingConverterController:
             conversion_available=ready,
             preflight_status=summary.readiness.value,
             blocker_owner_counts=owner_counts,
+            formal_ready_summary=(assessment.ready_journals, assessment.entry_count),
             messages=tuple(lines) + tuple(summary.blocking_reasons),
             result_summary=None,
             verification_report=None,

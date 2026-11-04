@@ -73,7 +73,7 @@ from accounting_converter.infrastructure.local_diagnostic_log import (
     log_local_exception,
 )
 
-from .theme import status_visual
+from .theme import OWNER_VISUALS, pill_style, status_visual
 from .widgets import CsvDropZone, WheelSafeComboBox
 
 
@@ -140,8 +140,17 @@ class AccountingConverterMainWindow(QMainWindow):
         scroll.setWidget(page)
         self.setCentralWidget(scroll)
 
-        header = QHBoxLayout()
+        # Header: product name, what it does, settings.
+        header_frame = QFrame()
+        header_frame.setObjectName("appHeader")
+        header = QHBoxLayout(header_frame)
+        header.setContentsMargins(22, 18, 22, 18)
+        header.setSpacing(14)
+        brand = QLabel("会")
+        brand.setObjectName("brandMark")
+        brand.setAlignment(Qt.AlignmentFlag.AlignCenter)
         titles = QVBoxLayout()
+        titles.setSpacing(2)
         title = QLabel("会計データ変換")
         title.setObjectName("title")
         self.subtitle = QLabel("Money Forward / 弥生の仕訳データをJDL用CSVへ安全に変換します")
@@ -150,12 +159,27 @@ class AccountingConverterMainWindow(QMainWindow):
         titles.addWidget(self.subtitle)
         self.settings_button = QPushButton("設定")
         self.settings_button.clicked.connect(self._open_settings)
+        header.addWidget(brand, alignment=Qt.AlignmentFlag.AlignTop)
         header.addLayout(titles, 1)
-        header.addWidget(self.settings_button, alignment=Qt.AlignmentFlag.AlignTop)
-        layout.addLayout(header)
+        header.addWidget(self.settings_button, alignment=Qt.AlignmentFlag.AlignVCenter)
+        layout.addWidget(header_frame)
 
+        # Overview: the four facts a user checks before converting.
+        overview = QGridLayout()
+        overview.setHorizontalSpacing(12)
+        overview.setVerticalSpacing(12)
+        self.metric_source = self._metric_tile("入力元")
+        self.metric_format = self._metric_tile("読み込んだ形式")
+        self.metric_company = self._metric_tile("会社設定")
+        self.metric_check = self._metric_tile("実行前チェック")
+        for index, (tile, _value, _hint) in enumerate(
+            (self.metric_source, self.metric_format, self.metric_company, self.metric_check)
+        ):
+            overview.addWidget(tile, index // 2, index % 2)
+        layout.addLayout(overview)
+
+        company_card, company_layout = self._card("会社を選ぶ", step="1")
         company_row = QHBoxLayout()
-        company_row.addWidget(QLabel("会社"))
         self.company_combo = QComboBox()
         self.company_combo.setPlaceholderText("会社設定を選択")
         self.company_combo.currentIndexChanged.connect(self._select_company)
@@ -163,13 +187,20 @@ class AccountingConverterMainWindow(QMainWindow):
         company_settings_button = QPushButton("会社設定")
         company_settings_button.clicked.connect(self._open_settings)
         company_row.addWidget(company_settings_button)
-        layout.addLayout(company_row)
+        company_layout.addLayout(company_row)
+        layout.addWidget(company_card)
 
+        file_card, file_layout = self._card("仕訳データを選ぶ（CSV / TXT）", step="2")
+        file_hint = QLabel("会計ソフトから出力したファイルをそのまま選べます。形式は中身から判定し、元のファイルは変更しません。")
+        file_hint.setObjectName("muted")
+        file_hint.setWordWrap(True)
+        file_layout.addWidget(file_hint)
         self.drop_zone = CsvDropZone()
         self.drop_zone.choose_button.clicked.connect(self._choose_input)
         self.drop_zone.file_selected.connect(self._select_input)
         self.drop_zone.rejected.connect(self._show_drop_error)
-        layout.addWidget(self.drop_zone)
+        file_layout.addWidget(self.drop_zone)
+        layout.addWidget(file_card)
 
         self.recognition_card, recognition_layout = self._card("認識結果")
         self.file_name_label = QLabel("ファイルはまだ選択されていません")
@@ -179,10 +210,11 @@ class AccountingConverterMainWindow(QMainWindow):
         self.recognition_label.setWordWrap(True)
         recognition_layout.addWidget(self.file_name_label)
         recognition_layout.addWidget(self.recognition_label)
+        self.recognition_card.setObjectName("recognitionPanel")  # inset panel, not a nested card
         self.recognition_card.hide()
-        layout.addWidget(self.recognition_card)
+        file_layout.addWidget(self.recognition_card)
 
-        output_card, output_layout = self._card("保存先")
+        output_card, output_layout = self._card("保存先を選ぶ", step="3")
         output_row = QHBoxLayout()
         self.output_label = QLabel("保存先はまだ選択されていません")
         self.output_label.setWordWrap(True)
@@ -193,16 +225,16 @@ class AccountingConverterMainWindow(QMainWindow):
         output_layout.addLayout(output_row)
         layout.addWidget(output_card)
 
-        status_card, status_layout = self._card("状態")
+        status_card, status_layout = self._card("実行前チェックと変換", step="4")
         status_row = QHBoxLayout()
-        self.status_title = QLabel("CSVを選択してください")
+        self.status_title = QLabel("仕訳データ（CSV / TXT）を選択してください")
         self.status_title.setObjectName("statusTitle")
         self.status_badge = QLabel("未準備")
         self.status_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status_badge.setContentsMargins(10, 5, 10, 5)
         status_row.addWidget(self.status_title, 1)
         status_row.addWidget(self.status_badge)
-        self.status_detail = QLabel("変換する仕訳CSVを選択してください。")
+        self.status_detail = QLabel("変換する仕訳データ（CSV / TXT）を選択してください。")
         self.status_detail.setObjectName("muted")
         self.status_detail.setWordWrap(True)
         action_row = QHBoxLayout()
@@ -221,7 +253,19 @@ class AccountingConverterMainWindow(QMainWindow):
         action_row.addWidget(self.copy_diagnostics_button)
         action_row.addStretch(1)
         action_row.addWidget(self.convert_button)
+        # Owners of what still blocks conversion, as labelled pills (not color alone).
+        self.owner_row = QHBoxLayout()
+        self.owner_row.setSpacing(8)
+        self.owner_pills: dict[str, QLabel] = {}
+        for owner in ("READY", "HUMAN", "SYSTEM_EVIDENCE", "SYSTEM_IMPLEMENTATION"):
+            pill = QLabel()
+            pill.setObjectName("pill")
+            pill.hide()
+            self.owner_pills[owner] = pill
+            self.owner_row.addWidget(pill)
+        self.owner_row.addStretch(1)
         status_layout.addLayout(status_row)
+        status_layout.addLayout(self.owner_row)
         status_layout.addWidget(self.status_detail)
         status_layout.addLayout(action_row)
         layout.addWidget(status_card)
@@ -246,23 +290,51 @@ class AccountingConverterMainWindow(QMainWindow):
         layout.addWidget(self.result_card)
 
     @staticmethod
-    def _card(title_text: str) -> tuple[QFrame, QVBoxLayout]:
+    def _card(title_text: str, step: str | None = None) -> tuple[QFrame, QVBoxLayout]:
         card = QFrame()
         card.setObjectName("card")
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setContentsMargins(24, 20, 24, 22)
         layout.setSpacing(12)
+        heading = QHBoxLayout()
+        heading.setSpacing(10)
+        if step is not None:
+            badge = QLabel(step)
+            badge.setObjectName("stepBadge")
+            badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            heading.addWidget(badge)
         title = QLabel(title_text)
         title.setObjectName("sectionTitle")
-        layout.addWidget(title)
+        heading.addWidget(title, 1)
+        layout.addLayout(heading)
         return card, layout
+
+    @staticmethod
+    def _metric_tile(label_text: str) -> tuple[QFrame, QLabel, QLabel]:
+        tile = QFrame()
+        tile.setObjectName("metricTile")
+        tile_layout = QVBoxLayout(tile)
+        tile_layout.setContentsMargins(18, 14, 18, 14)
+        tile_layout.setSpacing(4)
+        label = QLabel(label_text)
+        label.setObjectName("metricLabel")
+        value = QLabel("—")
+        value.setObjectName("metricValue")
+        value.setWordWrap(True)
+        hint = QLabel("")
+        hint.setObjectName("metricHint")
+        hint.setWordWrap(True)
+        tile_layout.addWidget(label)
+        tile_layout.addWidget(value)
+        tile_layout.addWidget(hint)
+        return tile, value, hint
 
     def _choose_input(self) -> None:
         filename, _ = QFileDialog.getOpenFileName(
             self,
-            "変換する仕訳CSVを選択",
+            "変換する仕訳データを選択（CSV / TXT）",
             "",
-            "CSV files (*.csv);;All files (*)",
+            "仕訳データ (*.csv *.txt);;CSV files (*.csv);;Text files (*.txt);;All files (*)",
         )
         if filename:
             self._select_input(Path(filename))
@@ -491,6 +563,9 @@ class AccountingConverterMainWindow(QMainWindow):
         if result and result.output_path:
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(result.output_path.parent)))
 
+    def _render_overview(self, state: AppState, selected_company, badge: str) -> None:
+        _render_overview_for(self, state, selected_company, badge)
+
     def _render(self, state: AppState) -> None:
         presentation = present_main_screen(state)
         selected_company = next(
@@ -534,6 +609,7 @@ class AccountingConverterMainWindow(QMainWindow):
         self.status_badge.setStyleSheet(
             f"color: {foreground}; background: {background}; border-radius: 10px; font-weight: 700;"
         )
+        self._render_overview(state, selected_company, badge)
         self.convert_button.setEnabled(presentation.conversion_enabled)
         self.settings_action.setVisible(presentation.settings_action_visible)
         self.copy_guidance_button.setVisible(
@@ -557,6 +633,40 @@ class AccountingConverterMainWindow(QMainWindow):
                     )
                 )
             )
+
+
+def _set_metric(metric, value: str, hint: str = "") -> None:
+    _tile, value_label, hint_label = metric
+    value_label.setText(value)
+    hint_label.setText(hint)
+    hint_label.setVisible(bool(hint))
+
+
+def _render_overview_for(window, state: AppState, selected_company, badge: str) -> None:
+    recognition = state.file_recognition
+    source = {
+        RecognizedFormat.MONEYFORWARD: "Money Forward",
+        RecognizedFormat.YAYOI: "弥生会計",
+        RecognizedFormat.JDL: "JDL",
+    }.get(recognition.format, "未対応") if recognition else "未選択"
+    _set_metric(window.metric_source, source,
+                selected_company.source_label + "の会社設定" if selected_company else "")
+    _set_metric(window.metric_format, recognition.display_name if recognition else "—",
+                f"{recognition.journal_count}仕訳" if recognition and recognition.journal_count else "")
+    _set_metric(window.metric_company, selected_company.display_name if selected_company else "未選択",
+                selected_company.status_label if selected_company else "")
+    summary = state.formal_ready_summary
+    _set_metric(window.metric_check,
+                f"{summary[0]:,} / {summary[1]:,} 仕訳" if summary else badge,
+                "正式変換できる仕訳数" if summary else "")
+    owners = dict(state.blocker_owner_counts)
+    counts = {"READY": summary[0] if summary else 0, **owners}
+    for owner, pill in window.owner_pills.items():
+        count = counts.get(owner, 0)
+        label, foreground, background = OWNER_VISUALS[owner]
+        pill.setVisible(bool(count))
+        pill.setText(f"{label}  {count:,}")
+        pill.setStyleSheet(pill_style(foreground, background))
 
 
 class SettingsDialog(QDialog):
@@ -1670,6 +1780,14 @@ class CompanyMappingUpdateDialog(QDialog):
         unconfirmed_only = QCheckBox("未確認のみ表示")
         filter_bar.addWidget(search, 1)
         filter_bar.addWidget(unconfirmed_only)
+        candidate_note = QLabel(
+            "候補は名前の一致・類似から機械的に表示しています（確定ではありません）。"
+            "対応先を選んで「確認しました」にチェックした行だけが保存されます。"
+            "1行の確認は、同じ科目・補助を使うすべての仕訳と次回以降のファイルに使われます。"
+        )
+        candidate_note.setObjectName("infoCard")
+        candidate_note.setWordWrap(True)
+        page_layout.addWidget(candidate_note)
         page_layout.addLayout(filter_bar)
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setChildrenCollapsible(False)
@@ -1693,6 +1811,10 @@ class CompanyMappingUpdateDialog(QDialog):
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         table.setWordWrap(False)
+        table.setAlternatingRowColors(True)
+        table.setShowGrid(False)
+        table.verticalHeader().setVisible(False)
+        table.verticalHeader().setDefaultSectionSize(46)
         table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -2622,7 +2744,7 @@ class CompanyAddDialog(QDialog):
         layout.addWidget(self.source_combo)
         # 弥生: one sample CSV decides which export the company uses
         # (仕訳日記帳 汎用形式 / インポート形式). It is only read, never changed.
-        self.yayoi_sample_button = QPushButton("弥生のCSVを選ぶ（形式の判定に使います）")
+        self.yayoi_sample_button = QPushButton("弥生の仕訳データを選ぶ（CSV / TXT・形式の判定に使います）")
         self.yayoi_sample_button.clicked.connect(self._choose_yayoi_sample)
         self.yayoi_sample_label = QLabel("未選択")
         self.yayoi_sample_label.setObjectName("muted")
@@ -2644,7 +2766,7 @@ class CompanyAddDialog(QDialog):
 
     def _choose_yayoi_sample(self) -> None:
         filename, _ = QFileDialog.getOpenFileName(
-            self, "弥生のCSVを選択", "", "CSV / TXT (*.csv *.txt)"
+            self, "弥生の仕訳データを選択（CSV / TXT）", "", "仕訳データ (*.csv *.txt)"
         )
         if filename:
             self.yayoi_sample_path = Path(filename)
@@ -2844,7 +2966,7 @@ class CompanyAddDialog(QDialog):
                 )
             except Exception as exc:
                 log_local_exception("yayoi_profile_create", exc)
-                self.error_label.setText("弥生のCSVを読み込めませんでした。ファイルを確認してください。")
+                self.error_label.setText("弥生の仕訳データを読み込めませんでした。ファイルを確認してください。")
                 return
             self.profile_ids = [profile.profile_id]
             profile_id = profile.profile_id

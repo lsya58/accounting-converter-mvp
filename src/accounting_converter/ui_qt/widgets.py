@@ -31,7 +31,7 @@ class CsvDropZone(QFrame):
         layout.setContentsMargins(28, 28, 28, 28)
         layout.setSpacing(10)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.prompt = QLabel("CSVをここにドロップ")
+        self.prompt = QLabel("CSV / TXT をここにドロップ")
         self.prompt.setObjectName("sectionTitle")
         self.prompt.setAlignment(Qt.AlignmentFlag.AlignCenter)
         hint = QLabel("または")
@@ -71,7 +71,7 @@ class CsvDropZone(QFrame):
             event.ignore()
 
     def _reset_drag_state(self) -> None:
-        self.prompt.setText("CSVをここにドロップ")
+        self.prompt.setText("CSV / TXT をここにドロップ")
         self._set_drag_active(False)
 
     def _set_drag_active(self, active: bool) -> None:

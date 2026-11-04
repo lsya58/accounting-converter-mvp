@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import unittest
 from types import SimpleNamespace
+
+from accounting_converter.ui.view_models import TaxContextSaveStatus
 from unittest.mock import patch
 
 from accounting_converter.adapters.output.jdl import (
@@ -49,6 +51,10 @@ class _Controller:
                 else "JDL税設定を保存できませんでした。科目対応を確認してください。"
             ),
             developer_error=None if self.succeeds else "SyntheticError",
+            # Same contract as AccountingConverterController.confirm_company_tax_context.
+            tax_context_save_status=(
+                TaxContextSaveStatus.SAVED if self.succeeds else TaxContextSaveStatus.NOT_SAVED
+            ),
         )
 
     def company_tax_context(self, company_setting_id: str):

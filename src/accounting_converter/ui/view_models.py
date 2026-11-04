@@ -91,6 +91,8 @@ class ConversionResultPresentation:
 class AppState:
     # Blockers per owner (HUMAN / SYSTEM_EVIDENCE / SYSTEM_IMPLEMENTATION), journals.
     blocker_owner_counts: tuple[tuple[str, int], ...] = ()
+    # (formally READY journals, all journals) from the latest pre-run check, if known.
+    formal_ready_summary: tuple[int, int] | None = None
     companies: tuple[CompanyOption, ...] = ()
     selected_company_setting_id: str | None = None
     profiles: tuple[ProfileOption, ...] = ()
@@ -237,7 +239,7 @@ def present_main_screen(state: AppState) -> MainScreenPresentation:
         )
     return MainScreenPresentation(
         UserFacingStatus.NEEDS_INPUT,
-        "CSVを選択してください" if not state.selected_file else "保存先を選択してください",
+        "仕訳データ（CSV / TXT）を選択してください" if not state.selected_file else "保存先を選択してください",
         _friendly_guidance(state),
         recognition,
         False,
@@ -260,7 +262,7 @@ def _recognition_text(recognition: FileRecognition | None) -> str:
 
 def _friendly_guidance(state: AppState) -> str:
     if not state.selected_file:
-        return "変換する仕訳CSVを選択してください。"
+        return "変換する仕訳データ（CSV / TXT）を選択してください。"
     pending = tuple(
         label
         for label, count in (

@@ -65,6 +65,7 @@ class CompanyMappingUpdateDialogTests(unittest.TestCase):
             source_path=None,
             context_path=None,
             items=(account, subaccount),
+            logical_journal_count=0,
             tax_categories=(),
         )
 
@@ -93,12 +94,20 @@ class CompanyMappingUpdateDialogTests(unittest.TestCase):
         subaccount.setCurrentIndex(subaccount.findData("target-sub-a1"))
         subaccount_confirmed.setChecked(True)
         parent.setCurrentIndex(parent.findData("target-parent-b"))
+        # Changing the parent resets the subaccount and unconfirms the parent;
+        # the new parent's subaccounts appear only after it is confirmed again.
+        self.assertFalse(parent_confirmed.isChecked())
+        self.assertEqual(
+            [subaccount.itemData(index) for index in range(subaccount.count())],
+            [None],
+        )
+        self.assertIsNone(subaccount.currentData())
+        self.assertFalse(subaccount_confirmed.isChecked())
+        parent_confirmed.setChecked(True)
         self.assertEqual(
             [subaccount.itemData(index) for index in range(subaccount.count())],
             [None, "target-sub-b1"],
         )
-        self.assertIsNone(subaccount.currentData())
-        self.assertFalse(subaccount_confirmed.isChecked())
 
     def test_ranked_candidate_does_not_confirm_mapping(self) -> None:
         from dataclasses import replace
@@ -166,6 +175,7 @@ class CompanyMappingUpdateDialogTests(unittest.TestCase):
             for index in range(60)
         )
         review = CompanyMappingUpdateReview(
+            logical_journal_count=0,
             company_setting_id="company-a",
             source_path=None,
             context_path=None,
@@ -192,9 +202,10 @@ class CompanyMappingUpdateDialogTests(unittest.TestCase):
         self.assertIsInstance(dialog.tabs.widget(2), QScrollArea)
         self.assertEqual(
             dialog.tabs.tabText(3),
-            "税区分 残り1（確認済み0 / 全1）[要確認]",
+            "税区分 Human残り1 / 実機検証待ち0（確認済み0 / 全1）[要確認]",
         )
-        self.assertEqual(dialog.tabs.tabText(4), "その他 [要確認]")
+        # Unsupported shapes are a system limitation, not Human work.
+        self.assertEqual(dialog.tabs.tabText(4), "その他 [未対応あり]")
 
     def test_first_unresolved_tab_is_subaccounts_and_zero_tabs_are_disabled(self) -> None:
         subaccounts = tuple(
@@ -211,6 +222,7 @@ class CompanyMappingUpdateDialogTests(unittest.TestCase):
             for index in range(13)
         )
         review = CompanyMappingUpdateReview(
+            logical_journal_count=0,
             company_setting_id="company-a",
             source_path=None,
             context_path=None,
@@ -230,6 +242,7 @@ class CompanyMappingUpdateDialogTests(unittest.TestCase):
 
     def test_tax_is_first_tab_when_only_tax_confirmation_remains(self) -> None:
         review = CompanyMappingUpdateReview(
+            logical_journal_count=0,
             company_setting_id="company-a",
             source_path=None,
             context_path=None,
@@ -242,7 +255,7 @@ class CompanyMappingUpdateDialogTests(unittest.TestCase):
         self.assertEqual(dialog.tabs.currentIndex(), dialog.category_tabs["tax"])
         self.assertEqual(
             dialog.tabs.tabText(dialog.category_tabs["tax"]),
-            "税区分 残り4（確認済み0 / 全4）[要確認]",
+            "税区分 Human残り4 / 実機検証待ち0（確認済み0 / 全4）[要確認]",
         )
         self.assertIn("Humanが解決できる残り設定", dialog.summary_label.text())
         self.assertIn("Evidence・実装対応待ち", dialog.summary_label.text())
@@ -250,6 +263,7 @@ class CompanyMappingUpdateDialogTests(unittest.TestCase):
     def test_description_candidate_is_prefilled_but_requires_confirmation(self) -> None:
         original = "髙橋"
         review = CompanyMappingUpdateReview(
+            logical_journal_count=0,
             company_setting_id="company-a",
             source_path=None,
             context_path=None,

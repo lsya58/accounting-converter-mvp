@@ -21,6 +21,8 @@ COLORS = {
     "confirm_soft": "#FFF4DC",
     "blocked": "#B42323",
     "blocked_soft": "#FDECEC",
+    "evidence": "#5133A6",
+    "evidence_soft": "#F0ECFB",
     "neutral": "#4B5568",
     "neutral_soft": "#EEF1F6",
     "disabled_text": "#6B7484",
@@ -29,6 +31,19 @@ COLORS = {
     "input_border": "#C9D1DD",
     "header": "#F6F8FB",
 }
+
+
+# Blocker owners as shown to the user: (label, foreground, background).
+OWNER_VISUALS = {
+    "READY": ("正式変換できる", COLORS["ready"], COLORS["ready_soft"]),
+    "HUMAN": ("人の確認が必要", COLORS["confirm"], COLORS["confirm_soft"]),
+    "SYSTEM_EVIDENCE": ("JDL実機での確認不足", COLORS["evidence"], COLORS["evidence_soft"]),
+    "SYSTEM_IMPLEMENTATION": ("システム未対応", COLORS["blocked"], COLORS["blocked_soft"]),
+}
+
+
+def pill_style(foreground: str, background: str) -> str:
+    return f"color: {foreground}; background: {background};"
 
 
 def status_visual(status: UserFacingStatus) -> tuple[str, str, str]:
@@ -40,6 +55,26 @@ def status_visual(status: UserFacingStatus) -> tuple[str, str, str]:
         UserFacingStatus.SUCCESS: ("完了", COLORS["ready"], COLORS["ready_soft"]),
     }[status]
 
+
+def _chevron(color: str, name: str) -> str:
+    """A small chevron for combo boxes. Qt style sheets need an image file."""
+    from pathlib import Path
+    import tempfile
+
+    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12">'
+           f'<path d="M2.5 4.5 L6 8 L9.5 4.5" fill="none" stroke="{color}" stroke-width="1.6" '
+           f'stroke-linecap="round" stroke-linejoin="round"/></svg>')
+    path = Path(tempfile.gettempdir()) / f"accounting_converter_{name}.svg"
+    try:
+        if not path.exists() or path.read_text(encoding="utf-8") != svg:
+            path.write_text(svg, encoding="utf-8")
+    except OSError:
+        return ""
+    return path.as_posix()
+
+
+_ARROW = _chevron(COLORS["muted"], "chevron")
+_ARROW_DISABLED = _chevron(COLORS["disabled_text"], "chevron_disabled")
 
 APP_STYLE_SHEET = f"""
 QMainWindow, QDialog, QMessageBox, QScrollArea, QWidget#page {{
@@ -134,13 +169,17 @@ QLineEdit:disabled, QComboBox:disabled, QListWidget:disabled {{
     border-color: {COLORS['border']};
 }}
 QComboBox::drop-down {{
-    width: 34px;
+    subcontrol-origin: padding;
+    subcontrol-position: center right;
+    width: 30px;
     border: 0;
-    border-left: 1px solid {COLORS['border']};
-    border-top-right-radius: 9px;
-    border-bottom-right-radius: 9px;
-    background: {COLORS['header']};
 }}
+QComboBox::down-arrow {{
+    image: url("{_ARROW}");
+    width: 12px;
+    height: 12px;
+}}
+QComboBox::down-arrow:disabled {{ image: url("{_ARROW_DISABLED}"); }}
 QComboBox QAbstractItemView {{
     color: {COLORS['text']};
     background: {COLORS['surface']};
@@ -247,4 +286,43 @@ QFrame#dialogFooter {{
 }}
 QSplitter::handle {{ background: {COLORS['page']}; width: 8px; }}
 QStackedWidget {{ background: {COLORS['page']}; }}
+QFrame#appHeader {{
+    background: {COLORS['surface']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 16px;
+}}
+QLabel#brandMark {{
+    color: white;
+    background: {COLORS['accent']};
+    border-radius: 12px;
+    min-width: 44px; max-width: 44px; min-height: 44px; max-height: 44px;
+    font-size: 18px;
+    font-weight: 800;
+}}
+QFrame#metricTile {{
+    background: {COLORS['surface']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 14px;
+}}
+QLabel#metricLabel {{ color: {COLORS['muted']}; font-size: 12px; font-weight: 600; }}
+QLabel#metricValue {{ font-size: 17px; font-weight: 700; }}
+QLabel#metricHint {{ color: {COLORS['muted']}; font-size: 12px; }}
+QLabel#pill {{
+    border-radius: 11px;
+    padding: 3px 10px;
+    font-size: 12px;
+    font-weight: 700;
+}}
+QFrame#recognitionPanel {{
+    background: {COLORS['header']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 12px;
+}}
+QLabel#infoCard {{
+    color: {COLORS['accent_pressed']};
+    background: {COLORS['accent_soft']};
+    border: 1px solid #C9D7F8;
+    border-radius: 10px;
+    padding: 10px 14px;
+}}
 """

@@ -26,7 +26,7 @@ class MoneyForwardInputAdapter(InputAdapter):
 
     def supports(self, path: Path, profile: FormatProfile) -> bool:
         return (
-            path.suffix.lower() == ".csv"
+            path.suffix.lower() in {".csv", ".txt"}  # content decides; .txt exports are common
             and profile.format_id == self.schema.identity.stable_key
             and profile.encoding.lower() == "cp932"
         )

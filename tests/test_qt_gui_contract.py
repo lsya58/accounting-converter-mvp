@@ -108,12 +108,17 @@ class QtGuiContractTests(unittest.TestCase):
         self.assertFalse(decision.accepted)
         self.assertIn("1件", decision.message)
 
-    def test_non_csv_and_directory_are_rejected(self) -> None:
+    def test_txt_is_accepted_other_types_and_directory_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             text = root / "input.txt"
             text.write_text("synthetic", encoding="ascii")
-            self.assertFalse(evaluate_csv_drop((text,)).accepted)
+            before = text.read_bytes()
+            self.assertTrue(evaluate_csv_drop((text,)).accepted)  # Yayoi exports are often .txt
+            self.assertEqual(text.read_bytes(), before)
+            pdf = root / "input.pdf"
+            pdf.write_bytes(b"%PDF")
+            self.assertFalse(evaluate_csv_drop((pdf,)).accepted)
             self.assertFalse(evaluate_csv_drop((root,)).accepted)
 
     def test_empty_or_nonexistent_drop_is_rejected(self) -> None:
