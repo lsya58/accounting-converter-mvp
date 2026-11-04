@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import QSettings, QUrl, Qt
@@ -1577,7 +1578,7 @@ class TradePartnerPolicyDialog(QDialog):
         actions.addStretch(1)
         actions.addWidget(cancel)
         actions.addWidget(self.save_button)
-        layout.addWidget(footer, 0)
+        layout.addLayout(actions)
 
     def _save(self) -> None:
         state = self.controller.confirm_company_trade_partner_policy(
@@ -1706,16 +1707,23 @@ class CompanyMappingUpdateDialog(QDialog):
         self.tax_completed = not bool(review.observed_tax_categories or review.tax_categories)
         if tax_review is not None:
             self.tax_completed = not bool(tax_review.items)
-        policy_getter = getattr(controller, "company_trade_partner_policy_state", None)
-        policy_state = (
-            policy_getter(review.company_setting_id)
-            if policy_getter is not None and review.optional_field_blocker_count
-            else None
-        )
-        self.retention_completed = bool(
-            not review.optional_field_blocker_count
-            or (policy_state is not None and policy_state.confirmed)
-        )
+        self.is_yayoi = bool(getattr(review, "source_is_yayoi", False))
+        self.information_fields = tuple(getattr(review, "information_fields", ()))
+        if self.is_yayoi:
+            # Yayoi has no trade-partner field. What needs a decision here is
+            # 部門・生成元・付箋 etc. (descriptions are handled on their own tab).
+            self.retention_completed = all(field.confirmed for field in self.information_fields)
+        else:
+            policy_getter = getattr(controller, "company_trade_partner_policy_state", None)
+            policy_state = (
+                policy_getter(review.company_setting_id)
+                if policy_getter is not None and review.optional_field_blocker_count
+                else None
+            )
+            self.retention_completed = bool(
+                not review.optional_field_blocker_count
+                or (policy_state is not None and policy_state.confirmed)
+            )
         self.setWindowTitle("新しい科目を確認")
         self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
         # Small enough for 1366x768 at 125% (about 1093x566 usable).
@@ -2571,7 +2579,15 @@ class CompanyMappingUpdateDialog(QDialog):
         self.retention_status_label = QLabel()
         self.retention_status_label.setWordWrap(True)
         page_layout.addWidget(self.retention_status_label)
-        if self.review.optional_field_blocker_count:
+        if self.is_yayoi:
+            if self.information_fields:
+                self.policy_button = QPushButton("JDLに保持されない情報の扱いを確認…")
+                self.policy_button.setObjectName("primaryButton")
+                self.policy_button.clicked.connect(self._open_yayoi_information_policy)
+                page_layout.addWidget(self.policy_button, 0, Qt.AlignmentFlag.AlignLeft)
+            else:
+                self.policy_button = None
+        elif self.review.optional_field_blocker_count:
             self.policy_button = QPushButton("取引先情報の扱いを確認")
             self.policy_button.clicked.connect(self._open_trade_partner_policy)
             page_layout.addWidget(self.policy_button)
@@ -2589,6 +2605,9 @@ class CompanyMappingUpdateDialog(QDialog):
         return page
 
     def _refresh_retention_status(self) -> None:
+        if self.is_yayoi:
+            self._refresh_yayoi_information_status()
+            return
         if self.review.optional_field_blocker_count == 0:
             text = "保持方法の確認が必要な仕訳: 完了"
             pending = False
@@ -2614,6 +2633,52 @@ class CompanyMappingUpdateDialog(QDialog):
         if self.policy_button is not None and self.retention_completed:
             self.policy_button.setText("取引先情報の扱いは確認済みです")
             self.policy_button.setEnabled(False)
+
+    def _refresh_yayoi_information_status(self) -> None:
+        pending = [field for field in self.information_fields if not field.confirmed]
+        description_journals = dict(self.review.optional_field_counts).get("description_character", 0)
+        lines = ["JDLに保持されない情報（JDLへは出さず、監査記録に残す）"]
+        if not self.information_fields:
+            lines.append("該当する項目はありません。")
+        for field in self.information_fields:
+            lines.append(
+                f"・{field.field}: {field.journals}仕訳 — "
+                + (f"確認済み（意味: {field.meaning}）" if field.confirmed else "未確認")
+            )
+        if description_journals:
+            lines.append(
+                f"摘要の文字（{description_journals}仕訳）は「摘要」タブで確認します。"
+            )
+        self.retention_status_label.setText("\n".join(lines))
+        self.retention_status_label.setObjectName("warningCard" if pending else "muted")
+        self.retention_status_label.style().unpolish(self.retention_status_label)
+        self.retention_status_label.style().polish(self.retention_status_label)
+        if self.policy_button is not None:
+            self.policy_button.setEnabled(bool(pending))
+            if not pending:
+                self.policy_button.setText("JDLに保持されない情報の扱いは確認済みです")
+
+    def _open_yayoi_information_policy(self) -> None:
+        from .information_policy import YayoiInformationPolicyDialog
+
+        dialog = YayoiInformationPolicyDialog(
+            self.controller, self.review.company_setting_id, self.information_fields, self
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        self.information_fields = tuple(
+            replace(field, meaning=dialog.saved[field.field]) if field.field in dialog.saved else field
+            for field in self.information_fields
+        )
+        self.retention_completed = all(field.confirmed for field in self.information_fields)
+        self._refresh_retention_status()
+        QMessageBox.information(
+            self,
+            "扱いを保存しました",
+            "JDLに保持されない情報の扱いを保存しました。この画面の確認項目を保存後、"
+            "CSVを再確認すると最新状態が反映されます。",
+        )
+        self._update_action()
 
     def _open_trade_partner_policy(self) -> None:
         dialog = TradePartnerPolicyDialog(
@@ -2814,7 +2879,10 @@ class CompanyMappingUpdateDialog(QDialog):
                 self.tax_review_button.setText("実機Evidence待ちのため確認できません")
             elif self.tax_completed:
                 self.tax_review_button.setText("税区分の確認は完了しました")
-        retention_pending = queue.trade_partner_policy_settings
+        retention_pending = (
+            sum(not field.confirmed for field in self.information_fields)
+            if self.is_yayoi else queue.trade_partner_policy_settings
+        )
         other_status = (
             "要確認" if retention_pending else
             "未対応あり" if (
@@ -2831,6 +2899,7 @@ class CompanyMappingUpdateDialog(QDialog):
             bool(
                 self.review.unsupported_shape_count
                 or self.review.optional_field_blocker_count
+                or self.information_fields
             ),
         )
         pending_accounts = category_counts["accounts"][0] - category_counts["accounts"][1]
@@ -2848,8 +2917,9 @@ class CompanyMappingUpdateDialog(QDialog):
             f"補助科目: {pending_subaccounts}設定 / "
             f"税区分: {tax_human_pending}設定 / "
             f"摘要: {pending_descriptions}設定 / "
-            f"取引先情報: {retention_pending}設定\n"
-            "Evidence・実装対応待ち\n"
+            + (f"JDLに保持されない情報: {retention_pending}項目\n" if self.is_yayoi
+               else f"取引先情報: {retention_pending}設定\n")
+            + "Evidence・実装対応待ち\n"
             f"仕訳の形が未検証: {self.review.unsupported_shape_count}仕訳 / "
             f"税区分: {queue.tax_evidence_settings}種類 / "
             f"JDLに入らない情報（付箋など・摘要は除く）: {self._information_outside_jdl_journals()}仕訳"

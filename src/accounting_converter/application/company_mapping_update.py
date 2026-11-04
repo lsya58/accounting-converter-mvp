@@ -154,6 +154,10 @@ class CompanyMappingUpdateReview:
     other_optional_row_count: int = 0
     # Journals with any optional field before Human-confirmed replacements.
     optional_field_detected_count: int = 0
+    # Yayoi only: fields JDL cannot hold (kept in the audit file once the
+    # Human confirms what they mean). Includes already-confirmed fields.
+    source_is_yayoi: bool = False
+    information_fields: tuple = ()
 
 
 def _loss_rule_for(profile):
@@ -171,6 +175,17 @@ def _loss_rule_for(profile):
     if format_for_identity_key(profile.source_format_identity.stable_key) is not None:
         return YayoiToJdlLossRule(frozenset(confirmed_optional_fields(profile)))
     return MoneyForwardToJdlLossRule()
+
+
+def _yayoi_information(entries, profile) -> dict:
+    from accounting_converter.application.yayoi_information_policy import (
+        information_fields,
+        is_yayoi_profile,
+    )
+
+    if not is_yayoi_profile(profile):
+        return {}
+    return {"source_is_yayoi": True, "information_fields": information_fields(entries, profile)}
 
 
 def _information_results(results):
@@ -512,6 +527,7 @@ class CompanyMappingUpdateService:
             len(other_journals),
             len(other_rows),
             len({item.journal_id for item in detected_results if item.journal_id}),
+            **_yayoi_information(entries, profile),
         )
 
     @staticmethod

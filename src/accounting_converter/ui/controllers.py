@@ -40,6 +40,9 @@ from accounting_converter.profiles.jdl_official import JdlTaxProcessingMode
 from accounting_converter.application.company_trade_partner_policy import (
     CompanyTradePartnerPolicyService,
 )
+from accounting_converter.application.yayoi_information_policy import (
+    YayoiInformationPolicyService,
+)
 from accounting_converter.application.moneyforward_profile_setup import (
     MoneyForwardProfileSetupAnalysis,
     MoneyForwardProfileSetupService,
@@ -206,6 +209,9 @@ class AccountingConverterController:
             )
         )
         self.company_trade_partner_policy_service = CompanyTradePartnerPolicyService(
+            self.company_store, self.profile_store
+        )
+        self.yayoi_information_policy_service = YayoiInformationPolicyService(
             self.company_store, self.profile_store
         )
         self.moneyforward_profile_setup_service = MoneyForwardProfileSetupService(
@@ -941,6 +947,27 @@ class AccountingConverterController:
         self.state = replace(
             state,
             user_message="取引先情報をJDLの摘要へ記録する設定を保存しました。",
+        )
+        return self.state
+
+    def confirm_yayoi_information_policies(
+        self, company_setting_id: str, meanings: dict[str, str]
+    ) -> AppState:
+        """Save the Human's audit-only policy for Yayoi fields JDL cannot hold."""
+        try:
+            self.yayoi_information_policy_service.confirm(company_setting_id, meanings)
+        except Exception as error:
+            return self._fail_state(
+                str(error) if isinstance(error, ValueError) else
+                "JDLに保持されない情報の扱いを保存できませんでした。会社設定を確認してください。",
+                error,
+            )
+        self.load_profiles()
+        self.load_company_settings()
+        state = self.select_company_setting(company_setting_id)
+        self.state = replace(
+            state,
+            user_message=f"JDLに保持されない情報の扱いを{len(meanings)}項目保存しました（JDLへは出さず、監査記録に残します）。",
         )
         return self.state
 
