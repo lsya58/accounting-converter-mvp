@@ -56,6 +56,7 @@ from accounting_converter.adapters.output.jdl import (
     JdlContextProvenance,
     JdlInputTaxCreditMethod,
     JdlSimplifiedBusinessCategory,
+    JdlTaxRounding,
     JdlTaxationMethod,
 )
 from accounting_converter.profiles.jdl_official import JdlTaxProcessingMode
@@ -1662,15 +1663,24 @@ class CompanyMappingUpdateDialog(QDialog):
             policy_note.setObjectName("warningCard")
             policy_note.setWordWrap(True)
             page_layout.addWidget(policy_note)
+        filter_bar = QHBoxLayout()
+        search = QLineEdit()
+        search.setPlaceholderText("科目名・補助名で絞り込み")
+        search.setClearButtonEnabled(True)
+        unconfirmed_only = QCheckBox("未確認のみ表示")
+        filter_bar.addWidget(search, 1)
+        filter_bar.addWidget(unconfirmed_only)
+        page_layout.addLayout(filter_bar)
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setChildrenCollapsible(False)
         table = QTableWidget(len(items), 5)
         table.setHorizontalHeaderLabels(
             (
-                "MFの親科目", "MFの補助・入力値", "JDLの親科目",
+                "入力元の親科目", "入力元の科目・補助", "JDLの親科目",
                 "JDLでの対応先", "状態",
             )
         )
+        row_controls: list[tuple[object, QCheckBox]] = []
         for column in (0, 2, 4):
             table.horizontalHeader().setSectionResizeMode(
                 column, QHeaderView.ResizeMode.ResizeToContents
@@ -1707,6 +1717,17 @@ class CompanyMappingUpdateDialog(QDialog):
                     self.subaccount_parent_cells[item.key] = cell
             target = WheelSafeComboBox()
             target.addItem("未選択", None)
+            ranked = tuple(
+                candidate for candidate in getattr(item, "candidates", ())
+                if candidate.name in item.available_targets and candidate.name != item.exact_candidate
+            )
+            if ranked:
+                # Suggestions only: never pre-selected; the Human picks and confirms.
+                target.addItem("候補（名前の一致・類似。確定ではありません）", None)
+                for candidate in ranked:
+                    warning = f"・注意: {candidate.warning}" if candidate.warning else ""
+                    target.addItem(f"{candidate.name}（{candidate.label}{warning}）", candidate.name)
+                target.addItem("すべてのJDL科目", None)
             if item.mapping_type == "ACCOUNT" and item.exact_candidate:
                 target.addItem("おすすめ", None)
                 target.addItem(
@@ -1716,6 +1737,8 @@ class CompanyMappingUpdateDialog(QDialog):
                 target.addItem("その他のJDL科目", None)
             for value in item.available_targets:
                 if item.mapping_type == "ACCOUNT" and value == item.exact_candidate:
+                    continue
+                if any(candidate.name == value for candidate in ranked):
                     continue
                 target.addItem(value, value)
                 target.setItemData(
@@ -1753,6 +1776,7 @@ class CompanyMappingUpdateDialog(QDialog):
                 self._mapping_confirmation_changed(combo, checkbox, status)
             )
             self.controls.append((item.key, target, confirmed))
+            row_controls.append((item, confirmed))
             if item.mapping_type == "ACCOUNT":
                 self.account_controls[item.source_value] = (target, confirmed)
                 target.currentIndexChanged.connect(
@@ -1772,6 +1796,21 @@ class CompanyMappingUpdateDialog(QDialog):
             lambda current_row, _current_column, _previous_row, _previous_column:
             detail_stack.setCurrentIndex(max(current_row, 0))
         )
+
+        def apply_filter(*_args) -> None:
+            text = search.text().strip()
+            for row_index, (review_item, checkbox) in enumerate(row_controls):
+                matches = not text or any(
+                    text in (value or "")
+                    for value in (review_item.source_value, review_item.parent_account)
+                )
+                hide = not matches or (unconfirmed_only.isChecked() and checkbox.isChecked())
+                table.setRowHidden(row_index, hide)
+
+        search.textChanged.connect(apply_filter)
+        unconfirmed_only.toggled.connect(apply_filter)
+        for _item, checkbox in row_controls:
+            checkbox.stateChanged.connect(apply_filter)
         if items:
             table.selectRow(0)
             detail_stack.setCurrentIndex(0)
@@ -1798,6 +1837,7 @@ class CompanyMappingUpdateDialog(QDialog):
             details = (
                 ("推奨", "JDLで使用する科目を選択"),
                 ("理由", "入力元の科目を、今回のJDL会社で使用する科目へ対応させます。"),
+                ("影響する仕訳", f"{item.affected_journal_count}件（ここで1回確認すれば、すべての仕訳と次回以降のCSVに使われます）"),
             )
         else:
             details = (
@@ -1821,6 +1861,17 @@ class CompanyMappingUpdateDialog(QDialog):
                     if item.blank_rejection_evidence_id else ()
                 ),
             )
+        candidates = tuple(getattr(item, "candidates", ()))
+        if candidates:
+            details = (*details, (
+                "候補と根拠",
+                "\n".join(
+                    f"・{candidate.code} {candidate.name}：{candidate.label}（{candidate.basis}）"
+                    + (f"\n　注意：{candidate.warning}" if candidate.warning else "")
+                    for candidate in candidates
+                )
+                + "\n候補は名前の一致・類似から機械的に作ったもので、会計上の正しさは保証しません。",
+            ))
         for label, value in details:
             title = QLabel(label)
             title.setObjectName("muted")
@@ -2496,6 +2547,7 @@ class CompanyAddDialog(QDialog):
         super().__init__(parent)
         self.controller = controller
         self.context_path: Path | None = None
+        self.yayoi_sample_path: Path | None = None
         self.profile_ids: list[str] = []
         self.initial_company_ids = {
             item.company_setting_id for item in controller.state.companies
@@ -2568,12 +2620,35 @@ class CompanyAddDialog(QDialog):
         self.source_combo = QComboBox()
         self.source_combo.addItems(("Money Forward", "弥生", "JDL"))
         layout.addWidget(self.source_combo)
+        # 弥生: one sample CSV decides which export the company uses
+        # (仕訳日記帳 汎用形式 / インポート形式). It is only read, never changed.
+        self.yayoi_sample_button = QPushButton("弥生のCSVを選ぶ（形式の判定に使います）")
+        self.yayoi_sample_button.clicked.connect(self._choose_yayoi_sample)
+        self.yayoi_sample_label = QLabel("未選択")
+        self.yayoi_sample_label.setObjectName("muted")
+        layout.addWidget(self.yayoi_sample_button)
+        layout.addWidget(self.yayoi_sample_label)
+        self.source_combo.currentTextChanged.connect(self._source_changed)
         layout.addWidget(QLabel("変換先"))
         self.target_combo = QComboBox()
         self.target_combo.addItem("JDL")
         layout.addWidget(self.target_combo)
         layout.addStretch(1)
+        self._source_changed(self.source_combo.currentText())
         return page
+
+    def _source_changed(self, source: str) -> None:
+        is_yayoi = source == "弥生"
+        self.yayoi_sample_button.setVisible(is_yayoi)
+        self.yayoi_sample_label.setVisible(is_yayoi)
+
+    def _choose_yayoi_sample(self) -> None:
+        filename, _ = QFileDialog.getOpenFileName(
+            self, "弥生のCSVを選択", "", "CSV / TXT (*.csv *.txt)"
+        )
+        if filename:
+            self.yayoi_sample_path = Path(filename)
+            self.yayoi_sample_label.setText(Path(filename).name)
 
     def _settings_page(self) -> QWidget:
         page, layout = self._page(
@@ -2655,7 +2730,10 @@ class CompanyAddDialog(QDialog):
             self.error_label.setText("会社設定名を入力してください。")
             return
         if index == 1:
-            if self.source_combo.currentText() in {"Money Forward", "JDL"}:
+            if self.source_combo.currentText() == "弥生" and self.yayoi_sample_path is None:
+                self.error_label.setText("形式の判定に使う弥生のCSVを選んでください。")
+                return
+            if self.source_combo.currentText() in {"Money Forward", "JDL", "弥生"}:
                 self.profile_ids = []
                 self.profile_combo.clear()
                 self.profile_combo.hide()
@@ -2689,7 +2767,7 @@ class CompanyAddDialog(QDialog):
                 self.create_profile_button.setText("新しい対応設定を作成")
         if index == 2:
             if (
-                self.source_combo.currentText() not in {"Money Forward", "JDL"}
+                self.source_combo.currentText() not in {"Money Forward", "JDL", "弥生"}
                 and self.profile_combo.currentIndex() < 0
             ):
                 self.error_label.setText("対応設定を選択してください。")
@@ -2756,6 +2834,17 @@ class CompanyAddDialog(QDialog):
                 )
             except Exception:
                 self.error_label.setText("会社設定を作成できませんでした。科目一覧を確認してください。")
+                return
+            self.profile_ids = [profile.profile_id]
+            profile_id = profile.profile_id
+        elif source == "弥生" and not self.profile_ids:
+            try:
+                profile = self.controller.create_yayoi_company_draft_profile(
+                    self.name_edit.text().strip(), self.yayoi_sample_path
+                )
+            except Exception as exc:
+                log_local_exception("yayoi_profile_create", exc)
+                self.error_label.setText("弥生のCSVを読み込めませんでした。ファイルを確認してください。")
                 return
             self.profile_ids = [profile.profile_id]
             profile_id = profile.profile_id
@@ -3180,12 +3269,27 @@ class JdlTaxContextConfirmationDialog(QDialog):
             self.business_category.addItem(label, value.value)
         self.credit_label = QLabel("仕入税額控除")
         self.business_label = QLabel("主たる事業区分")
+        # JDL 端数処理 (売上・仕入): decides which explicit Yayoi tax amounts are safe.
+        self.sales_rounding = WheelSafeComboBox()
+        self.purchase_rounding = WheelSafeComboBox()
+        for combo in (self.sales_rounding, self.purchase_rounding):
+            for label, value in (
+                ("未確認", JdlTaxRounding.UNCONFIRMED),
+                ("切り捨て", JdlTaxRounding.FLOOR),
+                ("四捨五入", JdlTaxRounding.HALF_UP),
+                ("切り上げ", JdlTaxRounding.CEILING),
+            ):
+                combo.addItem(label, value.value)
+        self.sales_rounding_label = QLabel("売上の端数処理")
+        self.purchase_rounding_label = QLabel("仕入の端数処理")
         rows = (
             (QLabel("消費税処理"), self.taxable_status),
             (QLabel("経理処理"), self.accounting_method),
             (QLabel("課税方式"), self.taxation_method),
             (self.credit_label, self.credit_method),
             (self.business_label, self.business_category),
+            (self.sales_rounding_label, self.sales_rounding),
+            (self.purchase_rounding_label, self.purchase_rounding),
         )
         for row, (label, control) in enumerate(rows):
             form.addWidget(label, row, 0)
@@ -3198,6 +3302,8 @@ class JdlTaxContextConfirmationDialog(QDialog):
         self.taxation_method.currentIndexChanged.connect(self._refresh_fields)
         self.credit_method.currentIndexChanged.connect(self._refresh_fields)
         self.business_category.currentIndexChanged.connect(self._refresh_fields)
+        self.sales_rounding.currentIndexChanged.connect(self._refresh_fields)
+        self.purchase_rounding.currentIndexChanged.connect(self._refresh_fields)
         self._load_current_context()
         self._refresh_fields()
         actions = QHBoxLayout()
@@ -3246,6 +3352,8 @@ class JdlTaxContextConfirmationDialog(QDialog):
                 if taxation is JdlTaxationMethod.SIMPLIFIED
                 else None
             ),
+            sales_tax_rounding=JdlTaxRounding(str(self.sales_rounding.currentData())),
+            purchase_tax_rounding=JdlTaxRounding(str(self.purchase_rounding.currentData())),
         )
         if state.tax_context_save_status is TaxContextSaveStatus.SAVED:
             self.accept()
@@ -3281,6 +3389,9 @@ class JdlTaxContextConfirmationDialog(QDialog):
         self.business_label.setVisible(simplified)
         self.business_category.setVisible(simplified)
         self.business_category.setEnabled(simplified)
+        for widget in (self.sales_rounding_label, self.sales_rounding,
+                       self.purchase_rounding_label, self.purchase_rounding):
+            widget.setVisible(taxable)
         if not self._loading_context:
             self.confirmed.setChecked(False)
 
@@ -3329,6 +3440,13 @@ class JdlTaxContextConfirmationDialog(QDialog):
             )
             if category_index >= 0:
                 self.business_category.setCurrentIndex(category_index)
+        for combo, value in (
+            (self.sales_rounding, getattr(context, "sales_tax_rounding", JdlTaxRounding.UNCONFIRMED)),
+            (self.purchase_rounding, getattr(context, "purchase_tax_rounding", JdlTaxRounding.UNCONFIRMED)),
+        ):
+            index = combo.findData(value.value)
+            if index >= 0:
+                combo.setCurrentIndex(index)
 
 
 class TaxMappingConfirmationDialog(QDialog):

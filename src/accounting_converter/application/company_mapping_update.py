@@ -53,6 +53,7 @@ from accounting_converter.domain.mapping import (
     is_confirmed_parent_only,
 )
 from accounting_converter.domain.profile import FormatProfile
+from accounting_converter.application.mapping_candidates import TargetAccount, rank_candidates
 from accounting_converter.infrastructure.jdl_account_pdf_draft import JdlAccountPdfDraftStore
 from accounting_converter.infrastructure.jdl_target_context_loader import JdlTargetContextLoader
 from accounting_converter.profiles.known_formats import moneyforward_cloud_journal_export_observed_schema
@@ -84,6 +85,9 @@ class CompanyMappingUpdateItem:
     parent_only_loss: str = "補助科目別の情報はJDLへ引き継がれません。"
     source_peer_names: tuple[str, ...] = ()
     blank_rejection_evidence_id: str | None = None
+    # Ranked suggestions with kind and basis (application.mapping_candidates).
+    # Display only: selecting one is still an explicit Human confirmation.
+    candidates: tuple = ()
 
     def subaccount_targets_for(self, parent_target: str) -> tuple[str, ...]:
         return next(
@@ -152,6 +156,26 @@ class CompanyMappingUpdateReview:
     optional_field_detected_count: int = 0
 
 
+def _tax_usage_by_account(entries, profile, context) -> dict[str, tuple[str, ...]]:
+    """JDL tax semantics each source account is used with (confirmed, else the
+    natural Yayoi candidate); only feeds the category warning of candidates."""
+    from accounting_converter.application import moneyforward_tax_excluded_evidence as ev
+    from accounting_converter.application.yayoi_review import candidate_semantic
+
+    usage: dict[str, set[str]] = defaultdict(set)
+    for entry in entries:
+        for line in entry.lines:
+            if not line.tax_info or not line.tax_info.category:
+                continue
+            value = ev.target_tax_semantic(line, profile, context) if context is not None else ev.UNMAPPED_TAX
+            if value == ev.UNMAPPED_TAX:
+                semantic = candidate_semantic(line.tax_info.category)
+                value = semantic.value if semantic is not None else ""
+            if value:
+                usage[line.account].add(value)
+    return {key: tuple(sorted(values)) for key, values in usage.items()}
+
+
 class CompanyMappingUpdateService:
     def __init__(self, company_store, profile_store) -> None:
         self.company_store = company_store
@@ -173,10 +197,12 @@ class CompanyMappingUpdateService:
         entries = self._entries(source_path, profile.source_format_identity.stable_key)
         subaccount_journals: dict[MappingKey, set[str]] = defaultdict(set)
         blank_subaccount_journals: dict[str, set[str]] = defaultdict(set)
+        account_journals: dict[str, set[str]] = defaultdict(set)
         for entry in entries:
             for line in entry.lines:
                 if not line.account:
                     continue
+                account_journals[line.account].add(entry.id)
                 if line.sub_account:
                     subaccount_journals[
                         MappingKey(
@@ -199,6 +225,7 @@ class CompanyMappingUpdateService:
                 ).apply(entries).entries
             )
         accounts = AccountMappingReviewService().build(entries, master, profile)
+        tax_usage = _tax_usage_by_account(entries, profile, runtime_context)
         items: list[CompanyMappingUpdateItem] = []
         for item in accounts.items:
             if item.usable and not include_confirmed:
@@ -236,6 +263,20 @@ class CompanyMappingUpdateService:
                         item.usable
                         and current is not None
                         and current.status is MappingStatus.USER_CONFIRMED
+                    ),
+                    affected_journal_count=len(account_journals.get(item.requirement.source_value, ())),
+                    candidates=rank_candidates(
+                        item.requirement.source_value,
+                        tuple(
+                            TargetAccount(t.code, t.name, t.abbreviation, t.normal_balance)
+                            for t in item.selectable_targets
+                        ),
+                        approved_code=(
+                            current.metadata.get("target_code")
+                            if current is not None and current.status is MappingStatus.USER_CONFIRMED
+                            else None
+                        ),
+                        tax_usage=tax_usage.get(item.requirement.source_value, ()),
                     ),
                 )
             )
@@ -356,6 +397,15 @@ class CompanyMappingUpdateService:
                             requirement.parent_account or "", set()
                         )
                     )),
+                    # Only subaccounts of the confirmed parent: no invalid pairs.
+                    candidates=rank_candidates(
+                        requirement.source_value,
+                        tuple(TargetAccount(t.code, t.name) for t in candidates),
+                        approved_code=(
+                            mapping.metadata.get("target_code")
+                            if preserve and mapping is not None else None
+                        ),
+                    ),
                 )
             )
         self._append_default_subaccount_items(

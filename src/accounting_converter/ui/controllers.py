@@ -31,6 +31,7 @@ from accounting_converter.application.company_review_state import (
     build_company_review_work_queue,
 )
 from accounting_converter.adapters.output.jdl import (
+    JdlTaxRounding,
     JdlInputTaxCreditMethod,
     JdlSimplifiedBusinessCategory,
     JdlTaxationMethod,
@@ -113,6 +114,7 @@ from accounting_converter.profiles.known_formats import (
     jdl_ibex_cashbook_official_journal_import_schema_definition,
     moneyforward_cloud_journal_export_observed_schema,
     yayoi_ae19_direct_export_observed_schema,
+    yayoi_journal_report_generic_identity,
     yayoi_desktop_import_25_documented_schema,
 )
 
@@ -180,6 +182,9 @@ class AccountingConverterController:
             moneyforward_conversion_workflow or MoneyForwardConversionWorkflow()
         )
         self.jdl_migration_workflow = JdlMigrationFormalWorkflow()
+        from accounting_converter.application.yayoi_jdl_workflow import YayoiJdlWorkflow
+
+        self.yayoi_conversion_workflow = YayoiJdlWorkflow()
         self._active_conversion_workflow = self.conversion_workflow
         self.context_loader = context_loader or JdlTargetContextLoader()
         self.company_store = company_store or CompanySettingStore(
@@ -489,7 +494,10 @@ class AccountingConverterController:
         state = self.state
         if (
             state.file_recognition is None
-            or state.file_recognition.format is not RecognizedFormat.MONEYFORWARD
+            or not (
+                state.file_recognition.format is RecognizedFormat.MONEYFORWARD
+                or self._yayoi_route()
+            )
             or state.selected_file is None
             or state.selected_company_setting_id is None
         ):
@@ -876,6 +884,14 @@ class AccountingConverterController:
             return TaxMappingSetupReview(
                 user_message="現在のJDL設定ではこの税区分を確認できません"
             )
+        from accounting_converter.application.yayoi_review import yayoi_tax_mapping_review
+        from accounting_converter.application.yayoi_sources import format_for_identity_key
+
+        if format_for_identity_key(resolved.profile.source_format_identity.stable_key) is not None:
+            return yayoi_tax_mapping_review(
+                resolved.profile, resolved.context,
+                affected_counts=affected_counts or {}, observed_source_values=observed_source_values,
+            )
         review = self.moneyforward_profile_setup_service.tax_mapping_review(
             resolved.profile,
             resolved.context,
@@ -955,6 +971,8 @@ class AccountingConverterController:
         taxation_method: JdlTaxationMethod = JdlTaxationMethod.STANDARD,
         input_tax_credit_method: JdlInputTaxCreditMethod = JdlInputTaxCreditMethod.INDIVIDUAL,
         simplified_business_category: JdlSimplifiedBusinessCategory | None = None,
+        sales_tax_rounding: JdlTaxRounding = JdlTaxRounding.UNCONFIRMED,
+        purchase_tax_rounding: JdlTaxRounding = JdlTaxRounding.UNCONFIRMED,
     ) -> AppState:
         try:
             result = self.company_tax_context_confirmation_service.confirm(
@@ -964,6 +982,8 @@ class AccountingConverterController:
                     taxation_method=taxation_method,
                     input_tax_credit_method=input_tax_credit_method,
                     simplified_business_category=simplified_business_category,
+                    sales_tax_rounding=sales_tax_rounding,
+                    purchase_tax_rounding=purchase_tax_rounding,
                 ),
                 confirmed=explicitly_confirmed,
             )
@@ -1054,8 +1074,20 @@ class AccountingConverterController:
                 "現在のJDL設定ではこの税区分を確認できません。",
                 CompanySettingStoreError("company setting is unavailable"),
             )
+        from accounting_converter.application.yayoi_review import candidate_semantic, confirm_tax_identity
+        from accounting_converter.application.yayoi_sources import format_for_identity_key
+
+        is_yayoi = format_for_identity_key(resolved.profile.source_format_identity.stable_key) is not None
         try:
             for source_value in source_values:
+                if is_yayoi:
+                    semantic = candidate_semantic(source_value)
+                    if semantic is None:
+                        raise ValueError("この税区分にはJDLでの書き方の候補がありません。")
+                    # The Human confirms the shown candidate for this one identity.
+                    confirm_tax_identity(self.profile_store, resolved.profile.profile_id,
+                                         resolved.context, source_value, semantic)
+                    continue
                 self.moneyforward_profile_setup_service.confirm_evidence_backed_tax_mapping(
                     profile_id=resolved.profile.profile_id,
                     context=resolved.context,
@@ -1270,6 +1302,8 @@ class AccountingConverterController:
             # The first-release workflow is the Yayoi route and must not be used
             # as a fallback for a recognized JDL source.
             return self.inspect_selected_jdl_migration()
+        if self._yayoi_route():
+            return self._prepare_yayoi_conversion()
         if (
             self.state.file_recognition is not None
             and self.state.file_recognition.format is RecognizedFormat.MONEYFORWARD
@@ -1340,6 +1374,75 @@ class AccountingConverterController:
                 "変換を実行できます。内容を確認してください。"
                 if not summary.blocking_reasons
                 else summary.blocking_reasons[0]
+            ),
+            developer_error=None,
+        )
+        return self.state
+
+    def _prepare_yayoi_conversion(self) -> AppState:
+        """Yayoi → JDL: same review screens as MF, then the Yayoi workflow decides.
+
+        Blockers are shown per owner: HUMAN (choices), SYSTEM_EVIDENCE (real
+        JDL checks still missing) and SYSTEM_IMPLEMENTATION. Output is allowed
+        only when the workflow is READY.
+        """
+        from accounting_converter.application.yayoi_jdl_workflow import YayoiJdlWorkflow
+
+        inspected = self.inspect_selected_moneyforward_confirmations()
+        if inspected.developer_error is not None:
+            return inspected
+        workflow = self.yayoi_conversion_workflow
+        try:
+            resolved = self._resolved_selected_company_for_conversion()
+            profile = resolved.profile if resolved is not None else None
+            context = resolved.context if resolved is not None else None
+            assessment = workflow.assess(self.state.selected_file, profile, context)
+            self._active_conversion_workflow = workflow
+            self._prepared = workflow.prepare(
+                input_path=self.state.selected_file,
+                output_path=self.state.selected_output_file,
+                profile=profile,
+                context=context,
+                company_setting_validated=bool(resolved and resolved.available),
+            )
+        except Exception as error:
+            self._prepared = None
+            return self._fail_state("実行前チェックを完了できませんでした。", error)
+        owners: dict[str, int] = {}
+        for blockers in assessment.journal_blockers.values():
+            for owner in {blocker.split(":", 1)[0] for blocker in blockers}:
+                owners[owner] = owners.get(owner, 0) + 1
+        owner_counts = tuple(
+            (owner, owners.get(owner, 0))
+            for owner in ("HUMAN", "SYSTEM_EVIDENCE", "SYSTEM_IMPLEMENTATION")
+        )
+        summary = self._prepared.summary
+        ready = summary.readiness.value == "READY"
+        lines = [
+            f"正式変換できる仕訳: {assessment.ready_journals} / {assessment.entry_count}",
+            f"人の確認が必要: {owners.get('HUMAN', 0)}仕訳",
+            f"JDL実機での確認が不足: {owners.get('SYSTEM_EVIDENCE', 0)}仕訳",
+            f"システム未対応: {owners.get('SYSTEM_IMPLEMENTATION', 0)}仕訳",
+        ]
+        likely = assessment.likely_blocker_counts()
+        if likely:
+            lines.append(
+                "確認後に実機確認が必要になる見込み（現時点の候補による予測。確定ではありません）: "
+                + f"{len(assessment.likely_blockers or {})}仕訳"
+            )
+        self.state = replace(
+            self.state,
+            conversion_summary=summary,
+            conversion_available=ready,
+            preflight_status=summary.readiness.value,
+            blocker_owner_counts=owner_counts,
+            messages=tuple(lines) + tuple(summary.blocking_reasons),
+            result_summary=None,
+            verification_report=None,
+            user_message=(
+                "変換を実行できます。内容を確認してください。" if ready
+                else summary.blocking_reasons[0] if summary.blocking_reasons
+                else "確認が必要な項目があります。"
             ),
             developer_error=None,
         )
@@ -1645,14 +1748,17 @@ class AccountingConverterController:
         if recognition.format is RecognizedFormat.JDL:
             return jdl_ibex_cashbook_migration_input_schema_definition().identity.stable_key
         if recognition.format is RecognizedFormat.YAYOI:
-            return yayoi_ae19_direct_export_observed_schema().identity.stable_key
+            return recognition.source_format_key or yayoi_ae19_direct_export_observed_schema().identity.stable_key
         if recognition.format is RecognizedFormat.MONEYFORWARD:
             return moneyforward_cloud_journal_export_observed_schema().identity.stable_key
         return None
 
     @staticmethod
     def _source_label(source_key: str) -> str:
-        if source_key == yayoi_ae19_direct_export_observed_schema().identity.stable_key:
+        if source_key in {
+            yayoi_ae19_direct_export_observed_schema().identity.stable_key,
+            yayoi_journal_report_generic_identity().stable_key,
+        }:
             return "弥生"
         if source_key == moneyforward_cloud_journal_export_observed_schema().identity.stable_key:
             return "Money Forward"
@@ -1742,6 +1848,14 @@ class AccountingConverterController:
                     "19",
                 ),
             )
+        if not (
+            selected_setting is not None
+            and selected_setting.expected_source_format_key == jdl_source_key
+        ):
+            yayoi = self._recognize_yayoi(path)
+            if yayoi is not None:
+                return yayoi
+            # Otherwise the older AE19 reader may still recognize it (legacy route).
         for kind, label, adapter, schema, software, product, version in candidates:
             profile = FormatProfile(
                 software=software,
@@ -1766,6 +1880,65 @@ class AccountingConverterController:
             format=RecognizedFormat.UNKNOWN,
             display_name="未対応のCSV",
         )
+
+    @staticmethod
+    def _recognize_yayoi(path: Path) -> FileRecognition | None:
+        """Both Yayoi exports (仕訳日記帳 汎用形式 / インポート形式), strict readers."""
+        from accounting_converter.application.yayoi_sources import IMPORT, detect_format
+
+        source_format = detect_format(path)
+        try:
+            parsed = source_format.diagnose(path)
+        except Exception:
+            return None
+        if not parsed.entries:
+            return None
+        dates = sorted({entry.date for entry in parsed.entries})
+        label = "弥生会計 インポート形式" if source_format is IMPORT else "弥生会計 仕訳日記帳（汎用形式）"
+        return FileRecognition(
+            format=RecognizedFormat.YAYOI,
+            display_name=label + ("" if parsed.ok else "（読めない仕訳があります）"),
+            journal_count=len(parsed.entries) + parsed.rejected_journals,
+            period_start=dates[0].isoformat(),
+            period_end=dates[-1].isoformat(),
+            source_format_key=source_format.identity().stable_key,
+        )
+
+    def _selected_company_is_yayoi(self) -> bool:
+        """The selected CompanySetting uses one of the Yayoi → JDL workflow formats."""
+        from accounting_converter.application.yayoi_sources import format_for_identity_key
+
+        company_id = self.state.selected_company_setting_id
+        if company_id is None:
+            return False
+        try:
+            setting = self.company_store.get(company_id)
+        except CompanySettingStoreError:
+            return False
+        return format_for_identity_key(setting.expected_source_format_key) is not None
+
+    def _yayoi_route(self) -> bool:
+        recognition = self.state.file_recognition
+        return bool(
+            recognition is not None
+            and recognition.format is RecognizedFormat.YAYOI
+            and self._selected_company_is_yayoi()
+        )
+
+    def create_yayoi_company_draft_profile(
+        self, company_display_name: str, sample_source: Path
+    ) -> ConversionProfile:
+        """Company-scoped Yayoi → JDL profile; the sample CSV decides the Yayoi format."""
+        from accounting_converter.application.yayoi_review import create_yayoi_profile
+        from accounting_converter.application.yayoi_sources import detect_format
+
+        source_format = detect_format(sample_source)
+        parsed = source_format.diagnose(sample_source)
+        if not parsed.ok:
+            raise ValueError("弥生のCSVを安全に読み込めませんでした。")
+        profile = create_yayoi_profile(self.profile_store, company_display_name, parsed.entries, source_format)
+        self.load_profiles()
+        return profile
 
     def _fail_state(
         self,

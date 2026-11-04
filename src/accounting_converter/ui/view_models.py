@@ -71,6 +71,8 @@ class FileRecognition:
     journal_count: int | None = None
     period_start: str | None = None
     period_end: str | None = None
+    # Exact source format identity (e.g. which Yayoi export), when known.
+    source_format_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -87,6 +89,8 @@ class ConversionResultPresentation:
 
 @dataclass(frozen=True)
 class AppState:
+    # Blockers per owner (HUMAN / SYSTEM_EVIDENCE / SYSTEM_IMPLEMENTATION), journals.
+    blocker_owner_counts: tuple[tuple[str, int], ...] = ()
     companies: tuple[CompanyOption, ...] = ()
     selected_company_setting_id: str | None = None
     profiles: tuple[ProfileOption, ...] = ()

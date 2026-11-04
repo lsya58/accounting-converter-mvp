@@ -400,3 +400,61 @@ def non_retained_values(entry) -> tuple[tuple[int, str, str], ...]:
 
 def field_of(name: str) -> str:
     return DEPARTMENT_FIELD if name.startswith(DEPARTMENT_FIELD) else name
+
+
+def yayoi_tax_mapping_review(profile, context, *, affected_counts=None, observed_source_values=()):
+    """Yayoi tax identities in the same shape the existing tax screen shows for MF.
+
+    HUMAN: a candidate JDL literal exists in a verified Tax Context; the Human
+    confirms it. SYSTEM_EVIDENCE: no candidate (e.g. 軽減8%, 経過措置80%,
+    控除不可) - not confirmable on screen, the JDL representation is unverified.
+    """
+    from accounting_converter.application.moneyforward_profile_setup import (
+        TaxMappingSetupItem,
+        TaxMappingSetupReview,
+    )
+
+    affected_counts = affected_counts or {}
+    verified = ev.context_is_verified(context)
+    values = observed_source_values or tuple(profile.tax_mappings)
+    items = []
+    for value in values:
+        mapping = profile.tax_mappings.get(value)
+        if (
+            mapping is not None and mapping.status is MappingStatus.USER_CONFIRMED
+            and mapping.metadata.get("jdl_tax_context_identity_sha256") == ev.tax_context_identity_sha256(context)
+        ):
+            continue
+        semantic = candidate_semantic(value)
+        literal = JDL_TAX_LITERALS.get(semantic) if semantic is not None else None
+        confirmable = bool(semantic is not None and verified)
+        items.append(TaxMappingSetupItem(
+            source_value=value,
+            target_value=literal.category if literal else None,
+            target_display=_TAX_DISPLAY.get(semantic, "候補なし") if semantic else "候補なし",
+            target_scope=literal.scope if literal else "",
+            evidence_id=SEMANTIC_EVIDENCE_ID.get(semantic) if semantic else None,
+            human_confirmable=confirmable,
+            action_owner="HUMAN" if confirmable else "SYSTEM_EVIDENCE",
+            blocker_code="YAYOI-JDL-TAX-HUMAN-CONFIRMATION" if confirmable else "YAYOI-JDL-TAX-REPRESENTATION-UNVERIFIED",
+            reason=(
+                "候補の書き方でよいか確認してください（候補は自動では確定しません）。"
+                if confirmable else
+                "JDLでの書き方が実機で確認されていません（軽減税率・経過措置・控除不可など）。"
+            ),
+            affected_row_count=affected_counts.get(value, 0),
+        ))
+    return TaxMappingSetupReview(
+        items=tuple(items),
+        context_compatible=verified,
+        user_message="税区分はすべて確認済みです。" if not items else "",
+    )
+
+
+_TAX_DISPLAY = {
+    JdlTaxSemantic.NO_TAX: "対象外（税なし）",
+    JdlTaxSemantic.PURCHASE_10_INTERNAL: "仕入 / 10%（内税）",
+    JdlTaxSemantic.SALES_10_EXTERNAL: "売上 / 10%（外税）",
+    JdlTaxSemantic.NON_TAXABLE_PURCHASE: "非課税仕入（課区 非仕入）",
+    JdlTaxSemantic.NON_TAXABLE_SALES: "非課税売上（課区 非売上）",
+}
