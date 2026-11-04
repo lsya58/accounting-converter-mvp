@@ -7,7 +7,7 @@ from PySide6.QtGui import QFont, QFontDatabase, QGuiApplication
 from PySide6.QtWidgets import QApplication
 
 from accounting_converter.ui_qt.main_window import AccountingConverterMainWindow
-from accounting_converter.ui_qt.theme import APP_STYLE_SHEET
+from accounting_converter.ui_qt.theme import apply_light_theme
 
 
 def _preferred_font() -> QFont:
@@ -27,7 +27,7 @@ def main() -> int:
     app.setApplicationName("AccountingConverter")
     app.setOrganizationName("AccountingConverter")
     app.setFont(_preferred_font())
-    app.setStyleSheet(APP_STYLE_SHEET)
+    apply_light_theme(app)  # light palette even when Windows is in dark mode
     window = AccountingConverterMainWindow()
     window.show()
     return app.exec()

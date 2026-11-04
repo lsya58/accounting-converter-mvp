@@ -662,7 +662,7 @@ class QtGuiContractTests(unittest.TestCase):
         source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(encoding="utf-8")
         dialog = source.split("class CompanyMappingUpdateDialog", maxsplit=1)[1]
         self.assertIn("親科目のみで変換する", dialog)
-        self.assertIn("MF側の補助科目情報は", dialog)
+        self.assertIn("入力元の補助科目情報は", dialog)
         self.assertIn("PARENT_ONLY_SELECTION", dialog)
         self.assertIn("combo.currentData() is not None and check.isChecked()", dialog)
 

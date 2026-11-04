@@ -156,6 +156,29 @@ class CompanyMappingUpdateReview:
     optional_field_detected_count: int = 0
 
 
+def _loss_rule_for(profile):
+    """The loss rule of the company's own source format.
+
+    MF: information JDL cannot hold includes MF's invoice classification.
+    Yayoi: the invoice class is part of the tax identity (税区分｜請求書区分｜
+    仕入税額控除) and goes through the tax mapping, so it is not lost; only
+    付箋・生成元・部門 etc. (unless confirmed audit-only) and descriptions count.
+    """
+    from accounting_converter.application.yayoi_jdl_workflow import YayoiToJdlLossRule
+    from accounting_converter.application.yayoi_review import confirmed_optional_fields
+    from accounting_converter.application.yayoi_sources import format_for_identity_key
+
+    if format_for_identity_key(profile.source_format_identity.stable_key) is not None:
+        return YayoiToJdlLossRule(frozenset(confirmed_optional_fields(profile)))
+    return MoneyForwardToJdlLossRule()
+
+
+def _information_results(results):
+    # A closing entry is a JDL representation question (SYSTEM_EVIDENCE),
+    # not information that JDL cannot hold.
+    return [result for result in results if result.field != "closing_entry"]
+
+
 def _tax_usage_by_account(entries, profile, context) -> dict[str, tuple[str, ...]]:
     """JDL tax semantics each source account is used with (confirmed, else the
     natural Yayoi candidate); only feeds the category warning of candidates."""
@@ -432,14 +455,13 @@ class CompanyMappingUpdateService:
             not in verified_shapes
             for entry in entries
         )
-        detected_results = ValidationPipeline((MoneyForwardToJdlLossRule(),)).validate(
-            entries
-        )
+        loss_rule = _loss_rule_for(profile)
+        detected_results = _information_results(ValidationPipeline((loss_rule,)).validate(entries))
         # Blockers are what remains after Human-confirmed description
         # replacements, exactly as the formal workflow applies them.
-        loss_results = ValidationPipeline((MoneyForwardToJdlLossRule(),)).validate(
+        loss_results = _information_results(ValidationPipeline((loss_rule,)).validate(
             MoneyForwardDescriptionReplacementPolicy(profile).apply(entries).entries
-        )
+        ))
         optional_rows: dict[str, set[tuple[str, int]]] = defaultdict(set)
         by_id = {entry.id: entry for entry in entries}
         for result in loss_results:
@@ -930,8 +952,8 @@ class CompanyMappingUpdateService:
             "MF_INTERNAL_MANAGEMENT",
             "C",
             "Human判断が必要",
-            "MF固有の管理区分をJDLでも保持する必要があるか確認してください。",
-            "MFで使用していた補助科目別の情報はJDLへ引き継がれません。",
+            "入力元固有の管理区分をJDLでも保持する必要があるか確認してください。",
+            "入力元で使用していた補助科目別の情報はJDLへ引き継がれません。",
         )
 
     @staticmethod

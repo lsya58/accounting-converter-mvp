@@ -226,9 +226,11 @@ QTabWidget::pane {{
     border-radius: 12px;
     top: -1px;
 }}
+QTabBar {{ background: {COLORS['surface']}; }}
+QTabWidget::tab-bar {{ left: 4px; }}
 QTabBar::tab {{
     color: {COLORS['muted']};
-    background: transparent;
+    background: {COLORS['surface']};
     border: 0;
     border-bottom: 3px solid transparent;
     padding: 10px 16px;
@@ -238,6 +240,7 @@ QTabBar::tab {{
 }}
 QTabBar::tab:selected {{
     color: {COLORS['accent']};
+    background: {COLORS['accent_soft']};
     border-bottom: 3px solid {COLORS['accent']};
     font-weight: 700;
 }}
@@ -247,7 +250,12 @@ QTabBar::tab:hover:!selected {{
 }}
 QTabBar::tab:disabled {{
     color: {COLORS['disabled_text']};
-    background: transparent;
+    background: {COLORS['surface']};
+}}
+QTabBar QToolButton {{
+    background: {COLORS['surface']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 6px;
 }}
 QScrollBar:vertical {{
     width: 12px;
@@ -326,3 +334,36 @@ QLabel#infoCard {{
     padding: 10px 14px;
 }}
 """
+
+
+def apply_light_theme(app) -> None:
+    """Fusion style + an explicit light palette, then the style sheet.
+
+    Windows dark mode otherwise hands Qt a dark palette, which shows through
+    wherever the style sheet does not paint (e.g. tab bars, viewports).
+    """
+    from PySide6.QtGui import QColor, QPalette
+
+    app.setStyle("Fusion")
+    palette = QPalette()
+    roles = {
+        QPalette.ColorRole.Window: COLORS["page"],
+        QPalette.ColorRole.WindowText: COLORS["text"],
+        QPalette.ColorRole.Base: COLORS["surface"],
+        QPalette.ColorRole.AlternateBase: "#F9FAFC",
+        QPalette.ColorRole.Text: COLORS["text"],
+        QPalette.ColorRole.Button: COLORS["surface"],
+        QPalette.ColorRole.ButtonText: COLORS["text"],
+        QPalette.ColorRole.ToolTipBase: COLORS["text"],
+        QPalette.ColorRole.ToolTipText: COLORS["surface"],
+        QPalette.ColorRole.Highlight: COLORS["accent_soft"],
+        QPalette.ColorRole.HighlightedText: COLORS["text"],
+        QPalette.ColorRole.PlaceholderText: COLORS["muted"],
+        QPalette.ColorRole.Link: COLORS["accent"],
+    }
+    for role, color in roles.items():
+        palette.setColor(role, QColor(color))
+    for role in (QPalette.ColorRole.WindowText, QPalette.ColorRole.Text, QPalette.ColorRole.ButtonText):
+        palette.setColor(QPalette.ColorGroup.Disabled, role, QColor(COLORS["disabled_text"]))
+    app.setPalette(palette)
+    app.setStyleSheet(APP_STYLE_SHEET)
