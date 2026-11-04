@@ -333,6 +333,53 @@ QLabel#infoCard {{
     border-radius: 10px;
     padding: 10px 14px;
 }}
+/* Table-centred review screens: compact rows and in-cell controls. */
+QTableWidget#denseTable {{ padding: 0; }}
+QTableWidget#denseTable::item {{ padding: 2px 8px; }}
+QTableWidget#denseTable QComboBox, QTableWidget#denseTable QLineEdit {{
+    min-height: 26px;
+    max-height: 30px;
+    padding: 0 8px;
+    border-radius: 6px;
+}}
+QTableWidget#denseTable QCheckBox {{ min-height: 24px; spacing: 6px; }}
+QTableWidget#denseTable QHeaderView::section {{ padding: 6px 8px; }}
+QFrame#reviewHeader {{
+    background: {COLORS['surface']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 10px;
+}}
+QLabel#statusStrip {{ font-size: 13px; }}
+QLabel#hintLine {{ color: {COLORS['muted']}; font-size: 12px; }}
+QLabel#detailText {{
+    color: {COLORS['text']};
+    background: {COLORS['header']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 13px;
+}}
+QToolButton#disclosure {{
+    color: {COLORS['accent']};
+    background: transparent;
+    border: 0;
+    padding: 2px 4px;
+    font-size: 13px;
+    font-weight: 600;
+}}
+QToolButton#paneToggle {{
+    color: {COLORS['text']};
+    background: {COLORS['surface']};
+    border: 1px solid {COLORS['input_border']};
+    border-radius: 8px;
+    padding: 6px 10px;
+}}
+QToolButton#paneToggle:checked {{
+    color: {COLORS['accent']};
+    background: {COLORS['accent_soft']};
+    border-color: {COLORS['accent']};
+}}
+QTabWidget#reviewTabs QTabBar::tab {{ padding: 8px 12px; margin-right: 2px; }}
 """
 
 

@@ -436,7 +436,8 @@ class QtGuiContractTests(unittest.TestCase):
         )[0]
         self.assertIn('self._review_state() != self._initial_review_state', dialog)
         self.assertIn('QMessageBox.StandardButton.Discard', dialog)
-        self.assertIn('実機検証待ち{tax_system_pending}', dialog)
+        self.assertIn('実機待ち{tax_system_pending}', dialog)
+        self.assertIn('JDL実機での確認待ち {tax_system_pending}種類', dialog)
         self.assertIn('self.save_button.setEnabled(confirmed > 0)', dialog)
 
     def test_mapping_dialog_initializes_actions_before_subaccount_refresh(self) -> None:
@@ -691,7 +692,7 @@ class QtGuiContractTests(unittest.TestCase):
             'target.addItem("おすすめ", None)',
             'target.addItem("その他のJDL科目", None)',
             "item.recommended_reason",
-            "確認済み / 設定数:",
+            "確認済み（保存待ち）",
             "確認済み{confirmed}件を保存",
             "if key in confirmed",
             "item.already_confirmed",
@@ -761,8 +762,11 @@ class QtGuiContractTests(unittest.TestCase):
         self.assertIn("availableGeometry()", helper)
         self.assertIn("available.contains(frame)", helper)
         self.assertIn("dialog.setGeometry", helper)
-        self.assertIn("setHorizontalScrollBarPolicy", mapping)
-        self.assertIn("setVerticalScrollBarPolicy", mapping)
+        # Review tables share one compact, scrollable setup.
+        self.assertIn("dense_table(QTableWidget(", mapping)
+        layout = Path("src/accounting_converter/ui_qt/review_layout.py").read_text(encoding="utf-8")
+        self.assertIn("setHorizontalScrollBarPolicy", layout)
+        self.assertIn("setVerticalScrollBarPolicy", layout)
 
 
 if __name__ == "__main__":

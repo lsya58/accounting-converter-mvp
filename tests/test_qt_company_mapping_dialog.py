@@ -10,7 +10,6 @@ try:
     from PySide6.QtWidgets import (
         QAbstractItemView,
         QApplication,
-        QScrollArea,
         QTableWidget,
     )
 
@@ -160,7 +159,7 @@ class CompanyMappingUpdateDialogTests(unittest.TestCase):
         self.assertEqual(dialog.save_button.text(), "確認済み1件を保存")
         self.assertEqual(
             dialog.progress_label.text(),
-            "確認済み / 設定数: 1 / 2",
+            "確認済み（保存待ち）1件 ／ この画面の確認行 全2件",
         )
 
     def test_large_review_is_split_into_scrollable_categories(self) -> None:
@@ -190,7 +189,7 @@ class CompanyMappingUpdateDialogTests(unittest.TestCase):
         self.assertEqual(dialog.tabs.count(), 5)
         self.assertEqual(
             dialog.tabs.tabText(0),
-            "科目 残り60（確認済み0 / 全60）[要確認]",
+            "科目 残り60",
         )
         account_table = dialog.tabs.widget(0).findChild(QTableWidget)
         self.assertIsNotNone(account_table)
@@ -199,13 +198,14 @@ class CompanyMappingUpdateDialogTests(unittest.TestCase):
             account_table.verticalScrollMode(),
             QAbstractItemView.ScrollMode.ScrollPerPixel,
         )
-        self.assertIsInstance(dialog.tabs.widget(2), QScrollArea)
+        self.assertEqual(dialog.tabs.tabText(2), "摘要 なし")
+        self.assertFalse(dialog.tabs.isTabEnabled(2))
         self.assertEqual(
             dialog.tabs.tabText(3),
-            "税区分 Human残り1 / 実機検証待ち0（確認済み0 / 全1）[要確認]",
+            "税区分 残り1",
         )
         # Unsupported shapes are a system limitation, not Human work.
-        self.assertEqual(dialog.tabs.tabText(4), "その他 [未対応あり]")
+        self.assertEqual(dialog.tabs.tabText(4), "その他 未対応あり")
 
     def test_first_unresolved_tab_is_subaccounts_and_zero_tabs_are_disabled(self) -> None:
         subaccounts = tuple(
@@ -237,7 +237,7 @@ class CompanyMappingUpdateDialogTests(unittest.TestCase):
         )
         self.assertEqual(
             dialog.tabs.tabText(dialog.category_tabs["subaccounts"]),
-            "補助科目 残り13（確認済み0 / 全13）[要確認]",
+            "補助 残り13",
         )
 
     def test_tax_is_first_tab_when_only_tax_confirmation_remains(self) -> None:
@@ -255,7 +255,7 @@ class CompanyMappingUpdateDialogTests(unittest.TestCase):
         self.assertEqual(dialog.tabs.currentIndex(), dialog.category_tabs["tax"])
         self.assertEqual(
             dialog.tabs.tabText(dialog.category_tabs["tax"]),
-            "税区分 Human残り4 / 実機検証待ち0（確認済み0 / 全4）[要確認]",
+            "税区分 残り4",
         )
         self.assertIn("Humanが解決できる残り設定", dialog.summary_label.text())
         self.assertIn("Evidence・実装対応待ち", dialog.summary_label.text())
