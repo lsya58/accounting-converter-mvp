@@ -42,8 +42,14 @@ PROBES = (
     *(GAP / f"YAYOI_GAP_{name}_20260621_NOT_FOR_PRODUCTION.csv" for name in ("G1a", "G1b", "G1c", "G2", "G3")),
 )
 GAP_REEXPORT = GAP / "reexport_20260621.csv"
+NEW_ACCOUNTS = Path("data/private/yayoi_buddies/new_account_evidence_20261106_rev3")
+NEW_ACCOUNTS_PROBE = NEW_ACCOUNTS / "YAYOI_GAP_NEW_ACCOUNT_12_20260726_NOT_FOR_PRODUCTION.csv"
+NEW_ACCOUNTS_REEXPORT = NEW_ACCOUNTS / "YAYOI_NEW_ACCOUNT_12_REEXPORT_20260726.csv"
+MASTER_PDF = Path("data/private/yayoi_buddies/バディーズ科目一覧-科目追加後.pdf")
+PROBES = (*PROBES, NEW_ACCOUNTS_PROBE)
 REF = SourceReference("private", 1)
-AVAILABLE = STORE.exists() and GAP_REEXPORT.exists() and all(path.exists() for path in PROBES)
+AVAILABLE = (STORE.exists() and GAP_REEXPORT.exists() and NEW_ACCOUNTS_REEXPORT.exists()
+             and all(path.exists() for path in PROBES))
 
 
 def _tax(row, scope, category, method, tax):
@@ -76,7 +82,19 @@ class RegisteredEvidenceMatchesTheRealProbesTest(unittest.TestCase):
     def setUpClass(cls):
         profiles = ConversionProfileStore(STORE / "profiles")
         context = CompanySettingStore(STORE / "companies", profiles).resolve("company-yayoi-buddies").context
-        cls.context = replace(context, voucher_row_limit=16)
+        # The stored test master predates the accounts added in JDL on 2026-11-06; add exactly the identities
+        # the new-account probe sent to JDL (code, 略名称, 正式名称) so the output stage can be checked on them.
+        from accounting_converter.adapters.output.jdl import JdlAccountIdentity
+
+        known = {item.target_master_code for item in context.account_master}
+        added = {}
+        for row in _rows(NEW_ACCOUNTS_PROBE):
+            for code, short, formal in ((row[3], row[4], row[5]), (row[13], row[14], row[15])):
+                if code and code not in known:
+                    added[code] = JdlAccountIdentity(formal, code, short, formal)
+        cls.context = replace(context, voucher_row_limit=16,
+                              account_master=context.account_master + tuple(added.values()),
+                              accounts=frozenset(context.accounts) | {item.mapping_value for item in added.values()})
         cls.names = {item.target_master_code: item.mapping_value for item in cls.context.account_master}
 
     def test_the_production_output_stage_writes_the_rows_that_round_tripped(self):
@@ -103,9 +121,22 @@ class RegisteredEvidenceMatchesTheRealProbesTest(unittest.TestCase):
         cases, _summary = collect(CAMPAIGN, PENDING)
         gap_cases, _gap_summary = collect_gap_round(GAP, GAP_REEXPORT)
         cases += gap_cases
+        new_cases, _new_summary = collect_gap_round(NEW_ACCOUNTS, NEW_ACCOUNTS_REEXPORT)
+        cases += new_cases
         self.assertEqual(
             [(c["case_id"], c["evidence_id"], c["layout"], c["rows"], c["taxed"]) for c in cases],
             [(c.case_id, c.evidence_id, c.layout, c.rows, c.taxed) for c in SCOPED_CASES])
+
+    def test_setting_peers_equal_the_table_regenerated_from_the_master_pdf(self):
+        try:
+            import pypdf  # noqa: F401
+        except ModuleNotFoundError:
+            self.skipTest("pypdf is not installed")
+        from accounting_converter.adapters.output.jdl.scoped_evidence_registry import JDL_TAX_SETTING_PEERS
+        from accounting_converter.tools.build_scoped_evidence_registry import setting_peers, tax_setting_keys
+
+        cases = [{"taxed": case.taxed} for case in SCOPED_CASES]
+        self.assertEqual(setting_peers(cases, tax_setting_keys(MASTER_PDF)), JDL_TAX_SETTING_PEERS)
 
     def test_descriptions_follow_the_real_64_byte_result(self):
         """G4 (kept by JDL) is written unchanged; G5 (JDL truncated it silently to 64 bytes) is refused."""

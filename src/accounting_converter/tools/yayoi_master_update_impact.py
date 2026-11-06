@@ -1,8 +1,8 @@
 """What a newly printed JDL 科目一覧 changes for one Yayoi company. Analysis only: the real settings are never written.
 
 Everything happens in a SCRATCH COPY of the settings:
-  1. the new PDF is imported and the account-list refresh is applied (as the app does), then the Tax
-     Context is re-confirmed with the values the real company already has (rounding, row limit, ...);
+  1. the new PDF is imported and the account-list refresh is applied as the app does it, keeping the
+     confirmed Tax Context (rounding, row limit, ...); it stops if the app would not keep it;
   2. SCENARIO "same name": the Human is assumed to confirm every account whose JDL name equals the
      Yayoi name or differs only in width / dash (the app's EXACT and NORMALIZED candidates). ALIAS /
      SIMILAR / CONTAINS candidates are never assumed; those parents stay open. Tax identities with an
@@ -24,7 +24,6 @@ from pathlib import Path
 from accounting_converter.adapters.output.jdl.scoped_evidence import SEMANTIC_CELL
 from accounting_converter.application import parent_subaccount_policy as policy
 from accounting_converter.application import scoped_evidence_composition as composition
-from accounting_converter.application.company_voucher_row_limit import CompanyVoucherRowLimitService
 from accounting_converter.application.yayoi_review import candidate_semantic
 from accounting_converter.application.yayoi_sources import detect_format
 from accounting_converter.infrastructure.application_preferences import ApplicationPreferencesStore
@@ -38,7 +37,8 @@ SAME_NAME_KINDS = {"EXACT", "NORMALIZED"}
 
 
 def prepare(store: Path, company_id: str, new_pdf: Path, scratch: Path):
-    """Scratch copy with the new master + the real company's confirmed Tax Context settings."""
+    """Scratch copy with the new master, refreshed the way the app does it: the confirmed Tax Context
+    (rounding, row limit, ...) is kept by `preserve_confirmed_context` when the app allows it."""
     work = scratch / "store"
     shutil.copytree(store, work)
     old = CompanySettingStore(store / "companies", ConversionProfileStore(store / "profiles")).resolve(company_id).context
@@ -49,16 +49,17 @@ def prepare(store: Path, company_id: str, new_pdf: Path, scratch: Path):
         preferences_store=ApplicationPreferencesStore(scratch / "prefs.json"))
     controller.load_company_settings()
     plan = controller.plan_company_master_refresh(company_id, new_pdf)
-    reconfirm = plan.reconfirmation_count
-    controller.apply_company_master_refresh(plan, {}, set()) if reconfirm == 0 else None
-    if reconfirm:
-        raise SystemExit(f"{reconfirm} confirmed parents would need re-confirmation; the impact tool does not assume those")
-    controller.confirm_company_tax_context(
-        company_id, explicitly_confirmed=True, tax_processing_mode=old.tax_processing_mode,
-        taxation_method=old.effective_taxation_method, input_tax_credit_method=old.effective_input_tax_credit_method,
-        sales_tax_rounding=old.sales_tax_rounding, purchase_tax_rounding=old.purchase_tax_rounding)
-    if old.voucher_row_limit:
-        CompanyVoucherRowLimitService(companies, profiles).set(company_id, old.voucher_row_limit, confirmed=True)
+    if plan.reconfirmation_count:
+        raise SystemExit(f"{plan.reconfirmation_count} confirmed parents would need re-confirmation; not assumed here")
+    if not plan.confirmed_context_preservable:
+        raise SystemExit("the app would not keep the confirmed JDL settings for this PDF; nothing is assumed")
+    controller.apply_company_master_refresh(plan, {}, set(), preserve_confirmed_context=True)
+    new = companies.resolve(company_id).context
+    kept = new is not None and all(getattr(new, field) == getattr(old, field) for field in (
+        "tax_processing_mode", "sales_tax_rounding", "purchase_tax_rounding", "voucher_row_limit",
+        "effective_taxation_method", "effective_input_tax_credit_method", "confirmation_state"))
+    if not kept:
+        raise SystemExit("confirmed JDL settings were not kept by the refresh")
     return controller, companies, profiles, plan
 
 

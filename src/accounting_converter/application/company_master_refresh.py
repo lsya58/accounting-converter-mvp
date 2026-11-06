@@ -13,7 +13,10 @@ from accounting_converter.application.moneyforward_trade_partner import (
 from accounting_converter.application.jdl_master_identity import (
     observed_master_identity_sha256, target_context_master_identity_sha256,
 )
-from accounting_converter.application.company_tax_context_confirmation import printed_master_identities
+from accounting_converter.application.company_tax_context_confirmation import (
+    NAME_CONFLICTS_EXCLUDED_FROM_TARGETS,
+    printed_master_identities,
+)
 from accounting_converter.adapters.output.jdl import (
     JdlContextConfirmationState, JdlContextProvenance, JdlTargetContextValidator,
 )
@@ -119,7 +122,11 @@ class CompanyMasterRefreshService:
             return False
         if (old.product, old.version) != (draft.product, draft.version):
             return False
-        if draft.observation.conflicts or draft.observation.departments or draft.observation.printed_departments:
+        # Same allowance as the confirmation that created the old context: duplicated names are excluded
+        # from the targets (never selectable); any other conflict stops the preservation.
+        if any(item.category not in NAME_CONFLICTS_EXCLUDED_FROM_TARGETS for item in draft.observation.conflicts):
+            return False
+        if draft.observation.departments or draft.observation.printed_departments:
             return False
         accounts, subs, unusable = printed_master_identities(draft)
         before_accounts = {(a.target_master_code, a.target_formal_name, a.target_name) for a in old.account_master}

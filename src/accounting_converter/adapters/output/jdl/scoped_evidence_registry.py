@@ -9,6 +9,10 @@ same-period re-export under the existing strict comparator:
 - 2026-11-05 session 2: B (6) PASS.
 - 2026-11-06 gap round: G1a (21), G1b (25), G1c (13), G2 (11), G3 (5) PASS (controls and
   摘要 cases are not layout Evidence and are not in this table).
+- 2026-11-07 new-account round (Probe date 2026-07-26, JDL master with the codes added on 2026-11-06):
+  12 one-row cases PASS: 課税売上10% credit on 6122 (FLOOR), 6123 (no fraction), 6124 / 6132 / 6142
+  (COMPANY and FLOOR), 輸出売 credit on 6142, 課税売上10% debit on 6142 (FLOOR), 課税仕入10% debit on
+  7122 and 8672 (COMPANY).
 
 Structure only (no customer value): the physical-row layout, the JDL tax cell
 on each side of each row, the target account codes of the taxed lines, and how
@@ -22,7 +26,8 @@ EXACT = exact 8/108 (R8) or exact 80% of the 10% tax (T80), NONE = no tax amount
 R8 / T80 with a fractional exact value: HALF_LOW (written = floor = half-up),
 HALF_HIGH (written = half-up > floor), FLOOR_HIGH (written = floor < half-up).
 
-Regenerate with tools/build_scoped_evidence_registry.py (--gap-dir / --gap-reexport for 2026-11-06); the probes and re-exports
+Regenerate with tools/build_scoped_evidence_registry.py (--gap-dir / --gap-reexport once per round, in order,
+--master-pdf for JDL_TAX_SETTING_PEERS); the probes and re-exports
 stay under data/private (never tracked). Source probe SHA-256:
   3D3C/4D4C 13835669753fa1b09b7727fdc659d22946627a58eab1e7b7003762a654c5e16d
   A1 b850d2fd5f722acc2aa6833eb1b3c51e8187287b0932dcdb75766305af016caa
@@ -35,6 +40,8 @@ stay under data/private (never tracked). Source probe SHA-256:
   G2  ec7bec43ce70257dbea4a0c1f91978d6fa6f6540ae3b9a789f9ea0aac4a267cd
   G3  acff576d8e304b0841f928f1a48d16a8624a1fdab6a097d0b71cdb30eb8aca36
   gap re-export cdd4dceeeb0fd46e2f5c781838b0204ff53f2fba7a43ff623af43657dfa18797
+  NEW_ACCOUNT_12 16f56ea815d1f163a21a5e90b6249f4c3bb268bdfdf677eb72a242f43505572c
+  new-account re-export 395006ea7be9a560ea51e2871ded75cdcb8e4aa5e42a3a06dd9a91d838c7cc79
 """
 from __future__ import annotations
 
@@ -474,4 +481,46 @@ SCOPED_CASES: tuple[ScopedCase, ...] = (
     ScopedCase('FR-T80-HIGH-FLOOR', 'EVID-YAYOI-JDL-35-5-BUDDIES-GAP-FR-T80-HIGH-FLOOR-SYNTHETIC-ROUNDTRIP-001', 'B1',
         (('T80', 'NO'),),
         (('DEBIT', 'T80', '8471', 'FLOOR_HIGH'),)),
+    ScopedCase('NA-S10-6122-FLOOR', 'EVID-YAYOI-JDL-35-5-BUDDIES-GAP-NA-S10-6122-FLOOR-SYNTHETIC-ROUNDTRIP-001', 'B1',
+        (('NO', 'S10'),),
+        (('CREDIT', 'S10', '6122', 'FLOOR'),)),
+    ScopedCase('NA-S10-6123-WHOLE', 'EVID-YAYOI-JDL-35-5-BUDDIES-GAP-NA-S10-6123-WHOLE-SYNTHETIC-ROUNDTRIP-001', 'B1',
+        (('NO', 'S10'),),
+        (('CREDIT', 'S10', '6123', ''),)),
+    ScopedCase('NA-S10-6124-COMPANY', 'EVID-YAYOI-JDL-35-5-BUDDIES-GAP-NA-S10-6124-COMPANY-SYNTHETIC-ROUNDTRIP-001', 'B1',
+        (('NO', 'S10'),),
+        (('CREDIT', 'S10', '6124', 'COMPANY'),)),
+    ScopedCase('NA-S10-6124-FLOOR', 'EVID-YAYOI-JDL-35-5-BUDDIES-GAP-NA-S10-6124-FLOOR-SYNTHETIC-ROUNDTRIP-001', 'B1',
+        (('NO', 'S10'),),
+        (('CREDIT', 'S10', '6124', 'FLOOR'),)),
+    ScopedCase('NA-S10-6132-COMPANY', 'EVID-YAYOI-JDL-35-5-BUDDIES-GAP-NA-S10-6132-COMPANY-SYNTHETIC-ROUNDTRIP-001', 'B1',
+        (('NO', 'S10'),),
+        (('CREDIT', 'S10', '6132', 'COMPANY'),)),
+    ScopedCase('NA-S10-6132-FLOOR', 'EVID-YAYOI-JDL-35-5-BUDDIES-GAP-NA-S10-6132-FLOOR-SYNTHETIC-ROUNDTRIP-001', 'B1',
+        (('NO', 'S10'),),
+        (('CREDIT', 'S10', '6132', 'FLOOR'),)),
+    ScopedCase('NA-S10-6142-COMPANY', 'EVID-YAYOI-JDL-35-5-BUDDIES-GAP-NA-S10-6142-COMPANY-SYNTHETIC-ROUNDTRIP-001', 'B1',
+        (('NO', 'S10'),),
+        (('CREDIT', 'S10', '6142', 'COMPANY'),)),
+    ScopedCase('NA-S10-6142-FLOOR', 'EVID-YAYOI-JDL-35-5-BUDDIES-GAP-NA-S10-6142-FLOOR-SYNTHETIC-ROUNDTRIP-001', 'B1',
+        (('NO', 'S10'),),
+        (('CREDIT', 'S10', '6142', 'FLOOR'),)),
+    ScopedCase('NA-XS-6142', 'EVID-YAYOI-JDL-35-5-BUDDIES-GAP-NA-XS-6142-SYNTHETIC-ROUNDTRIP-001', 'B1',
+        (('NO', 'XS'),),
+        (('CREDIT', 'XS', '6142', 'NONE'),)),
+    ScopedCase('NA-DS10-6142', 'EVID-YAYOI-JDL-35-5-BUDDIES-GAP-NA-DS10-6142-SYNTHETIC-ROUNDTRIP-001', 'B1',
+        (('S10', 'NO'),),
+        (('DEBIT', 'S10', '6142', 'FLOOR'),)),
+    ScopedCase('NA-P10-7122-COMPANY', 'EVID-YAYOI-JDL-35-5-BUDDIES-GAP-NA-P10-7122-COMPANY-SYNTHETIC-ROUNDTRIP-001', 'B1',
+        (('P10', 'NO'),),
+        (('DEBIT', 'P10', '7122', 'COMPANY'),)),
+    ScopedCase('NA-P10-8672-COMPANY', 'EVID-YAYOI-JDL-35-5-BUDDIES-GAP-NA-P10-8672-COMPANY-SYNTHETIC-ROUNDTRIP-001', 'B1',
+        (('P10', 'NO'),),
+        (('DEBIT', 'P10', '8672', 'COMPANY'),)),
 )
+
+# Accounts with the same printed JDL tax defaults as every account a relation round-tripped on
+# (used by scoped_evidence.relation_covers_account). Generated from the JDL 科目一覧 PDF sha256 497baa94f43bd57b8eba27bd955a2b0d33fc65a39885b74cda42df056c858fc3.
+JDL_TAX_SETTING_PEERS: dict[frozenset[str], frozenset[str]] = {
+    frozenset(['7122', '8471', '8672']): frozenset(['2121', '2122', '2151', '2161', '7121', '7122', '7131', '7151', '7161', '8451', '8461', '8471', '8481', '8491', '8521', '8541', '8542', '8561', '8581', '8591', '8611', '8621', '8641', '8661', '8671', '8672', '8681', '8691', '8711', '8741', '8751', '8761', '8991']),
+}

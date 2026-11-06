@@ -64,6 +64,8 @@ PASS条件: 104/104 journals、160/160 rows、missing 0、extra 0、unexpected 0
 
 **第3回（2026-11-06、実機取得・反映済み）**: 合成Probe 7ファイル（93仕訳・471行）を実機で取込・再Export。構造70・端数税額5ケースが strict PASS し、registryは141ケースになった。Humanが自然な候補を確認した仮定での JDL Evidence不足は **147 → 0**（16行制約30・控除不可/決算9は残る）。摘要は CP932 64バイトまで（確認した文字種）JDLが保持し、64バイト超は**黙って切り詰める**ことを確認。摘要の確認待ちは 248件（205仕訳）→ 0。正式READYは0のまま（Human確認が残る）（[詳細](yayoi_buddies_evidence_campaign.md#96-実機結果と反映2026-11-06)）。
 
+**新規JDL科目（2026-11-07、実機取得・反映済み）**: 2026-11-06に追加した売上・仕入科目7コードの12ケースが strict PASS。registry 141→153ケース。新コード由来の技術的Evidence不足 1,108→0（Human確認の仮定での試算。正式READYは0のまま）。3科目規則は印字された税の既定設定が同じ科目に限定した（[詳細](yayoi_buddies_evidence_campaign.md#11-新規jdl科目の実機evidence2026-11-07)）。
+
 ## Evidence policy
 
 - 最高水準は、実JDL Importと同期間re-exportのstrict semantic comparison

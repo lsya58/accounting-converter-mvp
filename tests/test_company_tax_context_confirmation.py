@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 import json
 import os
 import tempfile
@@ -72,6 +73,24 @@ class _OverlongSubaccountMaster(_PrintedMaster):
 
 
 class _AddedMaster(_PrintedMaster):
+    def extract_pages(self, path):
+        return tuple(
+            page + "  3001- 架空追加科目  借C ○\n"
+            for page in super().extract_pages(path)
+        )
+
+
+class _DuplicatedNameMaster(_PrintedMaster):
+    """Two enabled accounts share a name (as in a real company's master): excluded from targets."""
+
+    def extract_pages(self, path):
+        return tuple(
+            page + "  5001  重複名  貸D ○\n  5002  重複名  貸E ○\n"
+            for page in super().extract_pages(path)
+        )
+
+
+class _DuplicatedNameAddedMaster(_DuplicatedNameMaster):
     def extract_pages(self, path):
         return tuple(
             page + "  3001- 架空追加科目  借C ○\n"
@@ -196,6 +215,41 @@ class CompanyTaxContextConfirmationTests(unittest.TestCase):
         profile = self.profiles.get(setting.conversion_profile_id)
         self.assertTrue(all(m.status is MappingStatus.USER_CONFIRMED for m in profile.account_mappings.values()))
         self.assertTrue(all(m.status is MappingStatus.USER_CONFIRMED for m in profile.subaccount_context_mappings.values()))
+
+    def test_refresh_keeps_confirmed_settings_when_the_master_has_the_same_duplicated_names(self) -> None:
+        source = self.root / "dup.pdf"
+        source.write_bytes(b"synthetic duplicated")
+        dup_draft = self.root / "dup.json"
+        JdlAccountPdfDraftStore(_DuplicatedNameMaster()).import_pdf(source, dup_draft)
+        dup_hash = hashlib.sha256(dup_draft.read_bytes()).hexdigest()
+        base = self.profiles.get("profile-1")
+        restamp = lambda mappings: {  # noqa: E731
+            key: replace(value, metadata={**value.metadata, "setup_context_sha256": dup_hash})
+            for key, value in mappings.items()
+        }
+        self.profiles.create(replace(
+            base, profile_id="profile-2", account_mappings=restamp(base.account_mappings),
+            subaccount_context_mappings=restamp(base.subaccount_context_mappings)))
+        self.companies.create(company_setting_id="company-2", display_name="架空会社2",
+                              conversion_profile_id="profile-2", context_source=dup_draft)
+        self.service.confirm_taxable_included("company-2", confirmed=True)
+        CompanyVoucherRowLimitService(self.companies, self.profiles).set("company-2", 16, confirmed=True)
+        added_source = self.root / "dup-added.pdf"
+        added_source.write_bytes(b"synthetic duplicated added")
+        added = self.root / "dup-added.json"
+        JdlAccountPdfDraftStore(_DuplicatedNameAddedMaster()).import_pdf(added_source, added)
+        refresh = CompanyMasterRefreshService(self.companies, self.profiles)
+        plan = refresh.plan("company-2", added)
+        # The same name conflict the confirmation accepted must not block keeping that confirmation.
+        self.assertTrue(plan.confirmed_context_preservable)
+        refresh.apply(plan, {}, set(), preserve_confirmed_context=True)
+        reopened = CompanySettingStore(self.root / "companies", self.profiles)
+        context = JdlTargetContextLoader().load(reopened.context_path(reopened.get("company-2")))
+        self.assertEqual(context.voucher_row_limit, 16)
+        self.assertEqual(context.confirmation_state.value, "CONFIRMED")
+        codes = {item.target_master_code for item in context.account_master}
+        self.assertIn("3001", codes)
+        self.assertFalse({"5001", "5002"} & codes)  # duplicated names stay unselectable
 
     def test_refresh_failure_preserves_previous_confirmed_setting(self) -> None:
         self.service.confirm_taxable_included("company-1", confirmed=True)

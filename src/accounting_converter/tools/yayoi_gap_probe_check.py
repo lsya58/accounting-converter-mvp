@@ -193,14 +193,20 @@ def _description_verdict(group, marker_hits, reexport_groups, comparator):
 def _pass_record(case: dict, group, manifest: dict) -> dict:
     from accounting_converter.tools.build_scoped_evidence_registry import case_record, gap_evidence_id
 
+    from accounting_converter.adapters.output.jdl import scoped_evidence as scoped
+
     evidence_id = gap_evidence_id(case["case"])
     record = case_record(case["case"], evidence_id, group)
+    # Older manifests (e.g. the 2026-11-06 new-account probe) do not repeat the scope; the registered scope is shown then.
+    stated = {key for key in ("scope_id", "target", "sales_tax_rounding", "purchase_tax_rounding") if key in manifest}
     return {
         "case": case["case"], "evidence_id_if_registered": evidence_id,
+        "scope_from_manifest": sorted(stated),
         "applies_only_to": {
-            "scope_id": manifest["scope_id"], "product": manifest["target"],
-            "voucher_row_limit": manifest["voucher_row_limit"],
-            "sales_tax_rounding": manifest["sales_tax_rounding"], "purchase_tax_rounding": manifest["purchase_tax_rounding"],
+            "scope_id": manifest.get("scope_id", scoped.SCOPE_ID), "product": manifest.get("target", "JDL IBEX 出納帳 35.5"),
+            "voucher_row_limit": manifest.get("voucher_row_limit", scoped.SCOPE_VOUCHER_ROW_LIMIT),
+            "sales_tax_rounding": manifest.get("sales_tax_rounding", scoped.SCOPE_SALES_ROUNDING.value),
+            "purchase_tax_rounding": manifest.get("purchase_tax_rounding", scoped.SCOPE_PURCHASE_ROUNDING.value),
             "layout": record["layout"], "rows": [list(r) for r in record["rows"]],
             "taxed_side_cell_account_relation": [list(t) for t in record["taxed"]],
         },

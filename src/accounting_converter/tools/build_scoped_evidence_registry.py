@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 from decimal import ROUND_DOWN, ROUND_HALF_UP, ROUND_UP, Decimal
 from pathlib import Path
 
@@ -173,7 +174,55 @@ def collect(campaign_dir: Path, pending_dir: Path) -> tuple[list[dict], dict]:
     return cases, {"cases_passed": summary, "source_sha256": sources}
 
 
-def render(cases: list[dict]) -> str:
+_SETTING_TOKEN = re.compile(r"(?:仕|入|売|上|内税|外税|別記|軽減\d+%|\d+%|非仕入|非売上|輸出売|対外)$")
+
+
+def tax_setting_keys(master_pdf: Path) -> dict[str, str]:
+    """Code -> printed JDL tax defaults (課区・税区・入力 tokens) of every enabled coded account."""
+    from accounting_converter.application.jdl_account_list_pdf import JdlAccountListPdfTextParser as P
+    from accounting_converter.infrastructure.jdl_account_pdf_draft import PypdfTextExtractor
+
+    keys: dict[str, str] = {}
+    for text in PypdfTextExtractor().extract_pages(master_pdf):
+        for line in text.splitlines():
+            found = P._PARENT_ROW.match(line) or P._CODED_ROW.match(line)
+            if not found or found["use"] != "○":
+                continue
+            tokens = []
+            for token in found["tail"].split():
+                if not _SETTING_TOKEN.match(token):
+                    break
+                tokens.append(token)
+            keys[found["code"]] = "".join(tokens)
+    return keys
+
+
+def setting_peers(cases: list[dict], keys: dict[str, str]) -> dict[frozenset, frozenset]:
+    """For every non-account-specific relation seen on >= 3 accounts that all print the same (non-empty)
+    tax defaults: the accounts printing exactly those defaults. Anything else gets no entry (account-specific)."""
+    from accounting_converter.adapters.output.jdl.scoped_evidence import (
+        RELATION_ACCOUNT_INDEPENDENCE_MIN_ACCOUNTS,
+        RELATION_ACCOUNT_SPECIFIC_ONLY,
+    )
+
+    observed: dict[tuple, set] = {}
+    for case in cases:
+        for side, cell, account, relation in case["taxed"]:
+            if relation not in {"", "NONE"}:
+                observed.setdefault((side, cell, relation), set()).add(account)
+    peers = {}
+    for (side, cell, _relation), accounts in observed.items():
+        if len(accounts) < RELATION_ACCOUNT_INDEPENDENCE_MIN_ACCOUNTS or (side, cell) in RELATION_ACCOUNT_SPECIFIC_ONLY:
+            continue
+        defaults = {keys.get(account) for account in accounts}
+        if len(defaults) != 1 or not next(iter(defaults)):
+            continue
+        key = next(iter(defaults))
+        peers[frozenset(accounts)] = frozenset(code for code, value in keys.items() if value == key)
+    return peers
+
+
+def render(cases: list[dict], peers: dict | None = None, master_sha256: str | None = None) -> str:
     lines = ["SCOPED_CASES: tuple[ScopedCase, ...] = ("]
     for case in cases:
         lines.append(
@@ -182,6 +231,14 @@ def render(cases: list[dict]) -> str:
             f"        {case['taxed']!r}),"
         )
     lines.append(")")
+    lines.append("")
+    lines.append("# Accounts with the same printed JDL tax defaults as every account a relation round-tripped on")
+    lines.append("# (used by scoped_evidence.relation_covers_account). Generated from the JDL 科目一覧 PDF"
+                 + (f" sha256 {master_sha256}." if master_sha256 else "; none given, so no relation is account-independent."))
+    lines.append("JDL_TAX_SETTING_PEERS: dict[frozenset[str], frozenset[str]] = {")
+    for observed, codes in sorted((peers or {}).items(), key=lambda kv: sorted(kv[0])):
+        lines.append(f"    frozenset({sorted(observed)!r}): frozenset({sorted(codes)!r}),")
+    lines.append("}")
     return "\n".join(lines) + "\n"
 
 
@@ -189,18 +246,29 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--campaign-dir", type=Path, required=True)
     parser.add_argument("--pending-dir", type=Path, required=True)
-    parser.add_argument("--gap-dir", type=Path, help="2026-11-06 gap Probe directory (round 3)")
-    parser.add_argument("--gap-reexport", type=Path, help="real JDL re-export of the gap Probe day")
+    parser.add_argument("--gap-dir", type=Path, action="append", default=[],
+                        help="gap Probe directory; repeat in round order (2026-11-06 round 3, then the new-account round)")
+    parser.add_argument("--gap-reexport", type=Path, action="append", default=[],
+                        help="real JDL re-export of that directory's Probe day (same order as --gap-dir)")
+    parser.add_argument("--master-pdf", type=Path, help="the company's current JDL 科目一覧 PDF (tax defaults per account)")
     parser.add_argument("--summary", action="store_true", help="print the per-file PASS counts instead of the table")
     args = parser.parse_args()
     cases, summary = collect(args.campaign_dir, args.pending_dir)
-    if args.gap_dir or args.gap_reexport:
-        if not (args.gap_dir and args.gap_reexport):
-            raise SystemExit("--gap-dir and --gap-reexport go together")
-        gap_cases, gap_summary = collect_gap_round(args.gap_dir, args.gap_reexport)
+    if len(args.gap_dir) != len(args.gap_reexport):
+        raise SystemExit("--gap-dir and --gap-reexport go together, one re-export per directory")
+    for gap_dir, gap_reexport in zip(args.gap_dir, args.gap_reexport):
+        gap_cases, gap_summary = collect_gap_round(gap_dir, gap_reexport)
         cases += gap_cases
         summary["cases_passed"].update(gap_summary)
-    print(json.dumps(summary, ensure_ascii=False, indent=1) if args.summary else render(cases), end="")
+    ids = [case["evidence_id"] for case in cases]
+    if len(ids) != len(set(ids)):
+        raise SystemExit("duplicate Evidence ids across rounds; nothing printed")
+    peers, master_sha = {}, None
+    if args.master_pdf:
+        peers = setting_peers(cases, tax_setting_keys(args.master_pdf))
+        master_sha = hashlib.sha256(args.master_pdf.read_bytes()).hexdigest()
+        summary["setting_peers"] = {",".join(sorted(k)): len(v) for k, v in peers.items()}
+    print(json.dumps(summary, ensure_ascii=False, indent=1) if args.summary else render(cases, peers, master_sha), end="")
     return 0
 
 

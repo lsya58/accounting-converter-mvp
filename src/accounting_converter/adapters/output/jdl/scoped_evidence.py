@@ -43,7 +43,7 @@ from .models import (
     JdlTaxationMethod,
     JdlTaxRounding,
 )
-from .scoped_evidence_registry import SCOPED_CASES, ScopedCase
+from .scoped_evidence_registry import JDL_TAX_SETTING_PEERS, SCOPED_CASES, ScopedCase
 from .tax_semantics import JdlTaxSemantic
 
 SCOPE_ID = "JDL-35-5-TAX-EXCL-PROP-SALES-CEIL-PURCH-HALFUP-VOUCHER-ROWS-16"
@@ -224,6 +224,10 @@ def relation_accounts(side: str, cell: str, relation: str) -> dict[str, tuple[st
 # existed before). Mirrors the general >=3-account rule used elsewhere for
 # this Evidence family; 課税売上10% on the credit side stays account-specific
 # regardless of how many accounts round-tripped, same as the pre-existing rule.
+# The rule reaches an unprobed account only when the company's JDL 科目一覧 prints
+# the same tax defaults (課区・税区・入力) for it as for EVERY account the relation
+# round-tripped on (`JDL_TAX_SETTING_PEERS`, generated from the PDF). An account
+# with other defaults is never covered by similarity.
 RELATION_ACCOUNT_INDEPENDENCE_MIN_ACCOUNTS = 3
 RELATION_ACCOUNT_SPECIFIC_ONLY = frozenset({("CREDIT", "S10")})
 
@@ -233,7 +237,8 @@ def relation_covers_account(side: str, cell: str, relation: str, account: str) -
 
     relation in {"", "NONE"}: no amount question; the layout/cell gate already
     decided coverage. Otherwise: round-tripped on this exact account, or
-    independent (observed on enough accounts and not account-specific).
+    independent: observed on enough accounts, not account-specific, and the
+    account has the same printed JDL tax defaults as all observed accounts.
     The single source of truth for this check: both composition and the
     output stage call it, so they can never disagree.
     """
@@ -242,7 +247,7 @@ def relation_covers_account(side: str, cell: str, relation: str, account: str) -
     observed = relation_accounts(side, cell, relation)
     if account in observed:
         return True
-    return (
-        len(observed) >= RELATION_ACCOUNT_INDEPENDENCE_MIN_ACCOUNTS
-        and (side, cell) not in RELATION_ACCOUNT_SPECIFIC_ONLY
-    )
+    if len(observed) < RELATION_ACCOUNT_INDEPENDENCE_MIN_ACCOUNTS or (side, cell) in RELATION_ACCOUNT_SPECIFIC_ONLY:
+        return False
+    peers = JDL_TAX_SETTING_PEERS.get(frozenset(observed))
+    return peers is not None and account in peers

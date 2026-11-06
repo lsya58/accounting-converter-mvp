@@ -124,10 +124,12 @@ def sales_journal(count, account="6121", amount="1100", explicit="100"):
 
 class RegistryTest(unittest.TestCase):
     def test_registry_is_the_campaign_and_gap_round_passes_plus_the_two_existing_ones(self):
-        self.assertEqual(len(SCOPED_CASES), 141)
-        self.assertEqual(len({case.evidence_id for case in SCOPED_CASES}), 141)
+        self.assertEqual(len(SCOPED_CASES), 153)
+        self.assertEqual(len({case.evidence_id for case in SCOPED_CASES}), 153)
         self.assertEqual(sum("BUDDIES-CAMP" in case.evidence_id for case in SCOPED_CASES), 64)
-        self.assertEqual(sum("BUDDIES-GAP" in case.evidence_id for case in SCOPED_CASES), 75)  # 2026-11-06
+        self.assertEqual(sum("BUDDIES-GAP-GP" in case.evidence_id or "BUDDIES-GAP-FR" in case.evidence_id
+                             for case in SCOPED_CASES), 75)  # 2026-11-06
+        self.assertEqual(sum("BUDDIES-GAP-NA-" in case.evidence_id for case in SCOPED_CASES), 12)  # 2026-11-07 new accounts
 
     def test_rejected_over_limit_cases_are_not_registered(self):
         longest = max(len(case.rows) for case in SCOPED_CASES)
@@ -153,18 +155,21 @@ class RegistryTest(unittest.TestCase):
                 for side_name, cell, account, relation in case.taxed:
                     self.assertIn(side_name, {"DEBIT", "CREDIT"})
                     self.assertIn(cell, scoped.CELL_SEMANTIC)
-                    self.assertIn(account, CODES | {"6121": "", "6131": "", "6181": "", "8471": "", "8991": "", "7131": ""})
+                    self.assertIn(account, CODES | dict.fromkeys(
+                        ("6121", "6131", "6181", "8471", "8991", "7131", "6122", "6123", "6124", "6132", "6142", "7122", "8672"), ""))
                     self.assertIn(relation, {"", "COMPANY", "FLOOR", "EXACT", "NONE", "HALF_LOW", "HALF_HIGH", "FLOOR_HIGH"})
 
     def test_observed_facts_the_implementation_relies_on(self):
-        self.assertEqual(set(scoped.CELL_ACCOUNTS[("CREDIT", "S10")]), {"6121", "6131", "6181"})
-        self.assertEqual(set(scoped.CELL_ACCOUNTS[("CREDIT", "XS")]), {"6121"})
+        self.assertEqual(set(scoped.CELL_ACCOUNTS[("CREDIT", "S10")]),
+                         {"6121", "6131", "6181", "6122", "6123", "6124", "6132", "6142"})
+        self.assertEqual(set(scoped.CELL_ACCOUNTS[("CREDIT", "XS")]), {"6121", "6142"})
         self.assertEqual(set(scoped.CELL_ACCOUNTS[("DEBIT", "R8")]), {"8471"})
         self.assertEqual(set(scoped.CELL_ACCOUNTS[("DEBIT", "T80")]), {"8471"})
-        self.assertEqual(set(scoped.relation_accounts("CREDIT", "S10", "COMPANY")), {"6121", "6131", "6181"})
-        self.assertEqual(set(scoped.relation_accounts("CREDIT", "S10", "FLOOR")), {"6121"})
-        self.assertEqual(set(scoped.relation_accounts("DEBIT", "P10", "COMPANY")), {"8471"})
-        self.assertEqual(set(scoped.relation_accounts("DEBIT", "S10", "FLOOR")), {"6131"})
+        self.assertEqual(set(scoped.relation_accounts("CREDIT", "S10", "COMPANY")),
+                         {"6121", "6131", "6181", "6124", "6132", "6142"})
+        self.assertEqual(set(scoped.relation_accounts("CREDIT", "S10", "FLOOR")), {"6121", "6122", "6124", "6132", "6142"})
+        self.assertEqual(set(scoped.relation_accounts("DEBIT", "P10", "COMPANY")), {"8471", "7122", "8672"})
+        self.assertEqual(set(scoped.relation_accounts("DEBIT", "S10", "FLOOR")), {"6131", "6142"})
         # Nothing about 控除不可 (no cell, no semantic) was ever registered.
         self.assertFalse(any("NODED" in case.case_id or "CLOSING" in case.case_id for case in SCOPED_CASES))
 
@@ -224,6 +229,16 @@ class PlacementTest(unittest.TestCase):
 
 
 class RelationTest(unittest.TestCase):
+    def test_three_account_relation_rule_needs_identical_printed_tax_defaults(self):
+        peers = scoped.JDL_TAX_SETTING_PEERS[frozenset({"8471", "7122", "8672"})]
+        self.assertIn("8681", peers)
+        self.assertNotIn("7141", peers)  # prints no 課区/入力: not like the probed accounts
+        self.assertTrue(scoped.relation_covers_account("DEBIT", "P10", "COMPANY", "8681"))
+        self.assertFalse(scoped.relation_covers_account("DEBIT", "P10", "COMPANY", "7141"))
+        # Sales stay account-specific whatever the count; two-account relations stay specific.
+        self.assertFalse(scoped.relation_covers_account("CREDIT", "S10", "COMPANY", "6122"))
+        self.assertFalse(scoped.relation_covers_account("DEBIT", "S10", "FLOOR", "6121"))
+
     def test_amount_relations_are_classified_for_this_scopes_rounding(self):
         d = Decimal
         self.assertEqual(scoped.relation_of("S10", d(1100), d(100)), "")
@@ -291,10 +306,13 @@ class CompositionTest(unittest.TestCase):
         self.assertGap(floor("6131"), "EXPLICIT_TAX_KEEP_UNVERIFIED")  # floor was observed on 6121 only
         self.assertGap(sales_journal(1, "6121", "1105", "102"), "EXPLICIT_TAX_AMOUNT_UNVERIFIED")
 
-    def test_purchase_explicit_tax_company_value_is_account_specific(self):
+    def test_purchase_explicit_tax_company_value_reaches_only_same_jdl_default_accounts(self):
         entry = lambda account, tax: journal([(side(account, "P10", "1106", tax), side("1111", "NO", "1106"))])  # noqa: E731
         self.assertScoped(entry("8471", "101"))
-        self.assertGap(entry("8681", "101"), "EXPLICIT_TAX_COMPANY_ROUNDING_UNVERIFIED")
+        # Round-tripped on 8471, 7122, 8672 (all printed 仕入・内税); 8681 prints the same defaults.
+        self.assertScoped(entry("8681", "101"))
+        # 3141 prints no tax defaults in the JDL 科目一覧: never covered by the three-account rule.
+        self.assertGap(entry("3141", "101"), "EXPLICIT_TAX_COMPANY_ROUNDING_UNVERIFIED")
         self.assertGap(entry("8471", "99"), "EXPLICIT_TAX_AMOUNT_UNVERIFIED")
 
     def test_new_tax_cells_apply_to_the_observed_accounts_and_exact_amounts_only(self):
@@ -383,7 +401,8 @@ class CompositionTest(unittest.TestCase):
         self.assertTrue(caps[("DEBIT", JdlTaxSemantic.NON_TAXABLE_PURCHASE.value)].account_independent)
         self.assertFalse(caps[("CREDIT", JdlTaxSemantic.EXPORT_SALES.value)].account_independent)
         self.assertEqual(caps[("CREDIT", JdlTaxSemantic.SALES_10_EXTERNAL.value)].verified_accounts,
-                         {"6121", "6131", "6181", "9251"})
+                         {"6121", "6131", "6181", "9251", "6122", "6123", "6124", "6132", "6142"})
+        self.assertFalse(caps[("CREDIT", JdlTaxSemantic.SALES_10_EXTERNAL.value)].covers("6141"))  # added, never probed
 
 
 class OutputTest(unittest.TestCase):
