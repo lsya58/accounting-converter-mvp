@@ -1883,11 +1883,19 @@ class CompanyMappingUpdateDialog(QDialog):
         bulk_button.setObjectName("primaryButton")
         bulk_button.setVisible(kind in {"accounts", "subaccounts"})
         bulk_button.clicked.connect(lambda _checked=False, k=kind: self._open_bulk(k))
+        parent_policy_button = QPushButton("親科目ごとに扱いを選ぶ…")
+        parent_policy_button.setToolTip(
+            "親科目単位で「補助を保持」または「親科目のみ」を選びます。"
+            "選んだ親科目だけが対象で、保存はこの画面の保存ボタンで行います。"
+        )
+        parent_policy_button.setVisible(kind == "subaccounts")
+        parent_policy_button.clicked.connect(lambda _checked=False: self._open_parent_policy())
         detail_toggle = remembered_toggle(
             "候補と根拠", "company_mapping_update_dialog/show_detail", True
         )
         detail_toggle.setToolTip("右側の「候補と根拠」の表示・非表示を切り替えます。")
         filter_bar.addWidget(bulk_button)
+        filter_bar.addWidget(parent_policy_button)
         filter_bar.addWidget(view)
         filter_bar.addWidget(search, 1)
         filter_bar.addWidget(unconfirmed_only)
@@ -3146,6 +3154,49 @@ class CompanyMappingUpdateDialog(QDialog):
         for row, combo, check in pairs:
             if row.index in chosen:
                 combo.setCurrentIndex(combo.findData(row.target))
+                check.setChecked(True)
+        self._update_action()
+
+    def _open_parent_policy(self) -> None:
+        from accounting_converter.application import parent_subaccount_policy as policy
+
+        from .parent_policy_dialog import PARENT_ONLY, ParentPolicyDialog
+
+        controls = {item.key: (combo, check) for item, combo, check, _status in self._subaccount_rows}
+
+        def free(item) -> bool:
+            return item.key in controls and not controls[item.key][1].isChecked()
+
+        rows = policy.policy_rows(
+            policy.parent_groups(self.review),
+            lambda item: free(item) and controls[item.key][0].findData(PARENT_ONLY_SELECTION) >= 0,
+            lambda item: free(item) and controls[item.key][0].findData(item.source_value) >= 0,
+        )
+        if not rows:
+            QMessageBox.information(self, "親科目ごとに扱いを選ぶ", "親科目単位で選べる補助科目はありません。")
+            return
+        dialog = ParentPolicyDialog(rows, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        choices = dialog.choices()
+        for row in rows:
+            choice = choices.get(row.group.source_parent)
+            if choice is None:
+                continue
+            for member in row.group.unconfirmed:
+                if member.item.mapping_type != "SUBACCOUNT" or not free(member.item):
+                    continue
+                if choice == PARENT_ONLY:
+                    value = PARENT_ONLY_SELECTION
+                elif member.klass == policy.PRESERVE_READY:
+                    value = member.item.source_value
+                else:
+                    continue
+                combo, check = controls[member.item.key]
+                index = combo.findData(value)
+                if index < 0:
+                    continue
+                combo.setCurrentIndex(index)
                 check.setChecked(True)
         self._update_action()
 

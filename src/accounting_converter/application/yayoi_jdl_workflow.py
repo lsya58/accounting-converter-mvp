@@ -46,7 +46,7 @@ from accounting_converter.application.profile_preflight import mapping_rule_set_
 from accounting_converter.application.validation_pipeline import ValidationPipeline
 from accounting_converter.domain.conversion_profile import ConversionProfile
 from accounting_converter.domain.journal import JournalEntry
-from accounting_converter.domain.mapping import MappingStatus
+from accounting_converter.domain.mapping import MappingKey, MappingStatus, MappingType, is_confirmed_parent_only
 from accounting_converter.domain.validation import BalanceRule, Severity, ValidationResult
 from accounting_converter.infrastructure.adapter_registry import production_adapter_registry
 from accounting_converter.adapters.output.jdl.tax_semantics import JdlTaxSemantic
@@ -220,7 +220,7 @@ class YayoiJournalReportJdlWorkflow:
         loss = YayoiToJdlLossRule(confirmed_fields)
         non_retained: Counter = Counter()
         for entry in entries:
-            for field in {field_of(name) for _, name, _ in non_retained_values(entry)}:
+            for field in {field_of(name) for _, name, _ in non_retained_values(entry) + dropped_subaccount_values(entry, profile)}:
                 non_retained[field] += 1
         for entry in entries:
             for result in loss.validate(entry):
@@ -764,12 +764,34 @@ def pending_audit_path_for(output_path: Path) -> Path:
 AUDIT_SCHEMA = "yayoi-jdl-non-retained-audit-v1"
 
 
+DROPPED_SUBACCOUNT_FIELD = "補助科目（親科目のみ・JDLへ引き継がない）"
+
+
+def dropped_subaccount_values(entry: JournalEntry, profile) -> tuple[tuple[int, str, str], ...]:
+    """(source row, field, "SIDE|parent|subaccount") for every subaccount the Human confirmed as 'parent only'.
+
+    The JDL CSV carries the parent account with a blank subaccount for these lines; the original
+    subaccount name is kept here (and in the audit file) so the omission is auditable."""
+    if profile is None:
+        return ()
+    found = []
+    for line in entry.lines:
+        if not line.sub_account:
+            continue
+        mapping = profile.subaccount_context_mappings.get(
+            MappingKey(MappingType.SUBACCOUNT, line.sub_account, line.account))
+        if is_confirmed_parent_only(mapping):
+            found.append((line.source_reference.row_number, DROPPED_SUBACCOUNT_FIELD,
+                          f"{line.side.value}|{line.account}|{line.sub_account}"))
+    return tuple(found)
+
+
 def expected_non_retained(source: Path, profile) -> list[dict]:
     """One record per source journal that has values JDL will not hold, in source order."""
     source_format = format_for_identity_key(profile.source_format_identity.stable_key) or detect_format(source)
     records = []
     for entry in source_format.read(source):
-        values = non_retained_values(entry)
+        values = non_retained_values(entry) + dropped_subaccount_values(entry, profile)
         if values:
             records.append({
                 "source_journal_content_sha256": entry.metadata.get(JOURNAL_CONTENT_IDENTITY_KEY),

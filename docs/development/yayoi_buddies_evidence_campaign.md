@@ -288,3 +288,10 @@ PAIR（借貸両方に税のある行）、EXPLICIT（明示税額の関係）�
 | 未解決（控除不可2・決算7） | 9 | 9 |
 
 実際の保存設定での診断: 摘要の確認（`HUMAN:DESCRIPTION_REPLACEMENT`）205仕訳 → **0**、GUIの摘要確認項目 248 → **0**。正式READYは0のまま（科目・補助・税区分の Human 確認が残る）。
+
+## 10. 補助科目: 親科目単位の扱い（2026-11-06）
+
+既存の「親科目のみ」（補助ごとの明示確認・JDL側に補助がない親科目だけ・出力段の `SUBACCOUNT_REQUIRED_BY_MASTER`・科目一覧更新時の失効）を再利用した。新規は次の3点だけ。
+- `application/parent_subaccount_policy.py` と `tools/yayoi_subaccount_policy_plan.py`: 補助の確認項目を入力元の親科目単位に集計（A 同名あり／B JDL親に補助なし／C JDL親に補助あり・同名なし／D 親科目未確定／X 既定補助）。保存はしない。
+- 確認画面の「親科目ごとに扱いを選ぶ…」（`ui_qt/parent_policy_dialog.py`）: 選ばない・補助を保持・親科目のみ。親科目のみは損失の確認チェックが必要で、確認画面の選択欄を埋めるだけ（保存は既存の保存ボタン）。
+- 監査: 親科目のみにした補助の元の名前を `.audit.json` に記録（`yayoi_jdl_workflow.dropped_subaccount_values`）。従来は部門・付箋などだけが対象で、親科目のみで落とした補助は記録されていなかった。補助を落とさない会社の出力・監査はバイト一致のまま。
