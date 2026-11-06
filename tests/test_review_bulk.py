@@ -127,7 +127,7 @@ class BulkLogicTest(unittest.TestCase):
         rules = [{"ルールID": "R01", "種類": "空白の整理", "対象の語句": "",
                   "【記入】短縮後の語句": "", "【記入】承認": "OK"}]
         lines = description_preview([
-            ("long", "A" * 33), ("encoding", "A" * 31 + "😀"),
+            ("long", "A" * 65), ("encoding", "A" * 31 + "😀"),
             ("fits", "あ" * 32),
         ], rules)
         self.assertEqual([line.state for line in lines], ["INDIVIDUAL", "INDIVIDUAL", "FIT"])

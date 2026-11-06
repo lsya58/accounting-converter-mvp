@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import hashlib
 
+from accounting_converter.profiles.jdl_official import JDL_DESCRIPTION_CHAR_LIMIT, jdl_description_fits
 
-JDL_DESCRIPTION_LIMIT = 32
+JDL_DESCRIPTION_LIMIT = JDL_DESCRIPTION_CHAR_LIMIT
 
 
 def description_sha256(value: str) -> str:
@@ -16,7 +17,7 @@ def has_control_character(value: str) -> bool:
 
 
 def replacement_is_valid(value: str) -> bool:
-    if not 1 <= len(value) <= JDL_DESCRIPTION_LIMIT:
+    if not value or not jdl_description_fits(value):
         return False
     if has_control_character(value):
         return False

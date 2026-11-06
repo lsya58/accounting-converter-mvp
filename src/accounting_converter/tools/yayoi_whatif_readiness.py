@@ -82,7 +82,7 @@ def _classify(entries, blockers: dict, row_limit: int | None) -> dict:
     }
 
 
-def technical_sizing(entries, context, *, with_campaign: bool) -> dict:
+def technical_sizing(entries, context, *, with_campaign: bool, evidence_missing: list | None = None) -> dict:
     """Technical (JDL Evidence / voucher row limit) status of every journal, whatever accounts the Human picks.
 
     Assumes the Human would confirm the natural tax candidate of every tax
@@ -162,6 +162,8 @@ def technical_sizing(entries, context, *, with_campaign: bool) -> dict:
             structure_ok = structure_gaps == ()
         if not structure_ok:
             classes["jdl_evidence_missing"] += 1
+            if evidence_missing is not None:
+                evidence_missing.append((entry, "structure", structure_gaps))
             reasons["structure" + (":" + structure_gaps[0] if structure_gaps else "")] += 1
             from accounting_converter.adapters.output.jdl.scoped_evidence import layout_of
 
@@ -192,6 +194,8 @@ def technical_sizing(entries, context, *, with_campaign: bool) -> dict:
                 restricted[SEMANTIC_CELL.get(semantic, semantic) + ":" + line.side.value[0]] += 1
         if status == "missing":
             classes["jdl_evidence_missing"] += 1
+            if evidence_missing is not None:
+                evidence_missing.append((entry, "line", (why,)))
             reasons["line:" + why] += 1
         else:
             classes[f"technical_ok_account_{status}"] += 1

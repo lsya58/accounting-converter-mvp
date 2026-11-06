@@ -866,7 +866,7 @@ class CompanyMappingUpdateService:
                 or unsafe_description_positions(replacement)
             ):
                 raise ValueError(
-                    "置換後の摘要はJDLで保持可能な1文字以上32文字以内にしてください。"
+                    "置換後の摘要はJDLで保持可能な1文字以上・全角32文字・半角64文字（CP932で64バイト）以内にしてください。"
                 )
             loss_policies[key] = MappingValue(
                 key,

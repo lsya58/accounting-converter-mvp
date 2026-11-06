@@ -176,7 +176,7 @@ def build_rows(source: Path, profile, context) -> list[tuple]:
         rows.append((
             "摘要", f"desc:{item.original_description_sha256[:16]}", original, "", item.affected_journal_count,
             suggestion.value if suggestion else "",
-            "置換文を【記入】意味・メモに書く（32文字以内）"
+            "置換文を【記入】意味・メモに書く（全角32文字・半角64文字以内）"
             + ("。候補でよければ OK" if suggestion and suggestion.kind != "TRUNCATED" else ""),
             "なし",
             " / ".join(description_issues(original))
@@ -324,7 +324,7 @@ def check_sheet(raw: bytes, source: Path, profile, context) -> list[dict]:
                 problems.append((number, "置換文が空"))
                 continue
             if not replacement_is_valid(replacement) or unsafe_description_positions(replacement):
-                problems.append((number, "置換文がJDLで使えない（1〜32文字・改行なし・CP932で表せる文字）"))
+                problems.append((number, "置換文がJDLで使えない（全角32文字・半角64文字以内・改行なし・CP932で表せる文字）"))
                 continue
             plan.append({"row": number, "kind": kind, "original": original, "replacement": replacement})
         elif kind == "JDLに入らない情報":

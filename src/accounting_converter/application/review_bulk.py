@@ -24,6 +24,7 @@ from accounting_converter.tools.yayoi_decision_sheet import (
 )
 from accounting_converter.application.description_replacement import has_control_character
 from accounting_converter.application.moneyforward_description_replacement import unsafe_description_positions
+from accounting_converter.profiles.jdl_official import jdl_description_fits
 
 PRE_TICKED_KINDS = frozenset({"EXACT", "SAME_NAME"})
 _NUMERIC_TOKEN = re.compile(r"\d+(?:[.,:/-]\d+)*")
@@ -167,8 +168,8 @@ def description_preview(descriptions: Sequence[tuple[str, str]], rules: Sequence
                 reason = "承認済みルールがありません"
             elif not result:
                 reason = "摘要が空になるため使用できません"
-            elif len(result) > 32:
-                reason = "32文字を超えています"
+            elif not jdl_description_fits(result):
+                reason = "JDLで保持できる長さ（32文字、または確認済みの文字でCP932 64バイト）を超えています"
             elif has_control_character(result):
                 reason = "改行・制御文字が残っています"
             else:

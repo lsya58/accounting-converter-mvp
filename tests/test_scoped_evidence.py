@@ -123,15 +123,17 @@ def sales_journal(count, account="6121", amount="1100", explicit="100"):
 
 
 class RegistryTest(unittest.TestCase):
-    def test_registry_is_the_64_campaign_passes_plus_the_two_existing_ones(self):
-        self.assertEqual(len(SCOPED_CASES), 66)
-        self.assertEqual(len({case.evidence_id for case in SCOPED_CASES}), 66)
+    def test_registry_is_the_campaign_and_gap_round_passes_plus_the_two_existing_ones(self):
+        self.assertEqual(len(SCOPED_CASES), 141)
+        self.assertEqual(len({case.evidence_id for case in SCOPED_CASES}), 141)
         self.assertEqual(sum("BUDDIES-CAMP" in case.evidence_id for case in SCOPED_CASES), 64)
+        self.assertEqual(sum("BUDDIES-GAP" in case.evidence_id for case in SCOPED_CASES), 75)  # 2026-11-06
 
     def test_rejected_over_limit_cases_are_not_registered(self):
         longest = max(len(case.rows) for case in SCOPED_CASES)
         self.assertEqual(longest, 16)
-        self.assertEqual(sum(len(case.rows) == 16 for case in SCOPED_CASES), 1)  # only the 16-row case passed
+        # A3 (2026-11-05) and one gap-round case (2026-11-06) are the only 16-row cases; none is longer.
+        self.assertEqual(sum(len(case.rows) == 16 for case in SCOPED_CASES), 2)
         self.assertFalse(any(len(case.rows) > scoped.SCOPE_VOUCHER_ROW_LIMIT for case in SCOPED_CASES))
 
     def test_every_case_is_internally_consistent(self):
@@ -152,7 +154,7 @@ class RegistryTest(unittest.TestCase):
                     self.assertIn(side_name, {"DEBIT", "CREDIT"})
                     self.assertIn(cell, scoped.CELL_SEMANTIC)
                     self.assertIn(account, CODES | {"6121": "", "6131": "", "6181": "", "8471": "", "8991": "", "7131": ""})
-                    self.assertIn(relation, {"", "COMPANY", "FLOOR", "EXACT", "NONE"})
+                    self.assertIn(relation, {"", "COMPANY", "FLOOR", "EXACT", "NONE", "HALF_LOW", "HALF_HIGH", "FLOOR_HIGH"})
 
     def test_observed_facts_the_implementation_relies_on(self):
         self.assertEqual(set(scoped.CELL_ACCOUNTS[("CREDIT", "S10")]), {"6121", "6131", "6181"})
@@ -200,12 +202,12 @@ class PlacementTest(unittest.TestCase):
         self.assertEqual(scoped.placement_gaps("B3", [("NO", "NO")] * 3), ())  # untaxed rows ride on the layout
 
     def test_cell_never_observed_in_that_layout_is_blocked(self):
-        # 3D3C round-tripped with 売上 only; purchase on the debit side of that layout was never imported.
-        self.assertEqual(scoped.placement_gaps("B3", [("P10", "NO")] * 3), ("VOUCHER_TAX_PLACEMENT_UNVERIFIED",))
+        # B3 round-tripped with 売上・仕入・非課税仕入 but never with 輸出売 on the credit side.
+        self.assertEqual(scoped.placement_gaps("B3", [("NO", "XS")] * 3), ("VOUCHER_TAX_PLACEMENT_UNVERIFIED",))
 
     def test_layout_never_observed_is_blocked(self):
-        # B7 and B9 round-tripped; B8 did not (nothing is inferred between observed sizes).
-        for layout in ("B8", "B11", "B14", "B17", "D2B1", "B1D40"):
+        # B11 and B13 round-tripped; B12 and B14 did not (nothing is inferred between observed sizes).
+        for layout in ("B12", "B14", "B17", "D2B1", "B1D40"):
             self.assertEqual(scoped.placement_gaps(layout, [("NO", "NO")]), ("VOUCHER_LAYOUT_UNVERIFIED",))
 
     def test_row_with_tax_on_both_sides_was_never_observed(self):
@@ -216,7 +218,8 @@ class PlacementTest(unittest.TestCase):
     def test_boundary_row_counts(self):
         self.assertEqual(scoped.placement_gaps("B16", [("NO", "NO")] * 16), ())
         self.assertEqual(scoped.placement_gaps("B9", [("NO", "NO")] * 9), ())
-        self.assertEqual(scoped.placement_gaps("B8", [("NO", "NO")] * 8), ("VOUCHER_LAYOUT_UNVERIFIED",))
+        self.assertEqual(scoped.placement_gaps("B8", [("NO", "NO")] * 8), ())  # 2026-11-06
+        self.assertEqual(scoped.placement_gaps("B12", [("NO", "NO")] * 12), ("VOUCHER_LAYOUT_UNVERIFIED",))
         self.assertEqual(scoped.placement_gaps("B17", [("NO", "NO")] * 17), ("VOUCHER_LAYOUT_UNVERIFIED",))
 
 
@@ -232,12 +235,16 @@ class RelationTest(unittest.TestCase):
         self.assertEqual(scoped.relation_of("P10", d(1101), d(100)), "")  # floor == half-up
         self.assertIsNone(scoped.relation_of("P10", d(1100), d(99)))
         self.assertEqual(scoped.relation_of("R8", d(1080), d(80)), "EXACT")
-        self.assertIsNone(scoped.relation_of("R8", d(1081), d(80)))
+        # A fractional exact value is classified; allowed only where it round-tripped (8471, 2026-11-06).
+        self.assertEqual(scoped.relation_of("R8", d(1081), d(80)), "HALF_LOW")
+        self.assertTrue(scoped.relation_covers_account("DEBIT", "R8", "HALF_LOW", "8471"))
+        self.assertFalse(scoped.relation_covers_account("DEBIT", "R8", "HALF_LOW", "8681"))
         self.assertIsNone(scoped.relation_of("R8", d(1080), d(81)))
         self.assertIsNone(scoped.relation_of("R8", d(1080), None))
         self.assertEqual(scoped.relation_of("T80", d(1100), d(80)), "EXACT")
         self.assertIsNone(scoped.relation_of("T80", d(1100), d(100)))  # the full 10% tax is not the 80% tax
-        self.assertIsNone(scoped.relation_of("T80", d(1105), d(80)))
+        self.assertEqual(scoped.relation_of("T80", d(1105), d(80)), "HALF_LOW")
+        self.assertTrue(scoped.relation_covers_account("DEBIT", "T80", "HALF_LOW", "8471"))
         self.assertEqual(scoped.relation_of("XS", d(11000), None), "NONE")
         self.assertIsNone(scoped.relation_of("XS", d(11000), d(1000)))
         self.assertEqual(scoped.relation_of("NP", d(1100), None), "NONE")
@@ -297,7 +304,9 @@ class CompositionTest(unittest.TestCase):
         reduced = lambda account, amount, tax: journal([(side(account, "R8", amount, tax), side("1111", "NO", amount))])  # noqa: E731
         self.assertScoped(reduced("8471", "1080", "80"))
         self.assertGap(reduced("8681", "1080", "80"), "TAX_ACCOUNT_UNVERIFIED")
-        self.assertGap(reduced("8471", "1081", "80"), "EXPLICIT_TAX_AMOUNT_UNVERIFIED")
+        self.assertScoped(reduced("8471", "1081", "80"))  # fraction kept by JDL (2026-11-06, HALF_LOW)
+        self.assertGap(reduced("8471", "1081", "81"), "EXPLICIT_TAX_AMOUNT_UNVERIFIED")  # ceil of a low fraction
+        self.assertGap(reduced("8471", "1200", "88"), "EXPLICIT_TAX_AMOUNT_UNVERIFIED")  # FLOOR_HIGH never probed for 8%
         self.assertGap(reduced("8471", "1080", None), "EXPLICIT_TAX_AMOUNT_UNVERIFIED")
         transitional = lambda amount, tax: journal([(side("8471", "T80", amount, tax), side("1111", "NO", amount))])  # noqa: E731
         self.assertScoped(transitional("1100", "80"))
@@ -312,13 +321,13 @@ class CompositionTest(unittest.TestCase):
         self.assertScoped(entry)
 
     def test_tax_cell_not_observed_in_the_layout_is_blocked(self):
-        # B3 round-tripped with 売上 only: three purchase rows were never imported.
-        entry = journal([(side("8471", "P10", "1100", "100"), side("1111", "NO", "1100"))] * 3)
+        # B3 round-tripped, but never with 輸出売 on the credit side.
+        entry = journal([(side("1111", "NO", "1100"), side("6121", "XS", "1100"))] * 3)
         self.assertGap(entry, "VOUCHER_TAX_PLACEMENT_UNVERIFIED")
 
     def test_unobserved_layout_is_blocked_even_when_every_cell_is_known(self):
-        self.assertScoped(sales_journal(7))  # B7 round-tripped
-        self.assertGap(sales_journal(8), "VOUCHER_LAYOUT_UNVERIFIED")  # B8 did not
+        self.assertScoped(sales_journal(11))  # B11 round-tripped
+        self.assertGap(sales_journal(12), "VOUCHER_LAYOUT_UNVERIFIED")  # B12 did not
 
     def test_row_limit_is_a_hard_stop_before_any_evidence(self):
         entry = sales_journal(17)
@@ -465,7 +474,7 @@ class OutputTest(unittest.TestCase):
         wrong.lines[1].tax_info.metadata["jdl_tax_input_method"] = "内税"
         self.assertIn("JDL-OUT-TAX-LITERAL", errors(wrong))
         # a layout that never round-tripped
-        unobserved = sales_journal(8)
+        unobserved = sales_journal(12)
         # literals applied directly: the point is that the OUTPUT stage refuses it on its own
         literal8 = ev.apply_tax_literals(unobserved, unobserved, "TEST", profile=profile(ctx), context=ctx)
         literal8.metadata[JDL_OUTPUT_METADATA_KEY] = literal.metadata[JDL_OUTPUT_METADATA_KEY]

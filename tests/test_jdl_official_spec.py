@@ -68,7 +68,12 @@ class JdlOfficialSpecTests(unittest.TestCase):
             self.assertTrue(jdl_field_length_valid(columns[position - 1], observed))
             self.assertFalse(jdl_field_length_valid(columns[position - 1], observed + "A"))
         self.assertFalse(jdl_subaccount_name_fits("😀"))
-        self.assertFalse(jdl_field_length_valid(columns[23], "A" * 33))
+        # 摘要: 32 characters, or up to 64 CP932 bytes of characters observed on real JDL (gap round 2026-11-06).
+        self.assertTrue(jdl_field_length_valid(columns[23], "A" * 64))
+        self.assertTrue(jdl_field_length_valid(columns[23], "あ" * 32))
+        self.assertFalse(jdl_field_length_valid(columns[23], "A" * 65))  # JDL truncates silently
+        self.assertFalse(jdl_field_length_valid(columns[23], "あ" * 33))
+        self.assertFalse(jdl_field_length_valid(columns[23], "!" * 33))  # single-byte character not observed
 
     def test_official_manual_schema_has_exact_30_column_header(self) -> None:
         spec = jdl_ibex_cashbook_official_journal_import_spec()

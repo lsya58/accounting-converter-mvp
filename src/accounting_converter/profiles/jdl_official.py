@@ -36,9 +36,40 @@ def jdl_subaccount_name_fits(value: str) -> bool:
         return False
 
 
+JDL_DESCRIPTION_CHAR_LIMIT = 32
+JDL_DESCRIPTION_BYTE_LIMIT = 64
+# Real JDL 35.5 CSV Import + re-export (2026-11-06, gap round G4/G5): 摘要 of up to 64
+# CP932 bytes kept exactly (full-width 32 chars; half-width alnum 33/48/64; half-width
+# kana 40; mixed; space and the symbols below); 65+ bytes were imported but SILENTLY
+# truncated to 64 bytes. Single-byte characters beyond 32 characters are limited to
+# the ones observed; anything else keeps the 32-character rule.
+JDL_DESCRIPTION_64_BYTE_EVIDENCE_ID = "EVID-YAYOI-JDL-35-5-BUDDIES-GAP-DESCRIPTION-CP932-64-BYTES-001"
+_DESCRIPTION_VERIFIED_SINGLE_BYTE = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 -./@()#$,&*_+':"
+) | frozenset(chr(code) for code in range(0xFF61, 0xFFA0))
+
+
+def jdl_description_fits(value: str) -> bool:
+    """Whether JDL 35.5 keeps this 摘要 unchanged by length (characters themselves are checked elsewhere)."""
+    if len(value) <= JDL_DESCRIPTION_CHAR_LIMIT:
+        return True
+    try:
+        encoded = value.encode("cp932", errors="strict")
+    except UnicodeError:
+        return False
+    if len(encoded) > JDL_DESCRIPTION_BYTE_LIMIT:
+        return False  # JDL truncates silently: never written
+    return all(
+        character in _DESCRIPTION_VERIFIED_SINGLE_BYTE or len(character.encode("cp932")) == 2
+        for character in value
+    )
+
+
 def jdl_field_length_valid(definition: JdlOfficialColumnDefinition, value: str) -> bool:
     if definition.position in (8, 18):
         return not value or jdl_subaccount_name_fits(value)
+    if definition.position == 24:
+        return jdl_description_fits(value)
     return definition.max_length is None or len(value) <= definition.max_length
 
 

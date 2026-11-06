@@ -2298,7 +2298,7 @@ class CompanyMappingUpdateDialog(QDialog):
         rows: list[tuple[object, QLineEdit, QCheckBox, object]] = []
         for row, item in enumerate(ordered):
             replacement = QLineEdit()
-            replacement.setPlaceholderText("置き換え後の摘要（1〜32文字、改行なし）")
+            replacement.setPlaceholderText("置き換え後の摘要（全角32文字・半角64文字（CP932で64バイト）以内、改行なし）")
             recommended = recommended_description_replacement(
                 item.current_description
             )
@@ -2328,7 +2328,7 @@ class CompanyMappingUpdateDialog(QDialog):
                 cell.setText(f"{len(value)}文字" if valid else "要修正")
                 cell.setToolTip(
                     f"JDLに出力される摘要: {value}（{len(value)}文字）"
-                    if valid else "1〜32文字・改行なし・JDLで保持できる文字で入力してください"
+                    if valid else "全角32文字・半角64文字（CP932で64バイト）以内・改行なし・JDLで保持できる文字で入力してください"
                 )
                 check.setEnabled(valid)
 
@@ -2412,7 +2412,7 @@ class CompanyMappingUpdateDialog(QDialog):
             valid = replacement_is_valid(value) and not unsafe_description_positions(value)
             detail_output.setText(
                 f"JDLに出力される摘要: {value}（{len(value)}文字）"
-                if valid else "1〜32文字・改行なし・JDLで保持できる文字で入力してください"
+                if valid else "全角32文字・半角64文字（CP932で64バイト）以内・改行なし・JDLで保持できる文字で入力してください"
             )
 
         table.currentCellChanged.connect(

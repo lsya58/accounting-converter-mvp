@@ -64,14 +64,13 @@ def _relation(cell: str, amount: Decimal, tax: str) -> str:
         if written == floor:
             return "FLOOR"
         raise ValueError("unclassified explicit tax in a PASS case")
-    if cell == "R8":
-        if Decimal(tax) != amount * 8 / 108:
-            raise ValueError("reduced 8% tax is not the exact 8/108 amount")
-        return "EXACT"
-    if cell == "T80":
-        if Decimal(tax) != amount * 10 / 110 * Decimal("0.8"):
-            raise ValueError("80% transitional tax is not the exact 80% amount")
-        return "EXACT"
+    if cell in {"R8", "T80"}:
+        from accounting_converter.adapters.output.jdl.scoped_evidence import relation_of
+
+        relation = relation_of(cell, amount, Decimal(tax))
+        if relation is None:
+            raise ValueError("reduced 8% / 80% transitional tax is not a relation to the exact amount that is modelled")
+        return relation
     if tax not in {"", "0"}:
         raise ValueError("tax amount on a cell that carries none")
     return "NONE"
@@ -103,6 +102,36 @@ def case_record(case_id: str, evidence_id: str, group: list[list[str]]) -> dict:
         "layout": "".join(f"{kind}{count}" for kind, count in layout),
         "rows": tuple(rows), "taxed": tuple(taxed),
     }
+
+
+def gap_evidence_id(case: str) -> str:
+    return f"EVID-YAYOI-JDL-35-5-BUDDIES-GAP-{case}-SYNTHETIC-ROUNDTRIP-001"
+
+
+def collect_gap_round(gap_dir: Path, reexport: Path) -> tuple[list[dict], dict]:
+    """Structural / explicit-tax PASS cases of the gap round (2026-11-06 Probes), re-judged here.
+
+    Nothing is taken unless the round is valid (no duplicate, no unexplained journal,
+    every control of an imported file PASS). Description and control cases are not
+    layout Evidence and are never added to this table."""
+    from accounting_converter.tools.yayoi_gap_probe_check import check_round
+
+    report = check_round(gap_dir, reexport)
+    if not report["round_valid"]:
+        raise ValueError("the gap round is not valid (duplicate, unexplained journal or failed control); nothing registered")
+    cases, summary = [], {}
+    for name, result in report["files"].items():
+        manifest = json.loads(manifest_path_for(gap_dir / name).read_text(encoding="utf-8"))
+        groups = _groups(_rows(gap_dir / name))
+        passed = 0
+        for case in manifest["cases"]:
+            if case["description_under_test"] or case["group"] == "CONTROL":
+                continue
+            if result["verdicts"][case["case"]] == "PASS":
+                passed += 1
+                cases.append(case_record(case["case"], gap_evidence_id(case["case"]), groups[case["journal_index"]]))
+        summary[name[:28]] = f"{passed}/{sum(1 for c in manifest['cases'] if not c['description_under_test'] and c['group'] != 'CONTROL')}"
+    return cases, summary
 
 
 def collect(campaign_dir: Path, pending_dir: Path) -> tuple[list[dict], dict]:
@@ -160,9 +189,17 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--campaign-dir", type=Path, required=True)
     parser.add_argument("--pending-dir", type=Path, required=True)
+    parser.add_argument("--gap-dir", type=Path, help="2026-11-06 gap Probe directory (round 3)")
+    parser.add_argument("--gap-reexport", type=Path, help="real JDL re-export of the gap Probe day")
     parser.add_argument("--summary", action="store_true", help="print the per-file PASS counts instead of the table")
     args = parser.parse_args()
     cases, summary = collect(args.campaign_dir, args.pending_dir)
+    if args.gap_dir or args.gap_reexport:
+        if not (args.gap_dir and args.gap_reexport):
+            raise SystemExit("--gap-dir and --gap-reexport go together")
+        gap_cases, gap_summary = collect_gap_round(args.gap_dir, args.gap_reexport)
+        cases += gap_cases
+        summary["cases_passed"].update(gap_summary)
     print(json.dumps(summary, ensure_ascii=False, indent=1) if args.summary else render(cases), end="")
     return 0
 

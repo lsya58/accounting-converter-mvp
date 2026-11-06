@@ -179,7 +179,9 @@ def relation_of(cell: str, amount: Decimal, written: Decimal | None) -> str | No
     """How the written tax relates to the amount for this scope's rounding.
 
     "" no question (every rounding agrees, or floor == company rounding);
-    COMPANY / FLOOR / EXACT / NONE as in the registry; None = a relation that
+    COMPANY / FLOOR / EXACT / NONE as in the registry; for 軽減8% / 10%免80 with a
+    fractional exact value HALF_LOW (written = floor = half-up), HALF_HIGH (written =
+    half-up > floor) and FLOOR_HIGH (written = floor < half-up). None = a relation that
     was never observed (never allowed).
     """
     if cell in NO_AMOUNT_CELLS:
@@ -198,10 +200,18 @@ def relation_of(cell: str, amount: Decimal, written: Decimal | None) -> str | No
         if written == floor:
             return "FLOOR"
         return None
-    if cell == "R8":
-        return "EXACT" if written == amount * 8 / 108 else None
-    if cell == "T80":
-        return "EXACT" if written == amount * 10 / 110 * Decimal("0.8") else None
+    if cell in {"R8", "T80"}:
+        exact = amount * 8 / 108 if cell == "R8" else amount * 10 / 110 * Decimal("0.8")
+        if written == exact:
+            return "EXACT"
+        # A fractional exact value: only describes how the written tax relates to it.
+        # Allowed to be used only if such a relation was round-tripped (registry data).
+        floor, half = (exact.quantize(Decimal(1), rounding=mode) for mode in (ROUND_DOWN, ROUND_HALF_UP))
+        if written == half:
+            return "HALF_LOW" if floor == half else "HALF_HIGH"
+        if written == floor:
+            return "FLOOR_HIGH"
+        return None
     return None
 
 

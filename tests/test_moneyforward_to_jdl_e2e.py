@@ -199,7 +199,7 @@ class MoneyForwardToJdlSyntheticE2ETests(unittest.TestCase):
 
     def test_verified_1d3c_description_is_not_silently_truncated(self) -> None:
         rows = [
-            self._row("16", debit_amount="1000", credit_amount="500", description="A" * 33),
+            self._row("16", debit_amount="1000", credit_amount="500", description="A" * 65),
             self._row(
                 "16", debit="", debit_amount="", credit="当座預金",
                 credit_amount="300", description="架空B",
@@ -219,7 +219,7 @@ class MoneyForwardToJdlSyntheticE2ETests(unittest.TestCase):
                 {"16": JdlEvidenceProfile.COMPOUND_1D3C_LINE_DESCRIPTIONS},
             )
 
-        # Over-32 descriptions now stop before output as a Human replacement item.
+        # Descriptions JDL would truncate (over 64 CP932 bytes) stop before output as a Human replacement item.
         self.assertEqual(result.status, ConversionStatus.BLOCKED_BY_BUSINESS_VALIDATION)
         self.assertTrue(
             any(item.field == "description_character" for item in result.validation_results)

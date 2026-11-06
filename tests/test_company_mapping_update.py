@@ -186,7 +186,7 @@ class CompanyMappingUpdateTests(unittest.TestCase):
         )
         review = self.service.review("company-a", source)
         item = review.descriptions[0]
-        for replacement in ("A" * 33, "🙂"):
+        for replacement in ("A" * 65, "!" * 33, "🙂"):
             with self.assertRaises(ValueError):
                 self.service.apply(
                     review,

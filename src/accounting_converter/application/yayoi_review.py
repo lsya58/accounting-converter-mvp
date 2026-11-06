@@ -360,7 +360,7 @@ def save_description_replacement(
 ) -> ConversionProfile:
     """Same replacement dictionary as MF: one confirmation per original description."""
     if not replacement_is_valid(replacement) or unsafe_description_positions(replacement):
-        raise ValueError("置換後の摘要はJDLで保持可能な1文字以上32文字以内にしてください。")
+        raise ValueError("置換後の摘要はJDLで保持可能な1文字以上・全角32文字・半角64文字（CP932で64バイト）以内にしてください。")
     profile = store.get(profile_id)
     key = moneyforward_description_replacement_key(original)
     policies = dict(profile.loss_policy_mappings)

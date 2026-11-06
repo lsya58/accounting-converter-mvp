@@ -14,6 +14,7 @@ from accounting_converter.domain.journal import JournalEntry
 from accounting_converter.domain.journal_rows import LINE_ROW_DESCRIPTION_KEY
 from accounting_converter.domain.mapping import MappingStatus
 from accounting_converter.domain.validation import Severity, ValidationResult
+from accounting_converter.profiles.jdl_official import jdl_description_fits
 
 
 MF_DESCRIPTION_REPLACEMENT_POLICY = "HUMAN_CONFIRMED_DESCRIPTION_REPLACEMENT"
@@ -61,24 +62,32 @@ def journal_descriptions(entry: JournalEntry) -> tuple[str, ...]:
     return tuple(dict.fromkeys(value for value in values if value))
 
 
+def _cp932_bytes(value: str) -> int:
+    try:
+        return len(value.encode("cp932", errors="strict"))
+    except UnicodeEncodeError:
+        return -1
+
+
 def description_requires_replacement(description: str) -> bool:
     """JDL cannot keep this text as-is: a non-round-trip character, a line
-    break/control character, or more than 32 characters.
+    break/control character, or longer than JDL keeps (`jdl_description_fits`:
+    32 characters, or up to 64 CP932 bytes of verified characters).
 
     No automatic truncation: the Human confirms a replacement per description.
     """
     return (
         bool(unsafe_description_positions(description))
         or has_control_character(description)
-        or len(description) > JDL_DESCRIPTION_LIMIT
+        or not jdl_description_fits(description)
     )
 
 
 def description_issues(description: str) -> tuple[str, ...]:
     """Human-readable reasons why JDL cannot keep this description as-is."""
     issues = []
-    if len(description) > JDL_DESCRIPTION_LIMIT:
-        issues.append(f"32文字を超えています（{len(description)}文字）")
+    if not jdl_description_fits(description):
+        issues.append(f"JDLで保持できる長さを超えています（{len(description)}文字・{_cp932_bytes(description)}バイト）")
     if has_control_character(description):
         issues.append("改行などの制御文字を含みます")
     if unsafe_description_positions(description):
@@ -171,10 +180,14 @@ class MoneyForwardDescriptionReplacementPolicy:
         replacements: dict[str, str] = {}
         errors: list[ValidationResult] = []
         for description in descriptions:
-            if not description_requires_replacement(description):
-                continue
             key = moneyforward_description_replacement_key(description)
             mapping = self._profile.loss_policy_mappings.get(key)
+            if not description_requires_replacement(description):
+                # A replacement the Human already confirmed stays in force even when the
+                # original is now known to fit JDL: the confirmed output never changes silently.
+                if self._mapping_is_valid(mapping, description):
+                    replacements[description] = str(mapping.target_value)
+                continue
             if not self._mapping_is_valid(mapping, description):
                 errors.append(self._error(entry))
                 continue

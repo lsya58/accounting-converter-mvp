@@ -91,7 +91,7 @@ class DescriptionCandidateTest(unittest.TestCase):
         self.assertEqual(candidate.value, "あ" * 32)
         self.assertEqual(candidate.kind, "TRUNCATED")
         self.assertFalse(candidate.bulk_confirmable)
-        self.assertEqual(description_issues(text), ("32文字を超えています（40文字）",))
+        self.assertEqual(description_issues(text), ("JDLで保持できる長さを超えています（40文字・80バイト）",))
 
     def test_known_character_replacement_reused(self) -> None:
         candidate = description_replacement_candidate("髙橋商店")

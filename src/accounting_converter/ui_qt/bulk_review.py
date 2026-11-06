@@ -405,7 +405,7 @@ class DescriptionRulesDialog(QDialog):
         self.preview_table = dense_table(QTableWidget(0, 7))
         self.preview_table.setHorizontalHeaderLabels(("選択", "状態", "元の摘要", "置き換え後", "変更ルール", "文字数 / CP932バイト", "理由"))
         self.preview_table.horizontalHeaderItem(5).setToolTip(
-            "JDLの上限は32文字です。バイト数はCP932で表現できるかの確認用で、32バイト制限ではありません。"
+            "JDLは全角32文字・半角64文字（CP932で64バイト）まで保持し、それを超える分は取込時に黙って切り捨てます（実機で確認）。"
         )
         self.preview_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         preview_header = self.preview_table.horizontalHeader()

@@ -284,7 +284,9 @@ class CapabilityCompositionTest(unittest.TestCase):
 
     def test_description_replacement_triggers(self) -> None:
         self.assertFalse(description_requires_replacement("A" * 32))
-        self.assertTrue(description_requires_replacement("A" * 33))
+        self.assertFalse(description_requires_replacement("A" * 64))  # 64 CP932 bytes kept by JDL
+        self.assertTrue(description_requires_replacement("A" * 65))  # truncated silently by JDL
+        self.assertTrue(description_requires_replacement("!" * 33))  # unobserved single-byte character
         self.assertTrue(description_requires_replacement("一行目\n二行目"))
         self.assertTrue(description_requires_replacement("髙橋"))
 

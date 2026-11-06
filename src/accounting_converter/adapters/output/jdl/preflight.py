@@ -16,6 +16,7 @@ from . import scoped_evidence
 from .tax_semantics import JDL_TAX_LITERALS, JdlTaxSemantic, semantic_for_target
 from accounting_converter.profiles.jdl_official import (
     JdlTaxProcessingMode,
+    jdl_description_fits,
     jdl_field_length_valid,
     jdl_ibex_cashbook_official_journal_import_spec,
 )
@@ -385,8 +386,8 @@ class JdlOutputPreflight:
         if not entry.is_balanced():
             errors.append(self._error("JDL-OUT-BALANCE", "仕訳が貸借一致しません。", "amount", entry))
             return []
-        if entry.description is not None and len(entry.description) > 32:
-            errors.append(self._error("JDL-OUT-DESCRIPTION-LENGTH", "摘要が32文字を超えています。", "description", entry))
+        if entry.description is not None and not jdl_description_fits(entry.description):
+            errors.append(self._error("JDL-OUT-DESCRIPTION-LENGTH", "摘要がJDLで保持できる長さ（32文字、または確認済みの文字でCP932 64バイト）を超えています。", "description", entry))
             return []
         return self._simple_rows(entry, evidence, errors)
 
@@ -459,8 +460,8 @@ class JdlOutputPreflight:
             except UnicodeEncodeError:
                 errors.append(self._error("JDL-OUT-DESCRIPTION-ENCODING", "摘要をCP932で表現できません。", "description", entry))
                 return []
-            if len(description) > 32:
-                errors.append(self._error("JDL-OUT-DESCRIPTION-LENGTH", "摘要が32文字を超えています。", "description", entry))
+            if not jdl_description_fits(description):
+                errors.append(self._error("JDL-OUT-DESCRIPTION-LENGTH", "摘要がJDLで保持できる長さ（32文字、または確認済みの文字でCP932 64バイト）を超えています。", "description", entry))
                 return []
         if len(rows) == 1:
             flags = ("1111",)
@@ -723,10 +724,10 @@ class JdlOutputPreflight:
                         entry,
                     ))
                     return []
-                if len(description) > 32:
+                if not jdl_description_fits(description):
                     errors.append(self._error(
                         "JDL-OUT-DESCRIPTION-LENGTH",
-                        "摘要が32文字を超えています。",
+                        "摘要がJDLで保持できる長さ（32文字、または確認済みの文字でCP932 64バイト）を超えています。",
                         "description",
                         entry,
                     ))

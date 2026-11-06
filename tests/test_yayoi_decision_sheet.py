@@ -29,7 +29,7 @@ def save(path: Path, records: list[dict]) -> None:
 
 
 class DecisionSheetTest(unittest.TestCase):
-    LONG = "テスト商事株式会社 定期購入代金 定期購入代金 1234-5678-9012"  # 38 characters
+    LONG = "テスト商事株式会社 定期購入代金 定期購入代金 定期購入代金 1234-5678-9012"  # 72 CP932 bytes
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
