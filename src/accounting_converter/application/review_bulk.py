@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from typing import Iterable, Sequence
 
@@ -21,8 +22,11 @@ from accounting_converter.tools.yayoi_decision_sheet import (
     description_fits,
     propose_rules,
 )
+from accounting_converter.application.description_replacement import has_control_character
+from accounting_converter.application.moneyforward_description_replacement import unsafe_description_positions
 
 PRE_TICKED_KINDS = frozenset({"EXACT", "SAME_NAME"})
+_NUMERIC_TOKEN = re.compile(r"\d+(?:[.,:/-]\d+)*")
 
 
 @dataclass(frozen=True)
@@ -85,6 +89,7 @@ class DescriptionPreviewLine:
     original: str
     result: str
     state: str  # FIT / DIGITS_CHANGED / INDIVIDUAL
+    reason: str = ""
 
     @property
     def fits(self) -> bool:
@@ -99,6 +104,22 @@ def rule_problems(rules: Sequence[dict]) -> list[str]:
     ]
 
 
+def provisional_description_preview(
+    descriptions: Sequence[tuple[str, str]], rules: Sequence[dict]
+) -> tuple[list[DescriptionPreviewLine], list[str]]:
+    """Show valid approved rules, but never authorize apply while an approval is incomplete."""
+    problems = rule_problems(rules)
+    valid_rules = [rule for rule in rules if not (
+        rule["【記入】承認"] == "OK" and rule["種類"] == "語句の短縮"
+        and not rule["【記入】短縮後の語句"].strip()
+    )]
+    return description_preview(descriptions, valid_rules), problems
+
+
+def _numeric_tokens(text: str) -> tuple[str, ...]:
+    return tuple(_NUMERIC_TOKEN.findall(text))
+
+
 def description_preview(descriptions: Sequence[tuple[str, str]], rules: Sequence[dict]) -> list[DescriptionPreviewLine]:
     """Every description, before/after, with whether the result may be used.
 
@@ -109,17 +130,41 @@ def description_preview(descriptions: Sequence[tuple[str, str]], rules: Sequence
     lines = []
     for key, original in descriptions:
         result = apply_rules(original, approved) if approved else ""
-        if result and _digits(result) != _digits(original):
+        # R03 explicitly permits removing separators from 4-4-4 identifiers;
+        # all other number/date/rate formatting must survive unchanged.
+        numeric_baseline = apply_rules(original, [
+            rule for rule in approved if rule["種類"] == "番号のハイフン削除"
+        ])
+        if result and (_digits(result) != _digits(original)
+                       or _numeric_tokens(result) != _numeric_tokens(numeric_baseline)):
             state = "DIGITS_CHANGED"
+            reason = "数字や数値表記（番号・日付・金額・レート）が変わるため使用できません"
         elif result and description_fits(result):
             state = "FIT"
+            reason = "反映できます"
         else:
             state = "INDIVIDUAL"
-        lines.append(DescriptionPreviewLine(key, original, result, state))
+            if not approved:
+                reason = "承認済みルールがありません"
+            elif not result:
+                reason = "摘要が空になるため使用できません"
+            elif len(result) > 32:
+                reason = "32文字を超えています"
+            elif has_control_character(result):
+                reason = "改行・制御文字が残っています"
+            else:
+                try:
+                    result.encode("cp932", errors="strict")
+                except UnicodeEncodeError:
+                    reason = "CP932で表現できません"
+                else:
+                    reason = ("JDLで保持できない文字があります" if unsafe_description_positions(result)
+                              else "個別入力が必要です")
+        lines.append(DescriptionPreviewLine(key, original, result, state, reason))
     return lines
 
 
 def preview_signature(lines: Sequence[DescriptionPreviewLine]) -> str:
     """Identity of a preview: what was shown is exactly what is applied."""
-    payload = [(line.key, line.original, line.result, line.state) for line in lines]
+    payload = [(line.key, line.original, line.result, line.state, line.reason) for line in lines]
     return hashlib.sha256(json.dumps(payload, ensure_ascii=False).encode("utf-8")).hexdigest()

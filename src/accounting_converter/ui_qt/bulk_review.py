@@ -32,6 +32,7 @@ from accounting_converter.application.review_bulk import (
     BulkRow,
     description_preview,
     preview_signature,
+    provisional_description_preview,
     rule_problems,
 )
 
@@ -279,7 +280,7 @@ class BulkCandidateDialog(QDialog):
         self.pages.setCurrentIndex(1)
 
 
-_STATE_LABEL = {"FIT": "反映できる", "DIGITS_CHANGED": "数字が変わるため使わない", "INDIVIDUAL": "個別に入力"}
+_STATE_LABEL = {"FIT": "反映できる", "DIGITS_CHANGED": "数字・表記が変わるため使わない", "INDIVIDUAL": "個別に入力"}
 
 
 class DescriptionRulesDialog(QDialog):
@@ -366,6 +367,7 @@ class DescriptionRulesDialog(QDialog):
         self.preview_button.clicked.connect(self._preview)
         self.preview_label = QLabel("承認したルールでプレビューしてください。")
         self.preview_label.setObjectName("muted")
+        self.preview_label.setWordWrap(True)
         self.state_filter = QComboBox()
         self.state_filter.addItem("すべて表示", "")
         for state, label in _STATE_LABEL.items():
@@ -376,13 +378,16 @@ class DescriptionRulesDialog(QDialog):
         self.preview_search.setClearButtonEnabled(True)
         self.wrap_toggle = QCheckBox("長い摘要を折り返して全文表示")
         preview_row.addWidget(self.preview_button)
-        preview_row.addWidget(self.preview_label, 1)
         preview_row.addWidget(self.state_filter)
         preview_row.addWidget(self.preview_search)
         preview_row.addWidget(self.wrap_toggle)
         preview_layout.addLayout(preview_row)
-        self.preview_table = dense_table(QTableWidget(0, 4))
-        self.preview_table.setHorizontalHeaderLabels(("状態", "元の摘要", "置き換え後", "文字数"))
+        preview_layout.addWidget(self.preview_label)
+        self.preview_table = dense_table(QTableWidget(0, 5))
+        self.preview_table.setHorizontalHeaderLabels(("状態", "元の摘要", "置き換え後", "文字数 / CP932バイト", "理由"))
+        self.preview_table.horizontalHeaderItem(3).setToolTip(
+            "JDLの上限は32文字です。バイト数はCP932で表現できるかの確認用で、32バイト制限ではありません。"
+        )
         self.preview_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         preview_header = self.preview_table.horizontalHeader()
         for column, mode in (
@@ -390,8 +395,10 @@ class DescriptionRulesDialog(QDialog):
             (1, QHeaderView.ResizeMode.Stretch),
             (2, QHeaderView.ResizeMode.Stretch),
             (3, QHeaderView.ResizeMode.ResizeToContents),
+            (4, QHeaderView.ResizeMode.Interactive),
         ):
             preview_header.setSectionResizeMode(column, mode)
+        self.preview_table.setColumnWidth(4, 220)
         preview_layout.addWidget(self.preview_table, 1)
         self.preview_detail = QLabel("行を選ぶと、元の摘要と置き換え後の全文をここに表示します。")
         self.preview_detail.setMaximumHeight(110)
@@ -430,29 +437,43 @@ class DescriptionRulesDialog(QDialog):
 
     def _rules_changed(self, *_args) -> None:
         # Any edit after a preview invalidates it.
-        if self._previewed is not None:
-            self.preview_label.setText("ルールが変わりました。もう一度プレビューしてください。")
+        self.preview_label.setText("ルールが変わりました。もう一度プレビューしてください。")
         self._previewed = None
+        self._lines = []
+        self.preview_table.setRowCount(0)
+        self.preview_detail.setText("ルール変更後の結果は、再プレビューで確認してください。")
         self.apply_button.setEnabled(False)
 
     def _preview(self) -> None:
         rules = self.current_rules()
-        problems = rule_problems(rules)
-        if problems:
-            self.preview_label.setText(" / ".join(problems))
-            return
-        lines = description_preview(self.descriptions, rules)
+        lines, problems = provisional_description_preview(self.descriptions, rules)
         self._lines = lines
         self.preview_table.setRowCount(len(lines))
         for index, line in enumerate(lines):
-            values = (_STATE_LABEL[line.state], line.original, line.result, str(len(line.result)) if line.result else "")
+            try:
+                byte_count = str(len(line.result.encode("cp932", errors="strict"))) if line.result else ""
+            except UnicodeEncodeError:
+                byte_count = "不可"
+            size = f"{len(line.result)} / {byte_count}" if line.result else ""
+            values = (_STATE_LABEL[line.state], line.original, line.result, size, line.reason)
             for column, value in enumerate(values):
                 self.preview_table.setItem(index, column, text_item(value.replace("\n", "⏎")))
         fit = sum(line.fits for line in lines)
-        self.preview_label.setText(
-            f"反映できる {fit}件 / 個別に入力 {len(lines) - fit}件（全{len(lines)}件）")
-        self._previewed = preview_signature(lines)
-        self.apply_button.setEnabled(fit > 0)
+        prefix = "仮プレビューの候補" if problems else "反映できる"
+        summary = f"{prefix} {fit}件 / 個別に入力 {len(lines) - fit}件（全{len(lines)}件）"
+        if problems:
+            missing_ids = ", ".join(rule["ルールID"] for rule in rules if (
+                rule["【記入】承認"] == "OK" and rule["種類"] == "語句の短縮"
+                and not rule["【記入】短縮後の語句"].strip()
+            ))
+            summary += (f"\n承認済みの語句短縮 {len(problems)}件に短縮後の語句が未入力です"
+                        f"（{missing_ids}）。入力するか承認を外してください。"
+                        "上の件数は入力済みルールだけの仮結果で、まだ反映できません。")
+        elif not fit:
+            summary += "\n反映できる摘要はありません。右端の理由を確認し、必要な行は個別に入力してください。"
+        self.preview_label.setText(summary)
+        self._previewed = preview_signature(lines) if not problems else None
+        self.apply_button.setEnabled(not problems and fit > 0)
         self._filter_preview()
         self._set_wrap(self.wrap_toggle.isChecked())
 
@@ -480,11 +501,13 @@ class DescriptionRulesDialog(QDialog):
         self.preview_detail.setText(
             f"元の摘要: {line.original}\n置き換え後: {line.result or '（ルールが当てはまりません）'}"
             f"{f'（{len(line.result)}文字）' if line.result else ''}\n状態: {_STATE_LABEL[line.state]}"
+            f" / 理由: {line.reason}"
         )
 
     def _apply(self) -> None:
-        lines = description_preview(self.descriptions, self.current_rules())
-        if self._previewed is None or preview_signature(lines) != self._previewed:
+        rules = self.current_rules()
+        lines = description_preview(self.descriptions, rules)
+        if rule_problems(rules) or self._previewed is None or preview_signature(lines) != self._previewed:
             self.preview_label.setText("プレビュー後にルールが変わりました。もう一度プレビューしてください。")
             self.apply_button.setEnabled(False)
             return

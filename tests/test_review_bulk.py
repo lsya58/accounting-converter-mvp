@@ -16,6 +16,7 @@ from accounting_converter.application.review_bulk import (
     description_preview,
     description_rules,
     preview_signature,
+    provisional_description_preview,
     rule_problems,
     subaccount_bulk_row,
 )
@@ -90,6 +91,64 @@ class BulkLogicTest(unittest.TestCase):
         rule = {"ルールID": "R09", "種類": "語句の短縮", "対象の語句": "長い語句", "【記入】短縮後の語句": " ", "【記入】承認": "OK"}
         self.assertEqual(len(rule_problems([rule])), 1)
 
+    def test_sixteen_approvals_with_twelve_missing_words_are_only_provisional(self):
+        original = "テスト商事株式会社 定期購入代金 定期購入代金 1234-5678-9012"
+        descriptions = [(f"synthetic-{index}", original) for index in range(248)]
+        rules = description_rules([original])
+        self.assertEqual(len(rules), 4)
+        rules.extend({
+            "ルールID": f"R{index:02d}", "種類": "語句の短縮", "対象の語句": f"架空語句{index}",
+            "影響する摘要数": 1, "説明": "架空の短縮候補", "【記入】短縮後の語句": "", "【記入】承認": "OK",
+        } for index in range(5, 17))
+        for rule in rules:
+            rule["【記入】承認"] = "OK"
+        lines, problems = provisional_description_preview(descriptions, rules)
+        self.assertEqual(len(problems), 12)
+        self.assertEqual(sum(line.fits for line in lines), 248)
+        self.assertTrue(all(line.original != line.result for line in lines))
+        for rule in rules[4:]:
+            rule["【記入】承認"] = ""
+        lines, problems = provisional_description_preview(descriptions, rules)
+        self.assertEqual(problems, [])
+        self.assertEqual(sum(line.fits for line in lines), 248)
+
+    def test_one_approved_description_rule_needs_no_other_approvals(self):
+        original = "A" * 30 + "  B"
+        rules = description_rules([original])
+        rules[0]["【記入】承認"] = "OK"
+        lines, problems = provisional_description_preview([("synthetic", original)], rules)
+        self.assertEqual(problems, [])
+        self.assertEqual((lines[0].state, lines[0].result), ("FIT", "A" * 30 + " B"))
+        self.assertEqual(len(lines[0].result), 32)
+
+    def test_description_preview_explains_length_encoding_and_digit_blocks(self):
+        rules = [{"ルールID": "R01", "種類": "空白の整理", "対象の語句": "",
+                  "【記入】短縮後の語句": "", "【記入】承認": "OK"}]
+        lines = description_preview([
+            ("long", "A" * 33), ("encoding", "A" * 31 + "😀"),
+            ("fits", "あ" * 32),
+        ], rules)
+        self.assertEqual([line.state for line in lines], ["INDIVIDUAL", "INDIVIDUAL", "FIT"])
+        self.assertIn("32文字", lines[0].reason)
+        self.assertIn("CP932", lines[1].reason)
+        self.assertEqual(len(lines[2].result.encode("cp932")), 64)  # 32 characters, not 32 bytes
+        number = description_preview([("number", "取引 1234")], [{
+            "ルールID": "R05", "種類": "語句の短縮", "対象の語句": "1234",
+            "【記入】短縮後の語句": "省略", "【記入】承認": "OK",
+        }])[0]
+        self.assertEqual(number.state, "DIGITS_CHANGED")
+        self.assertIn("数字", number.reason)
+        moved_decimal = description_preview([("rate", "レート 1.25")], [{
+            "ルールID": "R06", "種類": "語句の短縮", "対象の語句": "1.25",
+            "【記入】短縮後の語句": "12.5", "【記入】承認": "OK",
+        }])[0]
+        self.assertEqual(moved_decimal.state, "DIGITS_CHANGED")
+        kept_identifier = description_preview([("identifier", "番号 1234-5678-9012")], [{
+            "ルールID": "R03", "種類": "番号のハイフン削除", "対象の語句": "",
+            "【記入】短縮後の語句": "", "【記入】承認": "OK",
+        }])[0]
+        self.assertEqual(kept_identifier.state, "FIT")
+
 
 @unittest.skipUnless(PYSIDE6_AVAILABLE, "PySide6 is not installed")
 class BulkDialogTest(unittest.TestCase):
@@ -157,6 +216,55 @@ class BulkDialogTest(unittest.TestCase):
         self.assertIn("(株)", rules_dialog.result[key])
         field, check = dialog.description_controls[key]
         self.assertFalse(check.isChecked())  # nothing is confirmed until filled in the review dialog
+
+    def test_description_rules_16_approved_with_12_missing_words_preview_but_cannot_apply(self):
+        from accounting_converter.ui_qt.bulk_review import DescriptionRulesDialog
+
+        original = "テスト商事株式会社 定期購入代金 定期購入代金 1234-5678-9012"
+        descriptions = [(f"synthetic-{index}", original) for index in range(248)]
+        rules = description_rules([original])
+        self.assertEqual(len(rules), 4)
+        rules.extend({
+            "ルールID": f"R{index:02d}", "種類": "語句の短縮", "対象の語句": f"架空語句{index}",
+            "影響する摘要数": 1, "説明": "架空の短縮候補", "【記入】短縮後の語句": "", "【記入】承認": "",
+        } for index in range(5, 17))
+        dialog = DescriptionRulesDialog(descriptions, rules)
+        for row in range(16):
+            dialog.rule_table.item(row, 0).setCheckState(main_window.Qt.CheckState.Checked)
+        self.assertEqual(len(rule_problems(dialog.current_rules())), 12)
+        dialog.preview_button.click()
+        self.assertEqual(dialog.preview_table.rowCount(), 248)
+        self.assertIn("仮プレビューの候補 248件", dialog.preview_label.text())
+        self.assertIn("12件に短縮後の語句が未入力", dialog.preview_label.text())
+        self.assertFalse(dialog.apply_button.isEnabled())
+        self.assertEqual(dialog.result, {})
+        dialog.preview_table.setCurrentCell(0, 0)
+        self.assertIn("元の摘要:", dialog.preview_detail.text())
+        self.assertIn("置き換え後:", dialog.preview_detail.text())
+
+        dialog.rule_table.item(4, 0).setCheckState(main_window.Qt.CheckState.Unchecked)
+        self.assertIn("もう一度プレビュー", dialog.preview_label.text())
+        self.assertEqual(dialog.preview_table.rowCount(), 0)
+        for row in range(5, 16):
+            dialog.rule_table.item(row, 0).setCheckState(main_window.Qt.CheckState.Unchecked)
+        dialog.preview_button.click()
+        self.assertIn("反映できる 248件", dialog.preview_label.text())
+        self.assertTrue(dialog.apply_button.isEnabled())
+        dialog.apply_button.click()
+        self.assertEqual(len(dialog.result), 248)
+
+    def test_one_approved_rule_can_apply_without_approving_others(self):
+        from accounting_converter.ui_qt.bulk_review import DescriptionRulesDialog
+
+        original = "A" * 30 + "  B"
+        dialog = DescriptionRulesDialog([("synthetic", original)], description_rules([original]))
+        dialog.rule_table.item(0, 0).setCheckState(main_window.Qt.CheckState.Checked)
+        dialog.preview_button.click()
+        self.assertTrue(dialog.apply_button.isEnabled())
+        self.assertEqual(dialog.result, {})
+        self.assertEqual(dialog.preview_table.item(0, 3).text(), "32 / 32")
+        dialog.apply_button.click()
+        self.assertEqual(dialog.result, {"synthetic": "A" * 30 + " B"})
 
 
 class YayoiInformationCountTest(unittest.TestCase):
