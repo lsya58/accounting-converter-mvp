@@ -10,8 +10,10 @@ from accounting_converter.domain.journal_identity import stable_journal_identity
 from accounting_converter.domain.mf_outpur_scope import OUTPUR_SHAPE_EVIDENCE_IDS, outpur_target_signature
 from accounting_converter.domain.profile import FormatProfile
 from accounting_converter.domain.validation import Severity, ValidationResult
-from accounting_converter.domain.journal_rows import has_counterparty
+from accounting_converter.domain.journal_rows import has_counterparty, journal_physical_rows
 from .row_evidence import jdl_row_description_rows
+from . import scoped_evidence
+from .tax_semantics import JDL_TAX_LITERALS, JdlTaxSemantic, semantic_for_target
 from accounting_converter.profiles.jdl_official import (
     JdlTaxProcessingMode,
     jdl_field_length_valid,
@@ -123,6 +125,9 @@ EVIDENCE_IDS = {
     JdlEvidenceProfile.MF_COMPOUND_TAX_EXCLUDED_PROPORTIONAL: (
         "MF-JDL-35-5-TAX-EXCLUDED-PROPORTIONAL-CAPABILITY-COMPOSITION-V1"
     ),
+    JdlEvidenceProfile.SCOPED_COMPOSED_TAX_EXCLUDED_PROPORTIONAL: (
+        scoped_evidence.SCOPED_ROUTE_ID
+    ),
     JdlEvidenceProfile.MF_OUTPUR_COMPOUND_4D6C: OUTPUR_SHAPE_EVIDENCE_IDS[(4, 6)],
     JdlEvidenceProfile.MF_OUTPUR_COMPOUND_5D7C: OUTPUR_SHAPE_EVIDENCE_IDS[(5, 7)],
     JdlEvidenceProfile.MF_OUTPUR_COMPOUND_5D8C: OUTPUR_SHAPE_EVIDENCE_IDS[(5, 8)],
@@ -180,6 +185,7 @@ MF_TAX_EXCLUDED_PROPORTIONAL_FAMILY = frozenset({
     JdlEvidenceProfile.MF_COMPOUND_2D2C_TAX_EXCLUDED_PROPORTIONAL,
     JdlEvidenceProfile.MF_COMPOUND_1D2C_TAX_EXCLUDED_PROPORTIONAL,
     JdlEvidenceProfile.MF_COMPOUND_TAX_EXCLUDED_PROPORTIONAL,
+    JdlEvidenceProfile.SCOPED_COMPOSED_TAX_EXCLUDED_PROPORTIONAL,
     *MF_OUTPUR_COMPOUND_PROFILES,
 })
 MIXED_BATCH_PROFILE_SEQUENCE = (
@@ -355,6 +361,10 @@ class JdlOutputPreflight:
         evidence: JdlEvidenceProfile,
         errors: list[ValidationResult],
     ) -> list[JdlOutputRow]:
+        if not self._within_voucher_row_limit(entry, errors):
+            return []
+        if evidence is JdlEvidenceProfile.SCOPED_COMPOSED_TAX_EXCLUDED_PROPORTIONAL:
+            return self._scoped_rows(entry, errors)
         if evidence in {
             JdlEvidenceProfile.COMPOUND_1D3C,
             JdlEvidenceProfile.COMPOUND_1D3C_LINE_DESCRIPTIONS,
@@ -379,6 +389,123 @@ class JdlOutputPreflight:
             errors.append(self._error("JDL-OUT-DESCRIPTION-LENGTH", "摘要が32文字を超えています。", "description", entry))
             return []
         return self._simple_rows(entry, evidence, errors)
+
+    def _within_voucher_row_limit(self, entry: JournalEntry, errors: list[ValidationResult]) -> bool:
+        """JDL rejects a voucher longer than the company's 振替伝票入力行数 (also at CSV Import).
+
+        Checked only when the Human has confirmed the company setting; an
+        unconfirmed limit leaves every existing profile exactly as before."""
+        limit = self.context.voucher_row_limit
+        if limit is None:
+            return True
+        rows = journal_physical_rows(entry)
+        count = len(rows) if rows is not None else len(entry.lines)
+        if count > limit:
+            errors.append(self._error(
+                "JDL-OUT-VOUCHER-ROW-LIMIT",
+                "仕訳の行数が会社設定の振替伝票入力行数を超えています。",
+                "journal_structure",
+                entry,
+            ))
+            return False
+        return True
+
+    def _scoped_rows(self, entry: JournalEntry, errors: list[ValidationResult]) -> list[JdlOutputRow]:
+        """Rows of a journal composed from the campaign Evidence (exact company scope only)."""
+        if scoped_evidence.scope_state(self.context) is not scoped_evidence.ScopeState.IN_SCOPE:
+            errors.append(self._error(
+                "JDL-OUT-SCOPED-CONTEXT",
+                "実機確認済みの会社設定（端数処理・振替伝票入力行数・税処理）と一致しません。",
+                "tax_processing", entry,
+            ))
+            return []
+        rows = journal_physical_rows(entry)
+        if rows is None:
+            errors.append(self._error(
+                "JDL-OUT-COMPOUND-DESCRIPTION", "検証済み物理行に対応する摘要を一意に保持できません。", "description", entry))
+            return []
+        if not entry.is_balanced():
+            errors.append(self._error("JDL-OUT-BALANCE", "仕訳が貸借一致しません。", "amount", entry))
+            return []
+        if has_counterparty(entry):
+            errors.append(self._error("JDL-OUT-SCOPED-FEATURE", "取引先情報は実機確認済みの範囲にありません。", "journal_structure", entry))
+        for line in entry.lines:
+            self._validate_account(line, entry, errors)
+            self._validate_amount(line.amount, entry, errors)
+            self._validate_optional_subaccount(line, entry, errors)
+            if line.department:
+                errors.append(self._error("JDL-OUT-TAX-COMBINATION", "検証済み税profileに部門を併用できません。", "evidence_profile", entry))
+            if self.context.parent_has_subaccounts(name=line.account) and not line.sub_account:
+                errors.append(self._error(
+                    "JDL-OUT-TARGET-SUBACCOUNT-REQUIRED",
+                    "取込先科目には補助科目が設定されているため、確認済み補助が必要です。", "sub_account", entry))
+        row_cells = []
+        for row in rows:
+            pair = []
+            for line in (row.debit, row.credit):
+                pair.append(self._scoped_cell(line, entry, errors) if line is not None else "-")
+            row_cells.append(tuple(pair))
+        if errors:
+            return []
+        gaps = scoped_evidence.placement_gaps(scoped_evidence.layout_of(rows), row_cells)
+        if gaps:
+            errors.append(self._error(
+                "JDL-OUT-SCOPED-LAYOUT", "仕訳の構造・税の配置が実機で確認済みの範囲と一致しません。", "journal_structure", entry))
+            return []
+        for row in rows:
+            description = row.description
+            try:
+                description.encode("cp932")
+            except UnicodeEncodeError:
+                errors.append(self._error("JDL-OUT-DESCRIPTION-ENCODING", "摘要をCP932で表現できません。", "description", entry))
+                return []
+            if len(description) > 32:
+                errors.append(self._error("JDL-OUT-DESCRIPTION-LENGTH", "摘要が32文字を超えています。", "description", entry))
+                return []
+        if len(rows) == 1:
+            flags = ("1111",)
+        else:
+            flags = ("1110", *("1100",) * (len(rows) - 2), "1101")
+        return [
+            self._row(flag, entry, row.debit, row.credit, row.description)
+            for flag, row in zip(flags, rows, strict=True)
+        ]
+
+    def _scoped_cell(self, line: JournalLine, entry: JournalEntry, errors: list[ValidationResult]) -> str:
+        """The verified JDL tax cell of one line; an error for anything not exactly observed."""
+        info = line.tax_info
+        if not self._nonempty_tax(info):
+            return "NO"
+        assert info is not None
+        semantic = semantic_for_target(info.category or "", info.metadata.get("jdl_tax_scope") or "")
+        cell = scoped_evidence.SEMANTIC_CELL.get(semantic.value) if semantic is not None else None
+        literal = JDL_TAX_LITERALS.get(semantic) if semantic is not None else None
+        if (
+            cell is None or cell == "NO" or literal is None
+            or (info.metadata.get("jdl_tax_input_method") or "") != literal.input_method
+            or info.metadata.get("jdl_transaction_account")
+        ):
+            errors.append(self._error("JDL-OUT-TAX-LITERAL", "検証済み課区・税区のexact literalが必要です。", "tax", entry))
+            return "?"
+        if cell in scoped_evidence.NO_AMOUNT_CELLS:
+            valid = info.tax_amount is None
+        else:
+            if info.tax_amount is None or info.tax_amount < 0 or info.tax_amount != info.tax_amount.to_integral_value():
+                valid = False
+            else:
+                relation = scoped_evidence.relation_of(cell, line.amount, info.tax_amount)
+                valid = relation is not None
+                if valid:
+                    # The relation type alone is not enough: re-check it was round-tripped
+                    # on THIS account (same gate composition used; never trust the caller).
+                    account = self._account_identity(line.account)
+                    code = account.target_master_code if account else ""
+                    if not scoped_evidence.relation_covers_account(line.side.value, cell, relation, code):
+                        valid = False
+        if not valid:
+            errors.append(self._error(
+                "JDL-OUT-TAX-AMOUNT-PATTERN", "明示消費税額が実機で保持を確認した関係と一致しません。", "tax", entry))
+        return cell
 
     def _simple_rows(
         self,

@@ -31,7 +31,7 @@ PASS条件: 104/104 journals、160/160 rows、missing 0、extra 0、unexpected 0
 
 会計期間はconverterのcapabilityとは別のtarget条件です。期外の日付をJDLが拒否しても、converterの失敗ではありません。
 
-## 弥生 → JDL（2026-11-03 時点）
+## 弥生 → JDL（2026-11-04 時点）
 
 顧問先2社の実データとJDL科目一覧PDFを取得。顧客の値はここに書かない。
 
@@ -48,11 +48,19 @@ PASS条件: 104/104 journals、160/160 rows、missing 0、extra 0、unexpected 0
 | 端数処理（Human転記） | 売上 切上げ / 仕入 四捨五入 | 売上 切捨て / 仕入 切捨て |
 | 現在のブロッカー | HUMAN 2,514（科目・補助・税区分・摘要の確認）。SYSTEM_EVIDENCE 8（決算7・形2。他の形の不足は確認後に表に出る） | 0（確認シート35行を反映済み） |
 | JDLに入らない情報 | 付箋 2 | 部門 34・生成元 35・付箋1 35（同じ35仕訳）。JDLへは出さず監査記録に残す扱い（Human確認が必要）。完全保持は宣言しない |
-| SYSTEM_EVIDENCE（素直な候補・各社の端数を仮定） | 951仕訳 | 0（2026-11-03 実機で 6122売上 と 対象外2D2C を確認） |
+| SYSTEM_EVIDENCE（素直な候補・登録済みEvidenceを反映、2026-11-05） | 147仕訳（Humanが各税の自然な候補を確認し、振替伝票入力行数16を入力した仮定。レイアウト未観測76・税の配置未観測60・80%経過措置の税額11）。ほかに16行制約30・未解決（控除不可2・決算7）9 | 0（2026-11-03 実機で 6122売上 と 対象外2D2C を確認） |
 | 正式READY | 0 | **80/80**（HUMAN 0・SYSTEM_EVIDENCE 0・SYSTEM_IMPLEMENTATION 0） |
 | 正式CSV・実機往復 | 未実施 | **PASS**（2026-11-03。80/80仕訳・86/86行、既知正規化454セルのみ、監査記録104値 PASS）。部門・生成元・付箋1は監査記録で保全するため、完全保持ではない |
 
 明示税額は「JDLがそのまま保持する」と「JDLが会社の端数設定で計算し直す」のどちらでも同じ値になる場合だけ通す（明示税額 = 切捨て値 = 対象会社の端数処理の値）。端数処理が未設定なら HUMAN。0877 の実機では切捨て値が保持されたが、その会社の端数設定が記録されていないため、保持か再計算かは未確定（[仕様](../design/yayoi_journal_report_source.md#端数処理と明示税額2社)）。
+
+会社Aの合成JDL target probeは、[3D3C](../../tests/evidence/e2e/yayoi_buddies_3d3c_sales10/README.md) と [4D4C](../../tests/evidence/e2e/yayoi_buddies_4d4c_sales10/README.md) の課税売上10%について、実Import・同期間再Export・既存strict比較を各ケースPASSした（計2仕訳・7行、unexpected 0）。**弥生source→formal outputのEvidenceではない**。元データに同じ借貸行数・税側/税identityの構造候補は計154仕訳（3D3C 96、4D4C 58）。うち96仕訳は現在の仮評価でshapeのみが表示されるが、shapeを認めた後に複数課税行のgapが顕在化し得る。Human対応、target科目/補助、exact tax signatureも未確定。端数依存などが表示される残り58仕訳を含め、154仕訳をREADYへ加算しない。現在の正式READYは0、production Evidence registryも未変更。
+
+会社Aの [Evidenceキャンペーン](yayoi_buddies_evidence_campaign.md) 第1回（2026-11-05、検証用複製）: 合成probe A1〜A3 の58ケースがケース別 strict PASS、重複0（[記録](../../tests/evidence/e2e/yayoi_buddies_campaign_session1/README.md)）。**振替伝票入力行数16行以内の会社Aでは、16行の伝票はCSV取込できるが、17行以上は取込で拒否される**（`EVID-YAYOI-JDL-35-5-BUDDIES-VOUCHER-ROW-LIMIT-16-001`、この会社・この設定に限る）。元データの16行超30仕訳は、この設定のままでは1伝票として取り込めない（自動分割・設定変更はしない）。CSV取込の明示税額は会社の端数設定と異なる値でも保持された。輸出売上・軽減8%・80%経過措置はJDL画面で表現を観測（第2回で取込往復）、控除不可と決算仕訳は表現未確認で保留。production registry・READYは未変更。
+
+第2回（2026-11-05）: 輸出売上（課区「輸出売」）・軽減8%（仕　入／軽減8%／内税）・80%経過措置（仕　入／10%免80／内税）の合成probe 6ケースが strict PASS（[記録](../../tests/evidence/e2e/yayoi_buddies_campaign_session2/README.md)）。キャンペーン全体の再計算（Humanが自然な候補を確認した仮定、件数のみ）: 2,514仕訳のうち、既存Evidenceで技術条件なし992、**実機Evidenceはそろい本体実装待ち1,432**、Evidenceのないまれな形51（35種類・16行以内）、控除不可・決算 未解決9、16行制約30。課税売上10%の1,040仕訳と非課税売上の16仕訳は、Humanが検証済みの科目（売上 6121・6131・6181・9251、非課税売上 9111）へ対応付けた場合に限る。全仕訳で科目・補助・税区分などのHuman確認は残る。正式READYは0のまま。
+
+**本体への反映（2026-11-05）**: 上の実機Evidence 66ケース（既存の3D3C・4D4C＋キャンペーン64）を、会社設定の範囲を限って本体に登録した（[設計と結果](yayoi_buddies_evidence_campaign.md#7-本体への反映実装済み2026-11-05)）。範囲 = JDL IBEX 出納帳35.5・税抜・原則課税・一括比例配分・端数処理 売上=切上げ／仕入=四捨五入・**振替伝票入力行数16（Humanが会社設定から入力した値）**。範囲外（別の端数処理・別の行数・行数未入力）には適用しない。既存のMF/ACTのEvidenceは先に判定され、通れば従来どおり（MF 482 READY・出力SHA 2本、ACT 80/80・往復は不変）。新しい税の書き方（輸出売上・軽減8%・80%経過措置）は完全一致した弥生の識別名だけが候補で、Humanの確認が必須。控除不可・決算仕訳は未確認のまま。明示税額は観測した（側・税・関係・科目）の組だけ許可。振替伝票入力行数は会社設定に保存（確認済みのときだけ書く）し、超過する仕訳は正式変換前にHumanの判断として止める（自動分割しない）。会社Aの現在の保存設定は変更していないため、行数上限は未入力で、本物の診断は変わらずHUMAN 2,506・HUMAN+SYSTEM_EVIDENCE 8・READY 0。
 
 ## Evidence policy
 
@@ -70,7 +78,7 @@ PASS条件: 104/104 journals、160/160 rows、missing 0、extra 0、unexpected 0
 | JDL→JDL | `VERIFIED_BY_REAL_IMPORT`, frozen | 1,158 journals / 1,271 rows。実Import PASS。会計判断reviewとbatch re-export strict comparisonは未完了 |
 | MF→JDL READY batch | `VERIFIED_BY_REAL_IMPORT_AND_REEXPORT` | 13 journals / 14 rows、P01-P07、unexpected diff 0、silent loss 0 |
 | MF→JDL 482 dataset | 上の Canonical current state を参照 | FY2026-05 real round-trip VERIFIED、FY2027-05 PENDING |
-| 弥生→JDL | 会社B（インポート形式）は `VERIFIED_BY_REAL_IMPORT_AND_REEXPORT`。会社A（仕訳日記帳 汎用形式）は未検証 | 会社B 80仕訳の全件往復 PASS。会社Aは会社設定保留中。上の弥生の節を参照 |
+| 弥生→JDL | 会社B（インポート形式）は `VERIFIED_BY_REAL_IMPORT_AND_REEXPORT`。会社A（仕訳日記帳 汎用形式）のformal routeは未検証 | 会社B 80仕訳の全件往復 PASS。会社Aは合成target 3D3C/4D4Cのみ実機往復PASS、Human mappingとsource→formal E2Eは未完了。上の弥生の節を参照 |
 
 ## Key Evidence IDs
 

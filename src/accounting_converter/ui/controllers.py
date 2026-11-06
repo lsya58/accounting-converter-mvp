@@ -43,6 +43,9 @@ from accounting_converter.application.company_trade_partner_policy import (
 from accounting_converter.application.yayoi_information_policy import (
     YayoiInformationPolicyService,
 )
+from accounting_converter.application.company_voucher_row_limit import (
+    CompanyVoucherRowLimitService,
+)
 from accounting_converter.application.moneyforward_profile_setup import (
     MoneyForwardProfileSetupAnalysis,
     MoneyForwardProfileSetupService,
@@ -212,6 +215,9 @@ class AccountingConverterController:
             self.company_store, self.profile_store
         )
         self.yayoi_information_policy_service = YayoiInformationPolicyService(
+            self.company_store, self.profile_store
+        )
+        self.company_voucher_row_limit_service = CompanyVoucherRowLimitService(
             self.company_store, self.profile_store
         )
         self.moneyforward_profile_setup_service = MoneyForwardProfileSetupService(
@@ -947,6 +953,29 @@ class AccountingConverterController:
         self.state = replace(
             state,
             user_message="取引先情報をJDLの摘要へ記録する設定を保存しました。",
+        )
+        return self.state
+
+    def confirm_company_voucher_row_limit(
+        self, company_setting_id: str, limit: int, *, explicitly_confirmed: bool
+    ) -> AppState:
+        """Save the 振替伝票入力行数 the Human read from the JDL company setting."""
+        try:
+            self.company_voucher_row_limit_service.set(
+                company_setting_id, limit, confirmed=explicitly_confirmed
+            )
+        except Exception as error:
+            return self._fail_state(
+                str(error) if isinstance(error, ValueError) else
+                "振替伝票入力行数を保存できませんでした。会社設定を確認してください。",
+                error,
+            )
+        self.load_profiles()
+        self.load_company_settings()
+        state = self.select_company_setting(company_setting_id)
+        self.state = replace(
+            state,
+            user_message=f"振替伝票入力行数（{limit}行以内）を保存しました。JDLの会社設定は変更していません。",
         )
         return self.state
 

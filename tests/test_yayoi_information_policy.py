@@ -152,7 +152,7 @@ class InformationPolicyDialogTest(unittest.TestCase):
         self.assertNotIn("取引先情報の扱いを確認", texts)
         self.assertIn("付箋1: 1仕訳 — 未確認", dialog.retention_status_label.text())
         self.assertIn("「摘要」タブ", dialog.retention_status_label.text())
-        self.assertIn("JDLに保持されない情報: 1項目", dialog.summary_label.text())
+        self.assertIn("JDLに保持されない情報・振替伝票入力行数: 1項目", dialog.summary_label.text())
         self.assertEqual(dialog.tabs.tabText(dialog.category_tabs["other"]), "その他 要確認")
 
     def test_policy_dialog_requires_meaning_check_and_acknowledgement(self):

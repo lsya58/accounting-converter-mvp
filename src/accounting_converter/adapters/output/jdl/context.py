@@ -63,6 +63,7 @@ class JdlTargetContextBuilder:
         sales_tax_rounding: JdlTaxRounding = JdlTaxRounding.UNCONFIRMED,
         purchase_tax_rounding: JdlTaxRounding = JdlTaxRounding.UNCONFIRMED,
         unusable_subaccounts: Iterable[JdlUnusableSubaccount] = (),
+        voucher_row_limit: int | None = None,
     ) -> JdlTargetContextBuildResult:
         accounts = tuple(account_master)
         context = JdlTargetContext(
@@ -83,6 +84,7 @@ class JdlTargetContextBuilder:
             sales_tax_rounding=sales_tax_rounding,
             purchase_tax_rounding=purchase_tax_rounding,
             unusable_subaccounts=tuple(unusable_subaccounts),
+            voucher_row_limit=voucher_row_limit,
             no_fuzzy_matching=no_fuzzy_matching,
             no_automatic_replacement=no_automatic_replacement,
             confirmation_state=confirmation_state,

@@ -6,6 +6,10 @@ Prints counts only: no account names, descriptions, tax names or amounts.
 2. simulated: what would still need JDL Evidence if the Human confirmed the
    natural candidate for each tax identity and the target Tax Context were
    the verified one. Nothing is confirmed; this is not formal readiness.
+
+The simulation uses the Evidence that existed before the 2026-11-05 campaign.
+For the current rules (campaign Evidence, voucher row limit) use
+`yayoi_whatif_readiness`, which runs the production rules on a scratch copy.
 """
 from __future__ import annotations
 

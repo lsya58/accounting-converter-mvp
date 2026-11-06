@@ -258,7 +258,18 @@ def target_tax_semantic(line: JournalLine, profile, context: JdlTargetContext) -
 
 # Composition is only allowed for these source tax identities. 対象外仕入 stays
 # exact-only because its Evidence is a single 1D1C pair plus three fixed shapes.
-COMPOSABLE_TAX_IDENTITIES = frozenset(semantic.value for semantic in JdlTaxSemantic)
+# The five semantics of the original MF / ACT Evidence. Semantics added later
+# (輸出売上・軽減8%・80%経過措置) are composed only by scoped_evidence.
+COMPOSABLE_TAX_IDENTITIES = frozenset(
+    semantic.value
+    for semantic in (
+        JdlTaxSemantic.NO_TAX,
+        JdlTaxSemantic.PURCHASE_10_INTERNAL,
+        JdlTaxSemantic.SALES_10_EXTERNAL,
+        JdlTaxSemantic.NON_TAXABLE_PURCHASE,
+        JdlTaxSemantic.NON_TAXABLE_SALES,
+    )
+)
 # A tax line capability is treated as account-independent only when real
 # Evidence shows the same JDL representation surviving Import/re-export on at
 # least this many distinct target accounts on the same side. Otherwise it is
@@ -489,6 +500,20 @@ def match_evidence_for_occurrence(
                 composed.evidence_id,
                 "COMPOSED",
             )
+        # Only after the existing composition failed, and only inside the exact
+        # company scope of the campaign Evidence: journals the existing Evidence
+        # covers keep their evidence, profile and output rows.
+        from accounting_converter.application import scoped_evidence_composition
+
+        scoped, scoped_gaps = scoped_evidence_composition.compose_scoped(
+            source, signature, has_partner=has_partner, context=context
+        )
+        if scoped is not None:
+            return MfTaxEvidenceMatchResult(
+                scoped, signature, scoped.account_signature, (), scoped.evidence_id, "SCOPED"
+            )
+        if scoped_gaps is not None:
+            composition_gaps = scoped_gaps
 
     candidates = tuple(
         item for item in EVIDENCE
@@ -895,8 +920,31 @@ def apply_tax_literals(
             )
             lines.append(replace(mapped_line, tax_info=info))
         elif semantic in {
+            JdlTaxSemantic.PURCHASE_REDUCED_8_INTERNAL.value,
+            JdlTaxSemantic.PURCHASE_10_TRANSITIONAL_80_INTERNAL.value,
+        }:
+            # 2026-11-05 literals (仕　入 / 軽減8% or 10%免80 / 内税). The explicit tax is
+            # the source's own amount; scoped_evidence accepts only the exact
+            # relations JDL kept, so nothing is computed here.
+            literal = JDL_TAX_LITERALS[JdlTaxSemantic(semantic)]
+            reduced = semantic == JdlTaxSemantic.PURCHASE_REDUCED_8_INTERNAL.value
+            info = TaxInfo(
+                category=literal.category,
+                rate=Decimal("8") if reduced else Decimal("10"),
+                tax_inclusion="INCLUDED",
+                reduced_rate=True if reduced else None,
+                tax_amount=source_line.tax_info.tax_amount if source_line.tax_info else None,
+                metadata={
+                    "jdl_tax_scope": literal.scope,
+                    "jdl_tax_input_method": literal.input_method,
+                    "jdl_evidence_id": evidence_id,
+                },
+            )
+            lines.append(replace(mapped_line, tax_info=info))
+        elif semantic in {
             JdlTaxSemantic.NON_TAXABLE_PURCHASE.value,
             JdlTaxSemantic.NON_TAXABLE_SALES.value,
+            JdlTaxSemantic.EXPORT_SALES.value,
         }:
             # 0870/0876 literal: 課区 only; 税区, 税入力方法 and tax amount blank.
             info = TaxInfo(

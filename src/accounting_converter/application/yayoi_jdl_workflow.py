@@ -26,6 +26,7 @@ from accounting_converter.adapters.output.jdl import (
     jdl_ibex_35_5_output_profile,
 )
 from accounting_converter.application import moneyforward_tax_excluded_evidence as ev
+from accounting_converter.application import scoped_evidence_composition as scoped_composition
 from accounting_converter.application.conversion import ConversionRequest, ConversionService
 from accounting_converter.application.first_release_workflow import (
     FirstReleasePreparedConversion,
@@ -59,7 +60,12 @@ from accounting_converter.application.yayoi_review import (
     non_retained_values,
 )
 from accounting_converter.domain.journal_identity import JOURNAL_CONTENT_IDENTITY_KEY
-from accounting_converter.domain.journal_rows import LINE_ROW_DESCRIPTION_KEY, LINE_ROW_KEY, ROW_ORDER_KEY
+from accounting_converter.domain.journal_rows import (
+    LINE_ROW_DESCRIPTION_KEY,
+    LINE_ROW_KEY,
+    ROW_ORDER_KEY,
+    journal_physical_rows,
+)
 from accounting_converter.application.yayoi_sources import (
     YayoiSourceFormat,
     detect_format,
@@ -77,6 +83,13 @@ HUMAN_GAPS = {"TAX_MAPPING_UNCONFIRMED", "SUBACCOUNT_REQUIRED_BY_MASTER", "ACCOU
               "ACCOUNT_IDENTITY_MISMATCH", "SUBACCOUNT_CODE_MISMATCH"}
 ACCOUNT_DIAGNOSTIC_GAPS = {"ACCOUNT_CODE_MISMATCH", "ACCOUNT_IDENTITY_MISMATCH", "SUBACCOUNT_CODE_MISMATCH",
                            "PARENT_ONLY_REPRESENTATION_MISMATCH"}
+# Company-setting facts about the voucher row limit. The Human decides (split / key in by
+# hand / enter the setting), but nothing the Human confirms in this app makes an
+# over-limit journal importable: it stays blocked until the journal itself changes.
+VOUCHER_ROW_LIMIT_BLOCKERS = {
+    scoped_composition.GAP_ROW_LIMIT_EXCEEDED: "HUMAN:VOUCHER_ROW_LIMIT_EXCEEDED",
+    scoped_composition.GAP_ROW_LIMIT_UNCONFIRMED: "HUMAN:VOUCHER_ROW_LIMIT_SETTING",
+}
 IGNORED_DIAGNOSTIC_GAPS = {"TAX_CATEGORY_MISMATCH", "SHAPE_MISMATCH", "EVIDENCE_SCOPE_CHANGED_BY_MASTER"}
 
 
@@ -219,6 +232,11 @@ class YayoiJournalReportJdlWorkflow:
                 }[result.field])
         assignments = {}
         likely: dict[str, set[str]] = {entry.id: set() for entry in entries}
+        if context is not None and context.voucher_row_limit is not None:
+            for entry in entries:
+                rows = journal_physical_rows(entry)
+                if rows is not None and len(rows) > context.voucher_row_limit:
+                    blockers[entry.id].add(VOUCHER_ROW_LIMIT_BLOCKERS[scoped_composition.GAP_ROW_LIMIT_EXCEEDED])
         if profile is not None and context is not None and self._identity_matches(profile):
             requirements = MappingRequirementExtractor().extract(entries, profile)
             unresolved_accounts = {r.source_value for r in requirements.accounts if r.requires_confirmation}
@@ -240,7 +258,19 @@ class YayoiJournalReportJdlWorkflow:
                 for entry, mapped_entry in zip(entries, mapped, strict=True):
                     match = ev.match_evidence_for_occurrence(entry, mapped_entry, context, profile)
                     if match.evidence is not None:
-                        assignments[entry.id] = match.evidence.profile
+                        evidence = match.evidence
+                        if not _physical_rows_verified(entry, evidence.profile):
+                            # The composed compound profile also needs JDL row Evidence for
+                            # the physical-row shape (the output stage refuses it otherwise).
+                            # Try the campaign Evidence; else stop here, not at the output.
+                            evidence, scoped_gaps = scoped_composition.compose_scoped(
+                                entry, match.actual_signature, has_partner=False, context=context)
+                            if evidence is None:
+                                for gap in scoped_gaps or ("PHYSICAL_ROW_SHAPE_UNVERIFIED",):
+                                    blockers[entry.id].add(
+                                        VOUCHER_ROW_LIMIT_BLOCKERS.get(gap) or f"SYSTEM_EVIDENCE:{gap}")
+                                continue
+                        assignments[entry.id] = evidence.profile
                         continue
                     # Account problems come from the line identities themselves; the
                     # matcher's account codes compare against the nearest exact
@@ -256,7 +286,9 @@ class YayoiJournalReportJdlWorkflow:
                     }
                     gaps = (set(match.mismatch_fields) - IGNORED_DIAGNOSTIC_GAPS - ACCOUNT_DIAGNOSTIC_GAPS) | identity_gaps
                     for gap in gaps:
-                        if gap in {"TAX_MAPPING_UNCONFIRMED"}:
+                        if gap in VOUCHER_ROW_LIMIT_BLOCKERS:
+                            blockers[entry.id].add(VOUCHER_ROW_LIMIT_BLOCKERS[gap])
+                        elif gap in {"TAX_MAPPING_UNCONFIRMED"}:
                             blockers[entry.id].add("HUMAN:TAX_MAPPING")
                         elif gap == "JDL_TAX_ROUNDING_UNCONFIRMED":
                             blockers[entry.id].add("HUMAN:JDL_TAX_ROUNDING_SETTING")
@@ -273,8 +305,8 @@ class YayoiJournalReportJdlWorkflow:
                     # The matcher skips composition while an account is unmapped;
                     # shape x tax does not depend on accounts, so check it anyway.
                     current, candidate = structural_evidence_gaps(entry, profile, context)
-                    blockers[entry.id].update(f"SYSTEM_EVIDENCE:{gap}" for gap in current)
-                    likely[entry.id].update(f"SYSTEM_EVIDENCE:{gap}" for gap in candidate)
+                    blockers[entry.id].update(_structural_blocker(gap) for gap in current)
+                    likely[entry.id].update(_structural_blocker(gap) for gap in candidate)
         return YayoiJdlAssessment(
             {key: frozenset(value) for key, value in blockers.items()},
             assignments,
@@ -325,6 +357,11 @@ class YayoiJournalReportJdlWorkflow:
             "HUMAN:OPTIONAL_FIELD_POLICY": "生成元・付箋などJDLに保持先のない情報があります。意味と扱い（JDLへは出さず監査記録に残す）を確認してください。",
             "HUMAN:DEPARTMENT_POLICY": "部門を含む仕訳があります。対象のJDL会社は部門を使わない設定のため、意味と扱い（JDLへは出さず監査記録に残す）を確認してください。",
             "HUMAN:JDL_TAX_ROUNDING_SETTING": "JDL会社の消費税の端数処理（売上・仕入）を設定してください。",
+            "HUMAN:VOUCHER_ROW_LIMIT_SETTING": "JDLの会社設定「振替伝票入力行数」を確認して入力してください。",
+            "HUMAN:VOUCHER_ROW_LIMIT_EXCEEDED": (
+                "JDLの振替伝票入力行数を超える仕訳があります。JDLは行数が多すぎる伝票を取り込めません"
+                "（分割するか、JDLで手入力してください。アプリは自動で分割しません）。"
+            ),
         }
         for blocker in sorted({b for v in assessment.journal_blockers.values() for b in v}):
             if blocker in messages:
@@ -551,15 +588,36 @@ class YayoiJournalReportJdlWorkflow:
         ))
 
 
+_PROFILES_NEEDING_ROW_EVIDENCE = frozenset({
+    JdlEvidenceProfile.MF_COMPOUND_2D2C_TAX_EXCLUDED_PROPORTIONAL,
+    JdlEvidenceProfile.MF_COMPOUND_TAX_EXCLUDED_PROPORTIONAL,
+})
+
+
+def _physical_rows_verified(entry: JournalEntry, profile: JdlEvidenceProfile) -> bool:
+    if profile not in _PROFILES_NEEDING_ROW_EVIDENCE:
+        return True
+    from accounting_converter.adapters.output.jdl.row_evidence import jdl_row_description_rows
+
+    return jdl_row_description_rows(entry) is not None
+
+
+def _structural_blocker(gap: str) -> str:
+    return VOUCHER_ROW_LIMIT_BLOCKERS.get(gap) or f"SYSTEM_EVIDENCE:{gap}"
+
+
 def structural_evidence_gaps(entry: JournalEntry, profile, context) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """(current, likely) shape x tax gaps, independent of account mapping.
 
     current: every tax line has a confirmed mapping. likely: some line has only
     the natural candidate, so the gap appears if the Human confirms it.
+    Inside the exact scope of the campaign Evidence the layout / tax placement /
+    row limit rules of that Evidence decide; elsewhere the original shape rules do.
     """
     debit = sum(line.side is Side.DEBIT for line in entry.lines)
     shape = (debit, len(entry.lines) - debit)
     taxed = []
+    values: dict[int, str | None] = {}
     confirmed = True
     for line in entry.lines:
         value = ev.target_tax_semantic(line, profile, context) if line.tax_info else JdlTaxSemantic.NO_TAX.value
@@ -567,11 +625,19 @@ def structural_evidence_gaps(entry: JournalEntry, profile, context) -> tuple[tup
             confirmed = False
             semantic = candidate_semantic(line.tax_info.category)
             value = semantic.value if semantic is not None else None
+        values[id(line)] = value
         if value is None:
             continue  # no candidate: already a Human tax blocker
         if value != JdlTaxSemantic.NO_TAX.value:
             taxed.append((line.side.value, value))
-    gaps = ev.shape_tax_combination_gaps(shape, tuple(taxed))
+    existing_gaps = ev.shape_tax_combination_gaps(shape, tuple(taxed))
+    scoped_gaps = scoped_composition.structural_gaps(entry, lambda line: values.get(id(line)), context)
+    if scoped_gaps is None:
+        gaps = existing_gaps  # outside the campaign scope: the original shape rules decide
+    elif not existing_gaps:
+        gaps = ()  # the Evidence that existed before already covers this structure (accounts decide)
+    else:
+        gaps = scoped_gaps  # same precedence as composition: existing first, then the scoped Evidence
     return (gaps, ()) if confirmed else ((), gaps)
 
 

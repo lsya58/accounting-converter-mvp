@@ -47,6 +47,31 @@ SEMANTIC_EVIDENCE_ID = {
     JdlTaxSemantic.SALES_10_EXTERNAL: ev.SALES10_EVIDENCE_ID,
     JdlTaxSemantic.NON_TAXABLE_PURCHASE: ev.NONPUR_3181_EVIDENCE_ID,
     JdlTaxSemantic.NON_TAXABLE_SALES: ev.NONSALE_EVIDENCE_ID,
+    # 2026-11-05 campaign: 1-row round trips on the real JDL test company.
+    JdlTaxSemantic.EXPORT_SALES: "EVID-YAYOI-JDL-35-5-BUDDIES-CAMP-BI-EXPORT-SYNTHETIC-ROUNDTRIP-001",
+    JdlTaxSemantic.PURCHASE_REDUCED_8_INTERNAL: "EVID-YAYOI-JDL-35-5-BUDDIES-CAMP-BI-RED8-SYNTHETIC-ROUNDTRIP-001",
+    JdlTaxSemantic.PURCHASE_10_TRANSITIONAL_80_INTERNAL: "EVID-YAYOI-JDL-35-5-BUDDIES-CAMP-BI-TRANS80-SYNTHETIC-ROUNDTRIP-001",
+}
+# Valid only inside the exact company scope of that Evidence (scoped_evidence).
+SCOPED_SEMANTICS = frozenset({
+    JdlTaxSemantic.EXPORT_SALES,
+    JdlTaxSemantic.PURCHASE_REDUCED_8_INTERNAL,
+    JdlTaxSemantic.PURCHASE_10_TRANSITIONAL_80_INTERNAL,
+})
+SCOPED_SEMANTIC_BLOCKED_REASON = (
+    "この書き方は、実機で確認した会社設定（消費税の端数処理 売上=切上げ・仕入=四捨五入）でだけ確認できます。"
+    "この会社の端数処理が異なるため、JDL実機での確認が必要です。"
+)
+
+
+# Only the exact Yayoi identities whose JDL representation was observed on the
+# real JDL screen and round-tripped (2026-11-05). Variants (other invoice
+# classes, other rates) are not candidates. 控除不可 stays without a candidate.
+_EXACT_CANDIDATES = {
+    "輸出売上": JdlTaxSemantic.EXPORT_SALES,
+    "課対仕入8%（軽）｜適格｜100%": JdlTaxSemantic.PURCHASE_REDUCED_8_INTERNAL,
+    "課対仕入10%｜区分記載｜80%経過措置": JdlTaxSemantic.PURCHASE_10_TRANSITIONAL_80_INTERNAL,
+    "対外仕入": JdlTaxSemantic.NO_TAX,  # 対象外仕入: JDL receives no tax cell (same as 対象外)
 }
 
 
@@ -56,6 +81,9 @@ def candidate_semantic(identity: str) -> JdlTaxSemantic | None:
     Identities with an invoice class / purchase-credit ratio other than the
     ordinary 適格・100% case (経過措置 80%, 控除不可, 区分記載) get no candidate.
     """
+    exact = _EXACT_CANDIDATES.get(identity)
+    if exact is not None:
+        return exact
     base, _, extra = identity.partition("｜")
     if extra and extra != "適格｜100%":
         return None
@@ -202,7 +230,7 @@ def review_source(
             candidate=candidate_semantic(identity),
             mapping_state=state,
             confirmed_semantic=confirmed,
-            evidence_state=_evidence_state(semantic, counts),
+            evidence_state=_evidence_state(semantic, counts, context),
         ))
     description_items = CompanyMappingUpdateService._description_review_items(
         entries, profile if profile is not None else _EMPTY_PROFILE
@@ -227,11 +255,16 @@ def review_source(
     )
 
 
-def _evidence_state(semantic: JdlTaxSemantic | None, counts: Counter) -> str:
+def _evidence_state(semantic: JdlTaxSemantic | None, counts: Counter, context=None) -> str:
     if semantic is None:
         return "NO_SEMANTIC"
+    capabilities = ev.LINE_CAPABILITIES
+    if context is not None and _scoped_applies(context):
+        from accounting_converter.application.scoped_evidence_composition import UNITED_CAPABILITIES
+
+        capabilities = UNITED_CAPABILITIES
     for side in ("DEBIT", "CREDIT"):
-        if counts[side] and (side, semantic.value) not in ev.LINE_CAPABILITIES:
+        if counts[side] and (side, semantic.value) not in capabilities:
             return "SIDE_PENDING"
     if counts["explicit_unverified"]:
         return "EXPLICIT_TAX_PENDING"
@@ -299,6 +332,11 @@ def confirm_tax_identity(
     """Save one Human decision: Yayoi tax identity → JDL tax semantic."""
     if not ev.context_is_verified(context):
         raise ValueError("JDL税設定の実機Evidenceがない税設定では、税区分を確認済みにできません。")
+    if semantic in SCOPED_SEMANTICS:
+        from accounting_converter.adapters.output.jdl import scoped_evidence
+
+        if not scoped_evidence.semantic_evidence_applies(context):
+            raise ValueError(SCOPED_SEMANTIC_BLOCKED_REASON)
     literal = JDL_TAX_LITERALS[semantic]
     return MappingConfirmationService(store).confirm_mapping(
         profile_id,
@@ -427,7 +465,10 @@ def yayoi_tax_mapping_review(profile, context, *, affected_counts=None, observed
             continue
         semantic = candidate_semantic(value)
         literal = JDL_TAX_LITERALS.get(semantic) if semantic is not None else None
-        confirmable = bool(semantic is not None and verified)
+        scoped_blocked = bool(
+            semantic in SCOPED_SEMANTICS and verified and not _scoped_applies(context)
+        )
+        confirmable = bool(semantic is not None and verified and not scoped_blocked)
         items.append(TaxMappingSetupItem(
             source_value=value,
             target_value=literal.category if literal else None,
@@ -440,7 +481,8 @@ def yayoi_tax_mapping_review(profile, context, *, affected_counts=None, observed
             reason=(
                 "候補の書き方でよいか確認してください（候補は自動では確定しません）。"
                 if confirmable else
-                "JDLでの書き方が実機で確認されていません（軽減税率・経過措置・控除不可など）。"
+                SCOPED_SEMANTIC_BLOCKED_REASON if scoped_blocked else
+                "JDLでの書き方が実機で確認されていません（控除不可など）。"
             ),
             affected_row_count=affected_counts.get(value, 0),
         ))
@@ -451,7 +493,16 @@ def yayoi_tax_mapping_review(profile, context, *, affected_counts=None, observed
     )
 
 
+def _scoped_applies(context) -> bool:
+    from accounting_converter.adapters.output.jdl import scoped_evidence
+
+    return scoped_evidence.semantic_evidence_applies(context)
+
+
 _TAX_DISPLAY = {
+    JdlTaxSemantic.EXPORT_SALES: "輸出売上（課区 輸出売）",
+    JdlTaxSemantic.PURCHASE_REDUCED_8_INTERNAL: "仕入 / 軽減8%（内税）",
+    JdlTaxSemantic.PURCHASE_10_TRANSITIONAL_80_INTERNAL: "仕入 / 10%免80・経過措置80%（内税）",
     JdlTaxSemantic.NO_TAX: "対象外（税なし）",
     JdlTaxSemantic.PURCHASE_10_INTERNAL: "仕入 / 10%（内税）",
     JdlTaxSemantic.SALES_10_EXTERNAL: "売上 / 10%（外税）",

@@ -158,6 +158,12 @@ class CompanyMappingUpdateReview:
     # Human confirms what they mean). Includes already-confirmed fields.
     source_is_yayoi: bool = False
     information_fields: tuple = ()
+    # Yayoi: the company's 振替伝票入力行数 (None = not confirmed), how many journals have
+    # each physical-row count, and whether the registered JDL Evidence applies
+    # to this company's settings (scoped_evidence.ScopeState value).
+    voucher_row_limit: int | None = None
+    voucher_row_counts: tuple[tuple[int, int], ...] = ()
+    scoped_evidence_state: str = ""
 
 
 def _loss_rule_for(profile):
@@ -177,15 +183,24 @@ def _loss_rule_for(profile):
     return MoneyForwardToJdlLossRule()
 
 
-def _yayoi_information(entries, profile) -> dict:
+def _yayoi_information(entries, profile, context=None) -> dict:
+    from accounting_converter.adapters.output.jdl import scoped_evidence
     from accounting_converter.application.yayoi_information_policy import (
         information_fields,
         is_yayoi_profile,
     )
+    from accounting_converter.domain.journal_rows import journal_physical_rows
 
     if not is_yayoi_profile(profile):
         return {}
-    return {"source_is_yayoi": True, "information_fields": information_fields(entries, profile)}
+    counts = Counter(len(rows) for entry in entries if (rows := journal_physical_rows(entry)) is not None)
+    return {
+        "source_is_yayoi": True,
+        "information_fields": information_fields(entries, profile),
+        "voucher_row_counts": tuple(sorted(counts.items())),
+        "voucher_row_limit": context.voucher_row_limit if context is not None else None,
+        "scoped_evidence_state": scoped_evidence.scope_state(context).value if context is not None else "",
+    }
 
 
 def _information_results(results):
@@ -527,7 +542,7 @@ class CompanyMappingUpdateService:
             len(other_journals),
             len(other_rows),
             len({item.journal_id for item in detected_results if item.journal_id}),
-            **_yayoi_information(entries, profile),
+            **_yayoi_information(entries, profile, runtime_context),
         )
 
     @staticmethod

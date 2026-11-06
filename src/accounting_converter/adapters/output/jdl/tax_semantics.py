@@ -17,6 +17,13 @@ class JdlTaxSemantic(str, Enum):
     SALES_10_EXTERNAL = "JDL_SALES_10_EXTERNAL"
     NON_TAXABLE_PURCHASE = "JDL_NON_TAXABLE_PURCHASE"
     NON_TAXABLE_SALES = "JDL_NON_TAXABLE_SALES"
+    # Seen on the real JDL screen (self-export, 2026-11-05) on the Buddies test
+    # copy and round-tripped by synthetic probe. They are valid only inside the
+    # scope of that Evidence (see scoped_evidence); never for the Tax Contexts
+    # of the MF / ACT Evidence.
+    EXPORT_SALES = "JDL_EXPORT_SALES"
+    PURCHASE_REDUCED_8_INTERNAL = "JDL_PURCHASE_REDUCED_8_INTERNAL"
+    PURCHASE_10_TRANSITIONAL_80_INTERNAL = "JDL_PURCHASE_10_TRANSITIONAL_80_INTERNAL"
 
 
 @dataclass(frozen=True)
@@ -35,6 +42,12 @@ JDL_TAX_LITERALS: dict[JdlTaxSemantic, JdlTaxLiteral] = {
     JdlTaxSemantic.SALES_10_EXTERNAL: JdlTaxLiteral("売　上", "10%", "外税", True),
     JdlTaxSemantic.NON_TAXABLE_PURCHASE: JdlTaxLiteral("非仕入", "", "", False),
     JdlTaxSemantic.NON_TAXABLE_SALES: JdlTaxLiteral("非売上", "", "", False),
+    # 課区のみ（税区・税入力方法・消費税は空欄）。再Exportで消費税は0。
+    JdlTaxSemantic.EXPORT_SALES: JdlTaxLiteral("輸出売", "", "", False),
+    # 課区「仕　入」・税区「軽減8%」・内税。明示税額は 金額×8/108 の整数だけ確認済み。
+    JdlTaxSemantic.PURCHASE_REDUCED_8_INTERNAL: JdlTaxLiteral("仕　入", "軽減8%", "内税", False),
+    # 課区「仕　入」・税区「10%免80」・内税。明示税額は 10%税額の80%（整数）だけ確認済み。
+    JdlTaxSemantic.PURCHASE_10_TRANSITIONAL_80_INTERNAL: JdlTaxLiteral("仕　入", "10%免80", "内税", False),
 }
 
 # A confirmed mapping stores the JDL 税区 as its target value and the 課区 as

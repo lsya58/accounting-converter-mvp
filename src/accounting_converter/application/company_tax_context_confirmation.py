@@ -218,6 +218,11 @@ class CompanyTaxContextConfirmationService:
             simplified_business_category=selection.simplified_business_category,
             sales_tax_rounding=selection.sales_tax_rounding,
             purchase_tax_rounding=selection.purchase_tax_rounding,
+            # A tax-setting re-confirmation must not silently drop the
+            # Human-confirmed voucher row limit.
+            voucher_row_limit=(
+                previous_context.voucher_row_limit if previous_context is not None else None
+            ),
             confirmation_state=JdlContextConfirmationState.CONFIRMED,
             provenance=JdlContextProvenance.USER_CONFIRMED_RUNTIME_SNAPSHOT,
             no_fuzzy_matching=True,

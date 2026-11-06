@@ -71,6 +71,11 @@ class JdlEvidenceProfile(str, Enum):
     MF_COMPOUND_TAX_EXCLUDED_PROPORTIONAL = (
         "EVIDENCED_MF_COMPOUND_TAX_EXCLUDED_PROPORTIONAL"
     )
+    # Composed only from scoped_evidence (one exact company scope: rounding,
+    # voucher row limit, tax context); checked again by preflight.
+    SCOPED_COMPOSED_TAX_EXCLUDED_PROPORTIONAL = (
+        "EVIDENCED_SCOPED_COMPOSED_TAX_EXCLUDED_PROPORTIONAL"
+    )
     MF_OUTPUR_COMPOUND_4D6C = "EVIDENCED_MF_OUTPUR_COMPOUND_4D6C"
     MF_OUTPUR_COMPOUND_5D7C = "EVIDENCED_MF_OUTPUR_COMPOUND_5D7C"
     MF_OUTPUR_COMPOUND_5D8C = "EVIDENCED_MF_OUTPUR_COMPOUND_5D8C"
@@ -200,6 +205,9 @@ class JdlTargetContext:
     purchase_tax_rounding: JdlTaxRounding = JdlTaxRounding.UNCONFIRMED
     # In the JDL master but not selectable (see JdlUnusableSubaccount).
     unusable_subaccounts: tuple[JdlUnusableSubaccount, ...] = ()
+    # Human-transcribed JDL 会社設定「振替伝票入力行数」(rows per voucher).
+    # None = not confirmed; never inferred. Not part of the Tax Context identity.
+    voucher_row_limit: int | None = None
 
     def parent_has_subaccounts(self, *, code: str | None = None, name: str | None = None) -> bool:
         """JDL requires a subaccount on a parent with any registered subaccount,

@@ -1709,6 +1709,9 @@ class CompanyMappingUpdateDialog(QDialog):
             self.tax_completed = not bool(tax_review.items)
         self.is_yayoi = bool(getattr(review, "source_is_yayoi", False))
         self.information_fields = tuple(getattr(review, "information_fields", ()))
+        self.voucher_row_limit = getattr(review, "voucher_row_limit", None)
+        self.voucher_row_counts = tuple(getattr(review, "voucher_row_counts", ()))
+        self.scoped_evidence_state = getattr(review, "scoped_evidence_state", "")
         if self.is_yayoi:
             # Yayoi has no trade-partner field. What needs a decision here is
             # 部門・生成元・付箋 etc. (descriptions are handled on their own tab).
@@ -2593,6 +2596,14 @@ class CompanyMappingUpdateDialog(QDialog):
             page_layout.addWidget(self.policy_button)
         else:
             self.policy_button = None
+        self.voucher_status_label = QLabel()
+        self.voucher_status_label.setWordWrap(True)
+        self.voucher_button = None
+        if self.is_yayoi and self.voucher_row_counts:
+            page_layout.addWidget(self.voucher_status_label)
+            self.voucher_button = QPushButton("振替伝票入力行数を入力…")
+            self.voucher_button.clicked.connect(self._open_voucher_row_limit)
+            page_layout.addWidget(self.voucher_button, 0, Qt.AlignmentFlag.AlignLeft)
         note = QLabel(
             "ここに表示する件数は影響する仕訳数です。上部タブの件数は"
             "Humanが確認する設定項目数なので、同じ数になるとは限りません。"
@@ -2602,7 +2613,73 @@ class CompanyMappingUpdateDialog(QDialog):
         page_layout.addWidget(note)
         page_layout.addStretch(1)
         self._refresh_retention_status()
+        self._refresh_voucher_status()
         return page
+
+    def _refresh_voucher_status(self) -> None:
+        """振替伝票入力行数 and whether the registered JDL Evidence applies (never mixed with Human tasks)."""
+        if not self.is_yayoi or not self.voucher_row_counts:
+            return
+        from .voucher_row_limit import journals_over_limit
+
+        longest = max(rows for rows, _ in self.voucher_row_counts)
+        limit = self.voucher_row_limit
+        lines = ["振替伝票入力行数（JDLの会社設定）"]
+        if limit is None:
+            lines.append(f"・未確認（この会社の仕訳は最長{longest}行）。JDLの会社設定を見て入力してください。")
+        else:
+            over = journals_over_limit(self.voucher_row_counts, limit)
+            lines.append(f"・{limit}行以内（確認済み）")
+            lines.append(
+                f"・{limit}行を超える仕訳: {over}仕訳。JDLは行数が多すぎる伝票をCSVでも取り込めません。"
+                "分割するか、JDLで手入力してください（アプリは自動で分割しません。この仕訳は変換されません）。"
+                if over else f"・{limit}行を超える仕訳はありません。"
+            )
+        state = self.scoped_evidence_state
+        applies = {
+            "IN_SCOPE": "実機で確認済みの会社設定（端数処理 売上=切上げ・仕入=四捨五入、振替伝票入力行数16行）に一致します。"
+                        "登録済みの実機Evidenceを使えます。",
+            "VOUCHER_ROW_LIMIT_UNCONFIRMED": "登録済みの実機Evidenceは、振替伝票入力行数を入力すると使えます"
+                        "（端数処理は確認済みの設定と一致）。",
+            "OUT_OF_SCOPE": "この会社の設定は、実機で確認した範囲（端数処理 売上=切上げ・仕入=四捨五入、"
+                        "振替伝票入力行数16行）と異なります。新しい実機Evidenceは使えません。",
+        }.get(state)
+        if applies:
+            lines.append("登録済みEvidence（2026-11-05 実機確認）: " + applies)
+        self.voucher_status_label.setText("\n".join(lines))
+        needs_human = limit is None and state == "VOUCHER_ROW_LIMIT_UNCONFIRMED"
+        has_over = limit is not None and journals_over_limit(self.voucher_row_counts, limit) > 0
+        self.voucher_status_label.setObjectName("warningCard" if needs_human or has_over else "muted")
+        self.voucher_status_label.style().unpolish(self.voucher_status_label)
+        self.voucher_status_label.style().polish(self.voucher_status_label)
+        if self.voucher_button is not None:
+            self.voucher_button.setText(
+                "振替伝票入力行数を入力…" if limit is None else "振替伝票入力行数を確認・変更…"
+            )
+
+    def _open_voucher_row_limit(self) -> None:
+        from .voucher_row_limit import VoucherRowLimitDialog
+
+        dialog = VoucherRowLimitDialog(
+            self.controller, self.review.company_setting_id, self.voucher_row_counts,
+            self.voucher_row_limit, self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted or dialog.saved is None:
+            return
+        self.voucher_row_limit = dialog.saved
+        self.scoped_evidence_state = (
+            "IN_SCOPE" if self.scoped_evidence_state == "VOUCHER_ROW_LIMIT_UNCONFIRMED" and dialog.saved == 16
+            else "OUT_OF_SCOPE" if self.scoped_evidence_state in {"VOUCHER_ROW_LIMIT_UNCONFIRMED", "IN_SCOPE"}
+            else self.scoped_evidence_state
+        )
+        self._refresh_voucher_status()
+        QMessageBox.information(
+            self,
+            "振替伝票入力行数を保存しました",
+            "会社設定に保存しました（JDLの設定は変更していません）。この画面の確認項目を保存後、"
+            "CSVを再確認すると最新状態が反映されます。",
+        )
+        self._update_action()
 
     def _refresh_retention_status(self) -> None:
         if self.is_yayoi:
@@ -2879,8 +2956,12 @@ class CompanyMappingUpdateDialog(QDialog):
                 self.tax_review_button.setText("実機Evidence待ちのため確認できません")
             elif self.tax_completed:
                 self.tax_review_button.setText("税区分の確認は完了しました")
+        voucher_limit_pending = int(
+            self.is_yayoi and self.voucher_row_limit is None
+            and self.scoped_evidence_state == "VOUCHER_ROW_LIMIT_UNCONFIRMED"
+        )
         retention_pending = (
-            sum(not field.confirmed for field in self.information_fields)
+            sum(not field.confirmed for field in self.information_fields) + voucher_limit_pending
             if self.is_yayoi else queue.trade_partner_policy_settings
         )
         other_status = (
@@ -2900,6 +2981,7 @@ class CompanyMappingUpdateDialog(QDialog):
                 self.review.unsupported_shape_count
                 or self.review.optional_field_blocker_count
                 or self.information_fields
+                or self.voucher_row_counts
             ),
         )
         pending_accounts = category_counts["accounts"][0] - category_counts["accounts"][1]
@@ -2917,12 +2999,19 @@ class CompanyMappingUpdateDialog(QDialog):
             f"補助科目: {pending_subaccounts}設定 / "
             f"税区分: {tax_human_pending}設定 / "
             f"摘要: {pending_descriptions}設定 / "
-            + (f"JDLに保持されない情報: {retention_pending}項目\n" if self.is_yayoi
+            + (f"JDLに保持されない情報・振替伝票入力行数: {retention_pending}項目\n" if self.is_yayoi
                else f"取引先情報: {retention_pending}設定\n")
             + "Evidence・実装対応待ち\n"
             f"仕訳の形が未検証: {self.review.unsupported_shape_count}仕訳 / "
             f"税区分: {queue.tax_evidence_settings}種類 / "
             f"JDLに入らない情報（付箋など・摘要は除く）: {self._information_outside_jdl_journals()}仕訳"
+            + (
+                f" / 振替伝票入力行数を超える仕訳: "
+                f"{sum(j for r, j in self.voucher_row_counts if r > self.voucher_row_limit)}仕訳"
+                "（JDLに1伝票として取り込めません。分割または手入力が必要）"
+                if self.is_yayoi and self.voucher_row_limit is not None
+                and any(r > self.voucher_row_limit for r, _ in self.voucher_row_counts) else ""
+            )
         )
         for apply_filter in self._row_filters:
             apply_filter()

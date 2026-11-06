@@ -27,6 +27,15 @@ class JdlTargetContextLoadError(ValueError):
     pass
 
 
+def _voucher_row_limit(value) -> int | None:
+    """None when absent; a positive integer when present (anything else is rejected)."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError("voucher_row_limit must be a positive integer")
+    return value
+
+
 class JdlTargetContextLoader:
     """Loads an explicitly selected, local JDL target snapshot."""
 
@@ -75,6 +84,8 @@ class JdlTargetContextLoader:
             value = getattr(context, key)
             if value is not JdlTaxRounding.UNCONFIRMED:
                 payload[key] = value.value
+        if context.voucher_row_limit is not None:
+            payload["voucher_row_limit"] = context.voucher_row_limit
         return json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 
     def load(self, path: Path) -> JdlTargetContext:
@@ -149,6 +160,7 @@ class JdlTargetContextLoader:
                 purchase_tax_rounding=JdlTaxRounding(
                     payload.get("purchase_tax_rounding", JdlTaxRounding.UNCONFIRMED.value)
                 ),
+                voucher_row_limit=_voucher_row_limit(payload.get("voucher_row_limit")),
                 no_fuzzy_matching=bool(payload.get("no_fuzzy_matching", False)),
                 no_automatic_replacement=bool(
                     payload.get("no_automatic_replacement", False)
