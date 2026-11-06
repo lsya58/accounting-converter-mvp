@@ -90,6 +90,7 @@ class DescriptionPreviewLine:
     result: str
     state: str  # FIT / DIGITS_CHANGED / INDIVIDUAL
     reason: str = ""
+    applied_rule_ids: tuple[str, ...] = ()
 
     @property
     def fits(self) -> bool:
@@ -116,6 +117,17 @@ def provisional_description_preview(
     return description_preview(descriptions, valid_rules), problems
 
 
+def mechanical_description_candidates(
+    descriptions: Sequence[tuple[str, str]], rules: Sequence[dict]
+) -> list[DescriptionPreviewLine]:
+    """Suggest formatting-only changes; this does not approve rules or rows."""
+    mechanical = [
+        {**rule, "【記入】承認": "OK"}
+        for rule in rules if rule["種類"] in {"空白の整理", "番号のハイフン削除"}
+    ]
+    return description_preview(descriptions, mechanical)
+
+
 def _numeric_tokens(text: str) -> tuple[str, ...]:
     return tuple(_NUMERIC_TOKEN.findall(text))
 
@@ -130,6 +142,13 @@ def description_preview(descriptions: Sequence[tuple[str, str]], rules: Sequence
     lines = []
     for key, original in descriptions:
         result = apply_rules(original, approved) if approved else ""
+        changed_by = []
+        intermediate = original
+        for rule in approved:
+            next_value = apply_rules(intermediate, [rule])
+            if next_value != intermediate:
+                changed_by.append(rule["ルールID"])
+            intermediate = next_value
         # R03 explicitly permits removing separators from 4-4-4 identifiers;
         # all other number/date/rate formatting must survive unchanged.
         numeric_baseline = apply_rules(original, [
@@ -160,11 +179,23 @@ def description_preview(descriptions: Sequence[tuple[str, str]], rules: Sequence
                 else:
                     reason = ("JDLで保持できない文字があります" if unsafe_description_positions(result)
                               else "個別入力が必要です")
-        lines.append(DescriptionPreviewLine(key, original, result, state, reason))
+        lines.append(DescriptionPreviewLine(key, original, result, state, reason, tuple(changed_by)))
     return lines
 
 
 def preview_signature(lines: Sequence[DescriptionPreviewLine]) -> str:
     """Identity of a preview: what was shown is exactly what is applied."""
-    payload = [(line.key, line.original, line.result, line.state, line.reason) for line in lines]
+    payload = [(line.key, line.original, line.result, line.state, line.reason, line.applied_rule_ids) for line in lines]
     return hashlib.sha256(json.dumps(payload, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def selected_description_results(
+    lines: Sequence[DescriptionPreviewLine], selected_keys: set[str]
+) -> dict[str, str]:
+    """Only explicitly selected, changed and valid rows may fill the review form."""
+    if len({line.key for line in lines}) != len(lines):
+        raise ValueError("duplicate description review key")
+    available = {line.key: line for line in lines if line.fits and line.result != line.original}
+    if not selected_keys <= available.keys():
+        raise ValueError("selected description is not a valid candidate")
+    return {line.key: line.result for line in lines if line.key in selected_keys}

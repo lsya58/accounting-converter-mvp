@@ -15,9 +15,11 @@ from accounting_converter.application.review_bulk import (
     account_bulk_row,
     description_preview,
     description_rules,
+    mechanical_description_candidates,
     preview_signature,
     provisional_description_preview,
     rule_problems,
+    selected_description_results,
     subaccount_bulk_row,
 )
 from accounting_converter.application.company_mapping_update import CompanyMappingUpdateItem
@@ -149,6 +151,38 @@ class BulkLogicTest(unittest.TestCase):
         }])[0]
         self.assertEqual(kept_identifier.state, "FIT")
 
+    def test_mechanical_candidates_do_not_approve_phrase_or_repeated_word_deletion(self):
+        originals = [("a", "A" * 30 + "  B"), ("b", "屋号 屋号 " + "C" * 30)]
+        rules = description_rules(text for _key, text in originals)
+        candidates = mechanical_description_candidates(originals, rules)
+        self.assertEqual(candidates[0].state, "FIT")
+        self.assertEqual(candidates[0].applied_rule_ids, ("R01",))
+        self.assertNotIn("R02", candidates[1].applied_rule_ids)
+        self.assertTrue(all(not rule["【記入】承認"] for rule in rules))
+        self.assertNotEqual(preview_signature(candidates), preview_signature(description_preview(originals, rules)))
+
+    def test_rule_pattern_records_only_changed_rules(self):
+        originals = [("a", "A" * 30 + "  B"), ("b", "番号 1234-5678-9012")]
+        rules = description_rules(text for _key, text in originals)
+        for rule in rules:
+            if rule["ルールID"] in {"R01", "R03"}:
+                rule["【記入】承認"] = "OK"
+        lines = description_preview(originals, rules)
+        self.assertEqual(lines[0].applied_rule_ids, ("R01",))
+        self.assertEqual(lines[1].applied_rule_ids, ("R03",))
+
+    def test_only_selected_valid_changed_candidates_are_returned(self):
+        originals = [("fit", "A" * 30 + "  B"), ("long", "X" * 34)]
+        rules = description_rules(text for _key, text in originals)
+        rules[0]["【記入】承認"] = "OK"
+        lines = description_preview(originals, rules)
+        self.assertEqual(selected_description_results(lines, set()), {})
+        self.assertEqual(selected_description_results(lines, {"fit"}), {"fit": "A" * 30 + " B"})
+        with self.assertRaises(ValueError):
+            selected_description_results(lines, {"long"})
+        with self.assertRaises(ValueError):
+            selected_description_results(lines + [lines[0]], {"fit"})
+
 
 @unittest.skipUnless(PYSIDE6_AVAILABLE, "PySide6 is not installed")
 class BulkDialogTest(unittest.TestCase):
@@ -211,6 +245,7 @@ class BulkDialogTest(unittest.TestCase):
         self.assertFalse(rules_dialog.apply_button.isEnabled())
         rules_dialog.rule_table.item(0, 0).setCheckState(main_window.Qt.CheckState.Checked)
         rules_dialog._preview()
+        rules_dialog.preview_table.item(0, 0).setCheckState(main_window.Qt.CheckState.Checked)
         rules_dialog._apply()
         self.assertEqual(len(rules_dialog.result), 1)
         self.assertIn("(株)", rules_dialog.result[key])
@@ -249,6 +284,9 @@ class BulkDialogTest(unittest.TestCase):
             dialog.rule_table.item(row, 0).setCheckState(main_window.Qt.CheckState.Unchecked)
         dialog.preview_button.click()
         self.assertIn("反映できる 248件", dialog.preview_label.text())
+        self.assertFalse(dialog.apply_button.isEnabled())
+        dialog.pattern_filter.setCurrentIndex(1)
+        dialog.select_pattern.click()
         self.assertTrue(dialog.apply_button.isEnabled())
         dialog.apply_button.click()
         self.assertEqual(len(dialog.result), 248)
@@ -259,12 +297,31 @@ class BulkDialogTest(unittest.TestCase):
         original = "A" * 30 + "  B"
         dialog = DescriptionRulesDialog([("synthetic", original)], description_rules([original]))
         dialog.rule_table.item(0, 0).setCheckState(main_window.Qt.CheckState.Checked)
+        dialog.suggest_button.click()
+        self.assertIn("まだ承認・反映していません", dialog.preview_label.text())
+        self.assertFalse(dialog.apply_button.isEnabled())
         dialog.preview_button.click()
-        self.assertTrue(dialog.apply_button.isEnabled())
+        self.assertFalse(dialog.apply_button.isEnabled())
         self.assertEqual(dialog.result, {})
-        self.assertEqual(dialog.preview_table.item(0, 3).text(), "32 / 32")
+        self.assertEqual(dialog.preview_table.item(0, 5).text(), "32 / 32")
+        dialog.preview_table.item(0, 0).setCheckState(main_window.Qt.CheckState.Checked)
+        self.assertTrue(dialog.apply_button.isEnabled())
         dialog.apply_button.click()
         self.assertEqual(dialog.result, {"synthetic": "A" * 30 + " B"})
+
+    def test_selecting_one_pattern_does_not_select_other_fitting_rows(self):
+        from accounting_converter.ui_qt.bulk_review import DescriptionRulesDialog
+
+        originals = [("space", "A" * 30 + "  B"), ("number", "番号 1234-5678-9012")]
+        dialog = DescriptionRulesDialog(originals, description_rules(text for _key, text in originals))
+        for row in range(dialog.rule_table.rowCount()):
+            if dialog.rule_table.item(row, 1).text() in {"R01", "R03"}:
+                dialog.rule_table.item(row, 0).setCheckState(main_window.Qt.CheckState.Checked)
+        dialog.preview_button.click()
+        dialog.pattern_filter.setCurrentIndex(dialog.pattern_filter.findData("R01"))
+        dialog.select_pattern.click()
+        dialog.apply_button.click()
+        self.assertEqual(dialog.result, {"space": "A" * 30 + " B"})
 
 
 class YayoiInformationCountTest(unittest.TestCase):

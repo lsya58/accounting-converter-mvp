@@ -7,6 +7,7 @@ all checks again.
 from __future__ import annotations
 
 from collections import Counter
+from difflib import SequenceMatcher
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -31,9 +32,11 @@ from PySide6.QtWidgets import (
 from accounting_converter.application.review_bulk import (
     BulkRow,
     description_preview,
+    mechanical_description_candidates,
     preview_signature,
     provisional_description_preview,
     rule_problems,
+    selected_description_results,
 )
 
 from .review_layout import CollapsibleSection, count_item, dense_table, text_item
@@ -284,7 +287,7 @@ _STATE_LABEL = {"FIT": "反映できる", "DIGITS_CHANGED": "数字・表記が�
 
 
 class DescriptionRulesDialog(QDialog):
-    """Edit / approve shortening rules, preview every description, apply the fitting ones."""
+    """Suggest, preview, and explicitly select fitting descriptions for the review form."""
 
     def __init__(self, descriptions: list[tuple[str, str]], rules: list[dict], parent=None) -> None:
         super().__init__(parent)
@@ -292,6 +295,7 @@ class DescriptionRulesDialog(QDialog):
         self.rules = rules
         self._previewed: str | None = None
         self._lines = []
+        self._selected_keys: set[str] = set()
         self.result: dict[str, str] = {}
         self.setWindowTitle("摘要の共通ルール")
         _size_to_screen(self, 1400, 900)
@@ -301,7 +305,8 @@ class DescriptionRulesDialog(QDialog):
         note = QLabel(
             "ルールを承認すると、そのルールに当てはまる摘要すべてに同じ置き換えをします。"
             "数字（番号・日付・金額）が1文字でも変わる結果は使いません。先頭32文字で切ることもしません。"
-            "プレビューで全件を確認してから反映してください。ルールで収まらない摘要は個別に入力します。"
+            "機械的候補は提案のみです。プレビュー後、反映する行を選択してください。"
+            "ルールで収まらない摘要は確認画面で個別に入力します。保存は確認画面で行います。"
         )
         note.setObjectName("detailText")
         note.setWordWrap(True)
@@ -362,6 +367,8 @@ class DescriptionRulesDialog(QDialog):
         preview_layout.setContentsMargins(0, 0, 0, 0)
         preview_layout.setSpacing(4)
         preview_row = QHBoxLayout()
+        self.suggest_button = QPushButton("機械的候補を探す")
+        self.suggest_button.clicked.connect(self._suggest)
         self.preview_button = QPushButton("② 全件をプレビュー")
         self.preview_button.setObjectName("primaryButton")
         self.preview_button.clicked.connect(self._preview)
@@ -377,31 +384,46 @@ class DescriptionRulesDialog(QDialog):
         self.preview_search.setPlaceholderText("摘要で絞り込み")
         self.preview_search.setClearButtonEnabled(True)
         self.wrap_toggle = QCheckBox("長い摘要を折り返して全文表示")
+        preview_row.addWidget(self.suggest_button)
         preview_row.addWidget(self.preview_button)
         preview_row.addWidget(self.state_filter)
         preview_row.addWidget(self.preview_search)
         preview_row.addWidget(self.wrap_toggle)
         preview_layout.addLayout(preview_row)
         preview_layout.addWidget(self.preview_label)
-        self.preview_table = dense_table(QTableWidget(0, 5))
-        self.preview_table.setHorizontalHeaderLabels(("状態", "元の摘要", "置き換え後", "文字数 / CP932バイト", "理由"))
-        self.preview_table.horizontalHeaderItem(3).setToolTip(
+        self.pattern_filter = QComboBox()
+        self.pattern_filter.addItem("すべての変更パターン", "")
+        self.select_pattern = QPushButton("このパターンを選択")
+        self.select_pattern.clicked.connect(self._select_pattern)
+        self.clear_selection = QPushButton("選択解除")
+        self.clear_selection.clicked.connect(self._clear_selection)
+        pattern_row = QHBoxLayout()
+        pattern_row.addWidget(self.pattern_filter, 1)
+        pattern_row.addWidget(self.select_pattern)
+        pattern_row.addWidget(self.clear_selection)
+        preview_layout.addLayout(pattern_row)
+        self.preview_table = dense_table(QTableWidget(0, 7))
+        self.preview_table.setHorizontalHeaderLabels(("選択", "状態", "元の摘要", "置き換え後", "変更ルール", "文字数 / CP932バイト", "理由"))
+        self.preview_table.horizontalHeaderItem(5).setToolTip(
             "JDLの上限は32文字です。バイト数はCP932で表現できるかの確認用で、32バイト制限ではありません。"
         )
         self.preview_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         preview_header = self.preview_table.horizontalHeader()
         for column, mode in (
             (0, QHeaderView.ResizeMode.ResizeToContents),
-            (1, QHeaderView.ResizeMode.Stretch),
+            (1, QHeaderView.ResizeMode.ResizeToContents),
             (2, QHeaderView.ResizeMode.Stretch),
-            (3, QHeaderView.ResizeMode.ResizeToContents),
-            (4, QHeaderView.ResizeMode.Interactive),
+            (3, QHeaderView.ResizeMode.Stretch),
+            (4, QHeaderView.ResizeMode.ResizeToContents),
+            (5, QHeaderView.ResizeMode.ResizeToContents),
+            (6, QHeaderView.ResizeMode.Interactive),
         ):
             preview_header.setSectionResizeMode(column, mode)
-        self.preview_table.setColumnWidth(4, 220)
+        self.preview_table.setColumnWidth(6, 220)
+        self.preview_table.itemChanged.connect(self._selection_changed)
         preview_layout.addWidget(self.preview_table, 1)
         self.preview_detail = QLabel("行を選ぶと、元の摘要と置き換え後の全文をここに表示します。")
-        self.preview_detail.setMaximumHeight(110)
+        self.preview_detail.setMaximumHeight(160)
         self.preview_detail.setObjectName("detailText")
         self.preview_detail.setWordWrap(True)
         self.preview_detail.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -411,6 +433,7 @@ class DescriptionRulesDialog(QDialog):
         splitter.setStretchFactor(1, 2)
         splitter.setSizes((260, 520))
         self.state_filter.currentIndexChanged.connect(self._filter_preview)
+        self.pattern_filter.currentIndexChanged.connect(self._filter_preview)
         self.preview_search.textChanged.connect(self._filter_preview)
         self.wrap_toggle.toggled.connect(self._set_wrap)
         self.preview_table.currentCellChanged.connect(lambda row, _c, _pr, _pc: self._show_line(row))
@@ -418,7 +441,7 @@ class DescriptionRulesDialog(QDialog):
         actions = QHBoxLayout()
         cancel = QPushButton("キャンセル")
         cancel.clicked.connect(self.reject)
-        self.apply_button = QPushButton("③ プレビューした内容を入力欄に反映")
+        self.apply_button = QPushButton("③ 選択した候補を入力欄に反映")
         self.apply_button.setObjectName("primaryButton")
         self.apply_button.setEnabled(False)
         self.apply_button.clicked.connect(self._apply)
@@ -440,24 +463,28 @@ class DescriptionRulesDialog(QDialog):
         self.preview_label.setText("ルールが変わりました。もう一度プレビューしてください。")
         self._previewed = None
         self._lines = []
+        self._selected_keys.clear()
         self.preview_table.setRowCount(0)
         self.preview_detail.setText("ルール変更後の結果は、再プレビューで確認してください。")
+        self.apply_button.setEnabled(False)
+
+    def _suggest(self) -> None:
+        self._previewed = None
+        self._selected_keys.clear()
+        lines = mechanical_description_candidates(self.descriptions, self.current_rules())
+        self._show_preview(lines)
+        count = sum(line.fits and line.result != line.original for line in lines)
+        self.preview_label.setText(
+            f"機械的な整形候補 {count}件。まだ承認・反映していません。"
+            "使うルールを承認して②全件をプレビューし、反映する行を選択してください。"
+        )
         self.apply_button.setEnabled(False)
 
     def _preview(self) -> None:
         rules = self.current_rules()
         lines, problems = provisional_description_preview(self.descriptions, rules)
-        self._lines = lines
-        self.preview_table.setRowCount(len(lines))
-        for index, line in enumerate(lines):
-            try:
-                byte_count = str(len(line.result.encode("cp932", errors="strict"))) if line.result else ""
-            except UnicodeEncodeError:
-                byte_count = "不可"
-            size = f"{len(line.result)} / {byte_count}" if line.result else ""
-            values = (_STATE_LABEL[line.state], line.original, line.result, size, line.reason)
-            for column, value in enumerate(values):
-                self.preview_table.setItem(index, column, text_item(value.replace("\n", "⏎")))
+        self._selected_keys.clear()
+        self._show_preview(lines)
         fit = sum(line.fits for line in lines)
         prefix = "仮プレビューの候補" if problems else "反映できる"
         summary = f"{prefix} {fit}件 / 個別に入力 {len(lines) - fit}件（全{len(lines)}件）"
@@ -471,17 +498,90 @@ class DescriptionRulesDialog(QDialog):
                         "上の件数は入力済みルールだけの仮結果で、まだ反映できません。")
         elif not fit:
             summary += "\n反映できる摘要はありません。右端の理由を確認し、必要な行は個別に入力してください。"
+        else:
+            summary += "\n反映する行を選ぶか、変更パターンで絞って選択してください。保存は確認画面で行います。"
         self.preview_label.setText(summary)
         self._previewed = preview_signature(lines) if not problems else None
-        self.apply_button.setEnabled(not problems and fit > 0)
+        self._update_apply()
+
+    def _show_preview(self, lines) -> None:
+        self._lines = lines
+        self.preview_table.blockSignals(True)
+        self.preview_table.setRowCount(len(lines))
+        for index, line in enumerate(lines):
+            try:
+                byte_count = str(len(line.result.encode("cp932", errors="strict"))) if line.result else ""
+            except UnicodeEncodeError:
+                byte_count = "不可"
+            size = f"{len(line.result)} / {byte_count}" if line.result else ""
+            tick = QTableWidgetItem()
+            tick.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+            tick.setCheckState(_UNCHECKED)
+            if not line.fits or line.result == line.original:
+                tick.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            self.preview_table.setItem(index, 0, tick)
+            values = (_STATE_LABEL[line.state], line.original, line.result,
+                      "+".join(line.applied_rule_ids) or "変更なし", size, line.reason)
+            for column, value in enumerate(values, 1):
+                self.preview_table.setItem(index, column, text_item(value.replace("\n", "⏎")))
+        self.preview_table.blockSignals(False)
+        patterns = sorted({"+".join(line.applied_rule_ids) for line in lines if line.fits and line.applied_rule_ids})
+        self.pattern_filter.blockSignals(True)
+        self.pattern_filter.clear()
+        self.pattern_filter.addItem("すべての変更パターン", "")
+        for pattern in patterns:
+            self.pattern_filter.addItem(pattern, pattern)
+        self.pattern_filter.blockSignals(False)
         self._filter_preview()
         self._set_wrap(self.wrap_toggle.isChecked())
 
+    def _selection_changed(self, item: QTableWidgetItem) -> None:
+        if item.column() != 0:
+            return
+        if self._previewed is None:
+            self.preview_table.blockSignals(True)
+            item.setCheckState(_UNCHECKED)
+            self.preview_table.blockSignals(False)
+            return
+        line = self._lines[item.row()]
+        if item.checkState() == _CHECKED and line.fits and line.result != line.original:
+            self._selected_keys.add(line.key)
+        else:
+            self._selected_keys.discard(line.key)
+        self._update_apply()
+
+    def _update_apply(self) -> None:
+        self.apply_button.setText(f"③ 選択した{len(self._selected_keys)}件を入力欄に反映")
+        self.apply_button.setEnabled(self._previewed is not None and bool(self._selected_keys))
+
+    def _clear_selection(self) -> None:
+        self.preview_table.blockSignals(True)
+        for row in range(self.preview_table.rowCount()):
+            self.preview_table.item(row, 0).setCheckState(_UNCHECKED)
+        self.preview_table.blockSignals(False)
+        self._selected_keys.clear()
+        self._update_apply()
+
+    def _select_pattern(self) -> None:
+        if self._previewed is None:
+            return
+        wanted = self.pattern_filter.currentData()
+        if not wanted:
+            return
+        self.preview_table.blockSignals(True)
+        for index, line in enumerate(self._lines):
+            if line.fits and line.result != line.original and "+".join(line.applied_rule_ids) == wanted:
+                self.preview_table.item(index, 0).setCheckState(_CHECKED)
+                self._selected_keys.add(line.key)
+        self.preview_table.blockSignals(False)
+        self._update_apply()
+
     def _filter_preview(self, *_args) -> None:
         wanted = self.state_filter.currentData()
+        pattern = self.pattern_filter.currentData()
         text = self.preview_search.text().strip()
         for index, line in enumerate(self._lines):
-            matches = (not wanted or line.state == wanted) and (
+            matches = (not wanted or line.state == wanted) and (not pattern or "+".join(line.applied_rule_ids) == pattern) and (
                 not text or text in line.original or text in line.result
             )
             self.preview_table.setRowHidden(index, not matches)
@@ -498,9 +598,16 @@ class DescriptionRulesDialog(QDialog):
         if not 0 <= row < len(self._lines):
             return
         line = self._lines[row]
+        changes = [
+            f"{line.original[start:end] or '（なし）'} → {line.result[new_start:new_end] or '（なし）'}"
+            for kind, start, end, new_start, new_end in SequenceMatcher(
+                None, line.original, line.result, autojunk=False
+            ).get_opcodes() if kind != "equal"
+        ]
         self.preview_detail.setText(
             f"元の摘要: {line.original}\n置き換え後: {line.result or '（ルールが当てはまりません）'}"
-            f"{f'（{len(line.result)}文字）' if line.result else ''}\n状態: {_STATE_LABEL[line.state]}"
+            f"{f'（{len(line.result)}文字）' if line.result else ''}\n"
+            f"変更: {' / '.join(changes) if changes else 'なし'}\n状態: {_STATE_LABEL[line.state]}"
             f" / 理由: {line.reason}"
         )
 
@@ -511,5 +618,10 @@ class DescriptionRulesDialog(QDialog):
             self.preview_label.setText("プレビュー後にルールが変わりました。もう一度プレビューしてください。")
             self.apply_button.setEnabled(False)
             return
-        self.result = {line.key: line.result for line in lines if line.fits}
+        try:
+            self.result = selected_description_results(lines, self._selected_keys)
+        except ValueError:
+            self.preview_label.setText("確認対象が重複しているか、適合しない候補が選ばれています。反映せず開き直してください。")
+            self.apply_button.setEnabled(False)
+            return
         self.accept()
