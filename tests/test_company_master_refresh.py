@@ -6,6 +6,7 @@ import unittest
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from accounting_converter.application.company_master_refresh import (
     CompanyMasterRefreshService,
@@ -130,6 +131,14 @@ class CompanyMasterRefreshTests(unittest.TestCase):
         plan = self.service.plan("company-a", changed)
         self.assertFalse(plan.master_identity_unchanged)
         self.assertEqual(plan.reconfirmation_count, 1)
+
+    def test_plan_is_rejected_after_company_context_changes(self) -> None:
+        new = self._draft("add", (("1001", "架空科目A"), ("1002", "架空科目B"), ("1003", "架空科目C")))
+        plan = self.service.plan("company-a", new)
+        changed = replace(self.companies.get("company-a"), context_fingerprint="changed")
+        with patch.object(self.companies, "get", return_value=changed):
+            with self.assertRaisesRegex(ValueError, "会社設定が確認後に変更"):
+                self.service.apply(plan, {}, set())
 
     def test_removed_code_changed_and_name_changed_require_confirmation(self) -> None:
         cases = (

@@ -65,6 +65,37 @@ class PendingTaxContextConfirmation:
     blocking_rule_ids: tuple[str, ...]
 
 
+def printed_master_identities(draft):
+    """Build only identities explicitly printed by the selected JDL master."""
+    accounts = tuple(
+        JdlAccountIdentity(item.name, item.code, item.abbreviation, item.name)
+        for item in draft.observation.printed_accounts if item.enabled
+    )
+    printed_subaccounts = tuple(
+        item for item in draft.observation.subaccounts
+        if item.evidence_scope == "PRINTED_EXPLICIT_PARENT"
+    )
+    subaccounts = tuple(
+        JdlSubaccountIdentity(
+            parent_account=item.parent_account_name, mapping_value=item.name,
+            target_master_code=item.code, output_code=item.code,
+            output_name=item.name, output_representation_confirmed=True,
+            parent_account_code=item.parent_account_code, target_name=item.name,
+        )
+        for item in printed_subaccounts if jdl_subaccount_name_fits(item.name)
+    )
+    unusable = tuple(
+        JdlUnusableSubaccount(
+            parent_account=item.parent_account_name,
+            parent_account_code=item.parent_account_code,
+            code=item.code, name=item.name,
+            reason=UNUSABLE_SUBACCOUNT_NAME_TOO_LONG,
+        )
+        for item in printed_subaccounts if not jdl_subaccount_name_fits(item.name)
+    )
+    return accounts, subaccounts, unusable
+
+
 class CompanyTaxContextConfirmationService:
     """Promotes one explicitly confirmed PDF master to the scoped tax context."""
 
@@ -142,48 +173,7 @@ class CompanyTaxContextConfirmationService:
                 raise CompanyTaxContextConfirmationError(
                     "department settings require separate confirmation"
                 )
-            account_master = tuple(
-                JdlAccountIdentity(
-                    mapping_value=item.name,
-                    target_master_code=item.code,
-                    target_name=item.abbreviation,
-                    target_formal_name=item.name,
-                )
-                for item in draft.observation.printed_accounts
-                if item.enabled
-            )
-            printed_subaccounts = tuple(
-                item for item in draft.observation.subaccounts
-                if item.evidence_scope == "PRINTED_EXPLICIT_PARENT"
-            )
-            subaccounts = tuple(
-                JdlSubaccountIdentity(
-                    parent_account=item.parent_account_name,
-                    mapping_value=item.name,
-                    target_master_code=item.code,
-                    output_code=item.code,
-                    output_name=item.name,
-                    output_representation_confirmed=True,
-                    parent_account_code=item.parent_account_code,
-                    target_name=item.name,
-                )
-                for item in printed_subaccounts
-                if jdl_subaccount_name_fits(item.name)
-            )
-            # Names longer than the JDL import field cannot be written. They stay
-            # recorded (master stays complete) but are never selectable; nothing
-            # is shortened or renamed.
-            unusable_subaccounts = tuple(
-                JdlUnusableSubaccount(
-                    parent_account=item.parent_account_name,
-                    parent_account_code=item.parent_account_code,
-                    code=item.code,
-                    name=item.name,
-                    reason=UNUSABLE_SUBACCOUNT_NAME_TOO_LONG,
-                )
-                for item in printed_subaccounts
-                if not jdl_subaccount_name_fits(item.name)
-            )
+            account_master, subaccounts, unusable_subaccounts = printed_master_identities(draft)
             departments = ()
             department_processing_enabled = False
         else:

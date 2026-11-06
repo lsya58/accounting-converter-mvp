@@ -476,9 +476,12 @@ class AccountingConverterController:
         plan: AccountMasterRefreshPlan,
         selections: dict[str, str],
         explicitly_confirmed: set[str],
+        *,
+        preserve_confirmed_context: bool = False,
     ) -> AppState:
         count = self.company_master_refresh_service.apply(
-            plan, selections, explicitly_confirmed
+            plan, selections, explicitly_confirmed,
+            preserve_confirmed_context=preserve_confirmed_context,
         )
         self.load_profiles()
         self.load_company_settings()

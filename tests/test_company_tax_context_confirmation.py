@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -17,6 +18,7 @@ from accounting_converter.application.company_tax_context_confirmation import (
 from accounting_converter.application.company_master_refresh import (
     CompanyMasterRefreshService,
 )
+from accounting_converter.application.company_voucher_row_limit import CompanyVoucherRowLimitService
 from accounting_converter.adapters.output.jdl import (
     JdlInputTaxCreditMethod,
     JdlSimplifiedBusinessCategory,
@@ -65,6 +67,14 @@ class _OverlongSubaccountMaster(_PrintedMaster):
     def extract_pages(self, path):
         return tuple(
             page.replace("架空補助", "あ" * 12)
+            for page in super().extract_pages(path)
+        )
+
+
+class _AddedMaster(_PrintedMaster):
+    def extract_pages(self, path):
+        return tuple(
+            page + "  3001- 架空追加科目  借C ○\n"
             for page in super().extract_pages(path)
         )
 
@@ -162,6 +172,75 @@ class CompanyTaxContextConfirmationTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temp.cleanup()
+
+    def test_additive_master_refresh_keeps_confirmed_tax_limit_and_mappings(self) -> None:
+        self.service.confirm_taxable_included("company-1", confirmed=True)
+        CompanyVoucherRowLimitService(self.companies, self.profiles).set(
+            "company-1", 16, confirmed=True
+        )
+        source = self.root / "added.pdf"
+        source.write_bytes(b"synthetic added")
+        draft = self.root / "added.json"
+        JdlAccountPdfDraftStore(_AddedMaster()).import_pdf(source, draft)
+        refresh = CompanyMasterRefreshService(self.companies, self.profiles)
+        plan = refresh.plan("company-1", draft)
+        self.assertTrue(plan.confirmed_context_preservable)
+        self.assertEqual(plan.reconfirmation_count, 0)
+        refresh.apply(plan, {}, set(), preserve_confirmed_context=True)
+        reopened = CompanySettingStore(self.root / "companies", self.profiles)
+        setting = reopened.get("company-1")
+        context = JdlTargetContextLoader().load(reopened.context_path(setting))
+        self.assertEqual(context.voucher_row_limit, 16)
+        self.assertEqual(context.confirmation_state.value, "CONFIRMED")
+        self.assertEqual(len(context.account_master), 3)
+        profile = self.profiles.get(setting.conversion_profile_id)
+        self.assertTrue(all(m.status is MappingStatus.USER_CONFIRMED for m in profile.account_mappings.values()))
+        self.assertTrue(all(m.status is MappingStatus.USER_CONFIRMED for m in profile.subaccount_context_mappings.values()))
+
+    def test_refresh_failure_preserves_previous_confirmed_setting(self) -> None:
+        self.service.confirm_taxable_included("company-1", confirmed=True)
+        source = self.root / "added.pdf"
+        source.write_bytes(b"synthetic added")
+        draft = self.root / "added.json"
+        JdlAccountPdfDraftStore(_AddedMaster()).import_pdf(source, draft)
+        refresh = CompanyMasterRefreshService(self.companies, self.profiles)
+        plan = refresh.plan("company-1", draft)
+        setting = self.companies.get("company-1")
+        before = self.companies.context_path(setting).read_bytes()
+        before_profile = setting.conversion_profile_id
+        with patch("accounting_converter.infrastructure.company_setting_store.os.replace", side_effect=OSError("synthetic failure")):
+            with self.assertRaises(OSError):
+                refresh.apply(plan, {}, set(), preserve_confirmed_context=True)
+        after = self.companies.get("company-1")
+        self.assertEqual(after.conversion_profile_id, before_profile)
+        self.assertEqual(self.companies.context_path(after).read_bytes(), before)
+
+    def test_refresh_second_publish_failure_rolls_back_context(self) -> None:
+        self.service.confirm_taxable_included("company-1", confirmed=True)
+        source = self.root / "added.pdf"
+        source.write_bytes(b"synthetic added")
+        draft = self.root / "added.json"
+        JdlAccountPdfDraftStore(_AddedMaster()).import_pdf(source, draft)
+        refresh = CompanyMasterRefreshService(self.companies, self.profiles)
+        plan = refresh.plan("company-1", draft)
+        setting = self.companies.get("company-1")
+        before = self.companies.context_path(setting).read_bytes()
+        real_replace = os.replace
+        calls = 0
+
+        def fail_second(src, dst):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError("synthetic second publish failure")
+            return real_replace(src, dst)
+
+        with patch("accounting_converter.infrastructure.company_setting_store.os.replace", side_effect=fail_second):
+            with self.assertRaises(OSError):
+                refresh.apply(plan, {}, set(), preserve_confirmed_context=True)
+        after = self.companies.get("company-1")
+        self.assertEqual(after.conversion_profile_id, setting.conversion_profile_id)
+        self.assertEqual(self.companies.context_path(after).read_bytes(), before)
 
     def test_explicit_confirmation_promotes_draft_and_preserves_master(self) -> None:
         old_fingerprint = self.setting.context_fingerprint

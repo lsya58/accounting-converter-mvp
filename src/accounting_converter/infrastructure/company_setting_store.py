@@ -332,15 +332,17 @@ class CompanySettingStore:
         context_source: Path,
         *,
         conversion_profile_id: str | None = None,
+        confirmed_context_bytes: bytes | None = None,
     ) -> CompanySetting:
         current = self.get(company_setting_id)
         profile = self.profile_store.get(
             conversion_profile_id or current.conversion_profile_id
         )
-        context_bytes = context_source.read_bytes()
+        draft_bytes = context_source.read_bytes()
         if not self.account_pdf_drafts.is_draft(context_source):
             raise CompanySettingStoreError("JDL account-list draft is required")
-        self.account_pdf_drafts.load(context_source)
+        draft = self.account_pdf_drafts.load(context_source)
+        context_bytes = confirmed_context_bytes if confirmed_context_bytes is not None else draft_bytes
         context_hash = self._hash(context_bytes)
         expected_hashes = {
             mapping.metadata.get("setup_context_sha256")
@@ -362,20 +364,59 @@ class CompanySettingStore:
         )
         destination = self.context_path(current)
         context_temp = destination.with_name(f".{destination.name}.refresh.tmp")
+        rollback_temp = destination.with_name(f".{destination.name}.refresh.rollback.tmp")
         company_path = self.root_dir / company_setting_id / self.COMPANY_FILE
         company_temp = company_path.with_name(f".{self.COMPANY_FILE}.refresh.tmp")
         try:
-            self._exclusive_write(context_temp, context_bytes)
-            self.account_pdf_drafts.load(context_temp)
+            if confirmed_context_bytes is not None:
+                if self.account_pdf_drafts.is_draft(destination):
+                    raise CompanySettingStoreError("confirmed context cannot be inherited from a draft")
+                previous = self.context_loader.load(destination)
+                self._exclusive_write(context_temp, context_bytes)
+                refreshed = self.context_loader.load(context_temp)
+                if (
+                    previous.confirmation_state.value != "CONFIRMED"
+                    or previous.provenance.value != "USER_CONFIRMED_RUNTIME_SNAPSHOT"
+                    or (previous.product, previous.version) != (refreshed.product, refreshed.version)
+                    or (draft.product, draft.version) != (refreshed.product, refreshed.version)
+                    or target_context_master_identity_sha256(refreshed)
+                    != observed_master_identity_sha256(draft.observation)
+                    or previous.tax_processing_mode != refreshed.tax_processing_mode
+                    or previous.effective_taxation_method != refreshed.effective_taxation_method
+                    or previous.effective_input_tax_credit_method != refreshed.effective_input_tax_credit_method
+                    or previous.simplified_business_category != refreshed.simplified_business_category
+                    or previous.sales_tax_rounding != refreshed.sales_tax_rounding
+                    or previous.purchase_tax_rounding != refreshed.purchase_tax_rounding
+                    or previous.voucher_row_limit != refreshed.voucher_row_limit
+                    or previous.confirmation_state != refreshed.confirmation_state
+                    or previous.provenance != refreshed.provenance
+                ):
+                    raise CompanySettingStoreError("refreshed context cannot inherit confirmed settings")
+                runtime = JdlOutputRuntimeFactory().resolve(
+                    jdl_ibex_35_5_output_profile(), profile, refreshed
+                )
+                if not runtime.resolved:
+                    raise CompanySettingStoreError("refreshed context and mappings are incompatible")
+                self._exclusive_write(rollback_temp, destination.read_bytes())
+            else:
+                self._exclusive_write(context_temp, context_bytes)
+                self.account_pdf_drafts.load(context_temp)
             self._write_json(company_temp, self._to_dict(updated), exclusive=True)
             self._from_json(company_temp)
             os.replace(context_temp, destination)
-            os.replace(company_temp, company_path)
+            try:
+                os.replace(company_temp, company_path)
+            except Exception:
+                if confirmed_context_bytes is not None:
+                    os.replace(rollback_temp, destination)
+                raise
         finally:
             if context_temp.exists():
                 context_temp.unlink()
             if company_temp.exists():
                 company_temp.unlink()
+            if rollback_temp.exists():
+                rollback_temp.unlink()
         return updated
 
     def replace_with_confirmed_context(

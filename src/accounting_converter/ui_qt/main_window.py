@@ -1639,6 +1639,14 @@ class CompanyMasterRefreshDialog(QDialog):
             f"保持: {len(plan.items) - len(stale)}件 / 再確認: {len(stale)}件"
         )
         layout.addWidget(self.status_label)
+        self.preserve_context_check = QCheckBox(
+            "同じJDL会社で、税設定・振替伝票入力行数を変更していないことを確認しました"
+        )
+        self.preserve_context_check.setEnabled(plan.confirmed_context_preservable)
+        self.preserve_context_check.setToolTip(
+            "確認した場合のみ、追加後の科目一覧へ税設定と入力行数の確認結果を引き継ぎます。"
+        )
+        layout.addWidget(self.preserve_context_check)
         actions = QHBoxLayout()
         cancel = QPushButton("キャンセル")
         cancel.clicked.connect(self.reject)
@@ -1670,7 +1678,8 @@ class CompanyMasterRefreshDialog(QDialog):
         }
         try:
             self.controller.apply_company_master_refresh(
-                self.plan, selections, confirmed
+                self.plan, selections, confirmed,
+                preserve_confirmed_context=self.preserve_context_check.isChecked(),
             )
         except Exception as exc:
             log_local_exception("jdl_account_master_refresh_apply", exc)

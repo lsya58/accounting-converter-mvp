@@ -11,7 +11,11 @@ from accounting_converter.application.moneyforward_trade_partner import (
     upgrade_trade_partner_policy,
 )
 from accounting_converter.application.jdl_master_identity import (
-    observed_master_identity_sha256,
+    observed_master_identity_sha256, target_context_master_identity_sha256,
+)
+from accounting_converter.application.company_tax_context_confirmation import printed_master_identities
+from accounting_converter.adapters.output.jdl import (
+    JdlContextConfirmationState, JdlContextProvenance, JdlTargetContextValidator,
 )
 from accounting_converter.application.jdl_master_diff import JdlMasterDiff, compare_jdl_masters
 from accounting_converter.application.jdl_master_observation import (
@@ -47,9 +51,11 @@ class AccountMasterRefreshPlan:
     company_setting_id: str
     new_context_path: Path
     new_context_sha256: str
+    old_context_sha256: str
     items: tuple[AccountMasterRefreshItem, ...]
     master_identity_unchanged: bool = False
     master_diff: JdlMasterDiff = JdlMasterDiff(())
+    confirmed_context_preservable: bool = False
 
     @property
     def reconfirmation_count(self) -> int:
@@ -69,6 +75,8 @@ class CompanyMasterRefreshService:
         profile = self.profile_store.get(setting.conversion_profile_id)
         draft = self.drafts.load(new_context_path)
         old_observation = self._current_observation(setting)
+        old_path = self.company_store.context_path(setting)
+        old_context = None if self.drafts.is_draft(old_path) else JdlTargetContextLoader().load(old_path)
         targets = tuple(item for item in draft.observation.printed_accounts if item.enabled)
         by_identity = {(item.code, item.name) for item in targets}
         available = tuple(item.name for item in sorted(targets, key=lambda item: (item.code, item.name)))
@@ -91,6 +99,7 @@ class CompanyMasterRefreshService:
             company_setting_id=company_setting_id,
             new_context_path=new_context_path,
             new_context_sha256=hashlib.sha256(new_context_path.read_bytes()).hexdigest(),
+            old_context_sha256=setting.context_fingerprint,
             items=tuple(items),
             master_identity_unchanged=(
                 self.company_store.target_master_identity_sha256(company_setting_id)
@@ -99,7 +108,31 @@ class CompanyMasterRefreshService:
             master_diff=compare_jdl_masters(
                 old_observation, draft.observation
             ),
+            confirmed_context_preservable=self._can_preserve_context(old_context, draft),
         )
+
+    @staticmethod
+    def _can_preserve_context(old, draft) -> bool:
+        if old is None or old.confirmation_state is not JdlContextConfirmationState.CONFIRMED:
+            return False
+        if old.provenance is not JdlContextProvenance.USER_CONFIRMED_RUNTIME_SNAPSHOT:
+            return False
+        if (old.product, old.version) != (draft.product, draft.version):
+            return False
+        if draft.observation.conflicts or draft.observation.departments or draft.observation.printed_departments:
+            return False
+        accounts, subs, unusable = printed_master_identities(draft)
+        before_accounts = {(a.target_master_code, a.target_formal_name, a.target_name) for a in old.account_master}
+        after_accounts = {(a.target_master_code, a.target_formal_name, a.target_name) for a in accounts}
+        before_subs = {
+            (s.parent_account_code, s.parent_account, s.target_master_code, s.target_name or s.output_name)
+            for s in old.subaccounts
+        } | {(s.parent_account_code, s.parent_account, s.code, s.name) for s in old.unusable_subaccounts}
+        after_subs = {
+            (s.parent_account_code, s.parent_account, s.target_master_code, s.target_name or s.output_name)
+            for s in subs
+        } | {(s.parent_account_code, s.parent_account, s.code, s.name) for s in unusable}
+        return before_accounts <= after_accounts and before_subs <= after_subs
 
     def _current_observation(self, setting) -> JdlMasterObservation:
         path = self.company_store.context_path(setting)
@@ -138,12 +171,36 @@ class CompanyMasterRefreshService:
         plan: AccountMasterRefreshPlan,
         selections: Mapping[str, str],
         explicitly_confirmed: set[str],
+        *, preserve_confirmed_context: bool = False,
     ) -> int:
+        setting = self.company_store.get(plan.company_setting_id)
+        if setting.context_fingerprint != plan.old_context_sha256:
+            raise ValueError("会社設定が確認後に変更されました。開き直してください。")
         if plan.master_identity_unchanged:
             return 0
-        setting = self.company_store.get(plan.company_setting_id)
         old_profile = self.profile_store.get(setting.conversion_profile_id)
         draft = self.drafts.load(plan.new_context_path)
+        if hashlib.sha256(plan.new_context_path.read_bytes()).hexdigest() != plan.new_context_sha256:
+            raise ValueError("JDL科目一覧が確認後に変更されました。")
+        old_path = self.company_store.context_path(setting)
+        old_context = None if self.drafts.is_draft(old_path) else JdlTargetContextLoader().load(old_path)
+        confirmed_bytes = None
+        new_context = None
+        context_hash = plan.new_context_sha256
+        if preserve_confirmed_context:
+            if not plan.confirmed_context_preservable or not self._can_preserve_context(old_context, draft):
+                raise ValueError("同一会社の確認済みJDL設定として保持できません。再確認してください。")
+            accounts, subs, unusable = printed_master_identities(draft)
+            new_context = replace(
+                old_context, accounts=frozenset(item.mapping_value for item in accounts),
+                account_master=accounts, subaccounts=subs, unusable_subaccounts=unusable,
+            )
+            if JdlTargetContextValidator().validate(new_context):
+                raise ValueError("更新後のJDL科目一覧と確認済み設定が整合しません。")
+            if target_context_master_identity_sha256(new_context) != observed_master_identity_sha256(draft.observation):
+                raise ValueError("更新後のJDL科目一覧を完全に保持できません。")
+            confirmed_bytes = JdlTargetContextLoader().to_json_text(new_context).encode("utf-8")
+            context_hash = hashlib.sha256(confirmed_bytes).hexdigest()
         targets = tuple(item for item in draft.observation.printed_accounts if item.enabled)
         by_name = {}
         for target in targets:
@@ -157,7 +214,11 @@ class CompanyMasterRefreshService:
         mappings = dict(old_profile.account_mappings)
         for item in plan.items:
             previous = mappings[item.source_value]
-            target_name = previous.target_value if item.preserved else selections[item.source_value]
+            target_name = (
+                previous.metadata.get("target_printed_name")
+                or previous.metadata.get("target_formal_name")
+                or previous.target_value
+            ) if item.preserved else selections[item.source_value]
             target = by_name[target_name][0]
             mappings[item.source_value] = MappingValue(
                 source_value=item.source_value,
@@ -168,7 +229,7 @@ class CompanyMasterRefreshService:
                     "target_code": target.code,
                     "target_printed_name": target.name,
                     "target_abbreviation": target.abbreviation,
-                    "setup_context_sha256": plan.new_context_sha256,
+                    "setup_context_sha256": context_hash,
                 },
             )
         subaccount_mappings: dict[MappingKey, MappingValue] = {}
@@ -216,7 +277,7 @@ class CompanyMasterRefreshService:
                     parent_account=previous.parent_account,
                     metadata={
                         **previous.metadata,
-                        "setup_context_sha256": plan.new_context_sha256,
+                        "setup_context_sha256": context_hash,
                     },
                 )
             else:
@@ -230,14 +291,12 @@ class CompanyMasterRefreshService:
         loss_policies = dict(old_profile.loss_policy_mappings)
         policy = loss_policies.get(TRADE_PARTNER_LOSS_POLICY_KEY)
         if policy is not None and policy.status is MappingStatus.USER_CONFIRMED:
-            old_path = self.company_store.context_path(setting)
-            if not self.drafts.is_draft(old_path):
-                old_context = JdlTargetContextLoader().load(old_path)
+            if old_context is not None:
                 loss_policies[TRADE_PARTNER_LOSS_POLICY_KEY] = (
                     upgrade_trade_partner_policy(
                         policy,
                         old_context,
-                        replace(old_context, product=draft.product, version=draft.version),
+                        new_context or replace(old_context, product=draft.product, version=draft.version),
                     )
                 )
         updated = replace(
@@ -254,6 +313,7 @@ class CompanyMasterRefreshService:
                 plan.company_setting_id,
                 plan.new_context_path,
                 conversion_profile_id=updated.profile_id,
+                confirmed_context_bytes=confirmed_bytes,
             )
         except Exception:
             self.profile_store.delete(updated.profile_id)
