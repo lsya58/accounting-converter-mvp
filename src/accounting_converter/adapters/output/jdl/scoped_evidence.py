@@ -225,9 +225,9 @@ def relation_accounts(side: str, cell: str, relation: str) -> dict[str, tuple[st
 # this Evidence family; 課税売上10% on the credit side stays account-specific
 # regardless of how many accounts round-tripped, same as the pre-existing rule.
 # The rule reaches an unprobed account only when the company's JDL 科目一覧 prints
-# the same tax defaults (課区・税区・入力) for it as for EVERY account the relation
-# round-tripped on (`JDL_TAX_SETTING_PEERS`, generated from the PDF). An account
-# with other defaults is never covered by similarity.
+# the same tax defaults (課区・税区・入力) for it as for at least three accounts the
+# relation round-tripped on (`JDL_TAX_SETTING_PEERS`, generated from the PDF). An
+# account with other defaults is covered only where it round-tripped itself.
 RELATION_ACCOUNT_INDEPENDENCE_MIN_ACCOUNTS = 3
 RELATION_ACCOUNT_SPECIFIC_ONLY = frozenset({("CREDIT", "S10")})
 
@@ -237,8 +237,8 @@ def relation_covers_account(side: str, cell: str, relation: str, account: str) -
 
     relation in {"", "NONE"}: no amount question; the layout/cell gate already
     decided coverage. Otherwise: round-tripped on this exact account, or
-    independent: observed on enough accounts, not account-specific, and the
-    account has the same printed JDL tax defaults as all observed accounts.
+    independent: not account-specific, and the account prints the same JDL tax
+    defaults as at least three accounts the relation round-tripped on.
     The single source of truth for this check: both composition and the
     output stage call it, so they can never disagree.
     """
@@ -249,5 +249,4 @@ def relation_covers_account(side: str, cell: str, relation: str, account: str) -
         return True
     if len(observed) < RELATION_ACCOUNT_INDEPENDENCE_MIN_ACCOUNTS or (side, cell) in RELATION_ACCOUNT_SPECIFIC_ONLY:
         return False
-    peers = JDL_TAX_SETTING_PEERS.get(frozenset(observed))
-    return peers is not None and account in peers
+    return account in JDL_TAX_SETTING_PEERS.get((side, cell, relation), frozenset())

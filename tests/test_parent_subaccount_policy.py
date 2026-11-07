@@ -183,6 +183,11 @@ class PolicyTest(unittest.TestCase):
         self.assertEqual((rows[FEE].subaccounts, rows[FEE].preserve_allowed), (2, False))
         self.assertIn("補助科目がありません", rows[FEE].preserve_reason)
         self.assertFalse(rows[BANK].parent_only_allowed)
+        self.assertEqual(rows[FEE].owner, "HUMAN_CHOOSES_POLICY")
+        self.assertEqual(rows[BANK].owner, "HUMAN_MAPS_EACH")  # JDL parent has subaccounts, no same name
+        self.assertEqual(rows[BANK].jdl_subaccounts, 1)
+        self.assertIn("EVID-JDL-35-5-BLANK-SUB-REJECT-1551-001", rows[BANK].parent_only_reason)
+        self.assertIn("実機検証待ち", rows[BANK].parent_only_reason)
         blocked = {r.group.source_parent: r for r in policy.policy_rows(groups, lambda _item: False)}
         self.assertFalse(blocked[FEE].parent_only_allowed)  # the form cannot carry it: not offered
 

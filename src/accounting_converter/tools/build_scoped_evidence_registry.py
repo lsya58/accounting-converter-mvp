@@ -197,9 +197,10 @@ def tax_setting_keys(master_pdf: Path) -> dict[str, str]:
     return keys
 
 
-def setting_peers(cases: list[dict], keys: dict[str, str]) -> dict[frozenset, frozenset]:
-    """For every non-account-specific relation seen on >= 3 accounts that all print the same (non-empty)
-    tax defaults: the accounts printing exactly those defaults. Anything else gets no entry (account-specific)."""
+def setting_peers(cases: list[dict], keys: dict[str, str]) -> dict[tuple[str, str, str], frozenset]:
+    """Per (side, cell, relation): the accounts printing the same non-empty JDL tax defaults as at least
+    three accounts the relation round-tripped on. Observed accounts are grouped by their defaults, so a
+    round trip on an account with other defaults never withdraws or widens another group."""
     from accounting_converter.adapters.output.jdl.scoped_evidence import (
         RELATION_ACCOUNT_INDEPENDENCE_MIN_ACCOUNTS,
         RELATION_ACCOUNT_SPECIFIC_ONLY,
@@ -211,14 +212,18 @@ def setting_peers(cases: list[dict], keys: dict[str, str]) -> dict[frozenset, fr
             if relation not in {"", "NONE"}:
                 observed.setdefault((side, cell, relation), set()).add(account)
     peers = {}
-    for (side, cell, _relation), accounts in observed.items():
-        if len(accounts) < RELATION_ACCOUNT_INDEPENDENCE_MIN_ACCOUNTS or (side, cell) in RELATION_ACCOUNT_SPECIFIC_ONLY:
+    for (side, cell, relation), accounts in sorted(observed.items()):
+        if (side, cell) in RELATION_ACCOUNT_SPECIFIC_ONLY:
             continue
-        defaults = {keys.get(account) for account in accounts}
-        if len(defaults) != 1 or not next(iter(defaults)):
-            continue
-        key = next(iter(defaults))
-        peers[frozenset(accounts)] = frozenset(code for code, value in keys.items() if value == key)
+        by_default: dict[str, set] = {}
+        for account in accounts:
+            if keys.get(account):
+                by_default.setdefault(keys[account], set()).add(account)
+        covered = frozenset(code for default, group in by_default.items()
+                            if len(group) >= RELATION_ACCOUNT_INDEPENDENCE_MIN_ACCOUNTS
+                            for code, value in keys.items() if value == default)
+        if covered:
+            peers[(side, cell, relation)] = covered
     return peers
 
 
@@ -232,12 +237,12 @@ def render(cases: list[dict], peers: dict | None = None, master_sha256: str | No
         )
     lines.append(")")
     lines.append("")
-    lines.append("# Accounts with the same printed JDL tax defaults as every account a relation round-tripped on")
+    lines.append("# Per (side, cell, relation): accounts printing the same JDL tax defaults as >= 3 accounts it round-tripped on")
     lines.append("# (used by scoped_evidence.relation_covers_account). Generated from the JDL 科目一覧 PDF"
                  + (f" sha256 {master_sha256}." if master_sha256 else "; none given, so no relation is account-independent."))
-    lines.append("JDL_TAX_SETTING_PEERS: dict[frozenset[str], frozenset[str]] = {")
-    for observed, codes in sorted((peers or {}).items(), key=lambda kv: sorted(kv[0])):
-        lines.append(f"    frozenset({sorted(observed)!r}): frozenset({sorted(codes)!r}),")
+    lines.append("JDL_TAX_SETTING_PEERS: dict[tuple[str, str, str], frozenset[str]] = {")
+    for key, codes in sorted((peers or {}).items()):
+        lines.append(f"    {key!r}: frozenset({sorted(codes)!r}),")
     lines.append("}")
     return "\n".join(lines) + "\n"
 
@@ -267,7 +272,7 @@ def main() -> int:
     if args.master_pdf:
         peers = setting_peers(cases, tax_setting_keys(args.master_pdf))
         master_sha = hashlib.sha256(args.master_pdf.read_bytes()).hexdigest()
-        summary["setting_peers"] = {",".join(sorted(k)): len(v) for k, v in peers.items()}
+        summary["setting_peers"] = {"/".join(k): len(v) for k, v in peers.items()}
     print(json.dumps(summary, ensure_ascii=False, indent=1) if args.summary else render(cases, peers, master_sha), end="")
     return 0
 

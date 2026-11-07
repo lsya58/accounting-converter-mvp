@@ -59,7 +59,8 @@ class ParentPolicyDialog(QDialog):
         intro.setObjectName("detailText")
         intro.setWordWrap(True)
         layout.addWidget(intro)
-        headers = ("入力元の親科目", "JDLの親科目", "補助の数", "仕訳数（延べ）", "選べる扱い", "この親科目の扱い")
+        headers = ("入力元の親科目", "JDLの親科目", "補助の数", "仕訳数（延べ）", "選べる扱い", "この親科目の扱い",
+                   "誰が判断するか", "JDLの補助", "理由")
         self.table = dense_table(QTableWidget(len(self.rows), len(headers)))
         self.table.setHorizontalHeaderLabels(headers)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -67,7 +68,9 @@ class ParentPolicyDialog(QDialog):
         for column, mode in enumerate((
             QHeaderView.ResizeMode.Interactive, QHeaderView.ResizeMode.Interactive,
             QHeaderView.ResizeMode.ResizeToContents, QHeaderView.ResizeMode.ResizeToContents,
-            QHeaderView.ResizeMode.Stretch, QHeaderView.ResizeMode.Interactive,
+            QHeaderView.ResizeMode.Interactive, QHeaderView.ResizeMode.Interactive,
+            QHeaderView.ResizeMode.Interactive, QHeaderView.ResizeMode.ResizeToContents,
+            QHeaderView.ResizeMode.Stretch,
         )):
             header.setSectionResizeMode(column, mode)
         self.table.setColumnWidth(0, 170)
@@ -81,6 +84,9 @@ class ParentPolicyDialog(QDialog):
             self.table.setItem(index, 3, count_item(row.journals))
             self.table.setItem(index, 4, text_item(self._availability(row)))
             self.table.item(index, 4).setToolTip(self._availability_detail(row))
+            self.table.setItem(index, 6, text_item(row.owner_label))
+            self.table.setItem(index, 7, count_item(row.jdl_subaccounts))
+            self.table.setItem(index, 8, text_item(self._availability_detail(row) or "-"))
             combo = QComboBox()
             combo.addItem("選ばない（個別に確認）", None)
             combo.addItem("補助を保持（同名の補助を対応付け）", KEEP)

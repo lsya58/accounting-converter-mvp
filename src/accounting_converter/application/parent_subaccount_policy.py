@@ -24,6 +24,12 @@ from typing import Callable
 
 from .company_mapping_update import PARENT_ONLY_SELECTION, CompanyMappingUpdateItem, CompanyMappingUpdateReview
 
+# Real JDL: blank subaccount on a parent that has subaccounts was rejected at Import (2026-05-15/16).
+BLANK_SUBACCOUNT_REJECTION_EVIDENCE = (
+    "EVID-JDL-35-5-BLANK-SUB-REJECT-1551-001",
+    "EVID-JDL-35-5-BLANK-SUB-REJECT-1311-001",
+)
+
 PRESERVE_READY = "A"
 PARENT_ONLY_OK = "B"
 NEEDS_JDL_SUB = "C"
@@ -84,7 +90,10 @@ class ParentGroup:
             return "親科目がまだ確定していません。先に親科目を確認してください。"
         if any(m.klass in {NEEDS_JDL_SUB, PRESERVE_READY, DEFAULT_NEEDED} for m in self.members):
             return ("JDL側でこの親科目に補助科目が設定されているため、親科目のみにはできません。"
-                    "補助を対応付けるか、JDLへ補助を登録して科目一覧を読み込み直してください。")
+                    "補助のある科目へ補助を空欄で取り込むと、JDLは『科目に補助が設定されています』で拒否します"
+                    f"（実機で確認: {', '.join(BLANK_SUBACCOUNT_REJECTION_EVIDENCE)}）。"
+                    "補助を対応付けるか、JDLへ補助を登録して科目一覧を読み込み直してください。"
+                    "補助を省略する別の書き方（補助コード0000など）は実機検証待ちです。")
         return "この親科目は親科目のみにできません。"
 
 
@@ -187,6 +196,24 @@ class ParentPolicyRow:
     preserve_allowed: bool
     preserve_reason: str | None
     individual_after_preserve: int  # still to be mapped or registered one by one
+    jdl_subaccounts: int = 0  # subaccounts of the JDL parent in the current master
+
+    @property
+    def owner(self) -> str:
+        """Who acts next: the Human chooses a policy / maps individually, or the parent comes first."""
+        if self.group.parent_target is None:
+            return "PARENT_FIRST"
+        if self.parent_only_allowed or self.preserve_allowed:
+            return "HUMAN_CHOOSES_POLICY"
+        return "HUMAN_MAPS_EACH"
+
+    @property
+    def owner_label(self) -> str:
+        return {
+            "PARENT_FIRST": "親科目の確認が先",
+            "HUMAN_CHOOSES_POLICY": "判断が必要（補助を保持するか親科目のみか）",
+            "HUMAN_MAPS_EACH": "個別に判断（JDLの既存補助から選ぶか、JDLで登録）。親科目のみは技術的に不可",
+        }[self.owner]
 
 
 def policy_rows(
@@ -213,7 +240,9 @@ def policy_rows(
                                else "JDLに同名の補助がありません。補助を選ぶか、JDLで登録して科目一覧を読み込み直してください。")
         else:
             preserve_reason = None
+        jdl_subs = len(named[0].item.subaccount_targets_for(group.parent_target)) if group.parent_target else 0
         rows.append(ParentPolicyRow(
+            jdl_subaccounts=jdl_subs,
             group=group, subaccounts=len(named), journals=sum(m.item.affected_journal_count for m in named),
             parent_only_allowed=parent_only, parent_only_reason=reason,
             preserve_matches=len(exact), preserve_allowed=preserve_reason is None, preserve_reason=preserve_reason,

@@ -183,6 +183,29 @@ def _loss_rule_for(profile):
     return MoneyForwardToJdlLossRule()
 
 
+# Structure gaps only. Row-limit codes are a company setting / the 16-row stop, shown elsewhere.
+_YAYOI_SHAPE_GAPS = frozenset({
+    "SHAPE_UNVERIFIED_IN_TAX_CONTEXT", "MULTIPLE_TAXED_LINES_UNVERIFIED",
+    "VOUCHER_LAYOUT_UNVERIFIED", "VOUCHER_TAX_PLACEMENT_UNVERIFIED",
+})
+
+
+def _yayoi_unsupported_shape_count(entries, profile, runtime_context) -> int | None:
+    """Yayoi: journals whose structure has no Evidence, judged by the same rules as the formal
+    assessment (the existing shapes first, then the company-scoped Evidence). None = not a Yayoi
+    company with a confirmed JDL context; the caller keeps the original shape-list count."""
+    from accounting_converter.application.yayoi_information_policy import is_yayoi_profile
+    from accounting_converter.application.yayoi_jdl_workflow import structural_evidence_gaps
+
+    if runtime_context is None or not is_yayoi_profile(profile):
+        return None
+    count = 0
+    for entry in entries:
+        current, likely = structural_evidence_gaps(entry, profile, runtime_context)
+        count += bool(_YAYOI_SHAPE_GAPS & {*current, *likely})
+    return count
+
+
 def _yayoi_information(entries, profile, context=None) -> dict:
     from accounting_converter.adapters.output.jdl import scoped_evidence
     from accounting_converter.application.yayoi_information_policy import (
@@ -477,14 +500,16 @@ class CompanyMappingUpdateService:
         verified_shapes = {(1, 1), (1, 3), (2, 1), (2, 2), (2, 3), (4, 6), (5, 7), (5, 8)} | set(
             verified_mf_shapes()
         )
-        unsupported_shape_count = sum(
-            (
-                sum(line.side is Side.DEBIT for line in entry.lines),
-                sum(line.side is Side.CREDIT for line in entry.lines),
+        unsupported_shape_count = _yayoi_unsupported_shape_count(entries, profile, runtime_context)
+        if unsupported_shape_count is None:
+            unsupported_shape_count = sum(
+                (
+                    sum(line.side is Side.DEBIT for line in entry.lines),
+                    sum(line.side is Side.CREDIT for line in entry.lines),
+                )
+                not in verified_shapes
+                for entry in entries
             )
-            not in verified_shapes
-            for entry in entries
-        )
         loss_rule = _loss_rule_for(profile)
         detected_results = _information_results(ValidationPipeline((loss_rule,)).validate(entries))
         # Blockers are what remains after Human-confirmed description

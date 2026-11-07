@@ -230,7 +230,7 @@ class PlacementTest(unittest.TestCase):
 
 class RelationTest(unittest.TestCase):
     def test_three_account_relation_rule_needs_identical_printed_tax_defaults(self):
-        peers = scoped.JDL_TAX_SETTING_PEERS[frozenset({"8471", "7122", "8672"})]
+        peers = scoped.JDL_TAX_SETTING_PEERS[("DEBIT", "P10", "COMPANY")]
         self.assertIn("8681", peers)
         self.assertNotIn("7141", peers)  # prints no 課区/入力: not like the probed accounts
         self.assertTrue(scoped.relation_covers_account("DEBIT", "P10", "COMPANY", "8681"))
@@ -238,6 +238,21 @@ class RelationTest(unittest.TestCase):
         # Sales stay account-specific whatever the count; two-account relations stay specific.
         self.assertFalse(scoped.relation_covers_account("CREDIT", "S10", "COMPANY", "6122"))
         self.assertFalse(scoped.relation_covers_account("DEBIT", "S10", "FLOOR", "6121"))
+
+    def test_a_round_trip_on_an_account_with_other_defaults_does_not_withdraw_a_group(self):
+        from accounting_converter.tools.build_scoped_evidence_registry import setting_peers
+
+        keys = {"8471": "仕入内税", "7122": "仕入内税", "8672": "仕入内税", "8681": "仕入内税", "7141": ""}
+        cases = [{"taxed": (("DEBIT", "P10", code, "COMPANY"),)} for code in ("8471", "7122", "8672")]
+        before = setting_peers(cases, keys)
+        after = setting_peers(cases + [{"taxed": (("DEBIT", "P10", "7141", "COMPANY"),)}], keys)
+        self.assertEqual(before, after)  # 7141 is covered by its own round trip only
+        self.assertIn("8681", after[("DEBIT", "P10", "COMPANY")])
+        self.assertNotIn("7141", after[("DEBIT", "P10", "COMPANY")])
+        two = setting_peers(cases[:2], keys)
+        self.assertEqual(two, {})  # fewer than three accounts with the same defaults: no widening
+        sales = setting_peers([{"taxed": (("CREDIT", "S10", c, "FLOOR"),)} for c in ("8471", "7122", "8672")], keys)
+        self.assertEqual(sales, {})  # 課税売上10% credit stays account-specific
 
     def test_amount_relations_are_classified_for_this_scopes_rounding(self):
         d = Decimal

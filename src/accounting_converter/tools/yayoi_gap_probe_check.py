@@ -51,6 +51,12 @@ def _raw_differences(expected_group, actual_group) -> list[dict]:
     return found
 
 
+def _known_raw_normalization(difference: dict) -> bool:
+    """JDL's documented re-export normalizations, on raw cells (blank tax / department -> 0)."""
+    return (difference["column"] in {"借方消費税", "貸方消費税", "借方部門コード", "貸方部門コード"}
+            and difference["expected"] in {"", "0"} and difference["actual"] in {"", "0"})
+
+
 def _manifests(probe_dir: Path) -> list[tuple[Path, dict]]:
     result = []
     for path in sorted(probe_dir.glob("YAYOI_GAP_*_NOT_FOR_PRODUCTION.csv")):
@@ -109,8 +115,12 @@ def check_round(probe_dir: Path, reexport: Path, import_counts: dict | None = No
                 elif len(marker_hits) > 1 or len(hits) > 1:
                     verdict, detail = "DUPLICATE", {"identifier_seen": len(marker_hits), "equal_journals": len(hits)}
                 elif marker_hits:
-                    verdict = "CHANGED"
-                    detail = {"raw_differences": _raw_differences(group, reexport_groups[marker_hits[0]])}
+                    raw = _raw_differences(group, reexport_groups[marker_hits[0]])
+                    unexplained = [d for d in raw if not _known_raw_normalization(d)]
+                    # A row the strict comparator cannot read (e.g. subaccount code without name) that came
+                    # back unchanged: observed, but never PASS (not a registered representation).
+                    verdict = "CHANGED" if unexplained else "KEPT_AS_WRITTEN"
+                    detail = {"raw_differences": raw}
                 else:
                     verdict, detail = "MISSING", {}
             verdicts[case["case"]] = verdict

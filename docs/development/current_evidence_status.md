@@ -66,6 +66,8 @@ PASS条件: 104/104 journals、160/160 rows、missing 0、extra 0、unexpected 0
 
 **新規JDL科目（2026-11-07、実機取得・反映済み）**: 2026-11-06に追加した売上・仕入科目7コードの12ケースが strict PASS。registry 141→153ケース。新コード由来の技術的Evidence不足 1,108→0（Human確認の仮定での試算。正式READYは0のまま）。3科目規則は印字された税の既定設定が同じ科目に限定した（[詳細](yayoi_buddies_evidence_campaign.md#11-新規jdl科目の実機evidence2026-11-07)）。
 
+**2026-11-07（補助・形・科目別税額）**: 確認画面の「形が未検証」をMF専用の数え方から正式判定と同じ構造ルールへ修正（会社Aは602→行数16入力時2）。補助のある親科目の補助省略は未検証のため不可のまま。Probe 6ファイル・35仕訳を用意（実機待ち）。会社Aの実際のREADYは157仕訳（行数上限が未入力のため1,073仕訳が止まっている）（[詳細](yayoi_buddies_evidence_campaign.md#12-補助のある親科目形の表示残る科目別evidence2026-11-07)）。
+
 ## Evidence policy
 
 - 最高水準は、実JDL Importと同期間re-exportのstrict semantic comparison

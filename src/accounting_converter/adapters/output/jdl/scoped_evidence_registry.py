@@ -519,8 +519,8 @@ SCOPED_CASES: tuple[ScopedCase, ...] = (
         (('DEBIT', 'P10', '8672', 'COMPANY'),)),
 )
 
-# Accounts with the same printed JDL tax defaults as every account a relation round-tripped on
+# Per (side, cell, relation): accounts printing the same JDL tax defaults as >= 3 accounts it round-tripped on
 # (used by scoped_evidence.relation_covers_account). Generated from the JDL 科目一覧 PDF sha256 497baa94f43bd57b8eba27bd955a2b0d33fc65a39885b74cda42df056c858fc3.
-JDL_TAX_SETTING_PEERS: dict[frozenset[str], frozenset[str]] = {
-    frozenset(['7122', '8471', '8672']): frozenset(['2121', '2122', '2151', '2161', '7121', '7122', '7131', '7151', '7161', '8451', '8461', '8471', '8481', '8491', '8521', '8541', '8542', '8561', '8581', '8591', '8611', '8621', '8641', '8661', '8671', '8672', '8681', '8691', '8711', '8741', '8751', '8761', '8991']),
+JDL_TAX_SETTING_PEERS: dict[tuple[str, str, str], frozenset[str]] = {
+    ('DEBIT', 'P10', 'COMPANY'): frozenset(['2121', '2122', '2151', '2161', '7121', '7122', '7131', '7151', '7161', '8451', '8461', '8471', '8481', '8491', '8521', '8541', '8542', '8561', '8581', '8591', '8611', '8621', '8641', '8661', '8671', '8672', '8681', '8691', '8711', '8741', '8751', '8761', '8991']),
 }
