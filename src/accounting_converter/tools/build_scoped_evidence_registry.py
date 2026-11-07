@@ -123,6 +123,9 @@ def collect_gap_round(gap_dir: Path, reexport: Path) -> tuple[list[dict], dict]:
     cases, summary = [], {}
     for name, result in report["files"].items():
         manifest = json.loads(manifest_path_for(gap_dir / name).read_text(encoding="utf-8"))
+        if manifest.get("scoped_registry_allowed") is False:
+            raise ValueError(f"{name}: this round may not be registered in the scoped registry "
+                             f"({manifest.get('registry_exclusion_reason', 'excluded by its manifest')}); nothing registered")
         groups = _groups(_rows(gap_dir / name))
         passed = 0
         for case in manifest["cases"]:

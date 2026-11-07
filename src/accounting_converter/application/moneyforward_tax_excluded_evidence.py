@@ -246,6 +246,14 @@ def target_tax_semantic(line: JournalLine, profile, context: JdlTargetContext) -
     """
     category = line.tax_info.category if line.tax_info else ""
     mapping = profile.tax_mappings.get(category) if profile is not None and category else None
+    if category and category.rsplit("｜", 1)[-1] == "控除不可":
+        # Yayoi 控除不可: never through an ordinary mapping. Only the exact identities with a valid,
+        # tax-accountant-signed company approval and the verified line shape (noncredit_approval).
+        from accounting_converter.application import noncredit_approval
+
+        if noncredit_approval.is_approved_line(line, profile, context):
+            return JdlTaxSemantic.NON_TAXABLE_PURCHASE.value
+        return UNMAPPED_TAX
     if (
         mapping is None
         or mapping.status is not MappingStatus.USER_CONFIRMED

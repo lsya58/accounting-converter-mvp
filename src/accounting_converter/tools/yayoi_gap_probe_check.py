@@ -205,8 +205,16 @@ def _pass_record(case: dict, group, manifest: dict) -> dict:
 
     from accounting_converter.adapters.output.jdl import scoped_evidence as scoped
 
+    if manifest.get("scoped_registry_allowed") is False:
+        # e.g. the 控除不可 probes: a CSV round trip does not show what the writing MEANS in JDL's tax
+        # calculation, so a PASS here is an observation, never a scoped-registry record.
+        return {"case": case["case"], "registrable": False,
+                "reason": manifest.get("registry_exclusion_reason", "this round may not be registered")}
     evidence_id = gap_evidence_id(case["case"])
-    record = case_record(case["case"], evidence_id, group)
+    try:
+        record = case_record(case["case"], evidence_id, group)
+    except ValueError as error:  # a tax literal with no registered semantic: observation only
+        return {"case": case["case"], "registrable": False, "reason": str(error)}
     # Older manifests (e.g. the 2026-11-06 new-account probe) do not repeat the scope; the registered scope is shown then.
     stated = {key for key in ("scope_id", "target", "sales_tax_rounding", "purchase_tax_rounding") if key in manifest}
     return {

@@ -26,6 +26,7 @@ from accounting_converter.adapters.output.jdl import (
     jdl_ibex_35_5_output_profile,
 )
 from accounting_converter.application import moneyforward_tax_excluded_evidence as ev
+from accounting_converter.application import noncredit_approval
 from accounting_converter.application import scoped_evidence_composition as scoped_composition
 from accounting_converter.application.conversion import ConversionRequest, ConversionService
 from accounting_converter.application.first_release_workflow import (
@@ -792,13 +793,17 @@ def expected_non_retained(source: Path, profile) -> list[dict]:
     records = []
     for entry in source_format.read(source):
         values = non_retained_values(entry) + dropped_subaccount_values(entry, profile)
-        if values:
-            records.append({
+        noncredit = noncredit_approval.audit_lines(entry, profile)
+        if values or noncredit:
+            record = {
                 "source_journal_content_sha256": entry.metadata.get(JOURNAL_CONTENT_IDENTITY_KEY),
                 "date": entry.date.isoformat(),
                 "source_rows": list(entry.metadata.get(ROW_ORDER_KEY, ())),
                 "not_in_jdl": [{"row": row, "field": name, "value": value} for row, name, value in values],
-            })
+            }
+            if noncredit:  # only then: earlier audit files stay byte-identical
+                record["noncredit_tax_lines"] = noncredit
+            records.append(record)
     return records
 
 
@@ -831,9 +836,21 @@ def begin_non_retained_audit(source: Path, output: Path, profile) -> Path | None
         "field_meanings_confirmed_by_human": confirmed_optional_fields(profile),
         "journal_count": len(records),
         "value_count": sum(len(item["not_in_jdl"]) for item in records),
+        **_noncredit_summary(records),
         "journals": records,
     })
     return pending
+
+
+def _noncredit_summary(records: list[dict]) -> dict:
+    lines = [line for item in records for line in item.get("noncredit_tax_lines", ())]
+    if not lines:
+        return {}
+    return {
+        "noncredit_tax_line_count": len(lines),
+        "noncredit_note": ("弥生の控除不可（区分記載）は、税理士確認の記録に基づきJDLへ非仕入（課区34・税区/入力/税額は空欄）で"
+                           "出力した。JDL CSVに残らない元の税区分・税率・税込金額・税額0・承認の参照を noncredit_tax_lines に記録する。"),
+    }
 
 
 def finish_non_retained_audit(output: Path) -> Path | None:
@@ -861,6 +878,7 @@ def verify_non_retained_audit(source: Path, output: Path, profile) -> dict:
         return {"verdict": "NOT_NEEDED" if ok else "FAIL", "expected_journals": 0}
     result = {"expected_journals": len(expected),
               "expected_values": sum(len(item["not_in_jdl"]) for item in expected),
+              "expected_noncredit_tax_lines": sum(len(item.get("noncredit_tax_lines", ())) for item in expected),
               "final_present": final.exists(), "pending_left": pending.exists()}
     if not final.exists() or pending.exists():
         result["verdict"] = "FAIL"
@@ -872,6 +890,7 @@ def verify_non_retained_audit(source: Path, output: Path, profile) -> dict:
         "output_sha256": payload.get("jdl_output_sha256") == hashlib.sha256(output.read_bytes()).hexdigest(),
         "journal_count": payload.get("journal_count") == len(payload.get("journals", ())) == len(expected),
         "records_equal": payload.get("journals") == expected,
+        "noncredit_summary": {k: payload.get(k) for k in _noncredit_summary(expected)} == _noncredit_summary(expected),
         # Identical journals share a content hash, so one-to-one is by source rows.
         "one_record_per_journal": len({tuple(item["source_rows"]) for item in payload.get("journals", ())})
         == len(payload.get("journals", ())),

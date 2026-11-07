@@ -906,6 +906,7 @@ class AccountingConverterController:
             return yayoi_tax_mapping_review(
                 resolved.profile, resolved.context,
                 affected_counts=affected_counts or {}, observed_source_values=observed_source_values,
+                company_setting_id=company_setting_id,
             )
         review = self.moneyforward_profile_setup_service.tax_mapping_review(
             resolved.profile,

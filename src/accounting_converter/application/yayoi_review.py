@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Sequence
 
+from accounting_converter.application.noncredit_observations import NONCREDIT_REASON, is_noncredit_identity
 from accounting_converter.adapters.output.jdl import JdlTargetContext, JdlTaxRounding
 from accounting_converter.adapters.output.jdl.tax_semantics import JDL_TAX_LITERALS, JdlTaxSemantic
 from accounting_converter.application import moneyforward_tax_excluded_evidence as ev
@@ -200,6 +201,11 @@ def review_source(
     for identity, counts in sorted(taxes.items(), key=lambda item: -sum(item[1].values())):
         mapping = profile.tax_mappings.get(identity) if profile is not None else None
         state = _mapping_state(mapping, has_target)
+        if state == "CONFIRMED" and is_noncredit_identity(identity):
+            from accounting_converter.application import noncredit_approval
+
+            if noncredit_approval.mapping_problems(identity, mapping, profile, context):
+                state = "UNCONFIRMED"  # a 控除不可 mapping without a valid signed approval is not a decision
         confirmed = None
         if state == "CONFIRMED" and context is not None:
             sample_line = next(
@@ -332,6 +338,8 @@ def confirm_tax_identity(
     """Save one Human decision: Yayoi tax identity → JDL tax semantic."""
     if not ev.context_is_verified(context):
         raise ValueError("JDL税設定の実機Evidenceがない税設定では、税区分を確認済みにできません。")
+    if is_noncredit_identity(identity):
+        raise ValueError("控除不可は通常の税区分確認では確定できません。税理士確認（SIGNOFF）を記録する専用の承認だけが使えます。")
     if semantic in SCOPED_SEMANTICS:
         from accounting_converter.adapters.output.jdl import scoped_evidence
 
@@ -440,7 +448,7 @@ def field_of(name: str) -> str:
     return DEPARTMENT_FIELD if name.startswith(DEPARTMENT_FIELD) else name
 
 
-def yayoi_tax_mapping_review(profile, context, *, affected_counts=None, observed_source_values=()):
+def yayoi_tax_mapping_review(profile, context, *, affected_counts=None, observed_source_values=(), company_setting_id=None):
     """Yayoi tax identities in the same shape the existing tax screen shows for MF.
 
     HUMAN: a candidate JDL literal exists in a verified Tax Context; the Human
@@ -458,6 +466,11 @@ def yayoi_tax_mapping_review(profile, context, *, affected_counts=None, observed
     items = []
     for value in values:
         mapping = profile.tax_mappings.get(value)
+        if is_noncredit_identity(value):
+            item = _noncredit_item(value, mapping, profile, context, company_setting_id, affected_counts)
+            if item is not None:  # None: a valid signed approval exists (listed like any confirmed mapping: not at all)
+                items.append(item)
+            continue
         if (
             mapping is not None and mapping.status is MappingStatus.USER_CONFIRMED
             and mapping.metadata.get("jdl_tax_context_identity_sha256") == ev.tax_context_identity_sha256(context)
@@ -482,6 +495,7 @@ def yayoi_tax_mapping_review(profile, context, *, affected_counts=None, observed
                 "候補の書き方でよいか確認してください（候補は自動では確定しません）。"
                 if confirmable else
                 SCOPED_SEMANTIC_BLOCKED_REASON if scoped_blocked else
+                NONCREDIT_REASON if is_noncredit_identity(value) else
                 "JDLでの書き方が実機で確認されていません（控除不可など）。"
             ),
             affected_row_count=affected_counts.get(value, 0),
@@ -490,6 +504,33 @@ def yayoi_tax_mapping_review(profile, context, *, affected_counts=None, observed
         items=tuple(items),
         context_compatible=verified,
         user_message="税区分はすべて確認済みです。" if not items else "",
+    )
+
+
+def _noncredit_item(value, mapping, profile, context, company_setting_id, affected_counts):
+    """控除不可: never bulk-confirmable; the reason says what is verified, what is lost and what is missing."""
+    from accounting_converter.application import noncredit_approval
+    from accounting_converter.application.moneyforward_profile_setup import TaxMappingSetupItem
+
+    approved = (
+        noncredit_approval.is_target_identity(value)
+        and not noncredit_approval.technical_problems(value, company_setting_id, context)
+        and not noncredit_approval.mapping_problems(value, mapping, profile, context)
+    )
+    if approved:
+        return None
+    code, reason, display = noncredit_approval.review_reason(value, company_setting_id, profile, context)
+    return TaxMappingSetupItem(
+        source_value=value,
+        target_value=None,
+        target_display=display,
+        target_scope="非仕入" if display != "候補なし" else "",
+        evidence_id=noncredit_approval.TECHNICAL_EVIDENCE.evidence_id if display != "候補なし" else None,
+        human_confirmable=False,
+        action_owner="HUMAN" if code != "YAYOI-JDL-TAX-REPRESENTATION-UNVERIFIED" else "SYSTEM_EVIDENCE",
+        blocker_code=code,
+        reason=reason,
+        affected_row_count=affected_counts.get(value, 0),
     )
 
 
