@@ -237,6 +237,20 @@ def present_main_screen(state: AppState) -> MainScreenPresentation:
             False,
             True,
         )
+    if (
+        state.selected_file
+        and state.review_work_queue is not None
+        and state.review_work_queue.awaiting_tax_context
+        and state.review_work_queue.source_path == state.selected_file
+    ):
+        return MainScreenPresentation(
+            UserFacingStatus.CONFIRM,
+            "JDL税設定の確認が必要です",
+            NEXT_ACTION_TAX_CONTEXT,
+            recognition,
+            False,
+            True,
+        )
     return MainScreenPresentation(
         UserFacingStatus.NEEDS_INPUT,
         "仕訳データ（CSV / TXT）を選択してください" if not state.selected_file else "保存先を選択してください",
@@ -287,6 +301,15 @@ def _friendly_guidance(state: AppState) -> str:
 # "0" means evaluated with no problem; these mean "not judged yet" and say when.
 NOT_EVALUATED_FORMAL = "未評価（保存先を選ぶと最終判定します）"
 NOT_EVALUATED_REVIEW = "未評価（会社設定の確認を開くと集計します）"
+# Yayoi: the JDL tax setting is saved as a PDF draft only. Structure and tax Evidence cannot be judged
+# until the Human confirms it; these are NOT "0 problems" and NOT findings.
+AWAITING_TAX_CONTEXT = "未評価（JDL税設定の確認が必要）"
+NEXT_ACTION_TAX_CONTEXT = "JDL税設定: 設定 →「JDL税設定を確認・変更」で6項目を確認して保存してください（これが済むまで仕訳構成・税のEvidenceは判定されません）"
+
+
+def _information_text(items) -> str:
+    """Field names and journal counts only (部門・生成元・付箋 ... are labels, not accounting values)."""
+    return "、".join(f"{field} {count}仕訳" for field, count in items) or "なし"
 
 
 def _next_actions(state: AppState, queue, summary) -> tuple[str, ...]:
@@ -296,15 +319,26 @@ def _next_actions(state: AppState, queue, summary) -> tuple[str, ...]:
             return "未評価"
         return "完了" if count == 0 else todo.format(count)
 
-    lines = [
+    awaiting = bool(queue is not None and getattr(queue, "awaiting_tax_context", False))
+    lines = ([NEXT_ACTION_TAX_CONTEXT] if awaiting else []) + [
         f"科目: {status(state.pending_account_confirmations, '{}件の確認が必要')}",
         f"補助科目: {status(state.pending_subaccount_confirmations, '{}件の確認が必要')}",
+        ("税区分: " + AWAITING_TAX_CONTEXT) if awaiting else
         f"税区分: {status(queue.tax_human_settings if queue else state.pending_tax_confirmations, '{}件の確認が必要')}",
         f"摘要: {status(queue.description_settings if queue else None, '{}種類の置換確認が必要')}",
         f"取引先: {status(queue.trade_partner_policy_settings if queue else None, '扱いの確認が必要')}",
+        ("未対応の仕訳構成: " + AWAITING_TAX_CONTEXT) if awaiting else
         f"未対応の仕訳構成: {status(queue.unsupported_journals if queue else None, '{}仕訳（開発側の実機確認待ち。利用者の操作は不要）')}",
     ]
-    if summary is None:
+    if queue is not None and queue.information_pending:
+        lines.append(
+            "JDLに保持されない情報: " + _information_text(queue.information_pending)
+            + "の扱いが未確認です。引継ぎ不要と判断済みの場合も、会社設定の確認画面の「JDLに保持されない情報の扱い」で"
+            "意味を記入して保存してください（JDLへは出さず、監査記録に原本の値を残します。未確認のまま変換はされません）"
+        )
+    if awaiting and summary is None:
+        lines.append("最終判定: 未実行。まずJDL税設定を確認して保存してください（保存先の選択はその後）")
+    elif summary is None:
         lines.append("最終判定: 未実行。上の確認が完了していれば、保存先を選ぶと最終判定します")
     elif summary.readiness.value == "READY":
         lines.append("最終判定: 変換できます")
@@ -330,15 +364,18 @@ def support_diagnostic_text(
     ):
         queue = None
     tax_evidence_result = (
+        AWAITING_TAX_CONTEXT if queue is not None and queue.awaiting_tax_context else
         "未評価（税の確認が必要）"
         if queue is not None
         and (queue.tax_human_settings or queue.tax_evidence_settings)
         else str(summary.tax_evidence_blocker_count) if summary else NOT_EVALUATED_FORMAL
     )
-    readiness = present_main_screen(state).status_text
+    awaiting = bool(queue is not None and queue.awaiting_tax_context)
+    readiness = "JDL税設定の確認が必要です" if awaiting else present_main_screen(state).status_text
     error_category = (
         "確認が必要"
-        if state.pending_account_confirmations
+        if awaiting
+        or state.pending_account_confirmations
         or state.pending_subaccount_confirmations
         or state.pending_tax_confirmations
         else "変換条件未対応"
@@ -362,11 +399,11 @@ def support_diagnostic_text(
         ("補助科目確認（設定項目）", str(state.pending_subaccount_confirmations)),
         ("補助科目確認（影響仕訳）", str(queue.subaccount_affected_journals) if queue else NOT_EVALUATED_REVIEW),
         ("補助科目確認（識別子）", (", ".join(queue.subaccount_review_ids) or "なし") if queue else NOT_EVALUATED_REVIEW),
-        ("税区分確認", str(queue.tax_human_settings if queue else state.pending_tax_confirmations)),
+        ("税区分確認", AWAITING_TAX_CONTEXT if awaiting else str(queue.tax_human_settings if queue else state.pending_tax_confirmations)),
         ("税区分（入力で観測）", str(queue.tax_observed) if queue else NOT_EVALUATED_REVIEW),
         ("税区分（実機Evidence待ち）", str(queue.tax_evidence_settings) if queue else NOT_EVALUATED_REVIEW),
         ("税区分（Evidence待ち入力行）", str(queue.tax_evidence_rows) if queue else NOT_EVALUATED_REVIEW),
-        ("未対応仕訳構成", str(summary.unsupported_shape_count if summary else state.unsupported_shape_count)),
+        ("未対応仕訳構成", AWAITING_TAX_CONTEXT if awaiting else str(summary.unsupported_shape_count if summary else state.unsupported_shape_count)),
         ("税Evidence条件未一致", tax_evidence_result),
         ("取引先保持方針（未確認設定）", str(queue.trade_partner_policy_settings) if queue else NOT_EVALUATED_REVIEW),
         ("取引先情報（未解決仕訳）", str(queue.trade_partner_affected_journals) if queue else NOT_EVALUATED_REVIEW),
@@ -378,6 +415,8 @@ def support_diagnostic_text(
         ("その他optional未解決（入力物理行）", str(queue.other_optional_affected_rows) if queue else NOT_EVALUATED_REVIEW),
         ("その他optional（Human確認待ち設定）", str(queue.description_settings) if queue else NOT_EVALUATED_REVIEW),
         ("その他optional blocker（未解決件数）", str(queue.other_optional_field_occurrences) if queue else NOT_EVALUATED_REVIEW),
+        ("JDLに保持されない情報（扱い未確認）", _information_text(queue.information_pending) if queue else NOT_EVALUATED_REVIEW),
+        ("JDLに保持されない情報（扱い確認済み・監査記録のみ）", _information_text(queue.information_confirmed) if queue else NOT_EVALUATED_REVIEW),
         ("Formal出力条件未一致", str(summary.formal_output_blocker_count) if summary else NOT_EVALUATED_FORMAL),
         ("最終判定（formal）", summary.readiness.value if summary else NOT_EVALUATED_FORMAL),
         ("JDL科目一覧", "設定済み" if state.jdl_master_configured else "未設定"),

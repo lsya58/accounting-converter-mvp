@@ -18,12 +18,15 @@ from accounting_converter.adapters.output.jdl import (
     JdlTargetContext,
     JdlTargetContextBuilder,
 )
+from accounting_converter.application.moneyforward_tax_excluded_evidence import (
+    tax_context_identity_sha256,
+)
 from accounting_converter.application.profile_revision import revised_profile_id
 from accounting_converter.application.moneyforward_trade_partner import (
     upgrade_trade_partner_policy,
 )
 from accounting_converter.domain.conversion_profile import TRADE_PARTNER_LOSS_POLICY_KEY
-from accounting_converter.domain.mapping import MappingStatus, MappingValue
+from accounting_converter.domain.mapping import MappingStatus, MappingValue, is_confirmed_parent_only
 from accounting_converter.infrastructure.jdl_account_pdf_draft import (
     JdlAccountPdfDraftStore,
 )
@@ -146,6 +149,12 @@ class CompanyTaxContextConfirmationService:
             confirmed=confirmed,
         )
 
+    # Subaccount approvals (JDL parent code, JDL subaccount code) returned to "unconfirmed" by the last
+    # confirm(): their JDL name does not fit the import field, so the approval could never be written.
+    last_reconfirmation_required: tuple[tuple[str, str], ...] = ()
+    # True when the last failed confirm() kept the six entered items for the next time the dialog opens.
+    last_selection_kept: bool = False
+
     def confirm(
         self,
         company_setting_id: str,
@@ -157,6 +166,35 @@ class CompanyTaxContextConfirmationService:
             raise CompanyTaxContextConfirmationError(
                 "JDL tax setting requires explicit confirmation"
             )
+        self.last_reconfirmation_required = ()
+        self.last_selection_kept = False
+        try:
+            return self._confirm(company_setting_id, selection)
+        except Exception:
+            self.last_selection_kept = self._keep_selection(company_setting_id, selection)
+            raise
+
+    def _keep_selection(self, company_setting_id: str, selection: JdlTaxContextSelection) -> bool:
+        """Keep what the Human entered (never applied) so the dialog is not reset after a failed save.
+
+        Only beside a PDF draft; the draft stays unconfirmed, so nothing becomes convertible."""
+        try:
+            self.company_store.save_pending_tax_confirmation(company_setting_id, {
+                "tax_processing_mode": selection.tax_processing_mode.value,
+                "taxation_method": selection.taxation_method.value,
+                "input_tax_credit_method": selection.input_tax_credit_method.value,
+                "simplified_business_category": (
+                    selection.simplified_business_category.value
+                    if selection.simplified_business_category else None
+                ),
+                "sales_tax_rounding": selection.sales_tax_rounding.value,
+                "purchase_tax_rounding": selection.purchase_tax_rounding.value,
+            })
+            return True
+        except Exception:
+            return False
+
+    def _confirm(self, company_setting_id: str, selection: JdlTaxContextSelection):
         setting = self.company_store.get(company_setting_id)
         draft_path = self.company_store.context_path(setting)
         previous_context = None
@@ -235,18 +273,44 @@ class CompanyTaxContextConfirmationService:
             )
             for key, value in old.account_mappings.items()
         }
-        subaccounts = {
-            key: replace(
-                value,
-                metadata={**value.metadata, "setup_context_sha256": context_hash},
-            )
-            for key, value in old.subaccount_context_mappings.items()
+        unusable_targets = {
+            (item.parent_account_code, item.code) for item in result.context.unusable_subaccounts
         }
+        returned: list[tuple[str, str]] = []
+        subaccounts = {}
+        for key, value in old.subaccount_context_mappings.items():
+            parent = old.account_mappings.get(key.parent_account or "")
+            target = (
+                parent.metadata.get("target_code", "") if parent is not None else "",
+                value.metadata.get("target_code", ""),
+            )
+            if (
+                value.status is MappingStatus.USER_CONFIRMED
+                and not is_confirmed_parent_only(value)
+                and target in unusable_targets
+            ):
+                # Only this approval, and only because it points at a JDL subaccount that cannot be written
+                # into the import file. It goes back to "not confirmed yet" (entry removed; an unresolved
+                # entry would make the whole setting incompatible). Everything else keeps its approval.
+                returned.append(target)
+                continue
+            subaccounts[key] = replace(
+                value, metadata={**value.metadata, "setup_context_sha256": context_hash}
+            )
+        # A tax approval records the identity of the tax settings it was made under. If the settings being
+        # confirmed now have the same identity, the approval is still exactly valid and is kept; with other
+        # settings it goes back to unconfirmed (as before). Nothing here approves anything new.
+        new_identity = tax_context_identity_sha256(result.context)
         taxes = {
-            key: MappingValue(
-                source_value=value.source_value,
-                target_value=None,
-                status=MappingStatus.UNRESOLVED,
+            key: (
+                value
+                if value.status is MappingStatus.USER_CONFIRMED
+                and value.metadata.get("jdl_tax_context_identity_sha256") == new_identity
+                else MappingValue(
+                    source_value=value.source_value,
+                    target_value=None,
+                    status=MappingStatus.UNRESOLVED,
+                )
             )
             for key, value in old.tax_mappings.items()
         }
@@ -278,4 +342,5 @@ class CompanyTaxContextConfirmationService:
         except Exception:
             self.profile_store.delete(updated.profile_id)
             raise
+        self.last_reconfirmation_required = tuple(sorted(set(returned)))
         return result.context

@@ -74,6 +74,8 @@ PASS条件: 104/104 journals、160/160 rows、missing 0、extra 0、unexpected 0
 
 **2026-11-07 READY 157→0 調査**: 現在のWindows設定ではCLI・GUI経路とも正式READY 157/2,514のまま。0は、科目承認0件の古い設定（repo内 `data/private/yayoi_store`）を読んだ場合に再現（[詳細](yayoi_buddies_evidence_campaign.md#14-正式ready-1570-の調査2026-11-07)）。診断に設定の識別情報と理由別の対処を追加。判定は緩和していない。
 
+**2026-11-07 Windows 税設定保存失敗（build aa7945e）**: 原因は、下書き状態の確認画面が「名称が取込欄に入らない補助」を選択肢に出し、その承認が税設定の確定時に使用不可へ分けられて整合チェックに失敗したこと。確認画面と確定処理を同じ集合にし、使用不可を指す承認だけを未確認に戻して保存できるようにした。診断は、税設定が下書きの間は仕訳構造・税を「未評価」と表示（602は旧フォールバックの数字）。修正後の設定コピーでは正式READY 998（行数16入力で2,472の試算）。実環境AppDataは未変更。[詳細](yayoi_buddies_evidence_campaign.md#15-windowsで税設定を保存できなかった問題2026-11-07build-aa7945e)
+
 ## Evidence policy
 
 - 最高水準は、実JDL Importと同期間re-exportのstrict semantic comparison

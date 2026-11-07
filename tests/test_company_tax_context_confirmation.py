@@ -22,6 +22,7 @@ from accounting_converter.application.company_master_refresh import (
 from accounting_converter.application.company_voucher_row_limit import CompanyVoucherRowLimitService
 from accounting_converter.adapters.output.jdl import (
     JdlInputTaxCreditMethod,
+    JdlTaxRounding,
     JdlSimplifiedBusinessCategory,
     JdlTaxationMethod,
 )
@@ -666,6 +667,183 @@ class CompanyTaxContextConfirmationTests(unittest.TestCase):
 
         self.assertNotIn("unusable_subaccounts", self.service.contexts.to_json_text(
             _replace(context, unusable_subaccounts=())))
+
+    # ---- 2026-11-07: tax setting could not be saved after a PDF update (Windows, Buddies) -------------
+
+    SIX = dict(
+        tax_processing_mode=JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED,
+        taxation_method=JdlTaxationMethod.STANDARD,
+        input_tax_credit_method=JdlInputTaxCreditMethod.PROPORTIONAL,
+    )
+
+    def _overlong_company(self, company_id: str, *, approve_unusable: bool, extra_tax=None):
+        """A draft master whose only subaccount name is too long for the import field (becomes unusable),
+        and a profile that already approved that subaccount (as the old review allowed on a draft)."""
+        source = self.root / f"{company_id}.pdf"
+        source.write_bytes(company_id.encode())
+        draft = self.root / f"{company_id}.json"
+        JdlAccountPdfDraftStore(_OverlongSubaccountMaster()).import_pdf(source, draft)
+        draft_hash = hashlib.sha256(draft.read_bytes()).hexdigest()
+        base = self.profiles.get("profile-1")
+        restamp = lambda mappings: {  # noqa: E731
+            key: replace(value, metadata={**value.metadata, "setup_context_sha256": draft_hash})
+            for key, value in mappings.items()
+        }
+        long_name = "あ" * 12
+        subs = {}
+        if approve_unusable:
+            subs[MappingKey(MappingType.SUBACCOUNT, "入力補助", "入力預金")] = MappingValue(
+                "入力補助", long_name, MappingStatus.USER_CONFIRMED, parent_account="入力預金",
+                metadata={"target_code": "0001", "output_code": "0001", "output_name": long_name,
+                          "setup_context_sha256": draft_hash})
+        self.profiles.create(replace(
+            base, profile_id=f"profile-{company_id}", account_mappings=restamp(base.account_mappings),
+            subaccount_context_mappings=subs,
+            tax_mappings=extra_tax if extra_tax is not None else base.tax_mappings))
+        self.companies.create(company_setting_id=company_id, display_name=company_id,
+                              conversion_profile_id=f"profile-{company_id}", context_source=draft)
+        return draft
+
+    def test_approval_of_an_unusable_subaccount_does_not_block_the_save_and_is_the_only_one_returned(self) -> None:
+        self._overlong_company("company-unusable", approve_unusable=True)
+        # The failure seen on Windows: this raised "confirmed JDL setting and mappings are incompatible".
+        self.service.confirm("company-unusable", selection=JdlTaxContextSelection(**self.SIX), confirmed=True)
+        self.assertEqual(self.service.last_reconfirmation_required, (("2001", "0001"),))
+        setting = self.companies.get("company-unusable")
+        profile = self.profiles.get(setting.conversion_profile_id)
+        self.assertEqual(profile.subaccount_context_mappings, {})  # back to "not confirmed"
+        # Parent accounts keep their approval.
+        self.assertTrue(all(m.status is MappingStatus.USER_CONFIRMED for m in profile.account_mappings.values()))
+        self.assertTrue(self.companies.resolve("company-unusable").available)
+
+    def test_a_usable_subaccount_approval_is_never_returned(self) -> None:
+        self.service.confirm_taxable_included("company-1", confirmed=True)
+        self.assertEqual(self.service.last_reconfirmation_required, ())
+        profile = self.profiles.get(self.companies.get("company-1").conversion_profile_id)
+        self.assertEqual(len(profile.subaccount_context_mappings), 1)
+        self.assertTrue(all(m.status is MappingStatus.USER_CONFIRMED
+                            for m in profile.subaccount_context_mappings.values()))
+
+    def test_review_on_a_draft_does_not_offer_a_subaccount_that_cannot_be_written(self) -> None:
+        from accounting_converter.application.company_mapping_update import CompanyMappingUpdateService
+
+        draft = self._overlong_company("company-offer", approve_unusable=False)
+        service = CompanyMappingUpdateService.__new__(CompanyMappingUpdateService)
+        service.drafts = JdlAccountPdfDraftStore()
+        service.contexts = JdlTargetContextLoader()
+        offered = service._master_observation(draft).subaccounts
+        self.assertEqual(offered, ())
+        # A normal-length one is still offered.
+        normal = service._master_observation(self.draft).subaccounts
+        self.assertEqual([(s.parent_account_code, s.code) for s in normal], [("2001", "0001")])
+
+    def test_parent_only_is_not_valid_for_a_parent_whose_only_subaccount_is_unusable(self) -> None:
+        from accounting_converter.adapters.output.jdl import JdlOutputRuntimeFactory, jdl_ibex_35_5_output_profile
+        from accounting_converter.domain.mapping import SubaccountPolicy
+
+        self._overlong_company("company-po", approve_unusable=False)
+        self.service.confirm("company-po", selection=JdlTaxContextSelection(**self.SIX), confirmed=True)
+        context = self.service.current_context("company-po")
+        profile = self.profiles.get(self.companies.get("company-po").conversion_profile_id)
+        parent_only = MappingValue(
+            "入力補助", "", MappingStatus.USER_CONFIRMED, parent_account="入力預金",
+            metadata={"subaccount_policy": SubaccountPolicy.PARENT_ONLY_CONFIRMED.value})
+        bad = replace(profile, subaccount_context_mappings={
+            MappingKey(MappingType.SUBACCOUNT, "入力補助", "入力預金"): parent_only})
+        resolution = JdlOutputRuntimeFactory().resolve(jdl_ibex_35_5_output_profile(), bad, context)
+        self.assertFalse(resolution.resolved)
+        self.assertIn("JDL-CONTEXT-SUBACCOUNT-MAPPING-MISMATCH", {r.rule_id for r in resolution.validation_results})
+
+    def test_failed_save_keeps_the_six_entered_items_and_says_why(self) -> None:
+        # An approval whose target does not exist in the master: a real incompatibility.
+        draft = self._overlong_company("company-bad", approve_unusable=False)
+        profile = self.profiles.get(self.companies.get("company-bad").conversion_profile_id)
+        ghost = MappingValue("入力補助", "存在しない補助", MappingStatus.USER_CONFIRMED, parent_account="入力預金",
+                             metadata={"target_code": "9999", "output_code": "9999", "output_name": "存在しない補助"})
+        new = replace(profile, profile_id="profile-ghost", subaccount_context_mappings={
+            MappingKey(MappingType.SUBACCOUNT, "入力補助", "入力預金"): ghost})
+        self.profiles.create(new)
+        # Rebind the company to the broken profile (same draft, so the fingerprint is recomputed by the store).
+        self.companies.replace_profile("company-bad", "profile-ghost")
+        controller = AccountingConverterController(
+            profile_store=self.profiles, company_store=self.companies,
+            preferences_store=ApplicationPreferencesStore(self.root / "prefs.json"))
+        controller.load_profiles()
+        controller.load_company_settings()
+        selection = dict(
+            tax_processing_mode=JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED,
+            taxation_method=JdlTaxationMethod.STANDARD,
+            input_tax_credit_method=JdlInputTaxCreditMethod.PROPORTIONAL,
+            sales_tax_rounding=JdlTaxRounding.CEILING, purchase_tax_rounding=JdlTaxRounding.HALF_UP)
+        state = controller.confirm_company_tax_context("company-bad", explicitly_confirmed=True, **selection)
+        self.assertIs(state.tax_context_save_status, TaxContextSaveStatus.NOT_SAVED)
+        self.assertIn("科目・補助科目の対応", state.user_message)       # the real reason, not a generic one
+        self.assertIn("入力した税設定は残してあります", state.user_message)
+        # Reopening (new service instance = restart) restores what was typed; the company stays unconfirmed.
+        reopened = CompanyTaxContextConfirmationService(
+            CompanySettingStore(self.root / "companies", self.profiles), self.profiles)
+        pending = reopened.pending_selection("company-bad")
+        self.assertEqual(
+            (pending.tax_processing_mode, pending.taxation_method, pending.input_tax_credit_method,
+             pending.sales_tax_rounding, pending.purchase_tax_rounding),
+            (JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED, JdlTaxationMethod.STANDARD,
+             JdlInputTaxCreditMethod.PROPORTIONAL, JdlTaxRounding.CEILING, JdlTaxRounding.HALF_UP))
+        self.assertTrue(reopened.is_pending("company-bad"))
+        self.assertIsNone(reopened.current_context("company-bad"))
+
+    def test_error_text_carries_the_rule_ids(self) -> None:
+        self._overlong_company("company-rules", approve_unusable=False)
+        profile = self.profiles.get(self.companies.get("company-rules").conversion_profile_id)
+        ghost = MappingValue("入力補助", "存在しない補助", MappingStatus.USER_CONFIRMED, parent_account="入力預金",
+                             metadata={"target_code": "9999", "output_code": "9999", "output_name": "存在しない補助"})
+        self.profiles.create(replace(profile, profile_id="profile-rules", subaccount_context_mappings={
+            MappingKey(MappingType.SUBACCOUNT, "入力補助", "入力預金"): ghost}))
+        self.companies.replace_profile("company-rules", "profile-rules")
+        with self.assertRaisesRegex(Exception, "JDL-CONTEXT-SUBACCOUNT-MAPPING-MISMATCH"):
+            self.service.confirm("company-rules", selection=JdlTaxContextSelection(**self.SIX), confirmed=True)
+
+    def test_tax_approvals_with_the_same_tax_settings_are_kept_and_others_are_reset(self) -> None:
+        from accounting_converter.application.moneyforward_tax_excluded_evidence import tax_context_identity_sha256
+
+        self.service.confirm("company-1", selection=JdlTaxContextSelection(**self.SIX), confirmed=True)
+        identity = tax_context_identity_sha256(self.service.current_context("company-1"))
+        profile = self.profiles.get(self.companies.get("company-1").conversion_profile_id)
+        stamped = {
+            "課税仕入 10%": MappingValue("課税仕入 10%", "10%", MappingStatus.USER_CONFIRMED,
+                                         metadata={"jdl_tax_context_identity_sha256": identity}),
+            "課税売上 10%": MappingValue("課税売上 10%", "10%", MappingStatus.USER_CONFIRMED,
+                                         metadata={"jdl_tax_context_identity_sha256": "other-settings"}),
+        }
+        self.profiles.create(replace(profile, profile_id="profile-stamped", tax_mappings=stamped))
+        self.companies.replace_profile("company-1", "profile-stamped")
+        # Same settings again: the approval made under them stays; the one made under others is reset.
+        self.service.confirm("company-1", selection=JdlTaxContextSelection(**self.SIX), confirmed=True)
+        after = self.profiles.get(self.companies.get("company-1").conversion_profile_id).tax_mappings
+        self.assertIs(after["課税仕入 10%"].status, MappingStatus.USER_CONFIRMED)
+        self.assertIs(after["課税売上 10%"].status, MappingStatus.UNRESOLVED)
+        # Different settings: nothing carries over.
+        self.service.confirm("company-1", selection=JdlTaxContextSelection(
+            tax_processing_mode=JdlTaxProcessingMode.TAXABLE_TAX_INCLUDED,
+            taxation_method=JdlTaxationMethod.STANDARD,
+            input_tax_credit_method=JdlInputTaxCreditMethod.INDIVIDUAL), confirmed=True)
+        after = self.profiles.get(self.companies.get("company-1").conversion_profile_id).tax_mappings
+        self.assertTrue(all(m.status is MappingStatus.UNRESOLVED for m in after.values()))
+
+    def test_confirmed_values_survive_restart_and_a_same_master_refresh(self) -> None:
+        self.service.confirm("company-1", selection=JdlTaxContextSelection(
+            **self.SIX, sales_tax_rounding=JdlTaxRounding.CEILING, purchase_tax_rounding=JdlTaxRounding.HALF_UP),
+            confirmed=True)
+        reopened_store = CompanySettingStore(self.root / "companies", self.profiles)
+        context = JdlTargetContextLoader().load(reopened_store.context_path(reopened_store.get("company-1")))
+        self.assertEqual((context.tax_processing_mode, context.sales_tax_rounding, context.purchase_tax_rounding),
+                         (JdlTaxProcessingMode.TAXABLE_TAX_EXCLUDED, JdlTaxRounding.CEILING, JdlTaxRounding.HALF_UP))
+        refresh = CompanyMasterRefreshService(reopened_store, self.profiles)
+        plan = refresh.plan("company-1", self.draft)
+        self.assertTrue(plan.confirmed_context_preservable)
+        refresh.apply(plan, {}, set(), preserve_confirmed_context=True)
+        context = JdlTargetContextLoader().load(reopened_store.context_path(reopened_store.get("company-1")))
+        self.assertEqual((context.confirmation_state.value, context.sales_tax_rounding),
+                         ("CONFIRMED", JdlTaxRounding.CEILING))
 
     def test_post_save_refresh_failure_is_not_reported_as_persistence_failure(self) -> None:
         controller = AccountingConverterController(

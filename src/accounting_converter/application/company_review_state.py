@@ -31,6 +31,12 @@ class CompanyReviewWorkQueue:
     optional_affected_journals: int
     unsupported_journals: int
     optional_detected_journals: int = 0
+    # Yayoi: the JDL tax setting is not confirmed, so structure / tax Evidence were NOT evaluated.
+    awaiting_tax_context: bool = False
+    # Yayoi: fields JDL cannot hold (部門・生成元・付箋 ...) as (field, journals). Pending = the company has not
+    # recorded what the field means / that it stays audit-only; nothing is dropped silently.
+    information_pending: tuple[tuple[str, int], ...] = ()
+    information_confirmed: tuple[tuple[str, int], ...] = ()
 
 
 def build_company_review_work_queue(
@@ -84,4 +90,7 @@ def build_company_review_work_queue(
         optional_affected_journals=review.optional_field_blocker_count,
         unsupported_journals=review.unsupported_shape_count,
         optional_detected_journals=review.optional_field_detected_count,
+        awaiting_tax_context=bool(review.source_is_yayoi and not review.scoped_evidence_state),
+        information_pending=tuple((f.field, f.journals) for f in review.information_fields if not f.confirmed),
+        information_confirmed=tuple((f.field, f.journals) for f in review.information_fields if f.confirmed),
     )

@@ -1021,6 +1021,24 @@ class AccountingConverterController:
             company_setting_id
         )
 
+    @staticmethod
+    def _tax_context_failure_message(error: Exception, *, kept: bool) -> str:
+        """The real reason in plain words (details, with rule IDs, are in the local log)."""
+        text = str(error)
+        if "SUBACCOUNT-MAPPING-MISMATCH" in text or "ACCOUNT-MAPPING-MISMATCH" in text or "are incompatible" in text:
+            reason = (
+                "保存済みの科目・補助科目の対応が、読み込んだJDL科目一覧と一致しません。"
+                "「対応内容を確認・変更」で対応を確認してください。"
+            )
+        elif "cannot be promoted safely" in text or "unresolved conflicts" in text:
+            reason = "読み込んだJDL科目一覧に、安全に使えない補助科目の記載があります。JDL科目一覧を確認してください。"
+        elif "requires explicit confirmation" in text:
+            reason = "確認のチェックが入っていません。"
+        else:
+            reason = "設定内容を確認してください。"
+        remembered = "入力した税設定は残してあります（次に開くと復元されます）。" if kept else ""
+        return f"JDL税設定を保存できませんでした。{reason}{remembered}"
+
     def confirm_company_tax_context(
         self,
         company_setting_id: str,
@@ -1048,9 +1066,10 @@ class AccountingConverterController:
             )
         except Exception as error:
             log_local_exception("company_tax_context_confirmation", error)
+            service = self.company_tax_context_confirmation_service
             self.state = replace(
                 self._fail_state(
-                    "JDL税設定を保存できませんでした。設定内容を確認してください。",
+                    self._tax_context_failure_message(error, kept=service.last_selection_kept),
                     error,
                 ),
                 tax_context_save_status=TaxContextSaveStatus.NOT_SAVED,
@@ -1112,10 +1131,20 @@ class AccountingConverterController:
                 developer_error=error.__class__.__name__,
             )
             return self.state
+        returned = self.company_tax_context_confirmation_service.last_reconfirmation_required
+        note = ""
+        if returned:
+            note = (
+                f" 補助科目{len(returned)}件は、JDL側の名称が取込欄（20バイト）に入らないため確認前に戻しました"
+                "（JDLで補助科目の名称を短くして科目一覧を更新し、あらためて確認してください）。"
+                "ほかの承認は変更していません。"
+            )
+            log_local_event("JDL-TAX-CONTEXT-SUBACCOUNT-APPROVALS-RETURNED", {
+                "count": len(returned), "jdl_codes": [f"{p}-{c}" for p, c in returned]})
         self.state = replace(
             state,
             tax_context_save_status=TaxContextSaveStatus.SAVED,
-            user_message="JDL税設定を保存しました。税区分を確認してください。",
+            user_message="JDL税設定を保存しました。税区分を確認してください。" + note,
         )
         return self.state
 

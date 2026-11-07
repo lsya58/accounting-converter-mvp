@@ -125,7 +125,7 @@ def diagnose(source: Path, company_store: Path, company_id: str, *, new_pdf: Pat
     identity = result["identity"]
     result["store_warnings"] = list(breakdown.store_check(
         account_mappings=identity["account_approvals"], subaccount_mappings=identity["subaccount_approvals"],
-        master_accounts=identity.get("master_accounts", 0), account_blocked_journals=0,
+        master_accounts=identity.get("master_accounts"), account_blocked_journals=0,
         voucher_row_limit=identity.get("voucher_row_limit"), confirmed_context=identity.get("context_confirmed") == "CONFIRMED"))
     with tempfile.TemporaryDirectory() as directory:
         store = Path(directory) / "store"
@@ -158,7 +158,8 @@ def diagnose(source: Path, company_store: Path, company_id: str, *, new_pdf: Pat
         def step(name: str, decisions: dict | None = None) -> None:
             resolved = companies.resolve(company_id)
             assessment = YayoiJournalReportJdlWorkflow().assess(source, resolved.profile, resolved.context)
-            summary, tax_ids, structure_ids = classify(assessment, by_id, resolved.context.voucher_row_limit)
+            summary, tax_ids, structure_ids = classify(
+                assessment, by_id, resolved.context.voucher_row_limit if resolved.context is not None else None)
             if decisions is not None:
                 summary["decisions_in_copy"] = decisions
             result["steps"][name] = summary
@@ -187,9 +188,11 @@ def diagnose(source: Path, company_store: Path, company_id: str, *, new_pdf: Pat
             return controller.review_company_mapping_updates(company_id, source)
 
         step("L0_saved_setting_formal_ready")
-        if l0_only or identity["account_approvals"] == 0:
+        if l0_only or identity["account_approvals"] == 0 or companies.resolve(company_id).context is None:
             result["ladder_skipped"] = (
                 "requested" if l0_only else
+                "the JDL tax setting is not confirmed (the master is only a PDF draft): nothing can be READY, "
+                "and the what-if steps need a confirmed setting" if companies.resolve(company_id).context is None else
                 "this setting has no confirmed account approvals; the what-if steps need a confirmed parent account")
             return result
         CompanyVoucherRowLimitService(companies, profiles).set(company_id, row_limit, confirmed=True)

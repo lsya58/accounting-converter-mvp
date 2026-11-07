@@ -41,6 +41,7 @@ from accounting_converter.application.moneyforward_tax_excluded_evidence import 
     context_is_verified as tax_excluded_proportional_context_verified,
 )
 from accounting_converter.application.profile_revision import revised_profile_id
+from accounting_converter.profiles.jdl_official import jdl_subaccount_name_fits
 from accounting_converter.application.validation_pipeline import ValidationPipeline
 from accounting_converter.domain.journal import Side
 from accounting_converter.domain.mapping import (
@@ -197,8 +198,13 @@ def _yayoi_unsupported_shape_count(entries, profile, runtime_context) -> int | N
     from accounting_converter.application.yayoi_information_policy import is_yayoi_profile
     from accounting_converter.application.yayoi_jdl_workflow import structural_evidence_gaps
 
-    if runtime_context is None or not is_yayoi_profile(profile):
+    if not is_yayoi_profile(profile):
         return None
+    if runtime_context is None:
+        # JDL tax setting not confirmed yet: the company-scoped Evidence cannot be applied, so the
+        # structure is NOT judged. Never fall back to the Money Forward shape list (it would count
+        # every journal as unsupported). The work queue reports this as "awaiting tax context".
+        return 0
     count = 0
     for entry in entries:
         current, likely = structural_evidence_gaps(entry, profile, runtime_context)
@@ -1168,7 +1174,15 @@ class CompanyMappingUpdateService:
 
     def _master_observation(self, context_path: Path) -> JdlMasterObservation:
         if self.drafts.is_draft(context_path):
-            return self.drafts.load(context_path).observation
+            observation = self.drafts.load(context_path).observation
+            # Same set the tax-setting confirmation will promote to usable subaccounts: a subaccount whose
+            # JDL name does not fit the import field becomes "unusable" there and cannot be a target.
+            # Offering it here lets a Human approve a mapping that the confirmation then cannot honor.
+            usable = tuple(
+                item for item in observation.subaccounts
+                if item.evidence_scope == "PRINTED_EXPLICIT_PARENT" and jdl_subaccount_name_fits(item.name)
+            )
+            return replace(observation, subaccounts=usable)
         context = self.contexts.load(context_path)
         return JdlMasterObservation(
             accounts=context.account_master,

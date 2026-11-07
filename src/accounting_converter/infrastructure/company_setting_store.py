@@ -451,7 +451,8 @@ class CompanySettingStore:
             )
             if not runtime.resolved:
                 raise CompanySettingStoreError(
-                    "confirmed JDL setting and mappings are incompatible"
+                    "confirmed JDL setting and mappings are incompatible: "
+                    + ", ".join(sorted({item.rule_id for item in runtime.validation_results}))
                 )
             updated = replace(
                 current,
@@ -464,6 +465,8 @@ class CompanySettingStore:
             self._from_json(company_temp)
             os.replace(context_temp, destination)
             os.replace(company_temp, company_path)
+            # The kept (never applied) entry belongs to the draft that has just been confirmed.
+            destination.with_name(self.PENDING_TAX_FILE).unlink(missing_ok=True)
             return updated
         finally:
             if context_temp.exists():

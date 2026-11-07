@@ -1647,6 +1647,15 @@ class CompanyMasterRefreshDialog(QDialog):
             "確認した場合のみ、追加後の科目一覧へ税設定と入力行数の確認結果を引き継ぎます。"
         )
         layout.addWidget(self.preserve_context_check)
+        preserve_note = QLabel(
+            "チェックしない場合は、更新後に「JDL税設定を確認・変更」で税設定（6項目）をもう一度保存する必要があります。"
+            "JDL側で変更のなかった科目・補助科目・税区分の承認は、どちらの場合も保持されます。"
+            if plan.confirmed_context_preservable else
+            "更新後の科目一覧に、これまでの科目・補助科目がすべては含まれていないため、税設定は引き継げません。"
+            "更新後に「JDL税設定を確認・変更」で税設定（6項目）をもう一度保存してください。"
+        )
+        preserve_note.setWordWrap(True)
+        layout.addWidget(preserve_note)
         actions = QHBoxLayout()
         cancel = QPushButton("キャンセル")
         cancel.clicked.connect(self.reject)

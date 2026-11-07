@@ -162,6 +162,11 @@ class JdlOutputRuntimeFactory:
                     item.parent_account == parent_mapping.target_value
                     for item in context.subaccounts
                 )
+                # A subaccount JDL has but the import field cannot hold still makes JDL reject a blank one.
+                and not any(
+                    item.parent_account == parent_mapping.target_value
+                    for item in context.unusable_subaccounts
+                )
             )
         policy = mapping.metadata.get(
             "subaccount_policy", SubaccountPolicy.PRESERVE_SUBACCOUNT.value

@@ -110,7 +110,7 @@ def summary_lines(journal_blockers: dict, limit: int = 8) -> tuple[str, ...]:
     return tuple(lines)
 
 
-def store_check(*, account_mappings: int, subaccount_mappings: int, master_accounts: int,
+def store_check(*, account_mappings: int, subaccount_mappings: int, master_accounts: int | None,
                 account_blocked_journals: int, voucher_row_limit: int | None,
                 confirmed_context: bool) -> tuple[str, ...]:
     """Warnings when a CompanySetting does not look like the one the data was prepared with."""
@@ -121,7 +121,7 @@ def store_check(*, account_mappings: int, subaccount_mappings: int, master_accou
         warnings.append("【会社設定の確認】確認済みの科目対応が0件です。別の（古い・空の）会社設定を選んでいないか確認してください。")
     elif account_blocked_journals:
         warnings.append(f"【会社設定の確認】科目対応が未確認の仕訳が{account_blocked_journals:,}件あります（確認済み{account_mappings}件）。")
-    if master_accounts == 0:
+    if master_accounts == 0:  # None = unknown (the master is still a PDF draft)
         warnings.append("【会社設定の確認】JDL科目一覧が空です。")
     if voucher_row_limit is None:
         warnings.append("【会社設定の確認】振替伝票入力行数が未入力です（アプリは黙って補完しません）。")
