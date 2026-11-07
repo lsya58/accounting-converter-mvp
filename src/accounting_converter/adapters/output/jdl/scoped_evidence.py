@@ -43,7 +43,12 @@ from .models import (
     JdlTaxationMethod,
     JdlTaxRounding,
 )
-from .scoped_evidence_registry import JDL_TAX_SETTING_PEERS, SCOPED_CASES, ScopedCase
+from .scoped_evidence_registry import (
+    JDL_TAX_RELATION_AUTHORIZED_PEERS,
+    JDL_TAX_SETTING_PEERS,
+    SCOPED_CASES,
+    ScopedCase,
+)
 from .tax_semantics import JdlTaxSemantic
 
 SCOPE_ID = "JDL-35-5-TAX-EXCL-PROP-SALES-CEIL-PURCH-HALFUP-VOUCHER-ROWS-16"
@@ -224,10 +229,10 @@ def relation_accounts(side: str, cell: str, relation: str) -> dict[str, tuple[st
 # existed before). Mirrors the general >=3-account rule used elsewhere for
 # this Evidence family; 課税売上10% on the credit side stays account-specific
 # regardless of how many accounts round-tripped, same as the pre-existing rule.
-# The rule reaches an unprobed account only when the company's JDL 科目一覧 prints
-# the same tax defaults (課区・税区・入力) for it as for at least three accounts the
-# relation round-tripped on (`JDL_TAX_SETTING_PEERS`, generated from the PDF). An
-# account with other defaults is covered only where it round-tripped itself.
+# The pre-existing P10/COMPANY rule reaches an unprobed account only when its
+# code is in the reviewed authorization subset of PDF-matching accounts.
+# New R8/T80 relations remain exact-account only even if three probes happen
+# to share printed tax defaults. PDF metadata alone never grants permission.
 RELATION_ACCOUNT_INDEPENDENCE_MIN_ACCOUNTS = 3
 RELATION_ACCOUNT_SPECIFIC_ONLY = frozenset({("CREDIT", "S10")})
 
@@ -237,8 +242,9 @@ def relation_covers_account(side: str, cell: str, relation: str, account: str) -
 
     relation in {"", "NONE"}: no amount question; the layout/cell gate already
     decided coverage. Otherwise: round-tripped on this exact account, or
-    independent: not account-specific, and the account prints the same JDL tax
-    defaults as at least three accounts the relation round-tripped on.
+    independent: not account-specific, and the account is in the explicit
+    authorization subset for that relation. Currently only P10/COMPANY has
+    such a subset; PDF-derived peers for other relations are metadata only.
     The single source of truth for this check: both composition and the
     output stage call it, so they can never disagree.
     """
@@ -249,4 +255,4 @@ def relation_covers_account(side: str, cell: str, relation: str, account: str) -
         return True
     if len(observed) < RELATION_ACCOUNT_INDEPENDENCE_MIN_ACCOUNTS or (side, cell) in RELATION_ACCOUNT_SPECIFIC_ONLY:
         return False
-    return account in JDL_TAX_SETTING_PEERS.get((side, cell, relation), frozenset())
+    return account in JDL_TAX_RELATION_AUTHORIZED_PEERS.get((side, cell, relation), frozenset())

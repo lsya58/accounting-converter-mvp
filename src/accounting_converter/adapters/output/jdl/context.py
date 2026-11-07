@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -252,10 +253,17 @@ class JdlTargetContextValidator:
         identities = [item.mapping_value for item in context.account_master]
         codes = [item.target_master_code for item in context.account_master]
         if len(identities) != len(set(identities)) or len(codes) != len(set(codes)):
+            involved = self._duplicate_codes(
+                (item.mapping_value, item.target_master_code)
+                for item in context.account_master
+            )
             errors.append(
                 self._error(
                     "JDL-CONTEXT-ACCOUNT-DUPLICATE",
-                    "勘定科目masterに重複するidentityまたはcodeがあります。",
+                    "勘定科目masterに重複するidentityまたはcodeがあります"
+                    f"（JDLコード: {', '.join(involved)}）。"
+                    "JDLの科目は正式名称とコードで区別します。"
+                    "略名称や同名だけで別コードの科目をまとめないでください。",
                     "account_master",
                 )
             )
@@ -300,10 +308,18 @@ class JdlTargetContextValidator:
             for item in context.subaccounts
         ]
         if len(identities) != len(set(identities)) or len(codes) != len(set(codes)):
+            involved = self._duplicate_codes(
+                (
+                    (item.parent_account, item.mapping_value),
+                    f"{item.parent_account_code}-{item.target_master_code}",
+                )
+                for item in context.subaccounts
+            )
             errors.append(
                 self._error(
                     "JDL-CONTEXT-SUBACCOUNT-DUPLICATE",
-                    "補助科目masterに重複する親科目付きidentityまたはcodeがあります。",
+                    "補助科目masterに重複する親科目付きidentityまたはcodeがあります"
+                    f"（JDLコード: {', '.join(involved)}）。",
                     "subaccount_master",
                 )
             )
@@ -368,6 +384,17 @@ class JdlTargetContextValidator:
                         "department_master",
                     )
                 )
+
+    @staticmethod
+    def _duplicate_codes(pairs) -> tuple[str, ...]:
+        """JDL codes of every entry whose identity or code is not unique (codes only, no names)."""
+        pairs = tuple(pairs)
+        identity_counts = Counter(identity for identity, _code in pairs)
+        code_counts = Counter(code for _identity, code in pairs)
+        return tuple(sorted({
+            code for identity, code in pairs
+            if identity_counts[identity] > 1 or code_counts[code] > 1
+        }))
 
     @staticmethod
     def _numeric(value: str, max_length: int) -> bool:

@@ -198,9 +198,12 @@ def tax_setting_keys(master_pdf: Path) -> dict[str, str]:
 
 
 def setting_peers(cases: list[dict], keys: dict[str, str]) -> dict[tuple[str, str, str], frozenset]:
-    """Per (side, cell, relation): the accounts printing the same non-empty JDL tax defaults as at least
-    three accounts the relation round-tripped on. Observed accounts are grouped by their defaults, so a
-    round trip on an account with other defaults never withdraws or widens another group."""
+    """PDF-derived candidate peers, not permission to use a tax-amount relation.
+
+    Observed accounts are grouped by their printed defaults. A new relation
+    reaching three accounts changes this metadata, not the explicit runtime
+    authorization in scoped_evidence_registry.
+    """
     from accounting_converter.adapters.output.jdl.scoped_evidence import (
         RELATION_ACCOUNT_INDEPENDENCE_MIN_ACCOUNTS,
         RELATION_ACCOUNT_SPECIFIC_ONLY,
@@ -237,13 +240,13 @@ def render(cases: list[dict], peers: dict | None = None, master_sha256: str | No
         )
     lines.append(")")
     lines.append("")
-    lines.append("# Per (side, cell, relation): accounts printing the same JDL tax defaults as >= 3 accounts it round-tripped on")
-    lines.append("# (used by scoped_evidence.relation_covers_account). Generated from the JDL 科目一覧 PDF"
+    lines.append("# PDF-derived candidate peers; not conversion permission. Generated from the JDL 科目一覧 PDF"
                  + (f" sha256 {master_sha256}." if master_sha256 else "; none given, so no relation is account-independent."))
     lines.append("JDL_TAX_SETTING_PEERS: dict[tuple[str, str, str], frozenset[str]] = {")
     for key, codes in sorted((peers or {}).items()):
         lines.append(f"    {key!r}: frozenset({sorted(codes)!r}),")
     lines.append("}")
+    lines.append("# Do not derive runtime authorization from this table; keep the separately reviewed allowlist.")
     return "\n".join(lines) + "\n"
 
 

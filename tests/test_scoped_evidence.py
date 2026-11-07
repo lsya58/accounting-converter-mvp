@@ -241,6 +241,29 @@ class RelationTest(unittest.TestCase):
         self.assertFalse(scoped.relation_covers_account("CREDIT", "S10", "COMPANY", "6122"))
         self.assertFalse(scoped.relation_covers_account("DEBIT", "S10", "FLOOR", "6121"))
 
+    def test_pdf_peer_groups_do_not_authorize_new_tax_relations(self):
+        for cell, relation, observed_account in (
+            ("R8", "HALF_LOW", "8491"),
+            ("T80", "EXACT", "7121"),
+            ("T80", "FLOOR_HIGH", "8621"),
+            ("T80", "HALF_HIGH", "8751"),
+            ("T80", "HALF_LOW", "8641"),
+        ):
+            key = ("DEBIT", cell, relation)
+            with self.subTest(key=key):
+                self.assertIn("8681", scoped.JDL_TAX_SETTING_PEERS[key])
+                self.assertNotIn(key, scoped.JDL_TAX_RELATION_AUTHORIZED_PEERS)
+                self.assertTrue(scoped.relation_covers_account(*key, observed_account))
+                self.assertFalse(scoped.relation_covers_account(*key, "8681"))
+
+    def test_pdf_metadata_change_cannot_expand_the_frozen_allowlist(self):
+        from unittest.mock import patch
+
+        key = ("DEBIT", "P10", "COMPANY")
+        with patch.dict(scoped.JDL_TAX_SETTING_PEERS, {key: frozenset({"9999"})}):
+            self.assertTrue(scoped.relation_covers_account(*key, "8681"))
+            self.assertFalse(scoped.relation_covers_account(*key, "9999"))
+
     def test_a_round_trip_on_an_account_with_other_defaults_does_not_withdraw_a_group(self):
         from accounting_converter.tools.build_scoped_evidence_registry import setting_peers
 

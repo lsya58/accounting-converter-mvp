@@ -1489,6 +1489,19 @@ class AccountingConverterController:
                 "確認後に実機確認が必要になる見込み（現時点の候補による予測。確定ではありません）: "
                 + f"{len(assessment.likely_blockers or {})}仕訳"
             )
+        from accounting_converter.application import readiness_breakdown as breakdown
+
+        lines.extend(breakdown.summary_lines(assessment.journal_blockers))
+        if profile is not None and context is not None:
+            lines.extend(breakdown.store_check(
+                account_mappings=sum(1 for m in profile.account_mappings.values() if m.is_resolved),
+                subaccount_mappings=sum(1 for m in profile.subaccount_context_mappings.values() if m.is_resolved),
+                master_accounts=len(context.account_master),
+                account_blocked_journals=sum(
+                    "HUMAN:ACCOUNT_MAPPING" in blockers for blockers in assessment.journal_blockers.values()),
+                voucher_row_limit=context.voucher_row_limit,
+                confirmed_context=context.confirmation_state.value == "CONFIRMED",
+            ))
         self.state = replace(
             self.state,
             conversion_summary=summary,

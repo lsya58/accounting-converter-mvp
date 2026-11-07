@@ -68,7 +68,11 @@ PASS条件: 104/104 journals、160/160 rows、missing 0、extra 0、unexpected 0
 
 **2026-11-07（補助・形・科目別税額）**: 確認画面の「形が未検証」をMF専用の数え方から正式判定と同じ構造ルールへ修正（会社Aは602→行数16入力時2）。Probe 6ファイル・35仕訳を実機にImportし、同日再Exportを取得。補助省略は引き続き不可。過去のローカル診断ではREADY 157仕訳だったが、現在のWindows設定の正式READYではない（[詳細](yayoi_buddies_evidence_campaign.md#12-補助のある親科目形の表示残る科目別evidence2026-11-07)）。
 
-**2026-11-07 補助・税額・構造の実機往復結果**: TAX15の15ケースとSTRUCT6の6ケースがstrict PASSし、scope限定registryは153→174ケース。補助保持は2 PASS・1 CHANGED、補助名称のみは2 CHANGED、3141補助空欄と1551/3141補助0000はImport拒否。補助名称のみを安全な変換法として有効化していない。ケース別の[記録](../../tests/evidence/e2e/yayoi_buddies_subtax_20260719/README.md)を参照。保存済みローカルCompanySettingと新masterの再構成は重複identity検証で停止し、現時点の正式READYおよび38税額/20構造仕訳の解放数は未確定。旧試算や実機結果からREADY増加を推測しない。
+**2026-11-07 補助・税額・構造の実機往復結果**: TAX15の15ケースとSTRUCT6の6ケースがstrict PASSし、scope限定registryは153→174ケース。補助保持は2 PASS・1 CHANGED、補助名称のみは2 CHANGED、3141補助空欄と1551/3141補助0000はImport拒否。補助名称のみを安全な変換法として有効化していない。ケース別の[記録](../../tests/evidence/e2e/yayoi_buddies_subtax_20260719/README.md)を参照。保存済みローカルCompanySettingと新masterの再構成が重複identity検証で停止した件は、アプリ外の再構成で科目を略名称で識別したのが原因（1311と1314の略名称が同じ）。アプリの経路では停止しない。
+
+**2026-11-07 再診断（Windows設定のコピー、`tools/yayoi_formal_rediagnosis.py`）**: 正式READY **157**（保存設定のまま。最新PDFの再読込でも変化なし・context検証PASS）。行数16入力で493、22親科目を親科目のみで1,419、残り補助30種類を決めれば2,473（試算。正式READYではない）。174ケース化で科目別税額のEvidence不足 35→2仕訳、構造 22→2仕訳（STRUCT6の対象20仕訳はすべて解消）。残る2仕訳は控除不可を含む仕訳で、Humanの税区分判断待ち。技術的Evidence不足だけで止まる仕訳は0。残りは16行超30・決算7・控除不可2・付箋の方針2と補助30種類の登録判断（[詳細](yayoi_buddies_evidence_campaign.md#13-重複identityの原因最新evidenceでの再診断補助30種類2026-11-07)）。
+
+**2026-11-07 READY 157→0 調査**: 現在のWindows設定ではCLI・GUI経路とも正式READY 157/2,514のまま。0は、科目承認0件の古い設定（repo内 `data/private/yayoi_store`）を読んだ場合に再現（[詳細](yayoi_buddies_evidence_campaign.md#14-正式ready-1570-の調査2026-11-07)）。診断に設定の識別情報と理由別の対処を追加。判定は緩和していない。
 
 ## Evidence policy
 

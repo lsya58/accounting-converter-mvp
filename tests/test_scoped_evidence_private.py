@@ -154,15 +154,21 @@ class RegisteredEvidenceMatchesTheRealProbesTest(unittest.TestCase):
         self.assertFalse(any(case.startswith(("SK-", "SB-", "SZ-", "SN-")) for case in registered))
 
     def test_setting_peers_equal_the_table_regenerated_from_the_master_pdf(self):
+        """PDF defaults reproduce candidate peers; only the reviewed subset grants permission."""
         try:
             import pypdf  # noqa: F401
         except ModuleNotFoundError:
             self.skipTest("pypdf is not installed")
-        from accounting_converter.adapters.output.jdl.scoped_evidence_registry import JDL_TAX_SETTING_PEERS
+        from accounting_converter.adapters.output.jdl.scoped_evidence_registry import (
+            JDL_TAX_RELATION_AUTHORIZED_PEERS, JDL_TAX_SETTING_PEERS,
+        )
         from accounting_converter.tools.build_scoped_evidence_registry import setting_peers, tax_setting_keys
 
         cases = [{"taxed": case.taxed} for case in SCOPED_CASES]
         self.assertEqual(setting_peers(cases, tax_setting_keys(MASTER_PDF)), JDL_TAX_SETTING_PEERS)
+        self.assertEqual(set(JDL_TAX_RELATION_AUTHORIZED_PEERS), {("DEBIT", "P10", "COMPANY")})
+        for key, codes in JDL_TAX_RELATION_AUTHORIZED_PEERS.items():
+            self.assertEqual(codes, JDL_TAX_SETTING_PEERS[key])
 
     def test_descriptions_follow_the_real_64_byte_result(self):
         """G4 (kept by JDL) is written unchanged; G5 (JDL truncated it silently to 64 bytes) is refused."""
