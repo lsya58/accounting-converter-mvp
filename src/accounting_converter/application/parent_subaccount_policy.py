@@ -28,6 +28,11 @@ from .company_mapping_update import PARENT_ONLY_SELECTION, CompanyMappingUpdateI
 BLANK_SUBACCOUNT_REJECTION_EVIDENCE = (
     "EVID-JDL-35-5-BLANK-SUB-REJECT-1551-001",
     "EVID-JDL-35-5-BLANK-SUB-REJECT-1311-001",
+    "EVID-YAYOI-JDL-35-5-BUDDIES-SUB-BLANK-3141-REJECT-001",
+)
+ZERO_SUBACCOUNT_REJECTION_EVIDENCE = (
+    "EVID-YAYOI-JDL-35-5-BUDDIES-SUB-0000-1551-REJECT-001",
+    "EVID-YAYOI-JDL-35-5-BUDDIES-SUB-0000-3141-REJECT-001",
 )
 
 PRESERVE_READY = "A"
@@ -93,7 +98,9 @@ class ParentGroup:
                     "補助のある科目へ補助を空欄で取り込むと、JDLは『科目に補助が設定されています』で拒否します"
                     f"（実機で確認: {', '.join(BLANK_SUBACCOUNT_REJECTION_EVIDENCE)}）。"
                     "補助を対応付けるか、JDLへ補助を登録して科目一覧を読み込み直してください。"
-                    "補助を省略する別の書き方（補助コード0000など）は実機検証待ちです。")
+                    "1551・3141の補助コード0000も実機で拒否されています"
+                    f"（{', '.join(ZERO_SUBACCOUNT_REJECTION_EVIDENCE)}）。"
+                    "他の親科目の0000は実機検証待ちであり、利用可能とは扱いません。")
         return "この親科目は親科目のみにできません。"
 
 

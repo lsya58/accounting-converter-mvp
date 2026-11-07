@@ -46,9 +46,13 @@ NEW_ACCOUNTS = Path("data/private/yayoi_buddies/new_account_evidence_20261106_re
 NEW_ACCOUNTS_PROBE = NEW_ACCOUNTS / "YAYOI_GAP_NEW_ACCOUNT_12_20260726_NOT_FOR_PRODUCTION.csv"
 NEW_ACCOUNTS_REEXPORT = NEW_ACCOUNTS / "YAYOI_NEW_ACCOUNT_12_REEXPORT_20260726.csv"
 MASTER_PDF = Path("data/private/yayoi_buddies/バディーズ科目一覧-科目追加後.pdf")
-PROBES = (*PROBES, NEW_ACCOUNTS_PROBE)
+SUBTAX = Path("data/private/yayoi_buddies/subaccount_tax_evidence_20261107")
+SUBTAX_REEXPORT = SUBTAX / "yayoi補助再エクスポート.csv"
+SUBTAX_PROBES = tuple(SUBTAX / f"YAYOI_GAP_SUBTAX_{name}_20260719_NOT_FOR_PRODUCTION.csv"
+                      for name in ("TAX15", "STRUCT6"))
+PROBES = (*PROBES, NEW_ACCOUNTS_PROBE, *SUBTAX_PROBES)
 REF = SourceReference("private", 1)
-AVAILABLE = (STORE.exists() and GAP_REEXPORT.exists() and NEW_ACCOUNTS_REEXPORT.exists()
+AVAILABLE = (STORE.exists() and GAP_REEXPORT.exists() and NEW_ACCOUNTS_REEXPORT.exists() and SUBTAX_REEXPORT.exists()
              and all(path.exists() for path in PROBES))
 
 
@@ -123,9 +127,31 @@ class RegisteredEvidenceMatchesTheRealProbesTest(unittest.TestCase):
         cases += gap_cases
         new_cases, _new_summary = collect_gap_round(NEW_ACCOUNTS, NEW_ACCOUNTS_REEXPORT)
         cases += new_cases
+        subtax_cases, _subtax_summary = collect_gap_round(SUBTAX, SUBTAX_REEXPORT)
+        cases += subtax_cases
         self.assertEqual(
             [(c["case_id"], c["evidence_id"], c["layout"], c["rows"], c["taxed"]) for c in cases],
             [(c.case_id, c.evidence_id, c.layout, c.rows, c.taxed) for c in SCOPED_CASES])
+
+    def test_subtax_round_keeps_failures_out_of_positive_registry(self):
+        from collections import Counter
+        from accounting_converter.tools.yayoi_gap_probe_check import check_round
+
+        report = check_round(SUBTAX, SUBTAX_REEXPORT)
+        self.assertTrue(report["round_valid"])
+        self.assertEqual((report["expected_journals"], report["expected_rows"]), (35, 51))
+        self.assertEqual((report["reexport_journals"], report["reexport_rows"]), (30, 46))
+        expected = {
+            "TAX15": {"PASS": 16}, "STRUCT6": {"PASS": 7},
+            "SUB_KEEP": {"PASS": 3, "CHANGED": 1},
+            "SUB_NAMEONLY": {"PASS": 1, "CHANGED": 2},
+            "SUB_BLANK": {"MISSING": 2}, "SUB_0000": {"MISSING": 3},
+        }
+        for filename, result in report["files"].items():
+            kind = next(key for key in expected if f"_{key}_" in filename)
+            self.assertEqual(dict(Counter(result["verdicts"].values())), expected[kind])
+        registered = {case.case_id for case in SCOPED_CASES}
+        self.assertFalse(any(case.startswith(("SK-", "SB-", "SZ-", "SN-")) for case in registered))
 
     def test_setting_peers_equal_the_table_regenerated_from_the_master_pdf(self):
         try:

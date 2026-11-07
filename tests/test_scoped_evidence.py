@@ -124,12 +124,14 @@ def sales_journal(count, account="6121", amount="1100", explicit="100"):
 
 class RegistryTest(unittest.TestCase):
     def test_registry_is_the_campaign_and_gap_round_passes_plus_the_two_existing_ones(self):
-        self.assertEqual(len(SCOPED_CASES), 153)
-        self.assertEqual(len({case.evidence_id for case in SCOPED_CASES}), 153)
+        self.assertEqual(len(SCOPED_CASES), 174)
+        self.assertEqual(len({case.evidence_id for case in SCOPED_CASES}), 174)
         self.assertEqual(sum("BUDDIES-CAMP" in case.evidence_id for case in SCOPED_CASES), 64)
         self.assertEqual(sum("BUDDIES-GAP-GP" in case.evidence_id or "BUDDIES-GAP-FR" in case.evidence_id
                              for case in SCOPED_CASES), 75)  # 2026-11-06
         self.assertEqual(sum("BUDDIES-GAP-NA-" in case.evidence_id for case in SCOPED_CASES), 12)  # 2026-11-07 new accounts
+        self.assertEqual(sum("BUDDIES-GAP-TX-" in case.evidence_id for case in SCOPED_CASES), 15)
+        self.assertEqual(sum("BUDDIES-GAP-ST-" in case.evidence_id for case in SCOPED_CASES), 6)
 
     def test_rejected_over_limit_cases_are_not_registered(self):
         longest = max(len(case.rows) for case in SCOPED_CASES)
@@ -156,19 +158,19 @@ class RegistryTest(unittest.TestCase):
                     self.assertIn(side_name, {"DEBIT", "CREDIT"})
                     self.assertIn(cell, scoped.CELL_SEMANTIC)
                     self.assertIn(account, CODES | dict.fromkeys(
-                        ("6121", "6131", "6181", "8471", "8991", "7131", "6122", "6123", "6124", "6132", "6142", "7122", "8672"), ""))
+                        ("6121", "6131", "6181", "8471", "8991", "7131", "6122", "6123", "6124", "6132", "6142", "7122", "8672", "8451", "8621", "8641", "8751", "7141"), ""))
                     self.assertIn(relation, {"", "COMPANY", "FLOOR", "EXACT", "NONE", "HALF_LOW", "HALF_HIGH", "FLOOR_HIGH"})
 
     def test_observed_facts_the_implementation_relies_on(self):
         self.assertEqual(set(scoped.CELL_ACCOUNTS[("CREDIT", "S10")]),
-                         {"6121", "6131", "6181", "6122", "6123", "6124", "6132", "6142"})
+                         {"6121", "6131", "6181", "6122", "6123", "6124", "6132", "6142", "9251"})
         self.assertEqual(set(scoped.CELL_ACCOUNTS[("CREDIT", "XS")]), {"6121", "6142"})
-        self.assertEqual(set(scoped.CELL_ACCOUNTS[("DEBIT", "R8")]), {"8471"})
-        self.assertEqual(set(scoped.CELL_ACCOUNTS[("DEBIT", "T80")]), {"8471"})
+        self.assertEqual(set(scoped.CELL_ACCOUNTS[("DEBIT", "R8")]), {"8451", "8471", "8491"})
+        self.assertEqual(set(scoped.CELL_ACCOUNTS[("DEBIT", "T80")]), {"7121", "8451", "8471", "8621", "8641", "8751"})
         self.assertEqual(set(scoped.relation_accounts("CREDIT", "S10", "COMPANY")),
                          {"6121", "6131", "6181", "6124", "6132", "6142"})
-        self.assertEqual(set(scoped.relation_accounts("CREDIT", "S10", "FLOOR")), {"6121", "6122", "6124", "6132", "6142"})
-        self.assertEqual(set(scoped.relation_accounts("DEBIT", "P10", "COMPANY")), {"8471", "7122", "8672"})
+        self.assertEqual(set(scoped.relation_accounts("CREDIT", "S10", "FLOOR")), {"6121", "6122", "6124", "6132", "6142", "9251"})
+        self.assertEqual(set(scoped.relation_accounts("DEBIT", "P10", "COMPANY")), {"8471", "7122", "7141", "8672"})
         self.assertEqual(set(scoped.relation_accounts("DEBIT", "S10", "FLOOR")), {"6131", "6142"})
         # Nothing about 控除不可 (no cell, no semantic) was ever registered.
         self.assertFalse(any("NODED" in case.case_id or "CLOSING" in case.case_id for case in SCOPED_CASES))
@@ -234,7 +236,7 @@ class RelationTest(unittest.TestCase):
         self.assertIn("8681", peers)
         self.assertNotIn("7141", peers)  # prints no 課区/入力: not like the probed accounts
         self.assertTrue(scoped.relation_covers_account("DEBIT", "P10", "COMPANY", "8681"))
-        self.assertFalse(scoped.relation_covers_account("DEBIT", "P10", "COMPANY", "7141"))
+        self.assertTrue(scoped.relation_covers_account("DEBIT", "P10", "COMPANY", "7141"))  # exact new probe, not peer expansion
         # Sales stay account-specific whatever the count; two-account relations stay specific.
         self.assertFalse(scoped.relation_covers_account("CREDIT", "S10", "COMPANY", "6122"))
         self.assertFalse(scoped.relation_covers_account("DEBIT", "S10", "FLOOR", "6121"))
@@ -336,7 +338,7 @@ class CompositionTest(unittest.TestCase):
         self.assertGap(export("6131"), "TAX_ACCOUNT_UNVERIFIED")
         reduced = lambda account, amount, tax: journal([(side(account, "R8", amount, tax), side("1111", "NO", amount))])  # noqa: E731
         self.assertScoped(reduced("8471", "1080", "80"))
-        self.assertGap(reduced("8681", "1080", "80"), "TAX_ACCOUNT_UNVERIFIED")
+        self.assertGap(reduced("8681", "1080", "80"), "EXPLICIT_TAX_AMOUNT_UNVERIFIED")
         self.assertScoped(reduced("8471", "1081", "80"))  # fraction kept by JDL (2026-11-06, HALF_LOW)
         self.assertGap(reduced("8471", "1081", "81"), "EXPLICIT_TAX_AMOUNT_UNVERIFIED")  # ceil of a low fraction
         self.assertGap(reduced("8471", "1200", "88"), "EXPLICIT_TAX_AMOUNT_UNVERIFIED")  # FLOOR_HIGH never probed for 8%

@@ -126,12 +126,12 @@ def collect_gap_round(gap_dir: Path, reexport: Path) -> tuple[list[dict], dict]:
         groups = _groups(_rows(gap_dir / name))
         passed = 0
         for case in manifest["cases"]:
-            if case["description_under_test"] or case["group"] == "CONTROL":
+            if case["description_under_test"] or case["group"] in {"CONTROL", "SUBACCOUNT"}:
                 continue
             if result["verdicts"][case["case"]] == "PASS":
                 passed += 1
                 cases.append(case_record(case["case"], gap_evidence_id(case["case"]), groups[case["journal_index"]]))
-        summary[name[:28]] = f"{passed}/{sum(1 for c in manifest['cases'] if not c['description_under_test'] and c['group'] != 'CONTROL')}"
+        summary[name[:28]] = f"{passed}/{sum(1 for c in manifest['cases'] if not c['description_under_test'] and c['group'] not in {'CONTROL', 'SUBACCOUNT'})}"
     return cases, summary
 
 
