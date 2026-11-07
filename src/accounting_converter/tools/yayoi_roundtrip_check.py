@@ -30,6 +30,7 @@ from accounting_converter.application.moneyforward_description_replacement impor
 from accounting_converter.application.yayoi_jdl_workflow import verify_non_retained_audit
 from accounting_converter.application.yayoi_sources import detect_format, format_for_identity_key
 from accounting_converter.domain.journal_rows import LINE_ROW_DESCRIPTION_KEY, LINE_ROW_KEY
+from accounting_converter.domain.mapping import is_confirmed_parent_only
 from accounting_converter.infrastructure.company_setting_store import CompanySettingStore
 from accounting_converter.infrastructure.conversion_profile_store import ConversionProfileStore
 from accounting_converter.tools import mf_full_e2e_compare
@@ -63,17 +64,27 @@ def _subaccount_code(profile, account: str, sub: str | None) -> str:
         return ""
     for key, value in profile.subaccount_context_mappings.items():
         if key.parent_account == account and key.source_value == sub:
+            if is_confirmed_parent_only(value):
+                return ""  # parent only: JDL gets a blank subaccount, the name is in the audit file
             return str(value.metadata.get("output_code", "")).zfill(4)
     return "?"
 
 
 def source_view(source: Path, profile, context):
     source_format = format_for_identity_key(profile.source_format_identity.stable_key) or detect_format(source)
-    entries = MoneyForwardDescriptionReplacementPolicy(profile).apply(source_format.read(source)).entries
+    # The JDL vouchers expected: a Human-approved split turns one journal into its parts (voucher_split).
+    from accounting_converter.application.voucher_split import apply_split
+
+    from accounting_converter.application.closing_entries import mark_closing
+
+    entries = MoneyForwardDescriptionReplacementPolicy(profile).apply(
+        apply_split(mark_closing(source_format.read(source), profile, context), profile, context)).entries
     lines, descriptions, structure = Counter(), Counter(), Counter()
     rows = 0
     for entry in entries:
-        day = entry.date.strftime("%Y%m%d")
+        from accounting_converter.application.closing_entries import JDL_DATE_KEY
+
+        day = entry.metadata.get(JDL_DATE_KEY) or entry.date.strftime("%Y%m%d")
         by_row: dict[int, list] = {}
         for line in entry.lines:
             by_row.setdefault(int(line.metadata[LINE_ROW_KEY]), []).append(line)
@@ -122,7 +133,7 @@ def check(source: Path, profile, context, candidate: Path, reexport: Path | None
                                              "credit_total_equal", "tax_total_equal"))
         and all(not any(v.values()) for v in source_vs_candidate.values() if isinstance(v, dict))
     )
-    preservation = verify_non_retained_audit(source, candidate, profile)
+    preservation = verify_non_retained_audit(source, candidate, profile, context)
     result = {
         "source": {"journals": source_journals, "physical_rows": source_rows},
         "candidate": {"journals": c_journals, "physical_rows": c_rows},

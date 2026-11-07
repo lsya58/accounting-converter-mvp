@@ -253,7 +253,10 @@ class JdlOutputPreflight:
 
         rows: list[JdlOutputRow] = []
         profiles: list[JdlEvidenceProfile] = []
+        self._closing_dates: set[str] = set()
         for entry in entries:
+            if not self._closing_date_valid(entry, errors):
+                continue
             evidence = self._profile_for_entry(entry, errors)
             if evidence is None:
                 continue
@@ -270,6 +273,25 @@ class JdlOutputPreflight:
             JdlOutputPlan(tuple(rows), tuple(profiles), len(entries)),
             (),
         )
+
+    def _closing_date_valid(self, entry: JournalEntry, errors: list[ValidationResult]) -> bool:
+        """A closing-period date (JDL month 13) only with a valid closing mark in the Evidence scope."""
+        from accounting_converter.application import closing_entries
+
+        try:
+            text = closing_entries.output_date(entry, self.context)
+        except ValueError:
+            errors.append(self._error("JDL-OUT-CLOSING-DATE", "決算整理仕訳の日付は実機Evidenceの範囲でだけ出力できます。",
+                                      "journal_date", entry))
+            return False
+        if text is not None:
+            self._closing_dates.add(text)
+        return True
+
+    def _journal_date(self, entry: JournalEntry) -> str:
+        from accounting_converter.application import closing_entries
+
+        return closing_entries.output_date(entry, self.context) or entry.date.strftime("%Y%m%d")
 
     def _validate_profile(
         self,
@@ -1251,7 +1273,7 @@ class JdlOutputPreflight:
                         amount = Decimal("-1")
                     if amount < 0 or amount != amount.to_integral_value():
                         errors.append(self._error("JDL-OUT-AMOUNT-FIELD", "金額項目は0以上の整数円である必要があります。", definition.name))
-                if value and definition.data_type == "日付":
+                if value and definition.data_type == "日付" and value not in getattr(self, "_closing_dates", ()):
                     try:
                         datetime.strptime(value, "%Y%m%d")
                     except ValueError:
@@ -1276,7 +1298,7 @@ class JdlOutputPreflight:
         return JdlOutputRow(
             identifier_flag=flag,
             voucher_number="",
-            journal_date=entry.date.strftime("%Y%m%d"),
+            journal_date=self._journal_date(entry),
             debit_account_code=(debit_account.target_master_code if debit_account else ""),
             debit_account_name=(
                 debit_account.target_name

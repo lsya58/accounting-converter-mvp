@@ -224,6 +224,33 @@ class ConversionTest(unittest.TestCase):
             self.assertEqual(items[identity].mapping_state, "UNCONFIRMED")
 
 
+class Journal565ShapeTest(unittest.TestCase):
+    """B1D4 with 非仕入 debits (journal 565): structure proven by round 4 (NP-B1D4); 控除不可 still needs the sign-off."""
+
+    def rows(self):
+        from tests.test_yayoi_jdl_workflow import PURCHASE
+
+        total = 1100 * 3 + 999 + 1399
+        p10 = lambda: (YAYOI["fee"], "", PURCHASE, 1100, 100)  # noqa: E731
+        nc10 = lambda amount: (YAYOI["fee"], "", "課対仕入10%", amount, 0)  # noqa: E731
+        out = [detail(DATE, 1, debit=p10(), credit=(YAYOI["cash"], "", OUTSIDE, total, None), invoice="適格",
+                      credit_ratio="100%", description="R1", number=1)]
+        for k, (line, invoice, ratio) in enumerate(((p10(), "適格", "100%"), (nc10(999), "区分記載", "控除不可"),
+                                                     (nc10(1399), "区分記載", "控除不可"), (p10(), "適格", "100%")), start=2):
+            out.append(detail(DATE, 1, debit=line, invoice=invoice, credit_ratio=ratio, description=f"R{k}", number=1))
+        return out
+
+    def test_blocked_without_signoff_ready_with_it(self):
+        with tempfile.TemporaryDirectory() as directory, evidence_covers_test_company():
+            fixture = make(directory, self.rows())
+            assessment, _ = assess(fixture)
+            self.assertEqual(assessment.ready_journals, 0)
+            self.assertIn("HUMAN:TAX_MAPPING", assessment.blocker_counts())
+            approve(fixture)
+            assessment, _ = assess(fixture)
+            self.assertEqual(assessment.blocker_counts(), {})
+
+
 class ReviewScreenTest(unittest.TestCase):
     def _review(self, fixture, company=COMPANY):
         resolved = fixture.resolved()

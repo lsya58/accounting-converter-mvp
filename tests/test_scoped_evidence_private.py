@@ -50,10 +50,13 @@ SUBTAX = Path("data/private/yayoi_buddies/subaccount_tax_evidence_20261107")
 SUBTAX_REEXPORT = SUBTAX / "yayoi補助再エクスポート.csv"
 SUBTAX_PROBES = tuple(SUBTAX / f"YAYOI_GAP_SUBTAX_{name}_20260719_NOT_FOR_PRODUCTION.csv"
                       for name in ("TAX15", "STRUCT6"))
-PROBES = (*PROBES, NEW_ACCOUNTS_PROBE, *SUBTAX_PROBES)
+ROUND4 = Path("data/private/yayoi_buddies/split_layout_probe_20261107")
+ROUND4_REEXPORT = ROUND4 / "JDL_再Export_20260711.csv"
+ROUND4_PROBES = tuple(ROUND4 / f"YAYOI_GAP_{name}_20260711_NOT_FOR_PRODUCTION.csv" for name in ("SPLIT", "NP"))
+PROBES = (*PROBES, NEW_ACCOUNTS_PROBE, *SUBTAX_PROBES, *ROUND4_PROBES)
 REF = SourceReference("private", 1)
 AVAILABLE = (STORE.exists() and GAP_REEXPORT.exists() and NEW_ACCOUNTS_REEXPORT.exists() and SUBTAX_REEXPORT.exists()
-             and all(path.exists() for path in PROBES))
+             and ROUND4_REEXPORT.exists() and all(path.exists() for path in PROBES))
 
 
 def _tax(row, scope, category, method, tax):
@@ -129,6 +132,8 @@ class RegisteredEvidenceMatchesTheRealProbesTest(unittest.TestCase):
         cases += new_cases
         subtax_cases, _subtax_summary = collect_gap_round(SUBTAX, SUBTAX_REEXPORT)
         cases += subtax_cases
+        round4_cases, _round4_summary = collect_gap_round(ROUND4, ROUND4_REEXPORT)
+        cases += round4_cases
         self.assertEqual(
             [(c["case_id"], c["evidence_id"], c["layout"], c["rows"], c["taxed"]) for c in cases],
             [(c.case_id, c.evidence_id, c.layout, c.rows, c.taxed) for c in SCOPED_CASES])

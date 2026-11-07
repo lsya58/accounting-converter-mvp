@@ -98,7 +98,7 @@ def main() -> int:
     result = workflow.execute(prepared)
     ok = result is not None and result.status.value == "SUCCESS"
     audit = audit_path_for(args.output)
-    preservation = verify_non_retained_audit(args.source, args.output, resolved.profile) if ok else {"verdict": "NOT_RUN"}
+    preservation = verify_non_retained_audit(args.source, args.output, resolved.profile, resolved.context) if ok else {"verdict": "NOT_RUN"}
     print(json.dumps({
         "written": ok,
         "verdict_information_outside_jdl": preservation["verdict"],

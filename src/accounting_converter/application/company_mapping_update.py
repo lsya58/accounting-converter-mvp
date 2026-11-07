@@ -517,6 +517,12 @@ class CompanyMappingUpdateService:
                 for entry in entries
             )
         loss_rule = _loss_rule_for(profile)
+        from accounting_converter.application.yayoi_information_policy import is_yayoi_profile
+
+        if is_yayoi_profile(profile) and runtime_context is not None:
+            from accounting_converter.application.closing_entries import mark_closing
+
+            entries = mark_closing(entries, profile, runtime_context)  # same as the formal assessment
         detected_results = _information_results(ValidationPipeline((loss_rule,)).validate(entries))
         # Blockers are what remains after Human-confirmed description
         # replacements, exactly as the formal workflow applies them.

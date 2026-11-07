@@ -124,20 +124,23 @@ def sales_journal(count, account="6121", amount="1100", explicit="100"):
 
 class RegistryTest(unittest.TestCase):
     def test_registry_is_the_campaign_and_gap_round_passes_plus_the_two_existing_ones(self):
-        self.assertEqual(len(SCOPED_CASES), 174)
-        self.assertEqual(len({case.evidence_id for case in SCOPED_CASES}), 174)
+        self.assertEqual(len(SCOPED_CASES), 184)
+        self.assertEqual(len({case.evidence_id for case in SCOPED_CASES}), 184)
         self.assertEqual(sum("BUDDIES-CAMP" in case.evidence_id for case in SCOPED_CASES), 64)
         self.assertEqual(sum("BUDDIES-GAP-GP" in case.evidence_id or "BUDDIES-GAP-FR" in case.evidence_id
                              for case in SCOPED_CASES), 75)  # 2026-11-06
         self.assertEqual(sum("BUDDIES-GAP-NA-" in case.evidence_id for case in SCOPED_CASES), 12)  # 2026-11-07 new accounts
         self.assertEqual(sum("BUDDIES-GAP-TX-" in case.evidence_id for case in SCOPED_CASES), 15)
         self.assertEqual(sum("BUDDIES-GAP-ST-" in case.evidence_id for case in SCOPED_CASES), 6)
+        # 2026-11-07 round 4: voucher-split parts (7) and 非仕入 debit placement (3)
+        self.assertEqual(sum("BUDDIES-GAP-SP-" in case.evidence_id for case in SCOPED_CASES), 7)
+        self.assertEqual(sum("BUDDIES-GAP-NP-" in case.evidence_id for case in SCOPED_CASES), 3)
 
     def test_rejected_over_limit_cases_are_not_registered(self):
         longest = max(len(case.rows) for case in SCOPED_CASES)
         self.assertEqual(longest, 16)
-        # A3 (2026-11-05) and one gap-round case (2026-11-06) are the only 16-row cases; none is longer.
-        self.assertEqual(sum(len(case.rows) == 16 for case in SCOPED_CASES), 2)
+        # A3 (2026-11-05), one gap-round case (2026-11-06) and SP-C1D15 (round 4) are the 16-row cases; none is longer.
+        self.assertEqual(sum(len(case.rows) == 16 for case in SCOPED_CASES), 3)
         self.assertFalse(any(len(case.rows) > scoped.SCOPE_VOUCHER_ROW_LIMIT for case in SCOPED_CASES))
 
     def test_every_case_is_internally_consistent(self):

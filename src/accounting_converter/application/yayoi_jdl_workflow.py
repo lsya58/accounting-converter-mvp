@@ -27,6 +27,8 @@ from accounting_converter.adapters.output.jdl import (
 )
 from accounting_converter.application import moneyforward_tax_excluded_evidence as ev
 from accounting_converter.application import noncredit_approval
+from accounting_converter.application import voucher_split
+from accounting_converter.application import closing_entries
 from accounting_converter.application import scoped_evidence_composition as scoped_composition
 from accounting_converter.application.conversion import ConversionRequest, ConversionService
 from accounting_converter.application.first_release_workflow import (
@@ -126,8 +128,8 @@ class YayoiToJdlLossRule:
             fields.append("optional_field")  # 付箋 / 仕訳メモ / 期日 / 番号 / 生成元
         if DEPARTMENT_FIELD in unconfirmed:
             fields.append("department")  # JDL company without departments
-        if entry.metadata.get("yayoi_closing"):
-            fields.append("closing_entry")  # 決算区分: no proven JDL representation
+        if entry.metadata.get("yayoi_closing") and not closing_entries.is_marked(entry):
+            fields.append("closing_entry")  # 決算区分: only 本決 in the verified JDL month-13 form (closing_entries)
         if any(description_requires_replacement(value) for value in journal_descriptions(entry)):
             fields.append("description_character")
         return [
@@ -205,7 +207,15 @@ class YayoiJournalReportJdlWorkflow:
     ) -> YayoiJdlAssessment:
         source_format = self._source_format(input_path, profile)
         parsed = source_format.diagnose(input_path)
-        entries = parsed.entries
+        # 本決 journals proven to import as JDL 決算整理仕訳 carry their month-13 date (closing_entries).
+        source_entries = closing_entries.mark_closing(parsed.entries, profile, context)
+        # A Human-approved split replaces an over-limit journal by its parts; every part is judged on its own
+        # and the original journal is READY only when all of its parts are (voucher_split).
+        # Without the approval the parts are still judged (assume_approved) so that the report can say whether only
+        # the approval is missing; the journal stays blocked either way (see the aggregation below).
+        split_approved = profile is not None and context is not None and not voucher_split.policy_problems(profile, context)
+        entries = voucher_split.apply_split(source_entries, profile, context, assume_approved=True)
+        origin = {entry.id: entry.metadata.get(voucher_split.SPLIT_OF_KEY, entry.id) for entry in entries}
         blockers: dict[str, set[str]] = {entry.id: set() for entry in entries}
         if profile is None or context is None:
             for entry_blockers in blockers.values():
@@ -220,7 +230,7 @@ class YayoiJournalReportJdlWorkflow:
         confirmed_fields = frozenset(confirmed_optional_fields(profile)) if profile is not None else frozenset()
         loss = YayoiToJdlLossRule(confirmed_fields)
         non_retained: Counter = Counter()
-        for entry in entries:
+        for entry in source_entries:
             for field in {field_of(name) for _, name, _ in non_retained_values(entry) + dropped_subaccount_values(entry, profile)}:
                 non_retained[field] += 1
         for entry in entries:
@@ -308,11 +318,26 @@ class YayoiJournalReportJdlWorkflow:
                     current, candidate = structural_evidence_gaps(entry, profile, context)
                     blockers[entry.id].update(_structural_blocker(gap) for gap in current)
                     likely[entry.id].update(_structural_blocker(gap) for gap in candidate)
+        per_journal: dict[str, set[str]] = {entry.id: set() for entry in source_entries}
+        for key, value in blockers.items():
+            per_journal[origin[key]].update(value)
+        if not split_approved:
+            for journal_id in {o for k, o in origin.items() if k != o}:
+                found = per_journal[journal_id]
+                technical = any(not b.startswith("HUMAN:") for b in found)
+                # Parts all verified: only the Human's recorded approval is missing. Otherwise still over the limit.
+                found.add(VOUCHER_ROW_LIMIT_BLOCKERS[scoped_composition.GAP_ROW_LIMIT_EXCEEDED] if technical
+                          else voucher_split.APPROVAL_BLOCKER)
+        per_journal_likely: dict[str, set[str]] = {}
+        for key, value in likely.items():
+            if value:
+                per_journal_likely.setdefault(origin[key], set()).update(value)
+        blockers, likely = per_journal, per_journal_likely
         return YayoiJdlAssessment(
             {key: frozenset(value) for key, value in blockers.items()},
             assignments,
             parsed.issue_codes,
-            len(entries),
+            len(source_entries),
             parsed.detail_rows,
             dict(non_retained),
             {key: frozenset(value) for key, value in likely.items() if value},
@@ -359,6 +384,10 @@ class YayoiJournalReportJdlWorkflow:
             "HUMAN:DEPARTMENT_POLICY": "部門を含む仕訳があります。対象のJDL会社は部門を使わない設定のため、意味と扱い（JDLへは出さず監査記録に残す）を確認してください。",
             "HUMAN:JDL_TAX_ROUNDING_SETTING": "JDL会社の消費税の端数処理（売上・仕入）を設定してください。",
             "HUMAN:VOUCHER_ROW_LIMIT_SETTING": "JDLの会社設定「振替伝票入力行数」を確認して入力してください。",
+            voucher_split.APPROVAL_BLOCKER: (
+                "振替伝票入力行数を超える仕訳のうち、分割規則の対象で、分割後の各伝票の形はJDL実機で確認済みのものがあります。"
+                "分割してよいかの税理士確認を記録するまで変換しません（自動では分割しません）。"
+            ),
             "HUMAN:VOUCHER_ROW_LIMIT_EXCEEDED": (
                 "JDLの振替伝票入力行数を超える仕訳があります。JDLは行数が多すぎる伝票を取り込めません"
                 "（分割するか、JDLで手入力してください。アプリは自動で分割しません）。"
@@ -398,7 +427,8 @@ class YayoiJournalReportJdlWorkflow:
             ExplicitJdlEvidenceRoutePolicy(assessment.assignments, route_id=ROUTE_ID),
         )
         service = ConversionService(
-            input_adapter=_AuditOnlyFieldsRemovedAdapter(source_format.adapter(), confirmed_fields),
+            input_adapter=_VoucherSplitAdapter(
+                _AuditOnlyFieldsRemovedAdapter(source_format.adapter(), confirmed_fields), profile, context),
             structural_validator=source_format.validator(),
             mapping_engine=MappingEngine(mapping_rule_set_from_profile(profile)),
             business_validator=ValidationPipeline((BalanceRule(), YayoiToJdlLossRule(confirmed_fields))),
@@ -539,7 +569,8 @@ class YayoiJournalReportJdlWorkflow:
         output = Path(request.output_path)
         if "NOT_FOR_PRODUCTION" in output.name:  # probe: its journals carry nothing outside JDL
             return prepared.conversion_service.convert(request)
-        pending = begin_non_retained_audit(request.input_path, output, request.conversion_profile)
+        context = request.target_runtime_context
+        pending = begin_non_retained_audit(request.input_path, output, request.conversion_profile, context)
         try:
             result = prepared.conversion_service.convert(request)
         except Exception:
@@ -552,7 +583,7 @@ class YayoiJournalReportJdlWorkflow:
             return result
         try:
             finish_non_retained_audit(output)
-            check = verify_non_retained_audit(request.input_path, output, request.conversion_profile)
+            check = verify_non_retained_audit(request.input_path, output, request.conversion_profile, context)
             if check["verdict"] not in {"PASS", "NOT_NEEDED"}:
                 raise RuntimeError("audit record does not match the formal CSV")
         except Exception:
@@ -754,6 +785,25 @@ class _AuditOnlyFieldsRemovedAdapter:
         return entries
 
 
+class _VoucherSplitAdapter:
+    """Input adapter that applies the Human-approved voucher split (the same function assess uses)."""
+
+    def __init__(self, inner, profile, context) -> None:
+        self._inner = inner
+        self._profile = profile
+        self._context = context
+
+    def supports(self, path, profile) -> bool:
+        return self._inner.supports(path, profile)
+
+    def record_count(self, path, profile) -> int:
+        return self._inner.record_count(path, profile)
+
+    def read(self, path, profile):
+        entries = closing_entries.mark_closing(self._inner.read(path, profile), self._profile, self._context)
+        return voucher_split.apply_split(entries, self._profile, self._context)
+
+
 def audit_path_for(output_path: Path) -> Path:
     return output_path.with_name(output_path.name + ".audit.json")
 
@@ -787,14 +837,16 @@ def dropped_subaccount_values(entry: JournalEntry, profile) -> tuple[tuple[int, 
     return tuple(found)
 
 
-def expected_non_retained(source: Path, profile) -> list[dict]:
+def expected_non_retained(source: Path, profile, context=None) -> list[dict]:
     """One record per source journal that has values JDL will not hold, in source order."""
     source_format = format_for_identity_key(profile.source_format_identity.stable_key) or detect_format(source)
     records = []
     for entry in source_format.read(source):
         values = non_retained_values(entry) + dropped_subaccount_values(entry, profile)
         noncredit = noncredit_approval.audit_lines(entry, profile)
-        if values or noncredit:
+        split = voucher_split.audit_record(entry, profile, context)
+        closing = closing_entries.audit_record(entry, profile, context)
+        if values or noncredit or split or closing:
             record = {
                 "source_journal_content_sha256": entry.metadata.get(JOURNAL_CONTENT_IDENTITY_KEY),
                 "date": entry.date.isoformat(),
@@ -803,6 +855,10 @@ def expected_non_retained(source: Path, profile) -> list[dict]:
             }
             if noncredit:  # only then: earlier audit files stay byte-identical
                 record["noncredit_tax_lines"] = noncredit
+            if split:
+                record["voucher_split"] = split
+            if closing:
+                record["closing_entry"] = closing
             records.append(record)
     return records
 
@@ -813,13 +869,13 @@ def _atomic_json(path: Path, payload: dict) -> None:
     temp.replace(path)
 
 
-def begin_non_retained_audit(source: Path, output: Path, profile) -> Path | None:
+def begin_non_retained_audit(source: Path, output: Path, profile, context=None) -> Path | None:
     """Before the CSV exists: write the audit as .pending (no output hash yet).
 
     If the run stops after the CSV is written, the .pending file shows that the
     pair is incomplete; verify_non_retained_audit then fails.
     """
-    records = expected_non_retained(source, profile)
+    records = expected_non_retained(source, profile, context)
     if not records:
         return None
     for path in (audit_path_for(output), pending_audit_path_for(output)):
@@ -837,9 +893,22 @@ def begin_non_retained_audit(source: Path, output: Path, profile) -> Path | None
         "journal_count": len(records),
         "value_count": sum(len(item["not_in_jdl"]) for item in records),
         **_noncredit_summary(records),
+        **_split_summary(records),
         "journals": records,
     })
     return pending
+
+
+def _split_summary(records: list[dict]) -> dict:
+    splits = [item["voucher_split"] for item in records if "voucher_split" in item]
+    if not splits:
+        return {}
+    return {
+        "voucher_split_journal_count": len(splits),
+        "voucher_split_note": ("振替伝票入力行数を超える弥生の仕訳を、Humanが記録した税理士確認に基づき複数のJDL伝票に分割した"
+                               "（相手科目1行の金額を各伝票の明細合計に分けるだけ。明細・税額・補助・摘要は変更なし）。"
+                               "voucher_split に元の行と各伝票の対応、元仕訳への復元照合の結果を記録する。"),
+    }
 
 
 def _noncredit_summary(records: list[dict]) -> dict:
@@ -865,13 +934,13 @@ def finish_non_retained_audit(output: Path) -> Path | None:
     return final
 
 
-def verify_non_retained_audit(source: Path, output: Path, profile) -> dict:
+def verify_non_retained_audit(source: Path, output: Path, profile, context=None) -> dict:
     """Separate verdict for the information JDL does not hold.
 
     NOT_NEEDED: nothing left out. PASS: the audit exists, is final, belongs to
     this source and this CSV, and lists exactly the expected values.
     """
-    expected = expected_non_retained(source, profile)
+    expected = expected_non_retained(source, profile, context)
     final, pending = audit_path_for(output), pending_audit_path_for(output)
     if not expected:
         ok = not final.exists() and not pending.exists()
@@ -891,6 +960,9 @@ def verify_non_retained_audit(source: Path, output: Path, profile) -> dict:
         "journal_count": payload.get("journal_count") == len(payload.get("journals", ())) == len(expected),
         "records_equal": payload.get("journals") == expected,
         "noncredit_summary": {k: payload.get(k) for k in _noncredit_summary(expected)} == _noncredit_summary(expected),
+        "split_summary": {k: payload.get(k) for k in _split_summary(expected)} == _split_summary(expected),
+        "splits_rebuild_originals": all(item["voucher_split"]["reconstruction"] == "PASS"
+                                        for item in expected if "voucher_split" in item),
         # Identical journals share a content hash, so one-to-one is by source rows.
         "one_record_per_journal": len({tuple(item["source_rows"]) for item in payload.get("journals", ())})
         == len(payload.get("journals", ())),

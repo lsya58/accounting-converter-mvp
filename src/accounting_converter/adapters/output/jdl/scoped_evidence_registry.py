@@ -42,6 +42,7 @@ stay under data/private (never tracked). Source probe SHA-256:
   gap re-export cdd4dceeeb0fd46e2f5c781838b0204ff53f2fba7a43ff623af43657dfa18797
   NEW_ACCOUNT_12 16f56ea815d1f163a21a5e90b6249f4c3bb268bdfdf677eb72a242f43505572c
   new-account re-export 395006ea7be9a560ea51e2871ded75cdcb8e4aa5e42a3a06dd9a91d838c7cc79
+  round 4 (2026-07-11, split parts / 非仕入 placement): see the SCOPED_CASES += block at the end
 """
 from __future__ import annotations
 
@@ -600,4 +601,42 @@ SCOPED_CASES += (
         (('P10', 'NO'),), (('DEBIT', 'P10', '7141', 'COMPANY'),)),
     ScopedCase('TX-S10-9251-FLOOR', 'EVID-YAYOI-JDL-35-5-BUDDIES-GAP-TX-S10-9251-FLOOR-SYNTHETIC-ROUNDTRIP-001', 'B1',
         (('NO', 'S10'),), (('CREDIT', 'S10', '9251', 'FLOOR'),)),
+)
+
+# 2026-11-07 round 4 (Probe date 2026-07-11): strict real round-trip PASS 10/10, controls PASS, duplicates 0,
+# unexplained journals 0, known JDL normalizations only. SP-*: the layouts of the voucher-split parts
+# (voucher_split; using them still needs the Human-recorded split approval). NP-*: 非仕入 debit placement
+# (控除不可 still needs the tax accountant's sign-off; this proves the JDL structure only).
+# Probe SPLIT ac78bebf107c100c4f53fe98782e5bfd9ce606773054cbfa1b8c9448c98480df / NP 298adab91c467f8b210ec6f1654f8548914a18fb8b516fb3f4876c7c9e7c0103 / re-export 708e593847d32c22b5941035a45548f47b889fa1a814552f335feaa51d38819a.
+SCOPED_CASES += (
+    ScopedCase('NP-B1D4', 'EVID-YAYOI-JDL-35-5-BUDDIES-GAP-NP-B1D4-SYNTHETIC-ROUNDTRIP-001', 'B1D4',
+        (('NP', 'NO'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-')),
+        (('DEBIT', 'NP', '7131', 'NONE'), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''))),
+    ScopedCase('NP-B1D10', 'EVID-YAYOI-JDL-35-5-BUDDIES-GAP-NP-B1D10-SYNTHETIC-ROUNDTRIP-001', 'B1D10',
+        (('NP', 'NO'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-')),
+        (('DEBIT', 'NP', '7131', 'NONE'), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''))),
+    ScopedCase('NP-B1D12', 'EVID-YAYOI-JDL-35-5-BUDDIES-GAP-NP-B1D12-SYNTHETIC-ROUNDTRIP-001', 'B1D12',
+        (('NP', 'NO'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-')),
+        (('DEBIT', 'NP', '7131', 'NONE'), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''))),
+    ScopedCase('SP-B1D14', 'EVID-YAYOI-JDL-35-5-BUDDIES-GAP-SP-B1D14-SYNTHETIC-ROUNDTRIP-001', 'B1D14',
+        (('P10', 'NO'), ('R8', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-')),
+        (('DEBIT', 'P10', '8471', ''), ('DEBIT', 'R8', '8471', 'EXACT'), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''))),
+    ScopedCase('SP-C1D9', 'EVID-YAYOI-JDL-35-5-BUDDIES-GAP-SP-C1D9-SYNTHETIC-ROUNDTRIP-001', 'C1D9',
+        (('-', 'NO'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-')),
+        (('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''))),
+    ScopedCase('SP-C1D10', 'EVID-YAYOI-JDL-35-5-BUDDIES-GAP-SP-C1D10-SYNTHETIC-ROUNDTRIP-001', 'C1D10',
+        (('-', 'NO'), ('P10', '-'), ('R8', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-')),
+        (('DEBIT', 'P10', '8471', ''), ('DEBIT', 'R8', '8471', 'EXACT'), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''))),
+    ScopedCase('SP-C1D11', 'EVID-YAYOI-JDL-35-5-BUDDIES-GAP-SP-C1D11-SYNTHETIC-ROUNDTRIP-001', 'C1D11',
+        (('-', 'NO'), ('P10', '-'), ('R8', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-')),
+        (('DEBIT', 'P10', '8471', ''), ('DEBIT', 'R8', '8471', 'EXACT'), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''))),
+    ScopedCase('SP-C1D13', 'EVID-YAYOI-JDL-35-5-BUDDIES-GAP-SP-C1D13-SYNTHETIC-ROUNDTRIP-001', 'C1D13',
+        (('-', 'NO'), ('R8', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-')),
+        (('DEBIT', 'R8', '8471', 'EXACT'), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''))),
+    ScopedCase('SP-C1D14', 'EVID-YAYOI-JDL-35-5-BUDDIES-GAP-SP-C1D14-SYNTHETIC-ROUNDTRIP-001', 'C1D14',
+        (('-', 'NO'), ('P10', '-'), ('R8', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-')),
+        (('DEBIT', 'P10', '8471', ''), ('DEBIT', 'R8', '8471', 'EXACT'), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''))),
+    ScopedCase('SP-C1D15', 'EVID-YAYOI-JDL-35-5-BUDDIES-GAP-SP-C1D15-SYNTHETIC-ROUNDTRIP-001', 'C1D15',
+        (('-', 'NO'), ('P10', '-'), ('R8', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-'), ('P10', '-')),
+        (('DEBIT', 'P10', '8471', ''), ('DEBIT', 'R8', '8471', 'EXACT'), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''), ('DEBIT', 'P10', '8471', ''))),
 )
