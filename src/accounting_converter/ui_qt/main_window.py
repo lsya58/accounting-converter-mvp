@@ -2630,6 +2630,9 @@ class CompanyMappingUpdateDialog(QDialog):
             self.voucher_button = QPushButton("振替伝票入力行数を入力…")
             self.voucher_button.clicked.connect(self._open_voucher_row_limit)
             page_layout.addWidget(self.voucher_button, 0, Qt.AlignmentFlag.AlignLeft)
+            compare_button = QPushButton("16行・64行を比較…")
+            compare_button.clicked.connect(self._compare_voucher_limits)
+            page_layout.addWidget(compare_button, 0, Qt.AlignmentFlag.AlignLeft)
         note = QLabel(
             "ここに表示する件数は影響する仕訳数です。上部タブの件数は"
             "Humanが確認する設定項目数なので、同じ数になるとは限りません。"
@@ -2667,13 +2670,15 @@ class CompanyMappingUpdateDialog(QDialog):
                         "登録済みの実機Evidenceを使えます。",
             "VOUCHER_ROW_LIMIT_UNCONFIRMED": "登録済みの実機Evidenceは、振替伝票入力行数を入力すると使えます"
                         "（端数処理は確認済みの設定と一致）。",
+            "VOUCHER_ROW_LIMIT_SETTING_UNVERIFIED": f"振替伝票入力行数{limit}行はJDL実機でまだ確認していない設定です。"
+                        "実機確認が済むまで、この会社の仕訳は変換されません（16行で確認したEvidenceをそのまま使いません）。",
             "OUT_OF_SCOPE": "この会社の設定は、実機で確認した範囲（端数処理 売上=切上げ・仕入=四捨五入、"
                         "振替伝票入力行数16行）と異なります。新しい実機Evidenceは使えません。",
         }.get(state)
         if applies:
             lines.append("登録済みEvidence（2026-11-05 実機確認）: " + applies)
         self.voucher_status_label.setText("\n".join(lines))
-        needs_human = limit is None and state == "VOUCHER_ROW_LIMIT_UNCONFIRMED"
+        needs_human = (limit is None and state == "VOUCHER_ROW_LIMIT_UNCONFIRMED") or state == "VOUCHER_ROW_LIMIT_SETTING_UNVERIFIED"
         has_over = limit is not None and journals_over_limit(self.voucher_row_counts, limit) > 0
         self.voucher_status_label.setObjectName("warningCard" if needs_human or has_over else "muted")
         self.voucher_status_label.style().unpolish(self.voucher_status_label)
@@ -2682,6 +2687,22 @@ class CompanyMappingUpdateDialog(QDialog):
             self.voucher_button.setText(
                 "振替伝票入力行数を入力…" if limit is None else "振替伝票入力行数を確認・変更…"
             )
+
+    def _compare_voucher_limits(self) -> None:
+        from .voucher_limit_comparison import VoucherLimitComparisonDialog
+
+        try:
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                report = self.controller.compare_company_voucher_limits(
+                    self.review.company_setting_id, self.review.source_path)
+            finally:
+                QApplication.restoreOverrideCursor()
+        except Exception as exc:
+            log_local_exception("voucher_limit_comparison", exc)
+            QMessageBox.critical(self, "比較できませんでした", "入力ファイルと会社設定を確認してください。")
+            return
+        VoucherLimitComparisonDialog(report, self).exec()
 
     def _open_voucher_row_limit(self) -> None:
         from .voucher_row_limit import VoucherRowLimitDialog
@@ -2693,10 +2714,13 @@ class CompanyMappingUpdateDialog(QDialog):
         if dialog.exec() != QDialog.DialogCode.Accepted or dialog.saved is None:
             return
         self.voucher_row_limit = dialog.saved
+        from accounting_converter.adapters.output.jdl.scoped_evidence import verified_row_limits
+
+        same_settings = {"VOUCHER_ROW_LIMIT_UNCONFIRMED", "IN_SCOPE", "VOUCHER_ROW_LIMIT_SETTING_UNVERIFIED"}
         self.scoped_evidence_state = (
-            "IN_SCOPE" if self.scoped_evidence_state == "VOUCHER_ROW_LIMIT_UNCONFIRMED" and dialog.saved == 16
-            else "OUT_OF_SCOPE" if self.scoped_evidence_state in {"VOUCHER_ROW_LIMIT_UNCONFIRMED", "IN_SCOPE"}
-            else self.scoped_evidence_state
+            self.scoped_evidence_state if self.scoped_evidence_state not in same_settings
+            else "IN_SCOPE" if dialog.saved in verified_row_limits()
+            else "VOUCHER_ROW_LIMIT_SETTING_UNVERIFIED"
         )
         self._refresh_voucher_status()
         QMessageBox.information(

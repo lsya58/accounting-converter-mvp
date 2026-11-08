@@ -100,6 +100,8 @@ def _context_in_scope(context) -> bool:
         and ev.context_is_verified(context)
         and scoped_evidence.scope_state(context) is scoped_evidence.ScopeState.IN_SCOPE
         and scoped_evidence.SCOPE_ID == TECHNICAL_EVIDENCE.scope_id
+        # The tax-summary Evidence ran under 16 rows; it is never carried to another row setting.
+        and context.voucher_row_limit == scoped_evidence.SCOPE_VOUCHER_ROW_LIMIT
     )
 
 

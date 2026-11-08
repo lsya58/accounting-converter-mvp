@@ -30,6 +30,7 @@ from accounting_converter.application.company_tax_context_confirmation import (
 from accounting_converter.application.company_review_state import (
     build_company_review_work_queue,
 )
+from accounting_converter.adapters.output.jdl.scoped_evidence import verified_row_limits
 from accounting_converter.adapters.output.jdl import (
     JdlTaxRounding,
     JdlInputTaxCreditMethod,
@@ -960,6 +961,17 @@ class AccountingConverterController:
         )
         return self.state
 
+    def compare_company_voucher_limits(self, company_id, source_path):
+        from accounting_converter.application.yayoi_sources import detect_format
+        from accounting_converter.application.voucher_limit_comparison import compare_limits
+
+        source = Path(source_path)
+        source_format = detect_format(source)
+        resolved = self.company_setting_service.resolve_for_source(company_id, source_format.identity().stable_key)
+        if not resolved.available:
+            raise ValueError("入力形式と会社設定の整合を確認してください。")
+        return compare_limits(source, resolved.profile, resolved.context)
+
     def confirm_company_voucher_row_limit(
         self, company_setting_id: str, limit: int, *, explicitly_confirmed: bool
     ) -> AppState:
@@ -979,7 +991,9 @@ class AccountingConverterController:
         state = self.select_company_setting(company_setting_id)
         self.state = replace(
             state,
-            user_message=f"振替伝票入力行数（{limit}行以内）を保存しました。JDLの会社設定は変更していません。",
+            user_message=f"振替伝票入力行数（{limit}行以内）を保存しました。JDLの会社設定は変更していません。"
+            + ("" if limit in verified_row_limits() else
+               f"{limit}行以内はJDL実機で未確認の設定のため、確認が済むまで変換されません。"),
         )
         return self.state
 

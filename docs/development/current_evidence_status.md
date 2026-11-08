@@ -1,6 +1,6 @@
 # Current Evidence Status
 
-最終更新: 2026-10-31
+最終更新: 2026-11-08
 
 **現在地の唯一の正本（single source of truth）です。** README・製品文書・AGENTS.md はここへリンクし、件数を独自に持ちません。過去の実機操作は [JDL実機検証履歴](jdl_real_evidence_log.md)、調査時点の資料は `docs/research/` と各文書の履歴節に残します。矛盾する場合はこの文書とEvidence原本を優先します。
 
@@ -81,6 +81,8 @@ PASS条件: 104/104 journals、160/160 rows、missing 0、extra 0、unexpected 0
 **2026-11-07 決算整理（13月）**: 取込で決算整理区分が保たれることを実機確認（CLOSING_IMPORT_PRESERVED）。本決5件を日付YYYY13DDで出力するよう実装し、**正式READY 2,480**。分割承認後 2,499、＋控除不可SIGNOFF後 2,502（試算）。7531（3行）は追加Probe待ち、中決3605はBLOCK（[詳細](yayoi_buddies_evidence_campaign.md#19-決算整理仕訳13月の取込と実装2026-11-07)）
 
 **2026-11-07 決算 B1C2（7531）**: 実機PASS（CLOSING_IMPORT_PRESERVED）。本決6件すべて対応し **正式READY 2,481**。分割承認後 2,500、＋控除不可SIGNOFF後 2,503（試算）。残る決算は中決3605のみ
+
+**2026-11-08 振替伝票入力行数64・中間決算**: 64行設定は実機未確認のため、会社を64にすると全仕訳BLOCK（`VOUCHER_ROW_LIMIT_SETTING_UNVERIFIED`）。**正式READY 2,481（変化なし）**。16行超30仕訳のうち物理行64以内は27、Probe全PASSで26仕訳が解消見込み（試算 2,507〜2,508、＋分割承認 2,509。控除不可は64では止めたまま）。第5回Probe（13ファイル＋fallback、上限は物理行と片側明細を区別）実機待ち。控除不可は64に引き継がない。中決3605はJDL実機でしか確認できず、画面調査の手順とProbeを用意（[詳細](yayoi_buddies_evidence_campaign.md#20-振替伝票入力行数64行以内2026-11-08実機待ち)）
 
 **2026-11-07 READY 157→0 調査**: 現在のWindows設定ではCLI・GUI経路とも正式READY 157/2,514のまま。0は、科目承認0件の古い設定（repo内 `data/private/yayoi_store`）を読んだ場合に再現（[詳細](yayoi_buddies_evidence_campaign.md#14-正式ready-1570-の調査2026-11-07)）。診断に設定の識別情報と理由別の対処を追加。判定は緩和していない。
 

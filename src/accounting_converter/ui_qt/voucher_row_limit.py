@@ -42,7 +42,8 @@ class VoucherRowLimitDialog(QDialog):
         note = QLabel(
             "JDLの会社設定に表示されている「振替伝票入力行数」の数字を、そのまま入力してください。<br>"
             "JDLは、この行数を超える伝票を<b>CSVの取込でも受け付けません</b>"
-            "（実機の確認: 16行は取込でき、17行以上は拒否されました）。<br>"
+            "（実機の確認: 16行以内の設定で、16行は取込でき、17行以上は拒否されました）。<br>"
+            "JDL出納帳35.5の選択肢は「16行以内」「64行以内」です。64行以内は2026-11-08の実機確認で、借方・貸方それぞれ64明細まで取り込めました（確認した形だけ変換できます。決算整理仕訳と控除不可は16行以内でのみ確認済みです）。<br>"
             "アプリはJDLの設定を変更せず、仕訳を自動で分割もしません。"
             "入力しても、行数を超える仕訳が取り込めるようにはなりません（分割するか、JDLで手入力が必要です）。"
         )
@@ -89,10 +90,14 @@ class VoucherRowLimitDialog(QDialog):
         if limit is None:
             self.over_label.setText(f"この会社の仕訳は、最長 {longest} 行です。")
         else:
+            from accounting_converter.adapters.output.jdl.scoped_evidence import verified_row_limits
+
             over = journals_over_limit(self.counts, limit)
             self.over_label.setText(
                 f"この会社の仕訳は最長 {longest} 行です。{limit}行を超える仕訳: <b>{over}仕訳</b>"
                 + ("（JDLに1伝票として取り込めません。分割または手入力が必要です）" if over else "")
+                + ("" if limit in verified_row_limits() else
+                   f"<br><b>{limit}行以内はJDL実機で未確認の設定です。保存はできますが、確認が済むまで変換されません。</b>")
             )
             self.over_label.setTextFormat(Qt.TextFormat.RichText)
         self.save_button.setEnabled(limit is not None and self.acknowledge.isChecked())

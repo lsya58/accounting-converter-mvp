@@ -53,7 +53,9 @@ def ineligible_reason(entry: JournalEntry, row_limit: int | None) -> str | None:
     rows = journal_physical_rows(entry)
     if rows is None:
         return "ROW_SEMANTICS_MISSING"
-    if len(rows) <= row_limit:
+    from accounting_converter.adapters.output.jdl.scoped_evidence import exceeds_row_limit
+
+    if not exceeds_row_limit(rows, row_limit):
         return "WITHIN_LIMIT"
     if entry.metadata.get("yayoi_closing"):
         return "CLOSING_ENTRY"

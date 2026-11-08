@@ -29,6 +29,26 @@ class CompanyVoucherRowLimitError(ValueError):
     pass
 
 
+def profile_with_row_limit_context(profile, context_bytes: bytes):
+    """Build the same revision for persistence or a read-only in-memory trial."""
+    context_hash = hashlib.sha256(context_bytes).hexdigest()
+
+    def refreshed(mappings):
+        return {
+            key: replace(value, metadata={**value.metadata, "setup_context_sha256": context_hash})
+            if value.metadata.get("setup_context_sha256") else value
+            for key, value in mappings.items()
+        }
+
+    return replace(
+        profile,
+        profile_id=revised_profile_id(profile.profile_id, "rowlimit"),
+        account_mappings=refreshed(profile.account_mappings),
+        subaccount_context_mappings=refreshed(profile.subaccount_context_mappings),
+        updated_at=datetime.now(timezone.utc),
+    )
+
+
 class CompanyVoucherRowLimitService:
     def __init__(self, company_store: CompanySettingStore, profile_store: ConversionProfileStore) -> None:
         self.company_store = company_store
@@ -58,23 +78,8 @@ class CompanyVoucherRowLimitService:
             return limit
         updated_context = replace(context, voucher_row_limit=limit)
         context_bytes = self.contexts.to_json_text(updated_context).encode("utf-8")
-        context_hash = hashlib.sha256(context_bytes).hexdigest()
         old = self.profile_store.get(setting.conversion_profile_id)
-
-        def refreshed(mappings):
-            return {
-                key: replace(value, metadata={**value.metadata, "setup_context_sha256": context_hash})
-                if value.metadata.get("setup_context_sha256") else value
-                for key, value in mappings.items()
-            }
-
-        updated = replace(
-            old,
-            profile_id=revised_profile_id(old.profile_id, "rowlimit"),
-            account_mappings=refreshed(old.account_mappings),
-            subaccount_context_mappings=refreshed(old.subaccount_context_mappings),
-            updated_at=datetime.now(timezone.utc),
-        )
+        updated = profile_with_row_limit_context(old, context_bytes)
         self.profile_store.create(updated)
         try:
             self.company_store.replace_with_confirmed_context(

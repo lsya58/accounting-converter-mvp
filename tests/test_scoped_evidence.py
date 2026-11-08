@@ -124,8 +124,9 @@ def sales_journal(count, account="6121", amount="1100", explicit="100"):
 
 class RegistryTest(unittest.TestCase):
     def test_registry_is_the_campaign_and_gap_round_passes_plus_the_two_existing_ones(self):
-        self.assertEqual(len(SCOPED_CASES), 184)
-        self.assertEqual(len({case.evidence_id for case in SCOPED_CASES}), 184)
+        self.assertEqual(sum(case.row_limit_scope == 16 for case in SCOPED_CASES), 184)  # the 16-row Evidence is untouched
+        self.assertEqual(sum(case.row_limit_scope == 64 for case in SCOPED_CASES), 30)  # round 5, 振替伝票入力行数 64
+        self.assertEqual(len({case.evidence_id for case in SCOPED_CASES}), len(SCOPED_CASES))
         self.assertEqual(sum("BUDDIES-CAMP" in case.evidence_id for case in SCOPED_CASES), 64)
         self.assertEqual(sum("BUDDIES-GAP-GP" in case.evidence_id or "BUDDIES-GAP-FR" in case.evidence_id
                              for case in SCOPED_CASES), 75)  # 2026-11-06
@@ -137,11 +138,13 @@ class RegistryTest(unittest.TestCase):
         self.assertEqual(sum("BUDDIES-GAP-NP-" in case.evidence_id for case in SCOPED_CASES), 3)
 
     def test_rejected_over_limit_cases_are_not_registered(self):
-        longest = max(len(case.rows) for case in SCOPED_CASES)
-        self.assertEqual(longest, 16)
+        sixteen = [case for case in SCOPED_CASES if case.row_limit_scope == 16]
+        self.assertEqual(max(len(case.rows) for case in sixteen), 16)
         # A3 (2026-11-05), one gap-round case (2026-11-06) and SP-C1D15 (round 4) are the 16-row cases; none is longer.
-        self.assertEqual(sum(len(case.rows) == 16 for case in SCOPED_CASES), 3)
-        self.assertFalse(any(len(case.rows) > scoped.SCOPE_VOUCHER_ROW_LIMIT for case in SCOPED_CASES))
+        self.assertEqual(sum(len(case.rows) == 16 for case in sixteen), 3)
+        self.assertFalse(any(len(case.rows) > scoped.SCOPE_VOUCHER_ROW_LIMIT for case in sixteen))
+        # Under 64: nothing above 65 physical rows (the longest voucher imported: 64 lines on one side + 1)
+        self.assertEqual(max(len(case.rows) for case in SCOPED_CASES if case.row_limit_scope == 64), 65)
 
     def test_every_case_is_internally_consistent(self):
         for case in SCOPED_CASES:
@@ -183,9 +186,11 @@ class ScopeTest(unittest.TestCase):
     def test_only_the_exact_company_settings_are_in_scope(self):
         self.assertIs(scoped.scope_state(context()), scoped.ScopeState.IN_SCOPE)
         self.assertIs(scoped.scope_state(context(limit=None)), scoped.ScopeState.VOUCHER_ROW_LIMIT_UNCONFIRMED)
+        # Same settings but a row limit no real JDL round proved (only 16 and 64 are verified): blocked.
+        for limit in (15, 17, 32, 65):
+            with self.subTest(limit=limit):
+                self.assertIs(scoped.scope_state(context(limit=limit)), scoped.ScopeState.VOUCHER_ROW_LIMIT_SETTING_UNVERIFIED)
         for name, ctx in {
-            "other row limit": context(limit=17),
-            "smaller row limit": context(limit=15),
             "floor/floor rounding (ACT)": context(sales=JdlTaxRounding.FLOOR, purchase=JdlTaxRounding.FLOOR),
             "sales half-up": context(sales=JdlTaxRounding.HALF_UP),
             "purchase ceiling": context(purchase=JdlTaxRounding.CEILING),
@@ -394,10 +399,13 @@ class CompositionTest(unittest.TestCase):
         entry = sales_journal(17)
         self.assertGap(entry, "VOUCHER_ROW_LIMIT_EXCEEDED")
         self.assertNotIn("VOUCHER_LAYOUT_UNVERIFIED", match(entry).mismatch_fields)
-        # A company whose limit is not the verified one is outside the scope altogether; the
-        # Yayoi diagnosis still reports the over-limit journal from the company setting itself.
+        # A limit no real round proved: only that is reported (and the limit JDL enforces anyway).
         self.assertEqual(composition.compose_scoped(
-            sales_journal(3), match(sales_journal(3)).actual_signature, has_partner=False, context=context(limit=2)), (None, None))
+            sales_journal(3), match(sales_journal(3)).actual_signature, has_partner=False, context=context(limit=2)),
+            (None, ("VOUCHER_ROW_LIMIT_SETTING_UNVERIFIED", "VOUCHER_ROW_LIMIT_EXCEEDED")))
+        self.assertEqual(composition.compose_scoped(
+            sales_journal(3), match(sales_journal(3)).actual_signature, has_partner=False, context=context(limit=32)),
+            (None, ("VOUCHER_ROW_LIMIT_SETTING_UNVERIFIED",)))
         # the exact limit passes
         self.assertScoped(journal([(side("1111", "NO", "1100"), side("3181", "NO", "1100"))] * 16))
 
@@ -523,8 +531,9 @@ class OutputTest(unittest.TestCase):
         # another company setting
         self.assertIn("JDL-OUT-SCOPED-CONTEXT", errors(literal, context(sales=JdlTaxRounding.FLOOR, purchase=JdlTaxRounding.FLOOR)))
         self.assertIn("JDL-OUT-SCOPED-CONTEXT", errors(literal, context(limit=None)))
-        # over the company's row limit (any profile)
-        self.assertIn("JDL-OUT-VOUCHER-ROW-LIMIT", errors(literal, context(limit=2)))
+        # a row-limit setting no real round proved (e.g. 64): nothing is written
+        self.assertIn("JDL-OUT-VOUCHER-ROW-LIMIT-SETTING", errors(literal, context(limit=32)))
+        self.assertIn("JDL-OUT-VOUCHER-ROW-LIMIT-SETTING", errors(literal, context(limit=2)))
         # a tax amount that JDL was never shown to keep
         tampered = ev.apply_verified_tax_semantics(entry, entry, ctx, profile(ctx))
         tampered.metadata[JDL_OUTPUT_METADATA_KEY] = literal.metadata[JDL_OUTPUT_METADATA_KEY]
@@ -543,7 +552,8 @@ class OutputTest(unittest.TestCase):
         self.assertIn("JDL-OUT-SCOPED-LAYOUT", errors(literal8))
 
     def test_row_limit_applies_to_every_profile_only_when_the_human_confirmed_it(self):
-        ctx = context(limit=2)
+        # A company outside the campaign scope (another rounding): its confirmed limit still applies to every profile.
+        ctx = context(limit=2, sales=JdlTaxRounding.FLOOR, purchase=JdlTaxRounding.FLOOR)
         entry = journal([(side("8681", "P10", "1100", "100"), side("1111", "NO", "1100"))])
         literal = ev.apply_verified_tax_semantics(entry, entry, ctx, profile(ctx))
         literal.metadata[JDL_OUTPUT_METADATA_KEY] = JdlEvidenceProfile.MF_TAX_EXCLUDED_PROPORTIONAL_1111.value

@@ -20,6 +20,8 @@ PRIORITY: tuple[tuple[str, str, str], ...] = (
     ("SYSTEM_EVIDENCE:TAX_CONTEXT_UNVERIFIED", "会社設定", "JDL税設定（課税方式・端数処理など）を確認・保存してください。"),
     ("HUMAN:JDL_TAX_ROUNDING_SETTING", "会社設定", "JDL会社の消費税の端数処理（売上・仕入）を設定してください。"),
     ("HUMAN:VOUCHER_ROW_LIMIT_SETTING", "会社設定", "JDLの会社設定「振替伝票入力行数」を確認して入力してください。"),
+    ("SYSTEM_EVIDENCE:VOUCHER_ROW_LIMIT_SETTING_UNVERIFIED", "会社設定", "この振替伝票入力行数（例: 64行以内）はJDL実機で未確認です。実機確認（tools/yayoi_row64_probe）が済むまで変換しません。"),
+    ("SYSTEM_EVIDENCE:VOUCHER_ROW_LIMIT_SUBACCOUNT_UNVERIFIED", "会社設定", "この振替伝票入力行数の設定では補助科目付きの行が実機で未確認です（tools/yayoi_row64_probe の SUB 対照）。"),
     ("HUMAN:ACCOUNT_MAPPING", "科目", "科目の対応（JDL科目の選択）を確認してください。"),
     ("HUMAN:SUBACCOUNT_MAPPING", "補助", "補助科目の対応を確認してください（親科目のみ・既存補助・JDL新規登録のいずれか）。"),
     ("HUMAN:SUBACCOUNT_DEFAULT", "補助", "補助なしの仕訳のまとめ先補助を確認してください。"),

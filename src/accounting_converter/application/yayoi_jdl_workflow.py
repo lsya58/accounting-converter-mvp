@@ -25,6 +25,7 @@ from accounting_converter.adapters.output.jdl import (
     JdlTargetContext,
     jdl_ibex_35_5_output_profile,
 )
+from accounting_converter.adapters.output.jdl import scoped_evidence
 from accounting_converter.application import moneyforward_tax_excluded_evidence as ev
 from accounting_converter.application import noncredit_approval
 from accounting_converter.application import voucher_split
@@ -92,6 +93,8 @@ ACCOUNT_DIAGNOSTIC_GAPS = {"ACCOUNT_CODE_MISMATCH", "ACCOUNT_IDENTITY_MISMATCH",
 VOUCHER_ROW_LIMIT_BLOCKERS = {
     scoped_composition.GAP_ROW_LIMIT_EXCEEDED: "HUMAN:VOUCHER_ROW_LIMIT_EXCEEDED",
     scoped_composition.GAP_ROW_LIMIT_UNCONFIRMED: "HUMAN:VOUCHER_ROW_LIMIT_SETTING",
+    # A row-limit setting (e.g. 64) no real JDL round has proven: Evidence work, not a Human decision.
+    scoped_composition.GAP_ROW_LIMIT_SETTING_UNVERIFIED: "SYSTEM_EVIDENCE:VOUCHER_ROW_LIMIT_SETTING_UNVERIFIED",
 }
 IGNORED_DIAGNOSTIC_GAPS = {"TAX_CATEGORY_MISMATCH", "SHAPE_MISMATCH", "EVIDENCE_SCOPE_CHANGED_BY_MASTER"}
 
@@ -243,10 +246,15 @@ class YayoiJournalReportJdlWorkflow:
                 }[result.field])
         assignments = {}
         likely: dict[str, set[str]] = {entry.id: set() for entry in entries}
+        if context is not None and (
+                scoped_evidence.scope_state(context) is scoped_evidence.ScopeState.VOUCHER_ROW_LIMIT_SETTING_UNVERIFIED):
+            # Same block as the output stage (JDL-OUT-VOUCHER-ROW-LIMIT-SETTING): every journal, any Evidence route.
+            for entry in entries:
+                blockers[entry.id].add(VOUCHER_ROW_LIMIT_BLOCKERS[scoped_composition.GAP_ROW_LIMIT_SETTING_UNVERIFIED])
         if context is not None and context.voucher_row_limit is not None:
             for entry in entries:
                 rows = journal_physical_rows(entry)
-                if rows is not None and len(rows) > context.voucher_row_limit:
+                if rows is not None and scoped_evidence.exceeds_row_limit(rows, context.voucher_row_limit):
                     blockers[entry.id].add(VOUCHER_ROW_LIMIT_BLOCKERS[scoped_composition.GAP_ROW_LIMIT_EXCEEDED])
         if profile is not None and context is not None and self._identity_matches(profile):
             requirements = MappingRequirementExtractor().extract(entries, profile)
@@ -266,7 +274,13 @@ class YayoiJournalReportJdlWorkflow:
                     entry_blockers.add("SYSTEM_EVIDENCE:TAX_CONTEXT_UNVERIFIED")
             else:
                 mapped = MappingEngine(mapping_rule_set_from_profile(profile)).apply(entries).entries
+                subaccounts_unverified = (
+                    scoped_evidence.scope_state(context) is scoped_evidence.ScopeState.IN_SCOPE
+                    and not scoped_evidence.carries(context.voucher_row_limit, "SUBACCOUNT"))
                 for entry, mapped_entry in zip(entries, mapped, strict=True):
+                    if subaccounts_unverified and any(line.sub_account for line in mapped_entry.lines):
+                        # Same block as the output stage (JDL-OUT-VOUCHER-ROW-LIMIT-SUBACCOUNT).
+                        blockers[entry.id].add("SYSTEM_EVIDENCE:VOUCHER_ROW_LIMIT_SUBACCOUNT_UNVERIFIED")
                     match = ev.match_evidence_for_occurrence(entry, mapped_entry, context, profile)
                     if match.evidence is not None:
                         evidence = match.evidence
@@ -384,6 +398,13 @@ class YayoiJournalReportJdlWorkflow:
             "HUMAN:DEPARTMENT_POLICY": "部門を含む仕訳があります。対象のJDL会社は部門を使わない設定のため、意味と扱い（JDLへは出さず監査記録に残す）を確認してください。",
             "HUMAN:JDL_TAX_ROUNDING_SETTING": "JDL会社の消費税の端数処理（売上・仕入）を設定してください。",
             "HUMAN:VOUCHER_ROW_LIMIT_SETTING": "JDLの会社設定「振替伝票入力行数」を確認して入力してください。",
+            "SYSTEM_EVIDENCE:VOUCHER_ROW_LIMIT_SUBACCOUNT_UNVERIFIED": (
+                "この振替伝票入力行数の設定では、補助科目付きの行をJDL実機でまだ確認していません。確認が済むまで変換しません。"
+            ),
+            "SYSTEM_EVIDENCE:VOUCHER_ROW_LIMIT_SETTING_UNVERIFIED": (
+                "入力された振替伝票入力行数（例: 64行以内）は、JDL実機でまだ確認していない設定です。"
+                "実機確認が済むまで変換しません（16行で確認済みのEvidenceをそのまま使いません）。"
+            ),
             voucher_split.APPROVAL_BLOCKER: (
                 "振替伝票入力行数を超える仕訳のうち、分割規則の対象で、分割後の各伝票の形はJDL実機で確認済みのものがあります。"
                 "分割してよいかの税理士確認を記録するまで変換しません（自動では分割しません）。"

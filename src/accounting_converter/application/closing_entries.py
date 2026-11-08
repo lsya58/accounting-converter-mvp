@@ -12,7 +12,8 @@ Real JDL Evidence (company A, JDL IBEX 出納帳 35.5, 2026-11-07, private `clos
 
 Applied only when ALL hold (anything else stays SYSTEM_EVIDENCE:CLOSING_ENTRY_REPRESENTATION):
   - Yayoi 決算 is 本決 (中決 = interim closing: no JDL representation observed);
-  - the JDL setting is the exact scope of the Evidence (35.5・税抜・原則・一括比例・端数 売上切上げ/仕入四捨五入・16行);
+  - the JDL setting is the exact scope of the Evidence (35.5・税抜・原則・一括比例・端数 売上切上げ/仕入四捨五入・16行;
+    another verified 振替伝票入力行数 only if its round carried CLOSING);
   - the journal date is a fiscal year end of the observed month/day (07-31);
   - the journal's rows and JDL tax cells are one of the five imported closing shapes (B1 対象外, B1 非仕入 debit,
     B2, B1C1, B1C2).
@@ -54,7 +55,9 @@ def _scope_ok(context) -> bool:
     from accounting_converter.application import moneyforward_tax_excluded_evidence as ev
 
     return bool(context is not None and ev.context_is_verified(context)
-                and scoped_evidence.scope_state(context) is scoped_evidence.ScopeState.IN_SCOPE)
+                and scoped_evidence.scope_state(context) is scoped_evidence.ScopeState.IN_SCOPE
+                # imported as 決算整理 only under 16 rows so far; another setting needs its own closing control
+                and scoped_evidence.carries(context.voucher_row_limit, "CLOSING"))
 
 
 def _signature(entry, profile, context):

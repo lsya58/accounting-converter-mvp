@@ -41,8 +41,8 @@ COLUMNS = ("//識別フラグ", "伝番", "日付", "借方科目", "借方科�
            "貸方取引科目", "借方部門コード", "借方部門名称", "貸方部門コード", "貸方部門名称")
 
 
-def marked(path: Path) -> dict[str, list[list[str]]]:
-    found: dict[str, list[list[str]]] = {NORMAL: [], CLOSING: []}
+def marked(path: Path, markers: tuple[str, str] = (NORMAL, CLOSING)) -> dict[str, list[list[str]]]:
+    found: dict[str, list[list[str]]] = {marker: [] for marker in markers}
     for group in _groups(_rows(path)):
         for marker in found:
             if any(len(row) > 23 and row[23].startswith(marker) for row in group):
@@ -50,8 +50,11 @@ def marked(path: Path) -> dict[str, list[list[str]]]:
     return found
 
 
-def judge(with_closing: Path, without_closing: Path, after_reimport_without: Path | None = None) -> dict:
-    a, b = marked(with_closing), marked(without_closing)
+def judge(with_closing: Path, without_closing: Path, after_reimport_without: Path | None = None,
+          markers: tuple[str, str] = (NORMAL, CLOSING)) -> dict:
+    """markers = (ordinary entry, closing entry) 摘要 prefixes; the interim probe passes its own."""
+    NORMAL, CLOSING = markers  # noqa: N806 (shadow the module defaults for this call)
+    a, b = marked(with_closing, markers), marked(without_closing, markers)
     out: dict = {"with": {k: len(v) for k, v in a.items()}, "without": {k: len(v) for k, v in b.items()}}
     if len(a[NORMAL]) != 1 or len(a[CLOSING]) != 1 or len(b[NORMAL]) != 1:
         out["result"] = "UNDETERMINED"
@@ -79,7 +82,7 @@ def judge(with_closing: Path, without_closing: Path, after_reimport_without: Pat
     if after_reimport_without is None:
         out["result"] = "CSV_MARK_FOUND_IMPORT_UNVERIFIED"
         return out
-    c = marked(after_reimport_without)
+    c = marked(after_reimport_without, markers)
     out["after_reimport_without"] = {k: len(v) for k, v in c.items()}
     if len(c[NORMAL]) != 1:
         out["result"] = "UNDETERMINED"
@@ -132,7 +135,9 @@ def closing_date(year_end_day: str) -> str:
 
 
 def generate_import(source: Path, company_store: Path, company_id: str, year_end_day: str, output_dir: Path,
-                    shapes=CLOSING_SHAPES) -> dict:
+                    shapes=CLOSING_SHAPES, written_date: str | None = None, label: str = "決算整理仕訳",
+                    row_limit: int | None = None) -> dict:
+    """written_date: the date text JDL itself exported for the entry (default: the observed month-13 closing date)."""
     import csv as _csv
     import hashlib
     import io
@@ -147,39 +152,41 @@ def generate_import(source: Path, company_store: Path, company_id: str, year_end
         raise SystemExit("write under data/private only")
     entries, context = gap_plan.load(source, company_store, company_id, gap.VOUCHER_LIMIT)
     day = date(int(year_end_day[:4]), int(year_end_day[4:6]), int(year_end_day[6:]))
+    written = written_date or closing_date(year_end_day)
     accounts, names = gen._accounts(context)
     synthetic = gap.synthetic_profile(context)
     output_dir.mkdir(parents=True, exist_ok=True)
     common = {"NOT_FOR_PRODUCTION": True, "production_allowed": False, "evidence_activation_allowed": False,
               "status": "PENDING_REAL_JDL_IMPORT_REEXPORT", "target": "JDL IBEX 出納帳 35.5",
-              "company_setting_id": company_id, "probe_date": year_end_day, "voucher_row_limit": gap.VOUCHER_LIMIT,
+              "company_setting_id": company_id, "probe_date": year_end_day,
+              "voucher_row_limit": row_limit or gap.VOUCHER_LIMIT,
               "scoped_registry_allowed": False,
               "registry_exclusion_reason": "決算仕訳の表現の確認。構造・税額の会社範囲registryには入れない"}
     control = gap.write_file("CLOSING_CTL", "通常仕訳の対照（決算整理ではない）", [gap.control_case("CI-CTL", accounts)],
                              day, year_end_day, names, synthetic, context, company_id, output_dir, common, check_lengths=True)
-    cases = [gap.structural_case(case_id, rows, accounts, "CLOSING", f"決算整理仕訳 {case_id}（日付 {closing_date(year_end_day)}）", 0)
+    cases = [gap.structural_case(case_id, rows, accounts, "CLOSING", f"{label} {case_id}（日付 {written}）", 0)
              for case_id, rows in shapes]
-    manifest = gap.write_file("CLOSING_IMP", "決算整理仕訳（JDLの出力どおり13月の日付）", cases, day, year_end_day, names,
+    manifest = gap.write_file("CLOSING_IMP", f"{label}（JDLの出力どおりの日付 {written}）", cases, day, year_end_day, names,
                               synthetic, context, company_id, output_dir, common, check_lengths=True)
     path = output_dir / manifest["probe_file"]
     rows = list(_csv.reader(io.StringIO(path.read_bytes().decode("cp932"))))
     for row in rows[1:]:
-        row[2] = closing_date(year_end_day)
+        row[2] = written
     buffer = io.StringIO(newline="")
     _csv.writer(buffer, lineterminator="\r\n").writerows(rows)
     payload = buffer.getvalue().encode("cp932")
     path.write_bytes(payload)
-    manifest.update(probe_sha256=hashlib.sha256(payload).hexdigest(), journal_date_written=closing_date(year_end_day))
+    manifest.update(probe_sha256=hashlib.sha256(payload).hexdigest(), journal_date_written=written)
     manifest_path_for(path).write_text(json.dumps(manifest, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     import tempfile
 
     with tempfile.TemporaryDirectory() as directory:
-        swapped = _month13_swapped(path, closing_date(year_end_day), Path(directory))
+        swapped = _month13_swapped(path, written, Path(directory))
         self_check = probe_check(swapped, swapped, manifest)
     if any(c["verdict"] != "PASS" for c in self_check["cases"].values()):
         raise SystemExit("the comparator cannot read the month-13 date; nothing to import")
     return {"control": control["probe_file"], "closing": manifest["probe_file"],
-            "closing_cases": [c["case"] for c in manifest["cases"]], "closing_date": closing_date(year_end_day)}
+            "closing_cases": [c["case"] for c in manifest["cases"]], "closing_date": written}
 
 
 def judge_import(probe_dir: Path, with_closing: Path, without_closing: Path) -> dict:
@@ -191,7 +198,7 @@ def judge_import(probe_dir: Path, with_closing: Path, without_closing: Path) -> 
     verdicts = {}
     for path in sorted(probe_dir.glob("YAYOI_GAP_CLOSING_*_NOT_FOR_PRODUCTION.csv")):
         manifest = json.loads(manifest_path_for(path).read_text(encoding="utf-8"))
-        closing = closing_date(manifest["probe_date"])
+        closing = manifest.get("journal_date_written") or closing_date(manifest["probe_date"])
         with tempfile.TemporaryDirectory() as directory:
             work = Path(directory)
             (work / "p").mkdir(), (work / "w").mkdir(), (work / "o").mkdir()

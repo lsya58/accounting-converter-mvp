@@ -5,7 +5,8 @@ only AFTER the existing MF / ACT composition failed, so every journal the
 existing Evidence already covers keeps its evidence, profile and output rows.
 
 A journal is released only when ALL of these hold (each cites its Evidence):
-1. the company scope matches exactly (rounding, voucher row limit, tax context);
+1. the company scope matches exactly (rounding, voucher row limit, tax context); a row limit
+   with no real Evidence for that setting (e.g. 64 before its round) is a gap of its own;
 2. the physical-row count does not exceed the company's voucher row limit;
 3. the layout, the taxed cells and the rows round-tripped (scoped_evidence);
 4. every taxed line's (side, tax cell, target account) round-tripped —
@@ -32,6 +33,7 @@ from accounting_converter.domain.journal_rows import journal_physical_rows
 
 GAP_ROW_LIMIT_EXCEEDED = "VOUCHER_ROW_LIMIT_EXCEEDED"
 GAP_ROW_LIMIT_UNCONFIRMED = "VOUCHER_ROW_LIMIT_UNCONFIRMED"
+GAP_ROW_LIMIT_SETTING_UNVERIFIED = "VOUCHER_ROW_LIMIT_SETTING_UNVERIFIED"
 _RELATION_GAP = {
     "COMPANY": "EXPLICIT_TAX_COMPANY_ROUNDING_UNVERIFIED",
     "FLOOR": "EXPLICIT_TAX_KEEP_UNVERIFIED",
@@ -47,27 +49,38 @@ class ScopedLine:
     written_tax: Decimal | None
 
 
-def united_capabilities() -> dict[tuple[str, str], ev.TaxLineCapability]:
-    """Existing MF capabilities united with the campaign's, per (side, JDL semantic)."""
+_UNITED: dict[int, dict] = {}
+
+
+def united_capabilities(row_limit: int = scoped.SCOPE_VOUCHER_ROW_LIMIT) -> dict[tuple[str, str], ev.TaxLineCapability]:
+    """Existing MF capabilities united with the campaign's (under this row-limit setting), per (side, JDL semantic)."""
+    if row_limit in _UNITED:
+        return _UNITED[row_limit]
     accounts: dict[tuple[str, str], set] = {}
     evidence: dict[tuple[str, str], list] = {}
     for key, capability in ev.LINE_CAPABILITIES.items():
         accounts.setdefault(key, set()).update(capability.verified_accounts)
         evidence.setdefault(key, []).extend(capability.evidence_ids)
-    for (side, cell), by_account in scoped.CELL_ACCOUNTS.items():
+    for (side, cell), by_account in scoped.cell_accounts(row_limit).items():
         key = (side, scoped.CELL_SEMANTIC[cell].value)
         accounts.setdefault(key, set()).update(by_account)
         evidence.setdefault(key, []).extend(i for ids in by_account.values() for i in ids)
-    return {
+    _UNITED[row_limit] = {
         key: ev.TaxLineCapability(key[0], key[1], frozenset(accounts[key]), tuple(dict.fromkeys(evidence[key])))
         for key in accounts
     }
+    return _UNITED[row_limit]
+
+
+def reset_capabilities() -> None:
+    """Only after the registry data was swapped (dry-run forecast, tests)."""
+    _UNITED.clear()
 
 
 UNITED_CAPABILITIES = united_capabilities()
 
 
-def line_gaps(line: ScopedLine) -> tuple[list[str], list[str]]:
+def line_gaps(line: ScopedLine, row_limit: int = scoped.SCOPE_VOUCHER_ROW_LIMIT) -> tuple[list[str], list[str]]:
     """(gaps, supporting Evidence ids) for one taxed line (account level)."""
     if line.cell == "NO":
         capability = ev.LINE_CAPABILITIES.get((line.side, JdlTaxSemantic.NO_TAX.value))
@@ -75,7 +88,7 @@ def line_gaps(line: ScopedLine) -> tuple[list[str], list[str]]:
             return ["TAX_SIDE_UNVERIFIED" if capability is None else "TAX_ACCOUNT_UNVERIFIED"], []
         return [], list(capability.evidence_ids)
     semantic = scoped.CELL_SEMANTIC[line.cell].value
-    capability = UNITED_CAPABILITIES.get((line.side, semantic))
+    capability = united_capabilities(row_limit).get((line.side, semantic))
     if capability is None:
         return ["TAX_SIDE_UNVERIFIED"], []
     if not capability.covers(line.account):
@@ -86,10 +99,10 @@ def line_gaps(line: ScopedLine) -> tuple[list[str], list[str]]:
         return ["EXPLICIT_TAX_AMOUNT_UNVERIFIED"], support
     # Single source of truth shared with the output stage (scoped.relation_covers_account),
     # so composition and preflight can never disagree about which account this applies to.
-    if not scoped.relation_covers_account(line.side, line.cell, relation, line.account):
+    if not scoped.relation_covers_account(line.side, line.cell, relation, line.account, row_limit):
         return [_RELATION_GAP.get(relation, "EXPLICIT_TAX_AMOUNT_UNVERIFIED")], support
     if relation not in {"", "NONE"}:
-        for ids in scoped.relation_accounts(line.side, line.cell, relation).values():
+        for ids in scoped.relation_accounts(line.side, line.cell, relation, row_limit).values():
             support.extend(ids)
     return [], support
 
@@ -107,7 +120,7 @@ def journal_gaps(
     gaps: list[str] = []
     support: list[str] = []
     limit = context.voucher_row_limit
-    if limit is not None and len(rows) > limit:
+    if scoped.exceeds_row_limit(rows, limit):
         return [GAP_ROW_LIMIT_EXCEEDED], []  # nothing else matters: JDL rejects the voucher
     row_cells = []
     lines: list[ScopedLine] = []
@@ -121,13 +134,14 @@ def journal_gaps(
             if scoped_line is not None:
                 lines.append(scoped_line)
         row_cells.append(tuple(pair))
+    view_limit = limit if limit is not None else scoped.SCOPE_VOUCHER_ROW_LIMIT
     layout = scoped.layout_of(rows)
-    placement = scoped.placement_gaps(layout, row_cells)
+    placement = scoped.placement_gaps(layout, row_cells, view_limit)
     gaps.extend(placement)
     if not placement:
-        support.extend(scoped.LAYOUT_EVIDENCE_IDS[layout])
+        support.extend(scoped.layout_evidence_ids(layout, view_limit))
     for line in lines:
-        line_issue, line_support = line_gaps(line)
+        line_issue, line_support = line_gaps(line, view_limit)
         gaps.extend(line_issue)
         support.extend(line_support)
     return gaps, support
@@ -148,6 +162,11 @@ def compose_scoped(
     rows = journal_physical_rows(source)
     if rows is None:
         return None, None
+    if state is scoped.ScopeState.VOUCHER_ROW_LIMIT_SETTING_UNVERIFIED:
+        # No Evidence for this setting at all: say only that (and the limit, which JDL enforces anyway).
+        over = len(rows) > context.voucher_row_limit
+        return None, ((GAP_ROW_LIMIT_SETTING_UNVERIFIED, GAP_ROW_LIMIT_EXCEEDED) if over
+                      else (GAP_ROW_LIMIT_SETTING_UNVERIFIED,))
     info = {
         id(line): (account, sub, tax)
         for line, (_side, account, sub, tax) in zip(source.lines, signature, strict=True)
@@ -185,7 +204,7 @@ def compose_scoped(
             signature,
             JdlEvidenceProfile.SCOPED_COMPOSED_TAX_EXCLUDED_PROPORTIONAL,
             False,
-            tuple(dict.fromkeys([*support, scoped.VOUCHER_ROW_LIMIT_EVIDENCE_ID])),
+            tuple(dict.fromkeys([*support, *scoped.row_limit_evidence_ids(context.voucher_row_limit)])),
         ),
         None,
     )
@@ -204,7 +223,9 @@ def structural_gaps(source: JournalEntry, taxed_value, context: JdlTargetContext
         return None
     gaps: list[str] = []
     limit = context.voucher_row_limit
-    if limit is not None and len(rows) > limit:
+    if state is scoped.ScopeState.VOUCHER_ROW_LIMIT_SETTING_UNVERIFIED:
+        return (GAP_ROW_LIMIT_SETTING_UNVERIFIED,)
+    if scoped.exceeds_row_limit(rows, limit):
         return (GAP_ROW_LIMIT_EXCEEDED,)
     row_cells = []
     for row in rows:
@@ -221,7 +242,8 @@ def structural_gaps(source: JournalEntry, taxed_value, context: JdlTargetContext
                 return None
             pair.append(cell)
         row_cells.append(tuple(pair))
-    gaps.extend(scoped.placement_gaps(scoped.layout_of(rows), row_cells))
+    gaps.extend(scoped.placement_gaps(scoped.layout_of(rows), row_cells,
+                                      limit if limit is not None else scoped.SCOPE_VOUCHER_ROW_LIMIT))
     if state is scoped.ScopeState.VOUCHER_ROW_LIMIT_UNCONFIRMED:
         gaps.append(GAP_ROW_LIMIT_UNCONFIRMED)
     return tuple(dict.fromkeys(gaps))

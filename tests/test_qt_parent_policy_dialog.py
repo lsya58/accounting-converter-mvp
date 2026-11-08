@@ -42,6 +42,17 @@ class ParentPolicyDialogTest(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
+    def _dialog(self, rows):
+        # Destroy the dialog before the interpreter exits; leaving it to GC at shutdown aborts on Windows.
+        dialog = ParentPolicyDialog(rows)
+
+        def cleanup():
+            dialog.close()
+            dialog.deleteLater()
+            self.app.processEvents()
+        self.addCleanup(cleanup)
+        return dialog
+
     def _rows(self):
         items = (_account("手数料", "支払手数料"), _account("預金", "普通預金"),
                  _sub("手数料", "支払手数料", "取引先P"), _sub("手数料", "支払手数料", "取引先Q"),
@@ -51,7 +62,7 @@ class ParentPolicyDialogTest(unittest.TestCase):
 
     def test_nothing_is_chosen_by_default_and_parent_only_is_offered_only_where_possible(self):
         rows = self._rows()
-        dialog = ParentPolicyDialog(rows)
+        dialog = self._dialog(rows)
         self.assertEqual(dialog.choices(), {})
         self.assertFalse(dialog.next_button.isEnabled())
         by_parent = {row.group.source_parent: combo for row, combo in zip(rows, dialog.combos)}
@@ -63,7 +74,7 @@ class ParentPolicyDialogTest(unittest.TestCase):
 
     def test_parent_only_needs_an_explicit_acknowledgement_and_only_chosen_parents_are_returned(self):
         rows = self._rows()
-        dialog = ParentPolicyDialog(rows)
+        dialog = self._dialog(rows)
         for row, combo in zip(rows, dialog.combos):
             if row.group.source_parent == "手数料":
                 combo.setCurrentIndex(combo.findData(PARENT_ONLY))

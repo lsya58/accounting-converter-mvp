@@ -421,13 +421,34 @@ class JdlOutputPreflight:
         limit = self.context.voucher_row_limit
         if limit is None:
             return True
+        if scoped_evidence.scope_state(self.context) is scoped_evidence.ScopeState.VOUCHER_ROW_LIMIT_SETTING_UNVERIFIED:
+            # The company matches the verified JDL settings except this 振替伝票入力行数 (e.g. 64), which no real
+            # JDL round has proven: nothing of this company is written, whatever profile the journal has.
+            errors.append(self._error(
+                "JDL-OUT-VOUCHER-ROW-LIMIT-SETTING",
+                f"振替伝票入力行数（{limit}行以内）はJDL実機で未確認の設定です。",
+                "journal_structure",
+                entry,
+            ))
+            return False
         rows = journal_physical_rows(entry)
-        count = len(rows) if rows is not None else len(entry.lines)
+        count = scoped_evidence.counted_rows(rows, limit) if rows is not None else len(entry.lines)
         if count > limit:
             errors.append(self._error(
                 "JDL-OUT-VOUCHER-ROW-LIMIT",
                 "仕訳の行数が会社設定の振替伝票入力行数を超えています。",
                 "journal_structure",
+                entry,
+            ))
+            return False
+        if (scoped_evidence.scope_state(self.context) is scoped_evidence.ScopeState.IN_SCOPE
+                and not scoped_evidence.carries(limit, "SUBACCOUNT")
+                and any(line.sub_account for line in entry.lines)):
+            # Verified row setting other than 16 whose round did not re-observe a JDL subaccount.
+            errors.append(self._error(
+                "JDL-OUT-VOUCHER-ROW-LIMIT-SUBACCOUNT",
+                f"振替伝票入力行数（{limit}行以内）の設定では、補助科目の出力をJDL実機で確認していません。",
+                "sub_account",
                 entry,
             ))
             return False
@@ -470,7 +491,7 @@ class JdlOutputPreflight:
             row_cells.append(tuple(pair))
         if errors:
             return []
-        gaps = scoped_evidence.placement_gaps(scoped_evidence.layout_of(rows), row_cells)
+        gaps = scoped_evidence.placement_gaps(scoped_evidence.layout_of(rows), row_cells, self.context.voucher_row_limit)
         if gaps:
             errors.append(self._error(
                 "JDL-OUT-SCOPED-LAYOUT", "仕訳の構造・税の配置が実機で確認済みの範囲と一致しません。", "journal_structure", entry))
@@ -523,7 +544,8 @@ class JdlOutputPreflight:
                     # on THIS account (same gate composition used; never trust the caller).
                     account = self._account_identity(line.account)
                     code = account.target_master_code if account else ""
-                    if not scoped_evidence.relation_covers_account(line.side.value, cell, relation, code):
+                    if not scoped_evidence.relation_covers_account(
+                            line.side.value, cell, relation, code, self.context.voucher_row_limit):
                         valid = False
         if not valid:
             errors.append(self._error(

@@ -54,6 +54,9 @@ ROUND4 = Path("data/private/yayoi_buddies/split_layout_probe_20261107")
 ROUND4_REEXPORT = ROUND4 / "JDL_再Export_20260711.csv"
 ROUND4_PROBES = tuple(ROUND4 / f"YAYOI_GAP_{name}_20260711_NOT_FOR_PRODUCTION.csv" for name in ("SPLIT", "NP"))
 PROBES = (*PROBES, NEW_ACCOUNTS_PROBE, *SUBTAX_PROBES, *ROUND4_PROBES)
+ROW64 = Path("data/private/yayoi_buddies/row64_probe_20261108")
+ROW64_REEXPORT = ROW64 / "JDL_再Export_20260614.csv"
+ROW64_IMPORTS = ROW64 / "import_results_20260614.json"
 REF = SourceReference("private", 1)
 AVAILABLE = (STORE.exists() and GAP_REEXPORT.exists() and NEW_ACCOUNTS_REEXPORT.exists() and SUBTAX_REEXPORT.exists()
              and ROUND4_REEXPORT.exists() and all(path.exists() for path in PROBES))
@@ -106,7 +109,7 @@ class RegisteredEvidenceMatchesTheRealProbesTest(unittest.TestCase):
 
     def test_the_production_output_stage_writes_the_rows_that_round_tripped(self):
         checked = 0
-        registered = {case.case_id for case in SCOPED_CASES}
+        registered = {case.case_id for case in SCOPED_CASES if case.row_limit_scope == 16}
         for probe in PROBES:
             manifest = json.loads(manifest_path_for(probe).read_text(encoding="utf-8"))
             groups = _groups(_rows(probe))
@@ -120,7 +123,7 @@ class RegisteredEvidenceMatchesTheRealProbesTest(unittest.TestCase):
                     self.assertEqual([v.rule_id for v in result.validation_results], [])
                     self.assertEqual([list(row.columns()) for row in result.plan.rows], [r[:30] for r in group])
                 checked += 1
-        self.assertEqual(checked, len(SCOPED_CASES))
+        self.assertEqual(checked, sum(case.row_limit_scope == 16 for case in SCOPED_CASES))
 
     def test_registry_equals_the_table_regenerated_from_the_real_files(self):
         from accounting_converter.tools.build_scoped_evidence_registry import collect, collect_gap_round
@@ -136,7 +139,38 @@ class RegisteredEvidenceMatchesTheRealProbesTest(unittest.TestCase):
         cases += round4_cases
         self.assertEqual(
             [(c["case_id"], c["evidence_id"], c["layout"], c["rows"], c["taxed"]) for c in cases],
-            [(c.case_id, c.evidence_id, c.layout, c.rows, c.taxed) for c in SCOPED_CASES])
+            [(c.case_id, c.evidence_id, c.layout, c.rows, c.taxed) for c in SCOPED_CASES if c.row_limit_scope == 16])
+
+    @unittest.skipUnless(ROW64_REEXPORT.exists() and ROW64_IMPORTS.exists(), "64-row round 5 files are not present")
+    def test_row_limit_64_registry_equals_the_regenerated_round_and_the_output_stage_writes_its_rows(self):
+        from accounting_converter.adapters.output.jdl import scoped_evidence as scoped
+        from accounting_converter.tools import yayoi_row64_probe as row64
+
+        result = row64.check(ROW64, ROW64_REEXPORT, json.loads(ROW64_IMPORTS.read_text(encoding="utf-8")))
+        self.assertTrue(result["row_limit_64_verified"])
+        self.assertEqual(result["counts"], scoped.ROW_LIMIT_SCOPES[64].counts)
+        self.assertEqual([c for c, ok in result["carried"].items() if ok],
+                         [c for c, _ in scoped.ROW_LIMIT_SCOPES[64].carried])
+        registered = [c for c in SCOPED_CASES if c.row_limit_scope == 64]
+        self.assertEqual(
+            [(r["case_id"], r["evidence_id"], r["layout"], r["rows"], r["taxed"]) for r in result["registry_records"]],
+            [(c.case_id, c.evidence_id, c.layout, c.rows, c.taxed) for c in registered])
+        context = replace(self.context, voucher_row_limit=64)
+        written = set()
+        for probe in sorted(ROW64.glob("YAYOI_GAP_R64*_NOT_FOR_PRODUCTION.csv")):
+            manifest = json.loads(manifest_path_for(probe).read_text(encoding="utf-8"))
+            groups = _groups(_rows(probe))
+            for case in manifest["cases"]:
+                if case["case"] not in {c.case_id for c in registered}:
+                    continue
+                group = groups[case["journal_index"]]
+                out = JdlOutputPreflight(context).evaluate(
+                    [entry_from_probe_rows(group, self.names)], jdl_ibex_35_5_output_profile())
+                with self.subTest(case=case["case"]):
+                    self.assertEqual([v.rule_id for v in out.validation_results], [])
+                    self.assertEqual([list(row.columns()) for row in out.plan.rows], [r[:30] for r in group])
+                written.add(case["case"])
+        self.assertEqual(written, {c.case_id for c in registered})
 
     def test_subtax_round_keeps_failures_out_of_positive_registry(self):
         from collections import Counter
@@ -169,7 +203,7 @@ class RegisteredEvidenceMatchesTheRealProbesTest(unittest.TestCase):
         )
         from accounting_converter.tools.build_scoped_evidence_registry import setting_peers, tax_setting_keys
 
-        cases = [{"taxed": case.taxed} for case in SCOPED_CASES]
+        cases = [{"taxed": case.taxed} for case in SCOPED_CASES if case.row_limit_scope == 16]
         self.assertEqual(setting_peers(cases, tax_setting_keys(MASTER_PDF)), JDL_TAX_SETTING_PEERS)
         self.assertEqual(set(JDL_TAX_RELATION_AUTHORIZED_PEERS), {("DEBIT", "P10", "COMPANY")})
         for key, codes in JDL_TAX_RELATION_AUTHORIZED_PEERS.items():

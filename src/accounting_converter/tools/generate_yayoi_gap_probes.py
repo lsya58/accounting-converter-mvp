@@ -245,13 +245,16 @@ def serialize_case_rows(entries, context, cases):
 
 
 def write_file(name: str, note: str, cases: list[Case], day: date, probe_date: str, names, profile, context, company_id,
-               output_dir: Path, common: dict, check_lengths: bool) -> dict:
+               output_dir: Path, common: dict, check_lengths: bool, row_limit: int = VOUCHER_LIMIT,
+               expected_over_limit: frozenset[str] = frozenset()) -> dict:
+    """Write one Probe file. A case longer than `row_limit` is refused unless it is named in
+    `expected_over_limit` (a boundary case that exists to be rejected by JDL, in a file of its own)."""
     ids = [c.case_id for c in cases]
     if len(set(ids)) != len(ids):
         raise gen.CampaignError("duplicate case ids")
-    over = [c.case_id for c in cases if len(c.rows) > VOUCHER_LIMIT]
+    over = [c.case_id for c in cases if len(c.rows) > row_limit and c.case_id not in expected_over_limit]
     if over:
-        raise gen.CampaignError(f"cases exceed the voucher row limit {VOUCHER_LIMIT}: {over}")
+        raise gen.CampaignError(f"cases exceed the voucher row limit {row_limit}: {over}")
     entries = [build_entry(case, i, day, names, profile, context) for i, case in enumerate(cases)]
     for entry in entries:
         if entry.debit_total() != entry.credit_total():
