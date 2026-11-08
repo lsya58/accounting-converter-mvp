@@ -129,6 +129,37 @@ class ReviewLayoutTest(unittest.TestCase):
         self.assertGreaterEqual(table.height(), table.minimumHeight())
         self.assertTrue(dialog.save_button.isVisible())
 
+    def test_other_tab_scrolls_and_never_clips_with_details_expanded(self):
+        from PySide6.QtWidgets import QLabel, QScrollArea
+
+        for name, width, height in SCREENS + (("small 760x480", 760, 480),):
+            with self.subTest(screen=name):
+                dialog = self.open_dialog(_large_review(), width, height)
+                dialog.details_section.set_expanded(True)
+                dialog.tabs.setCurrentIndex(dialog.category_tabs["other"])
+                self.app.processEvents()
+                page = dialog.tabs.widget(dialog.category_tabs["other"])
+                self.assertIsInstance(page, QScrollArea)
+                self.assertTrue(dialog.save_button.isVisible())
+                self.assertLessEqual(dialog.details_section.body.height(), main_window.CompanyMappingUpdateDialog._DETAILS_MAX_HEIGHT)
+                inner = page.widget()
+                warning = next(l for l in inner.findChildren(QLabel) if l.objectName() == "warningCard")
+                # The page keeps its natural height (scrolls) rather than squeezing the label.
+                self.assertGreaterEqual(inner.height(), inner.minimumSizeHint().height())
+                self.assertGreaterEqual(warning.height(), warning.heightForWidth(warning.width()))
+                bar = page.verticalScrollBar()
+                bar.setValue(bar.maximum())
+                self.app.processEvents()
+                self.assertTrue(dialog.save_button.isVisible())
+
+    def test_other_tabs_are_unchanged_scroll_wise(self):
+        from PySide6.QtWidgets import QScrollArea
+
+        dialog = self.open_dialog(_large_review(), 1366, 768 - 48)
+        for key in ("accounts", "subaccounts", "descriptions"):
+            self.assertIsNotNone(self.table_in(dialog, key), key)
+        self.assertNotIsInstance(dialog.tabs.widget(dialog.category_tabs["accounts"]), QScrollArea)
+
     def test_tab_labels_are_short_and_carry_meaning_without_colour(self):
         dialog = self.open_dialog(_large_review(), 1280, 800 - 48)
         texts = [dialog.tabs.tabText(index) for index in range(dialog.tabs.count())]

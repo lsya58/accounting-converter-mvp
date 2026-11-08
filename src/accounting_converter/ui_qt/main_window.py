@@ -1786,7 +1786,16 @@ class CompanyMappingUpdateDialog(QDialog):
         self.triage_label.setObjectName("detailText")
         self.triage_label.setWordWrap(True)
         details_layout.addWidget(self.triage_label)
-        self.details_section = CollapsibleSection("件数の内訳と数え方", details)
+        # Long notes scroll inside a capped area, so expanding them can never push the tabs
+        # and the footer out of a small window.
+        details_scroll = QScrollArea()
+        details_scroll.setObjectName("detailsScroll")
+        details_scroll.setWidgetResizable(True)
+        details_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        details_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        details_scroll.setMaximumHeight(self._DETAILS_MAX_HEIGHT)
+        details_scroll.setWidget(details)
+        self.details_section = CollapsibleSection("件数の内訳と数え方", details_scroll)
         header_layout.addWidget(self.details_section)
         layout.addWidget(header)
         self.progress_label = QLabel()
@@ -1810,7 +1819,7 @@ class CompanyMappingUpdateDialog(QDialog):
         )
         self._add_tab("descriptions", "摘要・文字置換", self._description_tab())
         self._add_tab("tax", "税区分", self._tax_tab(tax_message))
-        self._add_tab("other", "その他", self._other_tab())
+        self._add_tab("other", "その他", self._scrollable_page(self._other_tab()))
         layout.addWidget(self.tabs, 1)
         footer = QFrame()
         footer.setObjectName("dialogFooter")
@@ -1861,6 +1870,19 @@ class CompanyMappingUpdateDialog(QDialog):
             self._GEOMETRY_KEY, self.saveGeometry()
         )
         super().done(result)
+
+    # Logical pixels (Qt scales for 125% / 150% displays).
+    _DETAILS_MAX_HEIGHT = 200
+
+    @staticmethod
+    def _scrollable_page(page: QWidget) -> QScrollArea:
+        """A tab page that scrolls instead of squeezing its labels when the tab area is short."""
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setWidget(page)
+        return scroll
 
     def _add_tab(self, key: str, label: str, widget: QWidget) -> None:
         self.category_tabs[key] = self.tabs.addTab(widget, label)

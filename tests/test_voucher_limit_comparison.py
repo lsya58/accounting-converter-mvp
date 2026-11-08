@@ -117,3 +117,28 @@ class ComparisonQtTest(unittest.TestCase):
             dialog.deleteLater()
             self.app.processEvents()
             self.assertEqual(snapshot(Path(directory)), before)
+
+    def test_labels_close_button_and_duplicate_reasons(self):
+        from PySide6.QtWidgets import QDialogButtonBox
+        from accounting_converter.ui_qt.voucher_limit_comparison import (
+            VoucherLimitComparisonDialog, reason_labels)
+        self.assertEqual(reason_labels({"A", "B", "C"}, lambda c: ("同じ理由" if c != "C" else "別の理由", "")),
+                         ["同じ理由", "別の理由"])
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = make(directory, card_voucher(39))
+            resolved = fixture.resolved()
+            report = compare_limits(fixture.source, resolved.profile, resolved.context)
+            dialog = VoucherLimitComparisonDialog(report)
+            dialog.show()
+            self.app.processEvents()
+            self.assertEqual(dialog.findChild(QDialogButtonBox).button(
+                QDialogButtonBox.StandardButton.Close).text(), "閉じる")
+            # The data keeps every code; only the displayed text is de-duplicated.
+            self.assertEqual(dialog.report.journals[0].blockers16, report.journals[0].blockers16)
+            cell = dialog.table.item(0, 3).toolTip()
+            for code in report.journals[0].blockers16:
+                self.assertIn(code, cell)
+            self.assertFalse(dialog.table.horizontalScrollBar().isVisible() and dialog.width() > 980)
+            dialog.close()
+            dialog.deleteLater()
+            self.app.processEvents()

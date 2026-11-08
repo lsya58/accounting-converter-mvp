@@ -3,6 +3,17 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QComboBox, QDialog, QDialogButtonBox, QHeaderView,
     QLabel, QTableWidget, QTableWidgetItem, QVBoxLayout,
 )
+from PySide6.QtCore import Qt, QTimer
+
+
+def reason_labels(codes, describe) -> list[str]:
+    """Display names of BLOCK reasons, one line per distinct name (all codes stay in the data and tooltip)."""
+    seen = []
+    for code in sorted(codes):
+        name = describe(code)[0]
+        if name not in seen:
+            seen.append(name)
+    return seen
 
 
 class VoucherLimitComparisonDialog(QDialog):
@@ -42,7 +53,13 @@ class VoucherLimitComparisonDialog(QDialog):
                 self.summary.setItem(row, 0, name)
                 self.summary.setItem(row, col, QTableWidgetItem(str(trial.assessment.blocker_counts().get(code, 0))))
         self.summary.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        layout.addWidget(self.summary, 1)
+        self.summary.setWordWrap(True)
+        self.summary.setTextElideMode(Qt.TextElideMode.ElideNone)
+        self.summary.resizeRowsToContents()
+        # Room for the fixed rows plus a few reasons; the rest scrolls instead of being cut off.
+        self.summary.setMinimumHeight(self.summary.horizontalHeader().height()
+                                      + sum(self.summary.rowHeight(r) for r in range(min(self.summary.rowCount(), 8))) + 4)
+        layout.addWidget(self.summary, 2)
         released64 = sum(bool(j.blockers16) and not j.blockers64 for j in report.journals)
         released16 = sum(bool(j.blockers64) and not j.blockers16 for j in report.journals)
         counts = QLabel(f"64行のみREADY: {released64}件 / 16行のみREADY: {released16}件 / "
@@ -56,12 +73,24 @@ class VoucherLimitComparisonDialog(QDialog):
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(["仕訳ID", "借方明細", "貸方明細", "16行", "64行", "条件付き比較"])
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        self.table.setColumnWidth(0, 160)
-        for col in (3, 4, 5):
-            self.table.setColumnWidth(col, 260)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setMinimumSectionSize(56)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        self.table.setColumnWidth(0, 150)  # a long ID is elided in the middle; the full ID is the tooltip
+        for col in (1, 2):
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+        for col in (3, 4, 5):  # the long Japanese columns share the width; wrapped, not cut
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
+        self.table.setWordWrap(True)
+        self.table.setTextElideMode(Qt.TextElideMode.ElideMiddle)
         layout.addWidget(self.table, 3)
+        self._rows_timer = QTimer(self)
+        self._rows_timer.setSingleShot(True)
+        self._rows_timer.setInterval(80)
+        self._rows_timer.timeout.connect(self.table.resizeRowsToContents)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.button(QDialogButtonBox.StandardButton.Close).setText("閉じる")
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
         self._populate()
@@ -76,13 +105,18 @@ class VoucherLimitComparisonDialog(QDialog):
         self.table.setRowCount(len(rows))
         for row, journal in enumerate(rows):
             def result(codes):
-                return "READY" if not codes else "BLOCK: " + " / ".join(describe(c)[0] for c in sorted(codes))
+                return "READY" if not codes else "BLOCK: " + " / ".join(reason_labels(codes, describe))
             values = [journal.journal_id, str(journal.debit_lines), str(journal.credit_lines),
                       result(journal.blockers16), result(journal.blockers64), journal.outcome]
             for col, value in enumerate(values):
                 item = QTableWidgetItem(value)
                 codes = journal.blockers16 if col == 3 else journal.blockers64
                 item.setToolTip(value + ("\n" + "\n".join(
-                    describe(code)[1] + " (" + code + ")" for code in sorted(codes)) if col in (3, 4) else ""))
+                    describe(code)[0] + ": " + describe(code)[1] + " (" + code + ")" for code in sorted(codes))
+                    if col in (3, 4) else ""))
                 self.table.setItem(row, col, item)
         self.table.resizeRowsToContents()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._rows_timer.start()  # wrapped rows need new heights once the columns change width
