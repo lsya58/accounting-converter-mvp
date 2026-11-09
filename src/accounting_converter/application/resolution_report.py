@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from accounting_converter.application import readiness_breakdown as breakdown
+from accounting_converter.application import tax_review_facts
 from accounting_converter.application.noncredit_observations import is_noncredit_identity
 
 # action kinds the UI may connect to an existing screen
@@ -89,11 +90,13 @@ _CODE_RULES: dict[str, Rule] = {r.key: r for r in (
 )}
 
 _EXTRA_RULES: dict[str, Rule] = {r.key: r for r in (
-    Rule(NONCREDIT_KEY, "「控除不可」の仕訳があります",
-         "元データの仕入税額控除が「控除不可」です（弥生の経過措置の割合を選ぶ欄の「控除なし」）。JDLには同じ区分が無く、非仕入（税区空欄）で表す方法だけが実機で確認されています。",
+    Rule(NONCREDIT_KEY, "税区分の確認が必要な仕訳があります（控除不可）",
+         "元データの仕入税額控除が「控除不可」の明細があります（弥生の経過措置の割合を選ぶ欄の「控除なし」）。入力内容の確認が必要です"
+         "（誤りと確定したわけではありません）。JDLには同じ区分が無く、非仕入（税区空欄）で表す方法だけが実機で確認されています。",
          "非仕入にするとCSVの往復・消費税集計への影響は確認済みです。ただし元の10%・軽減8%の区別がJDLに残らない点、"
-         "申告上同じ扱いにしてよいかは未確認です。",
-         "税理士が、控除不可にした理由と、非仕入での扱いを確認してください。回答があるまで変換しません。承認記録はこの画面からは行いません。",
+         "申告上同じ扱いにしてよいかは未確認です。元の税区分は変更しません。",
+         "税理士が、取引の実態（相手・商品の所在地・輸入の有無など）と控除不可にした理由を確認してください。"
+         "回答・承認記録があるまで変換しません。承認記録はこの画面からは行いません。",
          (WHERE_TAX,), tax_accountant=True),
     Rule(NEGATIVE_KEY, "JDL CSVへの負の金額の入力方法が確認できません",
          "借方に負の金額（負の消費税を含む）の明細があります。JDLのCSV取込は、借方金額・借方消費税の「-」を数値以外として拒否しました（実機確認、確認した形の範囲）。",
@@ -148,6 +151,72 @@ class ResolutionItem:
 
 
 @dataclass(frozen=True)
+class TaxDecisionOutlook:
+    """Which blockers of a 控除不可 journal depend on the tax decision (a what-if, never a decision).
+
+    direct    : caused by the 控除不可 line itself (HUMAN:TAX_MAPPING)
+    derived   : present now, absent in the what-if where the tax accountant's sign-off is recorded
+                (they could not be evaluated while the tax category was open)
+    independent: present now and NOT about the tax category (row count ...). Never counted as derived even when the
+                what-if re-labels it (16行超 becomes 分割承認待ち once the tax side is evaluable).
+    remaining : still present in that what-if (independent of the tax decision: rows, split approval, Evidence ...)
+    computed  : False when the what-if could not run (the technical Evidence does not cover this company / setting);
+                then every non-direct code stays in `remaining` and nothing is claimed about it.
+    """
+    direct: tuple[str, ...]
+    derived: tuple[str, ...]
+    independent: tuple[str, ...]
+    remaining: tuple[str, ...]
+    computed: bool
+    basis: str
+
+    @property
+    def convertible_after_decision(self) -> bool:
+        return self.computed and not self.remaining
+
+    @property
+    def technical_remaining(self) -> tuple[str, ...]:
+        return tuple(c for c in self.remaining if c.startswith(("SYSTEM_EVIDENCE:", "SYSTEM_IMPLEMENTATION:")))
+
+    @property
+    def headline(self) -> str:
+        if not self.computed:
+            return self.basis
+        if not self.remaining:
+            return ("税理士が「JDLでは非仕入（税区空欄）として扱う」と判断し、その承認を記録した場合、"
+                    "現在の保存設定ではこの仕訳に他のBLOCKは残りません（試算。承認前は変換しません）。")
+        names = " / ".join(dict.fromkeys(rule_for_code(c).title for c in self.remaining))
+        return "税理士の判断・承認記録の後も残る条件: " + names + "（試算）"
+
+
+TRIAL_BASIS = "保存済み設定に、税理士の承認記録があると仮定した試算（保存しません）。"
+TRIAL_UNAVAILABLE = ("この会社・JDL設定は、控除不可の技術Evidence（実機確認）の適用範囲外です（確認済みは会社Aの16行設定のみ）。"
+                     "税理士の判断だけでは変換できず、この設定での実機確認が別途必要です。")
+
+
+# blockers that are never about the tax category, whatever the what-if shows
+INDEPENDENT_OF_TAX = frozenset({
+    "HUMAN:VOUCHER_ROW_LIMIT_EXCEEDED", "HUMAN:VOUCHER_SPLIT_APPROVAL", "SYSTEM_EVIDENCE:CLOSING_ENTRY_REPRESENTATION",
+    "HUMAN:ACCOUNT_MAPPING", "HUMAN:SUBACCOUNT_MAPPING", "HUMAN:SUBACCOUNT_DEFAULT", "HUMAN:VOUCHER_ROW_LIMIT_SETTING",
+    "SYSTEM_EVIDENCE:VOUCHER_ROW_LIMIT_SETTING_UNVERIFIED", "SYSTEM_EVIDENCE:VOUCHER_ROW_LIMIT_SUBACCOUNT_UNVERIFIED",
+    "HUMAN:DEPARTMENT_POLICY", "HUMAN:OPTIONAL_FIELD_POLICY", "HUMAN:DESCRIPTION_REPLACEMENT",
+})
+
+
+def outlook_for(codes, trial_codes) -> TaxDecisionOutlook:
+    codes = tuple(codes)
+    direct = tuple(c for c in codes if c == "HUMAN:TAX_MAPPING")
+    independent = tuple(c for c in codes if c in INDEPENDENT_OF_TAX)
+    if trial_codes is None:
+        return TaxDecisionOutlook(direct, (), independent, tuple(c for c in codes if c not in direct), False,
+                                  TRIAL_UNAVAILABLE)
+    trial = set(trial_codes)
+    derived = tuple(c for c in codes if c not in direct and c not in independent and c not in trial)
+    remaining = tuple(sorted(trial, key=lambda c: (breakdown._rank(c), c)))  # noqa: SLF001
+    return TaxDecisionOutlook(direct, derived, independent, remaining, True, TRIAL_BASIS)
+
+
+@dataclass(frozen=True)
 class JournalResolution:
     journal_id: str
     short_id: str
@@ -155,6 +224,10 @@ class JournalResolution:
     item_keys: tuple[str, ...]
     notes: tuple[str, ...]
     ready: bool = False
+    tax_review: tuple = ()             # read-only source facts (tax_review_facts.TaxReviewLine); never a verdict
+    other_tax: tuple = ()              # (Yayoi tax identity, line count) of the journal's OTHER lines
+    outlook: "TaxDecisionOutlook | None" = None
+    approvals: tuple = ()              # (identity, record) of saved sign-offs naming THIS journal; () = none
 
 
 @dataclass(frozen=True)
@@ -183,6 +256,18 @@ class ResolutionReport:
 
     def journal(self, short_id: str) -> JournalResolution | None:
         return next((j for j in self.journals if j.short_id == short_id), None)
+
+    def awaiting_tax_decision(self, item: ResolutionItem) -> tuple[str, ...]:
+        """Journals of `item` whose codes for it all vanish in the 控除不可 sign-off what-if (they could not be
+        evaluated while the tax category is open). Display only: the item, its count and its codes stay as they are."""
+        found = []
+        for short in item.journals:
+            journal = self.journal(short)
+            outlook = journal.outlook if journal is not None else None
+            own = set(journal.codes) & set(item.codes) if journal is not None else set()
+            if outlook is not None and outlook.computed and own and own <= set(outlook.derived):
+                found.append(short)
+        return tuple(found)
 
     @property
     def next_step(self) -> str:
@@ -214,10 +299,15 @@ def _facts(entry) -> tuple[bool, bool]:
     return noncredit, negative
 
 
+def has_noncredit(entry) -> bool:
+    return entry is not None and _facts(entry)[0]
+
+
 def _notes(codes, noncredit, negative) -> tuple[str, ...]:
     notes = []
     if noncredit:
-        notes.append("元データは「控除不可」。非仕入にすると10%・軽減8%の区別がJDLに残りません。税理士の回答待ちで、承認記録なしには変換しません。")
+        notes.append("元データは「控除不可」。入力内容の確認が必要です（誤りと確定ではありません）。非仕入にすると10%・軽減8%の区別がJDLに残りません。"
+                     "税理士の判断待ちで、承認記録なしには変換しません。")
     if negative:
         notes.append("借方に負の金額があります。JDL CSVは「-」を数値として受け付けませんでした。正の金額への変換・借貸入替・税額変更はしません。")
     if "SYSTEM_EVIDENCE:CLOSING_ENTRY_REPRESENTATION" in codes:
@@ -270,8 +360,12 @@ _DONE_CATEGORIES = (
 
 
 def build_report(journal_blockers: dict, entries: dict, *, saved_limit: int | None = None,
-                 alternative: SettingAlternative | None = None, split_policy_problems: tuple[str, ...] = ()) -> ResolutionReport:
-    """`journal_blockers`: journal id -> blocker codes (the formal assessment). `entries`: journal id -> source entry."""
+                 alternative: SettingAlternative | None = None, split_policy_problems: tuple[str, ...] = (),
+                 tax_decision_trial: dict | None = None, noncredit_approvals: dict | None = None) -> ResolutionReport:
+    """`journal_blockers`: journal id -> blocker codes (the formal assessment). `entries`: journal id -> source entry.
+
+    `tax_decision_trial`: journal id -> blocker codes of the what-if with a recorded 控除不可 sign-off, for the
+    控除不可 journals; a journal absent from it (or None) means the what-if was not available. Display only."""
     journals, by_key = [], {}
     for journal_id, found in journal_blockers.items():
         codes = tuple(sorted(set(found), key=lambda c: (breakdown._rank(c), c)))  # noqa: SLF001
@@ -280,7 +374,12 @@ def build_report(journal_blockers: dict, entries: dict, *, saved_limit: int | No
         noncredit, negative = _facts(entries.get(journal_id)) if entries.get(journal_id) is not None else (False, False)
         pairs = _keys_for(codes, noncredit, negative)
         keys = list(dict.fromkeys(k for k, _ in pairs))
-        journals.append(JournalResolution(journal_id, short_id(journal_id), codes, tuple(keys), _notes(codes, noncredit, negative)))
+        review = tax_review_facts.extract(entries[journal_id], journal_id) if noncredit and entries.get(journal_id) is not None else ()
+        other = tax_review_facts.other_identities(entries[journal_id]) if review else ()
+        outlook = outlook_for(codes, (tax_decision_trial or {}).get(journal_id)) if review else None
+        approvals = tuple(sorted((noncredit_approvals or {}).get(journal_id, {}).items())) if review else ()
+        journals.append(JournalResolution(journal_id, short_id(journal_id), codes, tuple(keys), _notes(codes, noncredit, negative),
+                                          False, review, other, outlook, approvals))
         for key in keys:
             own = tuple(c for k, c in pairs if k == key and c) or codes
             by_key.setdefault(key, []).append((journal_id, own, len(keys)))

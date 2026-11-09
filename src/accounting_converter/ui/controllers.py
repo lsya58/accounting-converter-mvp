@@ -1004,8 +1004,45 @@ class AccountingConverterController:
                 len(trial.assessment.journal_blockers) - trial.assessment.ready_journals)
         report = rr.build_report(
             comparison.formal.journal_blockers, entries, saved_limit=saved, alternative=alternative,
-            split_policy_problems=voucher_split.policy_problems(resolved.profile, resolved.context))
+            split_policy_problems=voucher_split.policy_problems(resolved.profile, resolved.context),
+            tax_decision_trial=self._noncredit_decision_trial(company_id, source, resolved, comparison.formal, entries),
+            noncredit_approvals=self._noncredit_journal_approvals(resolved, comparison.formal, entries))
         return report, comparison
+
+    @staticmethod
+    def _noncredit_journal_approvals(resolved, formal, entries):
+        """journal id -> {identity: saved sign-off record that names THIS journal}. Read-only."""
+        from accounting_converter.application import noncredit_approval as nc
+
+        found = {}
+        for jid in formal.journal_blockers:
+            entry = entries.get(jid)
+            if entry is not None:
+                records = nc.journal_approval(entry, resolved.profile, resolved.context)
+                if records:
+                    found[jid] = records
+        return found
+
+    @staticmethod
+    def _noncredit_decision_trial(company_id, source, resolved, formal, entries):
+        """What-if for the 控除不可 journals: their blockers if the tax accountant's sign-off WERE recorded.
+
+        The trial profile exists only in memory (the profile store refuses it); it never changes READY, never
+        saves and is shown as a 試算. None when the technical Evidence does not cover this company / setting.
+        """
+        from accounting_converter.application import noncredit_approval as nc
+        from accounting_converter.application import resolution_report as rr
+        from accounting_converter.application.yayoi_jdl_workflow import YayoiJdlWorkflow
+
+        flagged = [jid for jid, found in formal.journal_blockers.items() if found and rr.has_noncredit(entries.get(jid))]
+        if not flagged:
+            return None
+        trial = nc.signoff_trial_profile(resolved.profile, resolved.context, company_id,
+                                         [entries[jid] for jid in flagged if entries.get(jid) is not None])
+        if trial is None:
+            return None
+        assessment = YayoiJdlWorkflow().assess(source, trial, resolved.context)
+        return {jid: frozenset(assessment.journal_blockers.get(jid, ())) for jid in flagged}
 
     def voucher_split_briefs(self, company_id, source_path, journal_ids):
         """Read-only: what the approved split rule would write for the journals waiting for approval."""
