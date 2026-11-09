@@ -716,3 +716,35 @@ fallback/ の32ファイル（1ケース1伝票）は、対応するグループ
 - **操作できる項目**: 科目・補助・摘要は該当タブへ、税区分・行数・情報の扱いは既存の画面へ、分割は新設の承認ダイアログへ。操作後は同じ画面で再診断（保存済み設定の正式診断を再実行）。承認は利用者の明示操作（担当者・税理士・参照・日付・確認チェック）がすべて揃うまで押せない。承認は現在の会社設定・行数に紐づき、行数を変更すると失効（既存の挙動）。承認しても他のBLOCKは解消されず、READYは正式診断が決める。
 - **操作を付けない項目（承認ボタンなし）**: 控除不可（税理士の回答待ち、承認記録はCLIのみ）、負の金額（JDL CSVが「-」を拒否、技術調査と税理士判断を区別して表示）、決算の中間決算（実機Evidence不足）、その他の実機Evidence不足。
 - 会社A（保存設定16行）: 変換できる2,481/2,514、対応項目6種類（控除不可3・分割承認19・負の金額1・分割規則外10・中間決算1・実機未確認の形3＝控除不可の仕訳に重なる）。試算（64行）: 2,508、新たに変換できる27、残り6。
+
+## 26. 控除不可3仕訳の税理士回答と税区分確認表示（2026-11-09）
+
+税理士の暫定見解（①②は理由不明・入力ミスの可能性、③は海外商品購入で元区分が誤りとの見解）を受け、元データの再解析と表示改善を行った。新しいJDL実機操作なし、Evidence registry・READY判定・変換出力は不変（正式READY 2,481／2,514）。詳細は [yayoi_tax_review_design.md](yayoi_tax_review_design.md)。元データ: 425（軽減8%・区分記載・控除不可、33行）、565（10%・2明細）、3558（10%・1明細）、税額0。元の税区分の補足保持（JDLの欄／摘要追記）は実機Evidenceがないため不可、外部の監査記録のみ。実装: `tax_review_facts.py`、準備状況画面の「税区分の確認が必要」表示。
+
+## 27. 控除不可3仕訳のBLOCK依存関係と税区分確認UIの品質確認（2026-11-09）
+
+新しいJDL実機操作なし。registry・READY判定・変換出力は不変（正式READY 2,481、64行試算 2,508）。
+
+### 27.1 方法
+AppDataのコピーで、production `YayoiJdlWorkflow.assess` を次の条件で実行（保存なし）: (1) 保存設定そのまま、(2) メモリ上の試算SIGNOFF（`noncredit_approval.signoff_trial_profile`。承認者欄は「試算・承認ではありません」、`noncredit_trial_only` マーカー付きで、`ConversionProfileStore` は保存を拒否）、(3) 感度分析として元CSVのコピーの控除不可4明細を「対象外」または「非課仕入」に置き換えたもの（scratch内のみ。修正の提案ではない）。行数16・64の両方。
+
+### 27.2 結果
+- 16行: (1) 3仕訳ともBLOCK。(2) 565・3558 はBLOCKなし、425 は `HUMAN:VOUCHER_SPLIT_APPROVAL` のみ。READY 2,483（＋分割承認で 2,503）。(3) (2) と同じ。
+- 64行: (1)(2) とも3仕訳BLOCK（控除不可の技術Evidenceは16行のみ）。(3) は3仕訳ともBLOCKなし（READY 2,511）。
+- よって SHAPE_UNVERIFIED_IN_TAX_CONTEXT・MULTIPLE_TAXED_LINES_UNVERIFIED・EXPLICIT_TAX_COMPANY_ROUNDING_UNVERIFIED・TAX_IDENTITY_NOT_COMPOSABLE は、控除不可の明細の税区分が未確定であることから派生したもの。425 の VOUCHER_ROW_LIMIT_EXCEEDED は税区分と無関係（税区分が評価できると、分割後の形が検証済みの「分割承認待ち」として再評価される）。
+- 第16章の「565はB1D4の配置Evidence不足」は、第18章のNP（B1D4）PASSで解消済み。
+
+### 27.3 実装
+- `resolution_report.TaxDecisionOutlook`（direct／derived／independent／remaining、試算できない設定では何も主張しない）、`ResolutionReport.awaiting_tax_decision`。
+- controller `_noncredit_decision_trial`: 控除不可の仕訳があり技術Evidenceの範囲内のときだけ試算を1回実行（実データ約6秒→約7秒）。
+- 画面: 仕訳ごとの要点＋開閉式の詳細。BLOCKコードは利用者向けの名称で表示（全コードは既存の詳細欄）。HTMLはすべてエスケープ（`<script>`・`&` を含む摘要でテスト）。承認・税区分変更のボタンは無い。
+
+## 28. 控除不可の承認スコープ（仕訳単位）と税理士の海外購入方針（2026-11-09）
+
+新しいJDL実機操作なし。registry・READY判定の緩和なし（正式READY 2,481、64行試算 2,508）。詳細は [yayoi_tax_review_design.md](yayoi_tax_review_design.md) 第7・8章。
+
+- 監査: 第16章の承認は税区分identity単位で、同じidentityの別の仕訳・将来の仕訳にも及んでいた（合成データの再現テストで、10%を承認すると2仕訳がREADY）。第16章の「会社限定」は会社の範囲であり、仕訳の範囲ではなかった。
+- 修正: 承認は仕訳の内容identityに紐づける（`noncredit_approval` JOURNALS_V1、パーサが明細に所属仕訳のidentityを付与、正式診断で未承認の控除不可仕訳を明示的にBLOCK）。CLIは `--source` と `--journal` が必須。
+- 実データ試算: 565のみの承認で3558はBLOCKのまま（逆も同様）。
+- 回帰: ACT・MF の正式出力とバイト一致。
+- 税理士の追加回答（海外購入は全て非課税仕入）を運用方針として記録。3558の行き先（a/b/c）と方針の対象範囲は事務所の確認待ち。
