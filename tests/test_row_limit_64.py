@@ -91,7 +91,7 @@ class RegisteredSixtyFourTest(unittest.TestCase):
         record = scoped.ROW_LIMIT_SCOPES[64]
         self.assertIn(64, scoped.verified_row_limits())
         self.assertEqual(record.counts, "LINES_PER_SIDE")  # SIDE-D and SIDE-C (65 physical rows) round-tripped
-        self.assertEqual([c for c, _ in record.carried], ["LAYOUT", "TAX_RELATION", "SUBACCOUNT"])
+        self.assertEqual([c for c, _ in record.carried], ["LAYOUT", "TAX_RELATION", "SUBACCOUNT", "CLOSING"])
         self.assertEqual(sum(c.row_limit_scope == 64 for c in scoped.SCOPED_CASES), 30)
         self.assertEqual(sum(c.row_limit_scope == 16 for c in scoped.SCOPED_CASES), 184)
         self.assertIs(scoped.scope_state(context(limit=64)), scoped.ScopeState.IN_SCOPE)
@@ -114,8 +114,9 @@ class RegisteredSixtyFourTest(unittest.TestCase):
         self.assertIn("JDL-OUT-VOUCHER-ROW-LIMIT", write_errors(over, context(limit=64)))
 
     def test_unverified_conditions_stay_blocked(self):
-        self.assertFalse(scoped.carries(64, "CLOSING"))  # no 64-row closing Probe yet
-        self.assertFalse(closing_entries._scope_ok(context(limit=64)))
+        # Round 6 (2026-11-09): the 64-row closing Probe round-tripped (CLOSING_IMPORT_PRESERVED), so it is carried.
+        self.assertTrue(scoped.carries(64, "CLOSING"))
+        self.assertTrue(closing_entries._scope_ok(context(limit=64)))
         self.assertTrue(closing_entries._scope_ok(context(limit=16)))
         self.assertFalse(noncredit_approval._context_in_scope(context(limit=64)))  # 控除不可: never carried
         self.assertTrue(noncredit_approval._context_in_scope(context(limit=16)))

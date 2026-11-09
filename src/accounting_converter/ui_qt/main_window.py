@@ -260,6 +260,9 @@ class AccountingConverterMainWindow(QMainWindow):
         self.copy_guidance_button.clicked.connect(self._copy_guidance)
         self.copy_diagnostics_button = QPushButton("診断情報をコピー")
         self.copy_diagnostics_button.clicked.connect(self._copy_diagnostics)
+        self.readiness_main_button = QPushButton("変換の準備状況…")
+        self.readiness_main_button.setToolTip("変換できない仕訳の理由と、必要な対応を確認します（設定や承認は変更しません）")
+        self.readiness_main_button.clicked.connect(self._open_resolution_center_main)
         self.convert_button = QPushButton("JDL用に変換する")
         self.convert_button.setObjectName("primaryButton")
         self.convert_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -267,6 +270,7 @@ class AccountingConverterMainWindow(QMainWindow):
         action_row.addWidget(self.settings_action)
         action_row.addWidget(self.copy_guidance_button)
         action_row.addWidget(self.copy_diagnostics_button)
+        action_row.addWidget(self.readiness_main_button)
         action_row.addStretch(1)
         action_row.addWidget(self.convert_button)
         # Owners of what still blocks conversion, as labelled pills (not color alone).
@@ -525,6 +529,22 @@ class AccountingConverterMainWindow(QMainWindow):
         )
         self._render(self.controller.execute_conversion(answer == QMessageBox.StandardButton.Yes))
 
+    def _open_resolution_center_main(self) -> None:
+        from .resolution_center import ResolutionCenterDialog
+
+        state = self.controller.state
+        if not state.selected_file or not state.selected_company_setting_id:
+            return
+        # Items an existing screen resolves are opened through the normal confirmation flow ("確認する").
+        callbacks = {key: "review" for key in (
+            "ACCOUNTS_TAB", "SUBACCOUNTS_TAB", "DESCRIPTION_TAB", "TAX_REVIEW", "ROW_LIMIT", "INFORMATION_POLICY", "COMPANY_SETTING")}
+        dialog = ResolutionCenterDialog(
+            self.controller, state.selected_company_setting_id, state.selected_file, callbacks, self)
+        dialog.exec()
+        self._refresh_current_csv_readiness()
+        if dialog.goto:
+            self._confirm_current_csv()
+
     def _open_settings(self) -> None:
         dialog = SettingsDialog(self.controller, self)
         dialog.exec()
@@ -633,6 +653,10 @@ class AccountingConverterMainWindow(QMainWindow):
             and presentation.status.value in {"CONFIRM", "BLOCKED"}
         )
         self.copy_diagnostics_button.setVisible(state.selected_file is not None)
+        recognition = state.file_recognition
+        self.readiness_main_button.setVisible(
+            state.selected_file is not None and state.selected_company_setting_id is not None
+            and recognition is not None and recognition.format is RecognizedFormat.YAYOI)
         result = state.result_presentation
         self.result_card.setVisible(result is not None)
         if result is not None:
@@ -1831,6 +1855,12 @@ class CompanyMappingUpdateDialog(QDialog):
         self.save_button.setObjectName("primaryButton")
         self.save_button.clicked.connect(self._save)
         actions.addWidget(self.progress_label, 1)
+        self.readiness_button = None
+        if self.is_yayoi:
+            self.readiness_button = QPushButton("変換の準備状況…")
+            self.readiness_button.setToolTip("保存済みの設定で、変換できない仕訳の理由と対応方法を確認します（設定や承認は変更しません）")
+            self.readiness_button.clicked.connect(self._open_resolution_center)
+            actions.addWidget(self.readiness_button)
         actions.addWidget(cancel)
         actions.addWidget(self.save_button)
         layout.addWidget(footer, 0)
@@ -2709,6 +2739,23 @@ class CompanyMappingUpdateDialog(QDialog):
             self.voucher_button.setText(
                 "振替伝票入力行数を入力…" if limit is None else "振替伝票入力行数を確認・変更…"
             )
+
+    def _open_resolution_center(self) -> None:
+        from .resolution_center import ResolutionCenterDialog
+
+        callbacks = {
+            "ACCOUNTS_TAB": "accounts", "SUBACCOUNTS_TAB": "subaccounts", "DESCRIPTION_TAB": "descriptions",
+            "TAX_REVIEW": self._open_tax_review, "ROW_LIMIT": self._open_voucher_row_limit,
+            "COMPARE": self._compare_voucher_limits,
+        }
+        if self.is_yayoi and self.information_fields:
+            callbacks["INFORMATION_POLICY"] = self._open_yayoi_information_policy
+        dialog = ResolutionCenterDialog(
+            self.controller, self.review.company_setting_id, self.review.source_path, callbacks, self,
+            unsaved_changes=self._review_state() != self._initial_review_state)
+        dialog.exec()
+        if dialog.goto and dialog.goto in self.category_tabs:
+            self.tabs.setCurrentIndex(self.category_tabs[dialog.goto])
 
     def _compare_voucher_limits(self) -> None:
         from .voucher_limit_comparison import VoucherLimitComparisonDialog

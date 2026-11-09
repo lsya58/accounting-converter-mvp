@@ -146,7 +146,14 @@ class RegisteredEvidenceMatchesTheRealProbesTest(unittest.TestCase):
         from accounting_converter.adapters.output.jdl import scoped_evidence as scoped
         from accounting_converter.tools import yayoi_row64_probe as row64
 
-        result = row64.check(ROW64, ROW64_REEXPORT, json.loads(ROW64_IMPORTS.read_text(encoding="utf-8")))
+        closing_dir = ROW64 / "closing"
+        closing_with = closing_dir / "YAYOI_GAP_CLOSING_20260731_NOT_FOR_PRODUCTION決算整理あり.csv"
+        closing_without = closing_dir / "YAYOI_GAP_CLOSING_20260731_NOT_FOR_PRODUCTION決算整理なし.csv"
+        if not (closing_with.exists() and closing_without.exists()):
+            self.skipTest("64-row closing re-exports (round 6) are not present")
+        result = row64.check(ROW64, ROW64_REEXPORT, json.loads(ROW64_IMPORTS.read_text(encoding="utf-8")),
+                             closing_with, closing_without)
+        self.assertEqual(result["closing"]["result"], "CLOSING_IMPORT_PRESERVED")
         self.assertTrue(result["row_limit_64_verified"])
         self.assertEqual(result["counts"], scoped.ROW_LIMIT_SCOPES[64].counts)
         self.assertEqual([c for c, ok in result["carried"].items() if ok],

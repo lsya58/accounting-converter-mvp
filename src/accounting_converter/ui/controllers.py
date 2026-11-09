@@ -972,6 +972,87 @@ class AccountingConverterController:
             raise ValueError("入力形式と会社設定の整合を確認してください。")
         return compare_limits(source, resolved.profile, resolved.context)
 
+    def company_resolution_report(self, company_id, source_path):
+        """Read-only: the formal diagnosis grouped into resolvable items (application/resolution_report).
+
+        The READY / BLOCK decision is the production assessment; nothing is saved or approved here.
+        Returns (report, comparison): the comparison is the existing 16/64 trial, used for the setting alternative.
+        """
+        from accounting_converter.application import resolution_report as rr
+        from accounting_converter.application import voucher_split
+        from accounting_converter.application.yayoi_sources import detect_format
+
+        source = Path(source_path)
+        source_format = detect_format(source)
+        resolved = self.company_setting_service.resolve_for_source(company_id, source_format.identity().stable_key)
+        if not resolved.available:
+            raise ValueError("入力形式と会社設定の整合を確認してください。")
+        comparison = self.compare_company_voucher_limits(company_id, source_path)
+        saved = comparison.saved_limit
+        entries = {entry.id: entry for entry in source_format.diagnose(source).entries}
+        alternative = None
+        other = {16: 64, 64: 16}.get(saved)
+        if other is not None:
+            trial = next(t for t in comparison.trials if t.limit == other)
+            now = comparison.formal.journal_blockers
+            released = tuple(sorted((rr.short_id(j) for j, found in trial.assessment.journal_blockers.items()
+                                     if not found and now.get(j)), key=lambda x: (len(x), x)))
+            lost = tuple(sorted((rr.short_id(j) for j, found in trial.assessment.journal_blockers.items()
+                                 if found and not now.get(j)), key=lambda x: (len(x), x)))
+            alternative = rr.SettingAlternative(
+                other, trial.assessment.ready_journals, released, lost,
+                len(trial.assessment.journal_blockers) - trial.assessment.ready_journals)
+        report = rr.build_report(
+            comparison.formal.journal_blockers, entries, saved_limit=saved, alternative=alternative,
+            split_policy_problems=voucher_split.policy_problems(resolved.profile, resolved.context))
+        return report, comparison
+
+    def voucher_split_briefs(self, company_id, source_path, journal_ids):
+        """Read-only: what the approved split rule would write for the journals waiting for approval."""
+        from accounting_converter.application.voucher_split_brief import brief
+        from accounting_converter.application.yayoi_sources import detect_format
+
+        source = Path(source_path)
+        source_format = detect_format(source)
+        resolved = self.company_setting_service.resolve_for_source(company_id, source_format.identity().stable_key)
+        if not resolved.available or resolved.context is None or resolved.context.voucher_row_limit is None:
+            raise ValueError("振替伝票入力行数が確認済みの会社設定が必要です。")
+        wanted = set(journal_ids)
+        limit = resolved.context.voucher_row_limit
+        return limit, tuple(
+            brief(entry, limit) for entry in source_format.diagnose(source).entries
+            if entry.id.rsplit(":", 1)[-1] in wanted)
+
+    def approve_voucher_split(
+        self, company_setting_id: str, *, human_approver: str, tax_accountant: str,
+        signoff_reference: str, signoff_date, explicitly_confirmed: bool,
+    ) -> AppState:
+        """Record, for this company and its CURRENT 振替伝票入力行数, that the tax accountant accepted the split rule.
+
+        Only a user's explicit action calls this. It approves the rule (not an Evidence gap): the existing
+        diagnosis still decides which journals become READY. A later row-limit change invalidates the approval.
+        """
+        from accounting_converter.application import voucher_split
+
+        if not explicitly_confirmed:
+            return self._fail_state("承認の記録には、税理士が了承したことの明示的な確認が必要です。", ValueError("confirmation missing"))
+        try:
+            resolved = self.company_store.resolve(company_setting_id)
+            voucher_split.approve_split_policy(
+                self.profile_store, resolved.profile.profile_id, company_setting_id, resolved.context,
+                human_approver=human_approver, tax_accountant=tax_accountant,
+                signoff_reference=signoff_reference, signoff_date=signoff_date)
+            self.company_store.refresh_profile_fingerprint(company_setting_id)
+        except Exception as error:
+            return self._fail_state(
+                str(error) if isinstance(error, ValueError) else
+                "伝票分割の承認を保存できませんでした。会社設定を確認してください。", error)
+        self.load_profiles()
+        self.load_company_settings()
+        state = self.select_company_setting(company_setting_id)
+        self.state = replace(state, user_message="伝票分割の承認を記録しました。正式な診断で結果を確認してください。")
+        return self.state
+
     def confirm_company_voucher_row_limit(
         self, company_setting_id: str, limit: int, *, explicitly_confirmed: bool
     ) -> AppState:
