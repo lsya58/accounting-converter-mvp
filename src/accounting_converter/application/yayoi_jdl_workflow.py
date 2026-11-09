@@ -30,6 +30,7 @@ from accounting_converter.application import moneyforward_tax_excluded_evidence 
 from accounting_converter.application import noncredit_approval
 from accounting_converter.application import voucher_split
 from accounting_converter.application import closing_entries
+from accounting_converter.application import yayoi_credit_period as credit_period
 from accounting_converter.application import scoped_evidence_composition as scoped_composition
 from accounting_converter.application.conversion import ConversionRequest, ConversionService
 from accounting_converter.application.first_release_workflow import (
@@ -246,6 +247,10 @@ class YayoiJournalReportJdlWorkflow:
                 }[result.field])
         assignments = {}
         likely: dict[str, set[str]] = {entry.id: set() for entry in entries}
+        for entry in entries:
+            # 経過措置割合（80%/70%…）と取引日の期間が合わない行は、確認済みの税区分対応があっても変換しない。
+            if credit_period.period_mismatch(entry):
+                blockers[entry.id].add(credit_period.PERIOD_BLOCKER)
         if context is not None and (
                 scoped_evidence.scope_state(context) is scoped_evidence.ScopeState.VOUCHER_ROW_LIMIT_SETTING_UNVERIFIED):
             # Same block as the output stage (JDL-OUT-VOUCHER-ROW-LIMIT-SETTING): every journal, any Evidence route.
@@ -393,6 +398,7 @@ class YayoiJournalReportJdlWorkflow:
             "HUMAN:SUBACCOUNT_MAPPING": "未確認の補助科目対応があります。",
             "HUMAN:SUBACCOUNT_DEFAULT": "補助なしの仕訳のまとめ先補助を確認してください。",
             "HUMAN:TAX_MAPPING": "税区分の確認が必要です。",
+            credit_period.PERIOD_BLOCKER: credit_period.PERIOD_MESSAGE,
             "HUMAN:DESCRIPTION_REPLACEMENT": "JDLに入らない摘要があります。置き換え内容を確認してください。",
             "HUMAN:OPTIONAL_FIELD_POLICY": "生成元・付箋などJDLに保持先のない情報があります。意味と扱い（JDLへは出さず監査記録に残す）を確認してください。",
             "HUMAN:DEPARTMENT_POLICY": "部門を含む仕訳があります。対象のJDL会社は部門を使わない設定のため、意味と扱い（JDLへは出さず監査記録に残す）を確認してください。",

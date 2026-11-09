@@ -2,7 +2,12 @@
 
 **この文書は進捗の索引です。** 数字・判断の正本は [current_evidence_status.md](current_evidence_status.md)、実機操作の履歴は [jdl_real_evidence_log.md](jdl_real_evidence_log.md)、経緯は [yayoi_buddies_evidence_campaign.md](yayoi_buddies_evidence_campaign.md)。顧客の値は書かない。
 
-最終更新: 2026-11-08（第5回 64行Probe の解析後・比較診断UI追加）
+最終更新: 2026-11-09（消費税区分の調査・経過措置の期間チェック追加）
+
+### 消費税区分の調査（2026-11-09、詳細は campaign 第21章）
+- 控除不可は会社Aで3仕訳（425・565・3558、いずれも区分記載・税額0）。理由は取引内容から断定できず税理士確認待ち。BLOCK変更なし。
+- 80%→70%（2026-10-01〜）: `application/yayoi_credit_period.py` を追加。取引日と控除割合が食い違う行はBLOCK（`HUMAN:TRANSITIONAL_CREDIT_PERIOD`）。70%の識別名は候補なし。JDLの70%税区は未確認。READY 2,481不変。
+- 10%・軽減8%の実装変更なし。テスト Linux 1,384件 OK（skip 46）。
 
 ### 16行・64行の比較診断UI
 - 弥生の確認画面の行数設定欄から「16行・64行を比較…」。保存済みProfileによる正式判定と、別設定の条件付き試算を並べる。未保存の入力は含めない。

@@ -76,6 +76,19 @@ _EXACT_CANDIDATES = {
 }
 
 
+TRANSITIONAL_UNVERIFIED_REASON = (
+    "免税事業者等からの仕入れの経過措置（70%・50%・30%）は、JDL出納帳35.5での税区の書き方を実機で確認していません。"
+    "80%の税区「10%免80」や通常の課税仕入に置き換えると控除額が変わるため、確認が済むまで変換しません。"
+)
+
+
+def _unverified_transitional(identity: str) -> bool:
+    from accounting_converter.application.yayoi_credit_period import transitional_ratio
+
+    ratio = transitional_ratio(identity.rsplit("｜", 1)[-1])
+    return ratio is not None and ratio != 80
+
+
 def candidate_semantic(identity: str) -> JdlTaxSemantic | None:
     """Natural JDL candidate shown to the Human. Never applied without confirmation.
 
@@ -496,6 +509,7 @@ def yayoi_tax_mapping_review(profile, context, *, affected_counts=None, observed
                 if confirmable else
                 SCOPED_SEMANTIC_BLOCKED_REASON if scoped_blocked else
                 NONCREDIT_REASON if is_noncredit_identity(value) else
+                TRANSITIONAL_UNVERIFIED_REASON if _unverified_transitional(value) else
                 "JDLでの書き方が実機で確認されていません（控除不可など）。"
             ),
             affected_row_count=affected_counts.get(value, 0),
