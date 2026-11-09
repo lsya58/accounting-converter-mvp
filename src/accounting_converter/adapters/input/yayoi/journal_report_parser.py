@@ -40,6 +40,7 @@ from accounting_converter.domain.journal import (
 )
 from accounting_converter.domain.journal_identity import (
     JOURNAL_CONTENT_IDENTITY_KEY,
+    stamp_line_journal_identity,
     journal_content_identity,
 )
 from accounting_converter.domain.journal_rows import (
@@ -328,7 +329,7 @@ class YayoiJournalReportParser:
         )
         if not entry.is_balanced():
             return None, [YayoiJournalReportIssue("UNBALANCED_JOURNAL", first.number)]
-        return entry, []
+        return stamp_line_journal_identity(entry), []
 
     def _line(self, file_name, entry_id, row: _Row, side: Side, carries_invoice: bool):
         account, sub, department, tax, calculation, amount_raw, tax_raw = (row.get(name) for name in _SIDES[side])

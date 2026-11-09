@@ -251,6 +251,12 @@ class YayoiJournalReportJdlWorkflow:
             # 経過措置割合（80%/70%…）と取引日の期間が合わない行は、確認済みの税区分対応があっても変換しない。
             if credit_period.period_mismatch(entry):
                 blockers[entry.id].add(credit_period.PERIOD_BLOCKER)
+        # 控除不可: the sign-off covers the journals it names, never the Yayoi tax identity as such. A journal whose
+        # own content identity is not named (or not unique in this source) stays blocked whatever else matches.
+        unapproved = noncredit_approval.unapproved_journals(source_entries, profile, context)
+        for entry in entries:
+            if origin[entry.id] in unapproved:
+                blockers[entry.id].add("HUMAN:TAX_MAPPING")
         if context is not None and (
                 scoped_evidence.scope_state(context) is scoped_evidence.ScopeState.VOUCHER_ROW_LIMIT_SETTING_UNVERIFIED):
             # Same block as the output stage (JDL-OUT-VOUCHER-ROW-LIMIT-SETTING): every journal, any Evidence route.

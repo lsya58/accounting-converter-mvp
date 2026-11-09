@@ -26,3 +26,21 @@ def journal_content_identity(source_format: str, date_iso: str, rows: Sequence[S
 def stable_journal_identity(entry: JournalEntry) -> str | None:
     value = entry.metadata.get(JOURNAL_CONTENT_IDENTITY_KEY)
     return value if isinstance(value, str) and len(value) == 64 else None
+
+
+# Each line of a parsed Yayoi journal also carries its journal's content identity, so that a decision taken for ONE
+# journal (e.g. the 控除不可 sign-off, application/noncredit_approval.py) can be checked where only the line is at hand.
+LINE_JOURNAL_IDENTITY_KEY = "line_journal_content_sha256"
+
+
+def stamp_line_journal_identity(entry: JournalEntry) -> JournalEntry:
+    identity = stable_journal_identity(entry)
+    if identity is not None:
+        for line in entry.lines:
+            line.metadata = {**line.metadata, LINE_JOURNAL_IDENTITY_KEY: identity}
+    return entry
+
+
+def line_journal_identity(line) -> str | None:
+    value = (getattr(line, "metadata", None) or {}).get(LINE_JOURNAL_IDENTITY_KEY)
+    return value if isinstance(value, str) and len(value) == 64 else None

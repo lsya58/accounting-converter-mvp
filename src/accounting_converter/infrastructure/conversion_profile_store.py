@@ -160,6 +160,9 @@ class ConversionProfileStore:
             ("loss_policy_mappings", profile.loss_policy_mappings),
         ):
             _validate_mapping_dict(mapping_name, mappings)
+            # what-if sign-offs (application/noncredit_approval.signoff_trial_profile) are never persisted
+            if any("noncredit_trial_only" in (getattr(m, "metadata", None) or {}) for m in mappings.values()):
+                raise ConversionProfileStoreError("a what-if (trial) approval cannot be saved")
         _validate_context_mapping_dict(
             "subaccount_context_mappings",
             profile.subaccount_context_mappings,

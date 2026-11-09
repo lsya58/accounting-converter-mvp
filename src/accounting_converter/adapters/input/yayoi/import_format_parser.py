@@ -23,6 +23,7 @@ from pathlib import Path
 from accounting_converter.domain.journal import JournalEntry
 from accounting_converter.domain.journal_identity import (
     JOURNAL_CONTENT_IDENTITY_KEY,
+    stamp_line_journal_identity,
     journal_content_identity,
 )
 from accounting_converter.domain.journal_rows import (
@@ -159,7 +160,7 @@ class YayoiImportFormatParser(YayoiObservedSingleRecordParser):
             raise YayoiObservedSingleRecordParserError(
                 f"Yayoi import journal starting at row {first.row_number} is not balanced"
             )
-        return entry
+        return stamp_line_journal_identity(entry)
 
 
 def looks_like_yayoi_import_format(path: Path) -> bool:

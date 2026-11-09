@@ -3,9 +3,11 @@
   status   --company-store --company-id [--source]
            Evidence state, whether this company / JDL setting is covered, the saved approval per identity,
            the source lines involved and what JDL will not hold. Read-only.
-  approve  --company-store --company-id --identity --judge-report --human-approver --tax-accountant
-           --signoff-reference --signoff-date --acknowledge-rate-loss
-           Writes ONE approval into that company's profile. Refused unless the judge report (made from the
+  approve  --company-store --company-id --identity --source --journal ID [--journal ID ...] --judge-report
+           --human-approver --tax-accountant --signoff-reference --signoff-date --acknowledge-rate-loss
+           Writes the sign-off for the NAMED JOURNALS ONLY (by their content identity in --source; the ID is the
+           journal number shown on screen, e.g. 565). Other journals with the same Yayoi tax identity stay blocked,
+           and a later change to a named journal's content invalidates it for that journal. Refused unless the judge report (made from the
            readings sheet whose SIGNOFF row the tax accountant marked 済) says EQUIVALENCE_CONFIRMED for the
            probe case of the same rate, and every technical condition holds. Run it yourself on purpose; it is
            never run automatically and never against a store you have not chosen.
@@ -44,6 +46,10 @@ def status(company_store: Path, company_id: str, source: Path | None = None) -> 
     for identity in nc.NONCREDIT_SOURCES:
         mapping = profile.tax_mappings.get(identity) if profile is not None else None
         problems = nc.mapping_problems(identity, mapping, profile, context)
+        out.setdefault("approval_scope", "journals named in the sign-off only (content identity), never the identity as such")
+        out.setdefault("approved_journals", {})[identity] = [
+            {k: r.get(k) for k in ("label", "date", "journal_content_sha256", "tax_accountant", "signoff_reference", "signoff_date")}
+            for r in nc.approved_journals(mapping).values()] if not problems else []
         out["identities"][identity] = {
             "technical_problems": list(nc.technical_problems(identity, company_id, context)),
             "approval_problems": list(problems),
@@ -58,7 +64,9 @@ def status(company_store: Path, company_id: str, source: Path | None = None) -> 
             for line in entry.lines:
                 category = line.tax_info.category if line.tax_info else None
                 if category and category.rsplit("｜", 1)[-1] == "控除不可":
+                    covered = nc.journal_approval(entry, profile, context).get(category)
                     lines.append({"journal": entry.id, "date": entry.date.isoformat(), "identity": category,
+                                  "approved_for_this_journal": covered is not None,
                                   "side": line.side.value, "amount": str(line.amount),
                                   "tax": str(line.tax_info.tax_amount), "shape_problems": list(nc.line_problems(line)),
                                   "journal_lines": len(entry.lines)})
@@ -80,15 +88,27 @@ def approve(args) -> dict:
         raise SystemExit("--acknowledge-rate-loss is required: " + nc.LOSS_TEXT)
     profiles, companies = _stores(args.company_store)
     resolved = companies.resolve(args.company_id)
+    from accounting_converter.application.yayoi_sources import detect_format
+
+    entries = detect_format(args.source).diagnose(args.source).entries
+    by_label = {}
+    for entry in entries:
+        by_label.setdefault(entry.id.rsplit(":", 1)[-1], []).append(entry)
+    wanted = list(dict.fromkeys(args.journal))
+    missing = [j for j in wanted if len(by_label.get(j, ())) != 1]
+    if missing:
+        raise SystemExit(f"journal not found exactly once in --source: {', '.join(missing)}")
+    journals = [by_label[j][0] for j in wanted]
     nc.approve_noncredit_identity(
         profiles, resolved.profile.profile_id, args.company_id, resolved.context, args.identity,
         human_approver=args.human_approver, tax_accountant=args.tax_accountant,
         signoff_reference=args.signoff_reference, signoff_date=date.fromisoformat(args.signoff_date),
         rate_distinction_loss_acknowledged=True,
         judge_report_sha256=hashlib.sha256(report_bytes).hexdigest(),
+        journals=journals, source_entries=entries, labels={entry.id: entry.id.rsplit(":", 1)[-1] for entry in journals},
     )
     companies.refresh_profile_fingerprint(args.company_id)
-    return status(args.company_store, args.company_id)
+    return status(args.company_store, args.company_id, args.source)
 
 
 def main() -> int:
@@ -102,6 +122,9 @@ def main() -> int:
     a.add_argument("--company-store", type=Path, required=True)
     a.add_argument("--company-id", required=True)
     a.add_argument("--identity", required=True, choices=tuple(nc.NONCREDIT_SOURCES))
+    a.add_argument("--source", type=Path, required=True, help="the Yayoi file the journals are read from")
+    a.add_argument("--journal", action="append", required=True,
+                   help="journal number as shown on screen (repeat for several); each is approved individually")
     a.add_argument("--judge-report", type=Path, required=True)
     a.add_argument("--human-approver", required=True)
     a.add_argument("--tax-accountant", required=True)

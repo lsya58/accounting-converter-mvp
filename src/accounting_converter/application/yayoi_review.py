@@ -532,7 +532,18 @@ def _noncredit_item(value, mapping, profile, context, company_setting_id, affect
         and not noncredit_approval.mapping_problems(value, mapping, profile, context)
     )
     if approved:
-        return None
+        # The sign-off names journals, not this identity: other journals with the same identity stay blocked, so the
+        # identity is never shown as settled. Each journal's own state is on the 準備状況 screen.
+        labels = [r.get("label") or r["journal_content_sha256"][:12] for r in noncredit_approval.approved_journals(mapping).values()]
+        return TaxMappingSetupItem(
+            source_value=value, target_value=None, target_display="非仕入（税区空欄）※承認記録のある仕訳のみ",
+            target_scope="非仕入", evidence_id=noncredit_approval.TECHNICAL_EVIDENCE.evidence_id,
+            human_confirmable=False, action_owner="HUMAN", blocker_code="YAYOI-JDL-TAX-NONCREDIT-JOURNAL-SCOPED",
+            reason=("税理士の承認記録は仕訳ごとです（記録済み: 仕訳 " + "・".join(labels) + "）。"
+                    "同じ税区分でも、記録のない仕訳や内容が変わった仕訳は変換しません。"
+                    "各仕訳の状態は「変換の準備状況」で確認してください。" + noncredit_approval.LOSS_TEXT),
+            affected_row_count=affected_counts.get(value, 0),
+        )
     code, reason, display = noncredit_approval.review_reason(value, company_setting_id, profile, context)
     return TaxMappingSetupItem(
         source_value=value,
