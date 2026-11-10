@@ -2,7 +2,13 @@
 
 **この文書は進捗の索引です。** 数字・判断の正本は [current_evidence_status.md](current_evidence_status.md)、実機操作の履歴は [jdl_real_evidence_log.md](jdl_real_evidence_log.md)、経緯は [yayoi_buddies_evidence_campaign.md](yayoi_buddies_evidence_campaign.md)。顧客の値は書かない。
 
-最終更新: 2026-11-09（控除不可の承認を仕訳単位に修正・税理士の海外購入方針を記録／控除不可3仕訳のBLOCK依存関係）
+最終更新: 2026-11-10（Pilot-1・Pilot-2 実機往復の照合。どちらも正式判定は `NORMALIZATION_ACCEPTANCE_PENDING`）
+
+### Pilot-1 実機往復と Pilot-2 準備（2026-11-10、計画: [pilot_e2e_plan.md](pilot_e2e_plan.md)、campaign 第29章）
+- **Pilot-1（2025-12-01〜12-30、207仕訳・465明細）**: Windows EXE変換 → JDL実機Import → 再Export まで完了。欠落・重複・余分0、金額・借貸・日付・科目・補助・税区分・税額・伝票構造・決算区分は一致（既知の正規化2,199セル）、説明できない差分0。非保持171項目（親科目のみの補助・54組）は利用者確認済みで監査記録PASS。
+- **正式判定: `NORMALIZATION_ACCEPTANCE_PENDING`**。JDLが摘要の末尾の空白を削除した45行（44伝票）は実機Evidenceとして登録した（`EVID-YAYOI-JDL-35-5-BUDDIES-PILOT1-DESCRIPTION-TRAILING-SPACE-REMOVED-001`）が、**情報欠落の許容判断は未記録（税理士に確認中）**。記録するまで正式PASSにしない。許容判断を代行しない。
+- 修正（未commit）: 摘要末尾空白の正規化検出（Evidenceの範囲内のみ）、80%経過措置の税額比較（書き出し側と同じ `ev.target_tax_amount`）、監査JSONを出力SHA-256で対応付け（改名OK、0件・複数はFAIL）、許容判断の記録ツール。テスト 1,446件 OK（skip 61）。
+- **Pilot-2（2026-05-01〜05-29、174仕訳・434明細、全件READY）**: Windows EXE変換・JDL実機Import・再Export完了。会計データの不一致0、監査137項目PASS。摘要末尾空白48行（44伝票）のうち1行（伝票1939）が半角3個で、Pilot-1のEvidenceの範囲外のため一度FAIL。実機の再Exportを根拠に追加Evidence `EVID-YAYOI-JDL-35-5-BUDDIES-PILOT2-DESCRIPTION-TRAILING-SPACE-REMOVED-001`（半角3個だけ）を別エントリで登録し、再照合して **`NORMALIZATION_ACCEPTANCE_PENDING`**（説明できない差分0）。**Pilot-1の許容判断はPilot-2に適用しない**（それぞれ別の記録）。
 
 ### 控除不可の承認スコープを仕訳単位に修正（2026-11-09、設計: [yayoi_tax_review_design.md](yayoi_tax_review_design.md) 第7・8章）
 - **不具合（修正済み）**: 控除不可の承認は弥生の税区分identity単位で、10%を1件承認すると取引内容の異なる 565・3558 の両方と将来の同じidentityの仕訳まで変換対象になった（再現テストで確認）。承認記録は実AppDataに0件で、実害はない。
@@ -142,6 +148,7 @@
 - 64行にした場合（残り6）: 425・565・3558（控除不可）、4012（マイナス明細で分割不可）、1739（分割承認）、3605（中決）
 
 ## 7. 次に必要な最小限のJDL操作
+-1. Pilot-1・Pilot-2とも実機操作は完了。残りは税理士の摘要末尾空白の許容判断（記録のみ、JDL再操作は不要）。
 0. 4012: 負の明細はCSVで取り込めないと判明（`negative_probe_20261109` 実施済み）。税理士の方針決定までJDL操作は不要。
 1. **（任意・64行を使う場合）** 64行設定の複製に `closing/` の2ファイルを「決算整理を含む」で取込 → 2026-07-31 を「含む」「含まない」で再Export（2回）。
 2. （任意）中間決算の画面調査（手順書: `interim_closing_probe_20261108/JDL操作手順_中間決算_20260131.md`）。
@@ -166,4 +173,6 @@
 | 2026-11-08 | Qt終了時Abort: 原因＝`test_qt_parent_policy_dialog`が親なしダイアログを破棄せずGCに任せていた。テストにcleanup（close/deleteLater）を追加し解消。全体で`Fatal Python error`なし | 本体コードは変更なし |
 | 2026-11-09 | 承認スコープ修正後: Linux 1,428件 OK（skip 61: PySide6なし60・pypdfなし1）。Windows offscreen 1,428件 skip 0、failures 2＋errors 15（HEADでも再現する既存のOS依存17件と同一。今回の `test_noncredit_approval`・`test_resolution_report` 53件は倍率1／1.25／1.5でOK）。ACT・MF出力バイト一致 | 控除不可の承認を仕訳単位に |
 | 2026-11-09 | Linux 1,416件 OK（skip 60: PySide6なし59・pypdfなし1）。Windows offscreen `test_resolution_report` 27件 OK（倍率1／1.25／1.5）。Windows全体 1,416件: failures 2＋errors 15（すべてHEADのコードでも同じく再現＝既存のOS依存: CSV改行・CP932読込・パス・成果物順。今回の変更と無関係） | 控除不可3仕訳の依存関係・税区分確認UI |
+| 2026-11-10 | Linux 1,446件 OK（skip 61）。Pilot-1 実機往復の最終整備: 摘要末尾空白・80%経過措置・監査JSONのSHA-256対応付け・許容判断ツールの回帰18件を追加（変更前は1,428件） | 実機の再操作なし。Pilot-1 実データの回帰（取込CSVのバイト一致）を含む |
+| 2026-11-10 | Linux 1,452件 OK（skip 61）。Pilot-2の追加Evidence（半角3個）: エントリ履歴・未観測の並びの拒否・行ごとのEvidence紐づけ・Pilot-2実データ回帰を追加（直前は1,446件） | Pilot-1の45行の結果は不変 |
 | 2026-11-08 | 表示修正後: Linux全体OK、Windows Qt関連（比較・レイアウト）OK | Windows実画面での確認項目は報告参照。Windows固有の失敗11件は未解決のまま別管理 |

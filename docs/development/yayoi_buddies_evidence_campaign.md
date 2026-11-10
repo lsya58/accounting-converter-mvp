@@ -748,3 +748,10 @@ AppDataのコピーで、production `YayoiJdlWorkflow.assess` を次の条件で
 - 実データ試算: 565のみの承認で3558はBLOCKのまま（逆も同様）。
 - 回帰: ACT・MF の正式出力とバイト一致。
 - 税理士の追加回答（海外購入は全て非課税仕入）を運用方針として記録。3558の行き先（a/b/c）と方針の対象範囲は事務所の確認待ち。
+
+## 29. Pilot-1 実機往復の確定記録とPilot-2の準備（2026-11-10）
+- Pilot-1（2025-12-01〜12-30、207仕訳・465明細）: EXE変換・JDL実機Import・再Export完了。照合は `yayoi_roundtrip_check`（既存の厳密比較を再利用）。欠落・重複・余分0、金額・借貸・日付・科目・補助・税区分・税額・構造・決算区分一致、既知の正規化2,199セル、説明できない差分0。
+- 差分は摘要45行（44伝票）の末尾空白（半角1×26・半角2×18・全角1×1）だけ。JDLは末尾の空白の並びを丸ごと削除し、先頭・途中の空白は保持した。Evidence `EVID-YAYOI-JDL-35-5-BUDDIES-PILOT1-DESCRIPTION-TRAILING-SPACE-REMOVED-001`（会社A・JDL 35.5・現在の税務設定・16行に限定）。**Evidenceの登録（JDLがそうした事実）と、情報欠落を利用者が許容する判断は別**。許容が未記録なので正式判定は `NORMALIZATION_ACCEPTANCE_PENDING`。許容は行の内容と2ファイルのSHA-256に紐づけて記録する（`tools/jdl_description_trailing_space_acceptance.py`、Humanのみ実行）。
+- 比較ツールの誤検出を2件修正: 80%経過措置の明示税額（書き出し側と同じ `target_tax_amount` を使う）、改名したCSVの監査JSON（出力SHA-256が一致する1件だけを採用。0件・2件以上はFAIL）。
+- Pilot-2の実機往復（同日）: 174仕訳・434明細、会計データの不一致0、監査137項目PASS。摘要末尾空白48行のうち伝票1939（仕訳番号67695）だけが半角3個で、Pilot-1のEvidence（半角1・半角2・全角1）の範囲外のため一度FAILした。実機の再Exportを根拠に、**別エントリ**の追加Evidenceとして半角3個だけを登録（`EVID-YAYOI-JDL-35-5-BUDDIES-PILOT2-DESCRIPTION-TRAILING-SPACE-REMOVED-001`。Pilot-1のエントリは不変）。半角4個以上・全角2個以上・タブ・混在・一部削除・先頭/途中の変化は引き続き不一致。再照合の結果は Pilot-1・Pilot-2とも `NORMALIZATION_ACCEPTANCE_PENDING`。許容記録は各行がどのEvidenceに基づくかを持ち、入力・再ExportのSHA-256と行の内容に紐づく（Pilot間で流用できない）。
+- Pilot-2の期間選定: BLOCKを含まない最長の連続期間は 2026-05-01〜05-29（174仕訳・434明細）。207件を超える期間は無いので件数は増やさない。詳細は [pilot_e2e_plan.md](pilot_e2e_plan.md) 第5章。
