@@ -50,7 +50,10 @@ def _groups(rows: list[list[str]]) -> list[list[list[str]]]:
     return groups
 
 
-def compare(candidate: Path, reexport: Path) -> dict[str, object]:
+def compare(candidate: Path, reexport: Path, *,
+            description_trailing_space_suffixes: frozenset[str] = frozenset()) -> dict[str, object]:
+    """strict_passed: nothing but canonical normalizations. passed_with_evidenced_information_loss:
+    additionally only Evidence-backed losses (empty suffixes = none allowed); those need acceptance."""
     candidate_rows = _rows(candidate)
     normalizations = frozenset(
         (side, row[account], row[code].zfill(4), row[name])
@@ -58,11 +61,17 @@ def compare(candidate: Path, reexport: Path) -> dict[str, object]:
         for side, account, code, name in (("DEBIT", 3, 6, 7), ("CREDIT", 13, 16, 17))
         if row[code]
     )
-    comparator = MoneyForwardJdlRoundTripComparator(numeric_subaccount_normalizations=normalizations)
+    comparator = MoneyForwardJdlRoundTripComparator(
+        numeric_subaccount_normalizations=normalizations,
+        description_trailing_space_suffixes=description_trailing_space_suffixes)
     report = comparator.compare(candidate, reexport)
     failures = [item for item in report.differences if item.classification in FAILURES]
+    loss_rows = report.information_loss_rows
     result: dict[str, object] = {
-        "strict_passed": report.passed,
+        "strict_passed": report.passed and not loss_rows,
+        "passed_with_evidenced_information_loss": report.passed,
+        "unexplained_differences": len(failures),
+        "evidenced_information_loss_rows": list(loss_rows),
         "journals": [report.candidate_journal_count, report.reexport_journal_count],
         "physical_rows": [report.candidate_row_count, report.reexport_row_count],
         "classification_counts": report.classification_counts,

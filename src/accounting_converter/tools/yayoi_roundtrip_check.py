@@ -6,16 +6,24 @@ Prints counts and pass/fail only (no names, descriptions or amounts).
    (date, side, JDL account code, JDL subaccount code, amount, tax amount),
    row descriptions, journal structure, debit/credit/tax totals.
 2. candidate ↔ re-export (when given): the existing strict JDL comparator
-   (only known JDL canonical normalizations allowed).
-3. information not written to JDL: the audit file must exist, match the
-   candidate's SHA-256 and list exactly the journals the assessment reports.
+   (only known JDL canonical normalizations allowed). Inside the scope of
+   jdl_description_trailing_space, a 摘要 whose only change is an observed
+   trailing-space removal is reported row by row as Evidence-backed
+   information loss (never a silent pass).
+3. information not written to JDL: the audit file (found by name, or by the
+   candidate's SHA-256 when the CSV was renamed) must match the candidate and
+   list exactly the journals the assessment reports.
 
-PASS only when every section has zero missing / extra / unexpected items.
+Verdicts: PASS = nothing but canonical normalizations. PASS_WITH_ACCEPTED_NORMALIZATION =
+additionally only Evidence-backed losses the user accepted (acceptance file). Such losses
+without a valid acceptance: NORMALIZATION_ACCEPTANCE_PENDING (not a PASS). Anything
+unexplained: FAIL.
 """
 from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import io
 import json
 from collections import Counter
@@ -23,6 +31,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from accounting_converter.adapters.output.jdl.tax_semantics import JdlTaxSemantic
+from accounting_converter.application import jdl_description_trailing_space as trailing
 from accounting_converter.application import moneyforward_tax_excluded_evidence as ev
 from accounting_converter.application.moneyforward_description_replacement import (
     MoneyForwardDescriptionReplacementPolicy,
@@ -34,9 +43,6 @@ from accounting_converter.domain.mapping import is_confirmed_parent_only
 from accounting_converter.infrastructure.company_setting_store import CompanySettingStore
 from accounting_converter.infrastructure.conversion_profile_store import ConversionProfileStore
 from accounting_converter.tools import mf_full_e2e_compare
-
-TAXED = {JdlTaxSemantic.PURCHASE_10_INTERNAL.value, JdlTaxSemantic.SALES_10_EXTERNAL.value}
-
 
 def _decimal(value: str) -> Decimal:
     return Decimal(value or "0")
@@ -81,6 +87,7 @@ def source_view(source: Path, profile, context):
         apply_split(mark_closing(source_format.read(source), profile, context), profile, context)).entries
     lines, descriptions, structure = Counter(), Counter(), Counter()
     rows = 0
+    physical = []  # one item per JDL physical row, in output order (source provenance)
     for entry in entries:
         from accounting_converter.application.closing_entries import JDL_DATE_KEY
 
@@ -91,26 +98,57 @@ def source_view(source: Path, profile, context):
             mapping = profile.account_mappings.get(line.account)
             code = str(mapping.metadata.get("target_code", "?")) if mapping else "?"
             semantic = ev.target_tax_semantic(line, profile, context) if line.tax_info else JdlTaxSemantic.NO_TAX.value
-            tax = Decimal("0")
-            if semantic in TAXED:
-                explicit = line.tax_info.tax_amount
-                tax = explicit if explicit is not None else ev.ten_percent_tax_amount(line.amount)
+            # The writer's own rule (blank = 0 in the comparison), so 軽減8% / 10%免80 keep the source tax.
+            tax = ev.target_tax_amount(semantic, line, Decimal(line.amount)) or Decimal("0")
             lines[(day, line.side.value, code, _subaccount_code(profile, line.account, line.sub_account),
                    Decimal(line.amount), tax)] += 1
         rows += len(by_row)
-        for row_lines in by_row.values():
-            descriptions[(day, row_lines[0].metadata.get(LINE_ROW_DESCRIPTION_KEY) or entry.description or "")] += 1
+        for row_number, row_lines in by_row.items():
+            description = row_lines[0].metadata.get(LINE_ROW_DESCRIPTION_KEY) or entry.description or ""
+            descriptions[(day, description)] += 1
+            physical.append({"date": day, "source_row": row_number, "description": description,
+                             "voucher": entry.metadata.get("yayoi_voucher_number"),
+                             "journal_numbers": sorted({str(line.metadata.get("yayoi_journal_number") or "")
+                                                        for line in row_lines} - {""})})
         debit = sum(1 for line in entry.lines if line.side.value == "DEBIT")
         structure[(day, debit, len(entry.lines) - debit, len(by_row))] += 1
-    return entries, len(entries), rows, lines, descriptions, structure
+    return entries, len(entries), rows, lines, descriptions, structure, physical
 
 
 def _diff(expected: Counter, actual: Counter) -> dict[str, int]:
     return {"missing": sum((expected - actual).values()), "extra": sum((actual - expected).values())}
 
 
-def check(source: Path, profile, context, candidate: Path, reexport: Path | None) -> dict:
-    entries, source_journals, source_rows, s_lines, s_desc, s_struct = source_view(source, profile, context)
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def trailing_space_rows(candidate: Path, reexport: Path, loss_rows, physical,
+                        usable: frozenset[str] = trailing.EVIDENCE.observed_suffixes) -> tuple[list[dict], bool]:
+    """Row-level record of every Evidence-backed 摘要 loss, traced to the source row (customer data)."""
+    c_rows, r_rows = mf_full_e2e_compare._rows(candidate), mf_full_e2e_compare._rows(reexport)
+    records, aligned = [], len(physical) == len(c_rows)
+    for index in loss_rows:
+        before, after = c_rows[index - 1][23], r_rows[index - 1][23]
+        suffix = trailing.removed_trailing_suffix(before, after, usable)
+        entry = trailing.evidence_for_suffix(suffix) if suffix else None
+        origin = physical[index - 1] if aligned else None
+        if origin is None or origin["date"] != c_rows[index - 1][2] or origin["description"] != before:
+            aligned = False
+            origin = {}
+        records.append({
+            "row": index, "evidence_id": entry.evidence_id if entry else None,
+            "date": c_rows[index - 1][2], "voucher": origin.get("voucher"),
+            "journal_numbers": origin.get("journal_numbers"), "source_row": origin.get("source_row"),
+            "removed": trailing.suffix_counts(suffix or ""),
+            "candidate_description": before, "reexport_description": after,
+        })
+    return records, aligned
+
+
+def check(source: Path, profile, context, candidate: Path, reexport: Path | None, *,
+          company_setting_id: str | None = None, acceptance: Path | None = None) -> dict:
+    entries, source_journals, source_rows, s_lines, s_desc, s_struct, physical = source_view(source, profile, context)
     c_journals, c_rows, c_lines, c_desc, c_struct = candidate_view(candidate)
     totals = {
         side: (sum(k[4] for k, n in s_lines.items() for _ in range(n) if k[1] == side),
@@ -141,31 +179,81 @@ def check(source: Path, profile, context, candidate: Path, reexport: Path | None
         "information_not_in_jdl": preservation,
         "information_fully_retained": preservation["verdict"] == "NOT_NEEDED",
     }
+    scope = trailing.scope_problems(company_setting_id, context)   # every entry shares this scope
+    suffixes = trailing.applicable_suffixes(company_setting_id, context)
+    reexport_ok, loss = None, None
     if reexport is None:
         result["candidate_vs_reexport"] = "NOT_RUN (no re-export given)"
-        reexport_ok = None
     else:
         try:
-            comparison = mf_full_e2e_compare.compare(candidate, reexport)
+            comparison = mf_full_e2e_compare.compare(candidate, reexport, description_trailing_space_suffixes=suffixes)
         except ValueError as exc:  # unreadable or unbalanced re-export
             comparison = {"strict_passed": False, "error": type(exc).__name__}
         result["candidate_vs_reexport"] = comparison
         reexport_ok = bool(comparison["strict_passed"])
+        if not reexport_ok and comparison.get("passed_with_evidenced_information_loss"):
+            rows, aligned = trailing_space_rows(candidate, reexport, comparison["evidenced_information_loss_rows"],
+                                                physical, suffixes)
+            candidate_sha, reexport_sha = _sha256(candidate), _sha256(reexport)
+            used = [item for item in trailing.EVIDENCES
+                    if any(row["evidence_id"] == item.evidence_id for row in rows)]
+            entries = [{
+                "evidence_id": item.evidence_id, "technical_state": item.technical_state,
+                "condition": item.condition, "rows": sum(r["evidence_id"] == item.evidence_id for r in rows),
+                "evidence_files": {"candidate": item.candidate_sha256, "reexport": item.reexport_sha256},
+                "this_round_is_the_evidence_round": (candidate_sha, reexport_sha)
+                == (item.candidate_sha256, item.reexport_sha256),
+            } for item in used]
+            loss = {
+                "evidence_ids": [entry["evidence_id"] for entry in entries],
+                "evidence_entries": entries,
+                "technical_state": trailing.EVIDENCE.technical_state,
+                "this_round_is_the_evidence_round": any(e["this_round_is_the_evidence_round"] for e in entries),
+                "files": {"candidate": {"name": candidate.name, "sha256": candidate_sha},
+                          "reexport": {"name": reexport.name, "sha256": reexport_sha}},
+                "rows_count": len(rows), "journals_count": len({(r["date"], r["voucher"]) for r in rows}),
+                "removed_totals": {k: sum(r["removed"][k] for r in rows) for k in ("half_width_space",
+                                                                                  "ideographic_space")},
+                "source_alignment": "PASS" if aligned else "FAIL",
+                "rows_sha256": trailing.rows_sha256(rows),
+                "acceptance": trailing.check_acceptance(acceptance, candidate_sha256=candidate_sha,
+                                                        reexport_sha256=reexport_sha, rows=rows),
+                "rows": rows,
+            }
+    result["description_trailing_space_scope"] = "IN_SCOPE" if not scope else list(scope)
     # Two separate verdicts: what JDL received, and what was kept outside JDL.
-    if not source_ok or reexport_ok is False:
+    if not source_ok:
         jdl = "FAIL"
-    elif reexport_ok is None:
+    elif reexport is None:
         jdl = "SOURCE_TO_CSV_PASS_REEXPORT_PENDING"
-    else:
+    elif reexport_ok:
         jdl = "PASS"
+    elif loss is None or loss["source_alignment"] != "PASS":
+        jdl = "FAIL"
+    elif loss["acceptance"]["state"] == trailing.ACCEPTED:
+        jdl = "PASS_WITH_ACCEPTED_NORMALIZATION"
+    else:
+        jdl = "NORMALIZATION_ACCEPTANCE_PENDING"
+    if loss is not None:
+        result["description_trailing_space_loss"] = loss
     result["verdict_jdl_roundtrip"] = jdl
     result["verdict_information_outside_jdl"] = preservation["verdict"]
-    result["verdict"] = (
-        "PASS" if jdl == "PASS" and preservation["verdict"] in {"PASS", "NOT_NEEDED"}
-        else "FAIL" if jdl == "FAIL" or preservation["verdict"] == "FAIL"
-        else jdl
-    )
+    result["verdict"] = "FAIL" if preservation["verdict"] == "FAIL" else jdl
     return result
+
+
+RECORD_SCHEMA = "jdl-description-trailing-space-record-v1"
+
+
+def write_record(result: dict, path: Path) -> None:
+    """The audit record of the Evidence-backed 摘要 losses (customer data: data/private only, never overwritten)."""
+    if "data/private" not in path.resolve().as_posix():
+        raise SystemExit("the record contains customer descriptions; write it under data/private only")
+    loss = result["description_trailing_space_loss"]
+    payload = {"schema": RECORD_SCHEMA, "verdict_jdl_roundtrip": result["verdict_jdl_roundtrip"],
+               "source": result["source"], "candidate": result["candidate"], **loss}
+    with path.open("x", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False, indent=1) + "\n")
 
 
 def main() -> int:
@@ -175,11 +263,22 @@ def main() -> int:
     parser.add_argument("--company-id", required=True)
     parser.add_argument("--candidate", type=Path, required=True, help="formal JDL CSV generated by this app")
     parser.add_argument("--reexport", type=Path, help="JDL re-export of the same period from the test company")
+    parser.add_argument("--acceptance", type=Path,
+                        help="the user's acceptance of the 摘要 trailing-space loss (jdl_description_trailing_space_acceptance)")
+    parser.add_argument("--record-out", type=Path,
+                        help="write the row-level 摘要 loss record here (data/private only; customer data)")
     args = parser.parse_args()
     profiles = ConversionProfileStore(args.company_store / "profiles")
     resolved = CompanySettingStore(args.company_store / "companies", profiles).resolve(args.company_id)
-    print(json.dumps(check(args.source, resolved.profile, resolved.context, args.candidate, args.reexport),
-                     ensure_ascii=False, indent=2, default=str))
+    result = check(args.source, resolved.profile, resolved.context, args.candidate, args.reexport,
+                   company_setting_id=args.company_id, acceptance=args.acceptance)
+    if args.record_out is not None and "description_trailing_space_loss" in result:
+        write_record(result, args.record_out)
+    loss = result.get("description_trailing_space_loss")
+    if loss is not None:  # counts only on screen; the descriptions stay in the private record
+        loss = {**loss, "rows": f"{len(loss['rows'])} rows (see --record-out)"}
+        result = {**result, "description_trailing_space_loss": loss}
+    print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
     return 0
 
 

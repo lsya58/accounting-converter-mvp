@@ -8,6 +8,7 @@ import io
 from pathlib import Path
 
 from accounting_converter.adapters.input.jdl.observed_parser import JdlMigrationParser
+from accounting_converter.application.jdl_description_trailing_space import removed_trailing_suffix
 from accounting_converter.profiles.jdl_official import (
     jdl_ibex_cashbook_official_journal_import_spec,
 )
@@ -21,6 +22,9 @@ class MoneyForwardRoundTripClassification(str, Enum):
     EXPECTED_TAX_MAPPING = "EXPECTED_TAX_MAPPING"
     EXPECTED_TRADE_PARTNER_DESCRIPTION = "EXPECTED_TRADE_PARTNER_DESCRIPTION"
     EXPECTED_JDL_CANONICAL_NORMALIZATION = "EXPECTED_JDL_CANONICAL_NORMALIZATION"
+    # Real-Evidence-backed, but information is lost (jdl_description_trailing_space): not a failure of
+    # the comparison, never a PASS by itself; the caller needs the user's acceptance.
+    EVIDENCED_DESCRIPTION_TRAILING_SPACE_REMOVED = "EVIDENCED_DESCRIPTION_TRAILING_SPACE_REMOVED"
     UNEXPECTED_CHANGE = "UNEXPECTED_CHANGE"
     MISSING_ROW = "MISSING_ROW"
     EXTRA_ROW = "EXTRA_ROW"
@@ -51,6 +55,15 @@ class MoneyForwardRoundTripReport:
         return not any(item.classification in failures for item in self.differences)
 
     @property
+    def information_loss_rows(self) -> tuple[int, ...]:
+        """Rows whose only change is an Evidence-backed loss that still needs the user's acceptance."""
+        return tuple(sorted({
+            item.row_index for item in self.differences
+            if item.classification
+            is MoneyForwardRoundTripClassification.EVIDENCED_DESCRIPTION_TRAILING_SPACE_REMOVED
+        }))
+
+    @property
     def classification_counts(self) -> dict[str, int]:
         counts = Counter(item.classification.value for item in self.differences)
         return dict(sorted(counts.items()))
@@ -65,9 +78,12 @@ class MoneyForwardJdlRoundTripComparator:
         numeric_subaccount_normalizations: frozenset[
             tuple[str, str, str, str]
         ] = frozenset(),
+        description_trailing_space_suffixes: frozenset[str] = frozenset(),
     ) -> None:
         # (side, parent account code, zero-padded code, exact subaccount name)
         self._numeric_subaccount_normalizations = numeric_subaccount_normalizations
+        # Empty (default) = not in the Evidence scope: any 摘要 change is UNEXPECTED_CHANGE.
+        self._description_trailing_space_suffixes = description_trailing_space_suffixes
 
     _FIELDS = (
         "flag",
@@ -167,6 +183,12 @@ class MoneyForwardJdlRoundTripComparator:
             if before == after:
                 continue
             field = self._FIELDS[column]
+            if column == 23 and removed_trailing_suffix(
+                    before, after, self._description_trailing_space_suffixes) is not None:
+                differences.append(MoneyForwardRoundTripDifference(
+                    MoneyForwardRoundTripClassification.EVIDENCED_DESCRIPTION_TRAILING_SPACE_REMOVED,
+                    row_index, field))
+                continue
             classification = (
                 MoneyForwardRoundTripClassification.EXPECTED_JDL_CANONICAL_NORMALIZATION
                 if self._known_normalization(column, before, after, expected, actual)

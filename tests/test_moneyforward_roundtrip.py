@@ -109,6 +109,82 @@ class MoneyForwardJdlRoundTripComparatorTests(unittest.TestCase):
         self.assertFalse(report.passed)
         self.assertEqual(report.classification_counts, {"UNEXPECTED_CHANGE": 1})
 
+    def test_trailing_space_removal_is_evidenced_loss_only_when_enabled(self) -> None:
+        from accounting_converter.application.jdl_description_trailing_space import EVIDENCES
+
+        observed = frozenset().union(*(item.observed_suffixes for item in EVIDENCES))
+
+        cases = [("TEST  ", "TEST"), ("TEST ", "TEST"), ("TEST\u3000", "TEST"), ("TEST   ", "TEST")]
+        for before_text, after_text in cases:
+            before, after = self._row(), self._row()
+            before[23], after[23] = before_text, after_text
+            with self.subTest(before=before_text), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                candidate = self._write(root / "candidate.csv", [before])
+                reexport = self._write(root / "reexport.csv", [after])
+                enabled = MoneyForwardJdlRoundTripComparator(
+                    description_trailing_space_suffixes=observed).compare(candidate, reexport)
+                disabled = MoneyForwardJdlRoundTripComparator().compare(candidate, reexport)
+            self.assertTrue(enabled.passed)
+            self.assertEqual(enabled.information_loss_rows, (1,))
+            self.assertEqual(enabled.classification_counts, {"EVIDENCED_DESCRIPTION_TRAILING_SPACE_REMOVED": 1})
+            self.assertFalse(disabled.passed)
+            self.assertEqual(disabled.classification_counts, {"UNEXPECTED_CHANGE": 1})
+
+    def test_other_space_changes_are_never_the_trailing_space_evidence(self) -> None:
+        from accounting_converter.application.jdl_description_trailing_space import EVIDENCES
+
+        observed = frozenset().union(*(item.observed_suffixes for item in EVIDENCES))
+
+        cases = [
+            (" TEST", "TEST"),            # leading
+            ("TE ST", "TEST"),            # inner
+            ("TEST    ", "TEST"),         # four half-width spaces: not observed
+            ("TEST     ", "TEST"),        # five
+            ("TEST\u3000\u3000\u3000", "TEST"),  # three ideographic spaces
+            ("TEST   ", "TEST "),         # three, only two removed
+            ("TEST   ", "TEST  "),        # three, only one removed
+            ("TE   ST   ", "TEST"),       # inner spaces removed as well
+            (" TEST   ", "TEST"),         # leading space removed as well
+            ("TEST \t ", "TEST"),         # tab inside the run
+            ("TEST\t", "TEST"),           # tab
+            ("TEST \u3000", "TEST"),      # mixed run: not observed
+            ("TEST\u3000\u3000", "TEST"),  # two ideographic spaces: not observed
+            ("TEST  ", "TEST "),          # only part of the run removed
+            ("  ", ""),                   # nothing left
+            ("TEST ", "TESX"),            # text changed too
+            ("TEST", "TEST "),            # space added
+        ]
+        for before_text, after_text in cases:
+            before, after = self._row(), self._row()
+            before[23], after[23] = before_text, after_text
+            with self.subTest(before=before_text, after=after_text), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                candidate = self._write(root / "candidate.csv", [before])
+                reexport = self._write(root / "reexport.csv", [after])
+                report = MoneyForwardJdlRoundTripComparator(
+                    description_trailing_space_suffixes=observed).compare(candidate, reexport)
+            self.assertFalse(report.passed)
+            self.assertEqual(report.information_loss_rows, ())
+            self.assertEqual(report.classification_counts, {"UNEXPECTED_CHANGE": 1})
+
+    def test_trailing_space_evidence_does_not_hide_another_column_change(self) -> None:
+        from accounting_converter.application.jdl_description_trailing_space import EVIDENCES
+
+        observed = frozenset().union(*(item.observed_suffixes for item in EVIDENCES))
+
+        before, after = self._row(), self._row()
+        before[23], after[23] = "TEST ", "TEST"
+        after[19] = "別税区分"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            report = MoneyForwardJdlRoundTripComparator(
+                description_trailing_space_suffixes=observed).compare(
+                self._write(root / "c.csv", [before]), self._write(root / "r.csv", [after]))
+        self.assertFalse(report.passed)
+        self.assertEqual(report.classification_counts,
+                         {"EVIDENCED_DESCRIPTION_TRAILING_SPACE_REMOVED": 1, "UNEXPECTED_CHANGE": 1})
+
     @staticmethod
     def _write(
         path: Path,

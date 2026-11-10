@@ -967,6 +967,36 @@ def finish_non_retained_audit(output: Path) -> Path | None:
     return final
 
 
+AUDIT_FOUND_BY_NAME = "NAME"
+AUDIT_FOUND_BY_OUTPUT_SHA256 = "OUTPUT_SHA256"
+AUDIT_NOT_FOUND = "NOT_FOUND"
+AUDIT_AMBIGUOUS = "AMBIGUOUS"
+
+
+def locate_non_retained_audit(output: Path) -> tuple[Path | None, str]:
+    """The audit of this CSV: <output>.audit.json, else the ONE audit next to it naming this CSV's SHA-256.
+
+    A renamed CSV keeps its audit (the CSV bytes, not the file name, bind them). Two candidates or none
+    give no audit (the caller FAILs). The audit file is only read, never rewritten.
+    """
+    named = audit_path_for(output)
+    if named.exists():
+        return named, AUDIT_FOUND_BY_NAME
+    digest = hashlib.sha256(output.read_bytes()).hexdigest()
+    matches = []
+    for candidate in sorted(output.parent.glob("*.audit.json")):
+        try:
+            payload = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(payload, dict) and payload.get("schema") == AUDIT_SCHEMA \
+                and payload.get("jdl_output_sha256") == digest:
+            matches.append(candidate)
+    if len(matches) == 1:
+        return matches[0], AUDIT_FOUND_BY_OUTPUT_SHA256
+    return None, AUDIT_AMBIGUOUS if matches else AUDIT_NOT_FOUND
+
+
 def verify_non_retained_audit(source: Path, output: Path, profile, context=None) -> dict:
     """Separate verdict for the information JDL does not hold.
 
@@ -974,18 +1004,26 @@ def verify_non_retained_audit(source: Path, output: Path, profile, context=None)
     this source and this CSV, and lists exactly the expected values.
     """
     expected = expected_non_retained(source, profile, context)
-    final, pending = audit_path_for(output), pending_audit_path_for(output)
+    final, how = locate_non_retained_audit(output)
+    # An interrupted run of either name leaves a .pending file.
+    pending_paths = {pending_audit_path_for(output)}
+    if final is not None:
+        pending_paths.add(final.with_name(final.name + ".pending"))
+    pending = any(path.exists() for path in pending_paths)
     if not expected:
-        ok = not final.exists() and not pending.exists()
+        ok = final is None and how == AUDIT_NOT_FOUND and not pending
         return {"verdict": "NOT_NEEDED" if ok else "FAIL", "expected_journals": 0}
     result = {"expected_journals": len(expected),
               "expected_values": sum(len(item["not_in_jdl"]) for item in expected),
               "expected_noncredit_tax_lines": sum(len(item.get("noncredit_tax_lines", ())) for item in expected),
-              "final_present": final.exists(), "pending_left": pending.exists()}
-    if not final.exists() or pending.exists():
+              "final_present": final is not None, "pending_left": pending, "audit_found_by": how,
+              "audit_file": final.name if final is not None else None}
+    if final is None or pending:
         result["verdict"] = "FAIL"
         return result
     payload = json.loads(final.read_text(encoding="utf-8"))
+    # Informational: a renamed CSV is bound by its SHA-256 below, not by this name.
+    result["audit_names_this_file"] = payload.get("jdl_output_file") == output.name
     checks = {
         "schema": payload.get("schema") == AUDIT_SCHEMA,
         "source_sha256": payload.get("source_sha256") == hashlib.sha256(source.read_bytes()).hexdigest(),
