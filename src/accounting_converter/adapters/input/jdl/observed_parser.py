@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from io import StringIO
 from pathlib import Path
@@ -40,6 +40,14 @@ def jdl_source_tax_key(scope: str, category: str, input_method: str) -> str:
     )
 
 
+JDL_CLOSING_DATE_TEXT_KEY = "jdl_closing_period_date"  # same key as closing_entries.JDL_DATE_KEY
+
+
+def jdl_closing_date_text(day: date) -> str:
+    """JDL's 決算整理 date for a fiscal year end: month 13 (2026-07-31 -> 20261331)."""
+    return f"{day.year:04d}13{day.day:02d}"
+
+
 @dataclass(frozen=True)
 class JdlMigrationSourceMetadata:
     row_number: int
@@ -71,8 +79,12 @@ class JdlMigrationParser:
 
     FLAGS = frozenset({"1000", "1111", "1110", "1100", "1101"})
 
-    def __init__(self) -> None:
+    def __init__(self, *, closing_year_ends: frozenset[date] = frozenset()) -> None:
+        """closing_year_ends: fiscal year ends whose JDL 決算整理 date (YYYY13DD, e.g. 2026-07-31 -> 20261331) the
+        caller has verified for this file (closing_entries Evidence). Empty (default): only calendar dates, so the
+        migration input never accepts month 13. Any other YYYY13DD text stays an invalid date."""
         self.spec = jdl_ibex_cashbook_official_journal_import_spec()
+        self._closing_dates = {jdl_closing_date_text(day): day for day in closing_year_ends}
 
     def parse_path(self, path: Path) -> JdlMigrationParseResult:
         raw = path.read_bytes()
@@ -211,12 +223,17 @@ class JdlMigrationParser:
             raise JdlMigrationParseError(
                 f"JDL journal at row {first.row_number} has inconsistent voucher numbers"
             )
-        try:
-            journal_date = datetime.strptime(next(iter(dates)), "%Y%m%d").date()
-        except ValueError as exc:
-            raise JdlMigrationParseError(
-                f"JDL journal at row {first.row_number} has an invalid date"
-            ) from exc
+        date_text = next(iter(dates))
+        closing_day = self._closing_dates.get(date_text)
+        if closing_day is not None:
+            journal_date = closing_day  # 決算整理: the fiscal year end; the month-13 text stays in the metadata
+        else:
+            try:
+                journal_date = datetime.strptime(date_text, "%Y%m%d").date()
+            except ValueError as exc:
+                raise JdlMigrationParseError(
+                    f"JDL journal at row {first.row_number} has an invalid date"
+                ) from exc
         entry_id = f"jdl:{first.row_number}"
         source = SourceReference(file_name, first.row_number, entry_id)
         lines: list[JournalLine] = []
@@ -258,6 +275,7 @@ class JdlMigrationParser:
                 "identifier_flags": tuple(row.value(1) for row in rows),
                 "physical_rows": tuple(row_metadata),
                 "voucher_number": next(iter(vouchers)),
+                **({JDL_CLOSING_DATE_TEXT_KEY: date_text} if closing_day is not None else {}),
                 "production_adapter": False,
                 "formal_output_enabled": False,
             },

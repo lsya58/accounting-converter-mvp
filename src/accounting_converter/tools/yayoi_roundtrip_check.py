@@ -148,6 +148,44 @@ def trailing_space_rows(candidate: Path, reexport: Path, loss_rows, physical,
     return records, aligned
 
 
+def closing_view(entries, context, candidate: Path, reexport: Path | None) -> tuple[dict, frozenset]:
+    """The JDL 決算整理 (month-13) journals: only those the app itself writes under the closing_entries Evidence.
+
+    Their fiscal year ends are the only month-13 dates the strict comparison may read; any other YYYY13DD text
+    (another day, year or month, or a closing entry outside the Evidence scope) stays an invalid date there.
+    PASS needs the candidate (and the re-export, when given) to carry exactly the expected closing rows, as text."""
+    from accounting_converter.application.closing_entries import JDL_DATE_KEY, output_date
+
+    expected: Counter = Counter()
+    year_ends = set()
+    problems = []
+    for entry in entries:
+        if entry.metadata.get(JDL_DATE_KEY) is None:
+            continue
+        try:
+            text = output_date(entry, context)
+        except ValueError:
+            problems.append("CLOSING_MARK_INVALID")
+            continue
+        expected[text] += len({line.metadata[LINE_ROW_KEY] for line in entry.lines})
+        year_ends.add(entry.date)
+
+    def month13(path: Path) -> Counter:
+        return Counter(row[2] for row in mf_full_e2e_compare._rows(path) if row[2][4:6] == "13")
+
+    view = {"journals": sum(1 for e in entries if e.metadata.get(JDL_DATE_KEY) is not None),
+            "rows_expected": dict(expected), "candidate_rows": dict(month13(candidate))}
+    if view["candidate_rows"] != view["rows_expected"]:
+        problems.append("CANDIDATE_CLOSING_ROWS_DIFFER")
+    if reexport is not None:
+        view["reexport_rows"] = dict(month13(reexport))
+        if view["reexport_rows"] != view["rows_expected"]:
+            problems.append("REEXPORT_CLOSING_ROWS_DIFFER")
+    view["problems"] = problems
+    view["verdict"] = "PASS" if not problems else "FAIL"
+    return view, frozenset(year_ends)
+
+
 def check(source: Path, profile, context, candidate: Path, reexport: Path | None, *,
           company_setting_id: str | None = None, acceptance: Path | None = None, journal_ids=None) -> dict:
     """journal_ids: a READY-only output's journals (from its manifest); the excluded journals are not expected."""
@@ -185,12 +223,15 @@ def check(source: Path, profile, context, candidate: Path, reexport: Path | None
     }
     scope = trailing.scope_problems(company_setting_id, context)   # every entry shares this scope
     suffixes = trailing.applicable_suffixes(company_setting_id, context)
+    closing, closing_year_ends = closing_view(entries, context, candidate, reexport)
+    result["closing_entries"] = closing
     reexport_ok, loss = None, None
     if reexport is None:
         result["candidate_vs_reexport"] = "NOT_RUN (no re-export given)"
     else:
         try:
-            comparison = mf_full_e2e_compare.compare(candidate, reexport, description_trailing_space_suffixes=suffixes)
+            comparison = mf_full_e2e_compare.compare(candidate, reexport, description_trailing_space_suffixes=suffixes,
+                                                     closing_year_ends=closing_year_ends)
         except ValueError as exc:  # unreadable or unbalanced re-export
             comparison = {"strict_passed": False, "error": type(exc).__name__}
         result["candidate_vs_reexport"] = comparison
@@ -226,7 +267,7 @@ def check(source: Path, profile, context, candidate: Path, reexport: Path | None
             }
     result["description_trailing_space_scope"] = "IN_SCOPE" if not scope else list(scope)
     # Two separate verdicts: what JDL received, and what was kept outside JDL.
-    if not source_ok:
+    if not source_ok or closing["verdict"] != "PASS":
         jdl = "FAIL"
     elif reexport is None:
         jdl = "SOURCE_TO_CSV_PASS_REEXPORT_PENDING"

@@ -2,7 +2,16 @@
 
 **この文書は進捗の索引です。** 数字・判断の正本は [current_evidence_status.md](current_evidence_status.md)、実機操作の履歴は [jdl_real_evidence_log.md](jdl_real_evidence_log.md)、経緯は [yayoi_buddies_evidence_campaign.md](yayoi_buddies_evidence_campaign.md)。顧客の値は書かない。
 
-最終更新: 2026-11-10（READYのみ変換を追加・正式READYを2,480に訂正。Pilot-1・Pilot-2はどちらも `NORMALIZATION_ACCEPTANCE_PENDING`）
+最終更新: 2026-11-11（READYのみ2,480仕訳の実機往復はFAIL: 税額1件。13月の照合に対応。税額0のEvidence適用を修正し正式READY 2,479／BLOCK 35）
+
+### READYのみ2,480仕訳の実機往復（2026-11-11、未commit。詳細: [ready_only_windows_trial.md](ready_only_windows_trial.md) 第7章）
+- Windows EXE出力をJDL検証用複製へ「決算整理を含む」で取込・再Export。2,480/2,480仕訳・6,102/6,102行、欠落・重複・余分0、決算整理9行（20261331）保持、監査2,397項目PASS、摘要末尾空白588行は既存Evidenceの並び（許容判断は未記録）。
+- **正式判定 FAIL**: 説明できない差分1（売上・10%・外税・科目9251の1円行、消費税 0→1）。既存Evidenceで説明できない（原因の整理は次の「修正」項）。許容・書き換えはしていない。
+- 照合ツール: `JdlMigrationParser(closing_year_ends=…)`・比較器・`mf_full_e2e_compare.compare`・`yayoi_roundtrip_check`（`closing_entries` 欄）が、アプリ自身がEvidenceの範囲で13月と書いた決算日だけを読む。既定は従来どおり13月を拒否（移行入力は不変）。
+- **修正（利用者承認、同日）**: `scoped_evidence.relation_of` は、端数があり丸め方で値が分かれる金額に書いた税額0を、FLOOR／HALF_LOW／FLOOR_HIGH ではなく独立した関係 `ZERO` とする。`ZERO` はどの実機Evidenceにも無いので、診断（`scoped_evidence_composition`）と出力（`preflight`）の両方で止まる（BLOCK `SYSTEM_EVIDENCE:EXPLICIT_TAX_ZERO_UNVERIFIED`「税額0円がJDLで保持されるか未確認です」）。根拠: 登録済みのFLOOR等のケースはすべて税額>0、課税仕入の税額0はJDLが再計算した（控除不可Probe C10/C8、`OBS-…-NONCREDIT-{P10,R8}-TAX0-RECOMPUTED-001`）、今回の実機で売上の0が1になった。どの丸めでも0になる行（仕入1〜5円など、関係 ""）は変えない。税額は書き換えない。
+- **正式READY 2,480 → 2,479（BLOCK 34 → 35）**。新たなBLOCKは伝票1240（元の行3461、仕訳64402・64403）の1件だけ。従来の34件は理由も含め不変。READYのみ変換（隔離）: 2,479仕訳・6,100行、旧Windows出力から伝票1240の2行を除いたものとバイト一致、`verify_ready_only_output` PASS、監査1,176仕訳・2,397項目（不変）PASS、決算整理9行。全件変換は従来どおり拒否。旧2,480出力は現在の診断と一致しないため `verify` がFAIL（SHA紐付けと監査はPASS）。旧2,480の実機往復記録はFAILのまま。
+- 試算への影響: 伝票1240は承認や行数変更では解消しないため、各試算から1減る。64行の試算は再計算で 2,506（この変更前は2,507。下表の2,508は古い値）。
+- 回帰: MF 期別 `ec2bcc3b…`・`090f3633…`、ACT `97426c9a…` とバイト一致。registryにZERO関係は無い（Evidenceの拡張なし）。テスト 1,486件 OK（skip 65）。
 
 ### READYのみ変換と正式READYの訂正（2026-11-10、未commit）
 - **正式READYの訂正: 2,481 → 2,480（BLOCK 33 → 34）**。仕訳7519（2026-07-31・本決・負の金額の明細）は診断ではREADYだったが、JDL出力は負の金額を拒否する（`JDL-OUT-AMOUNT`）。全件変換はほかのBLOCKで止まるため表面化しなかった。診断に `HUMAN:NEGATIVE_AMOUNT`（負・端数の金額/税額）を追加し、出力と同じ基準にした（判定の緩和ではない。JDL出力仕様は不変）。
@@ -96,10 +105,10 @@
 ## 1. READY（会社A 2,514仕訳）
 | 区分 | 件数 | 条件 |
 |---|---:|---|
-| **正式READY（保存済み設定＝16行）** | **2,480** | AppDataのコピーで再計算（2026-11-10。7519を負の金額でBLOCKに訂正。以前の2,481は出力できない1件を含んでいた） |
-| 条件付き: 16行・伝票分割の承認後 | 2,500 | 試算。税理士の承認記録が必要 |
+| **正式READY（保存済み設定＝16行）** | **2,479** | AppDataのコピーで再計算（2026-11-11。伝票1240の税額0を `EXPLICIT_TAX_ZERO_UNVERIFIED` でBLOCK。2026-11-10は7519を負の金額でBLOCKに訂正して2,480） |
+| 条件付き: 16行・伝票分割の承認後 | 2,500 | 試算（2026-11-10の値。伝票1240のBLOCKで1減る見込み・未再計算）。税理士の承認記録が必要 |
 | 条件付き: 16行・＋控除不可SIGNOFF | 2,503 | 試算 |
-| 条件付き: アプリの行数を64にした場合 | 2,508 | 試算。保存設定の変更が必要（Human判断）。控除不可3・4012・1739・3605は止まる |
+| 条件付き: アプリの行数を64にした場合 | 2,506 | 試算。保存設定の変更が必要（Human判断）。控除不可3・4012・1739・3605は止まる |
 | 条件付き: 64行・＋分割承認（1739） | 2,509 | 試算 |
 | 他社 | MF 482/482（出力SHA不変）、ACT 80/80（出力SHA不変） | 回帰: 2026-11-08 バイト一致 |
 
@@ -149,7 +158,8 @@
 - 補助30種類の登録判断、付箋の扱い、科目・税区分の確認 — current_evidence_status.md 参照。
 - 保存設定の振替伝票入力行数を16→64に変えるか（変えると分割・控除不可の承認は無効になり記録し直し）。
 
-## 6. 現在のBLOCK理由（16行・保存設定、正式READY 2,480 に対する残り34）
+## 6. 現在のBLOCK理由（16行・保存設定、正式READY 2,479 に対する残り35）
+- 2026-11-11: 3461（伝票1240、税額0円の保持が未確認 `EXPLICIT_TAX_ZERO_UNVERIFIED`）が加わり35件。
 - 2026-11-10: 7519（本決・負の金額）が加わり34件。以下の33件の内訳は不変。
 - 仕訳別一覧・分類（A〜E）・試算・次の実装: [yayoi_buddies_block33_plan.md](yayoi_buddies_block33_plan.md)（2026-11-10 再計算: 16行で分割承認＋SIGNOFFなら2,503、64行＋分割承認なら2,509）
 - `HUMAN:VOUCHER_SPLIT_APPROVAL` 19（分割承認待ち）／`HUMAN:VOUCHER_ROW_LIMIT_EXCEEDED` 11（分割規則の対象外の16行超）

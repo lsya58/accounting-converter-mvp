@@ -108,7 +108,7 @@ PASS条件: 104/104 journals、160/160 rows、missing 0、extra 0、unexpected 0
 | 摘要末尾空白 | JDLが45行（44伝票）で削除。Evidence登録済み、**許容判断は未記録** | JDLが48行（44伝票）で削除（半角1×33・半角2×14・半角3×1）。半角3個は追加Evidence（`...PILOT2-DESCRIPTION-TRAILING-SPACE-REMOVED-001`）。**許容判断は未記録で、Pilot-1の判断は適用しない** |
 | 正式判定 | **`NORMALIZATION_ACCEPTANCE_PENDING`** | **`NORMALIZATION_ACCEPTANCE_PENDING`** |
 
-会社Aの正式READYは2,480/2,514（2026-11-10、負の金額の仕訳7519をBLOCKに訂正。BLOCK 34）。READYのみ変換で2,480仕訳を出力できる（全件移行ではない。除外34件は未移行）。
+会社Aの正式READYは2,479/2,514（2026-11-11、伝票1240の税額0円を `EXPLICIT_TAX_ZERO_UNVERIFIED` でBLOCK。BLOCK 35。2026-11-10は負の金額の仕訳7519をBLOCKに訂正して2,480）。READYのみ変換で2,479仕訳・6,100行を出力できる（全件移行ではない。除外35件は未移行）。端数のある金額に書いた税額0は、FLOOR等の実機Evidence（いずれも税額>0）では許可しない（関係 `ZERO`、未登録）。
 
 Pilot-1（45行）・Pilot-2（48行）を実機E2E PASSにする条件は、税理士による摘要末尾空白の許容判断を、それぞれの入力・再Exportファイルと対象明細に紐づけて記録することだけ（JDLの再操作は不要）。許容後の判定名は `PASS_WITH_ACCEPTED_NORMALIZATION`。
 

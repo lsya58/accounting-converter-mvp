@@ -286,15 +286,31 @@ def placement_gaps(layout: str, row_cells: Sequence[tuple[str, str]],
     return ()
 
 
+# A written tax of 0 where the exact tax is a fraction and the roundings disagree (e.g. 売上10% 外税 1 yen: floor 0,
+# company 切上げ 1). Every FLOOR / HALF_LOW / FLOOR_HIGH case that round-tripped wrote a tax > 0, and company A's
+# READY-only round trip (2026-11-11) re-exported such a written 0 as 1. So a written 0 is its own relation: never
+# registered, hence never covered (BLOCK EXPLICIT_TAX_ZERO_UNVERIFIED) until a real round trip registers it.
+ZERO_RELATION = "ZERO"
+_ZERO_GUARDED = frozenset({"FLOOR", "HALF_LOW", "FLOOR_HIGH"})
+
+
 def relation_of(cell: str, amount: Decimal, written: Decimal | None) -> str | None:
     """How the written tax relates to the amount for this scope's rounding.
 
     "" no question (every rounding agrees, or floor == company rounding);
     COMPANY / FLOOR / EXACT / NONE as in the registry; for 軽減8% / 10%免80 with a
     fractional exact value HALF_LOW (written = floor = half-up), HALF_HIGH (written =
-    half-up > floor) and FLOOR_HIGH (written = floor < half-up). None = a relation that
-    was never observed (never allowed).
+    half-up > floor) and FLOOR_HIGH (written = floor < half-up). ZERO: written 0 that
+    would otherwise be FLOOR / HALF_LOW / FLOOR_HIGH (unobserved, see ZERO_RELATION).
+    None = a relation that was never observed (never allowed).
     """
+    relation = _relation_of(cell, amount, written)
+    if relation in _ZERO_GUARDED and written == 0:
+        return ZERO_RELATION
+    return relation
+
+
+def _relation_of(cell: str, amount: Decimal, written: Decimal | None) -> str | None:
     if cell in NO_AMOUNT_CELLS:
         return "NONE" if written in (None, Decimal("0")) else None
     if written is None:

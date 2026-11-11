@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 
 from accounting_converter.application.moneyforward_roundtrip import (
@@ -184,6 +185,73 @@ class MoneyForwardJdlRoundTripComparatorTests(unittest.TestCase):
         self.assertFalse(report.passed)
         self.assertEqual(report.classification_counts,
                          {"EVIDENCED_DESCRIPTION_TRAILING_SPACE_REMOVED": 1, "UNEXPECTED_CHANGE": 1})
+
+    YEAR_END = frozenset({date(2026, 7, 31)})
+
+    def test_month13_closing_date_is_read_only_for_a_verified_year_end(self) -> None:
+        from accounting_converter.adapters.input.jdl.observed_parser import JdlMigrationParseError
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            candidate = self._write(root / "c.csv", [self._row(date_value="20261331")])
+            reexport = self._write(root / "r.csv", [self._row(date_value="20261331")])
+            report = MoneyForwardJdlRoundTripComparator(closing_year_ends=self.YEAR_END).compare(candidate, reexport)
+            with self.assertRaises(JdlMigrationParseError):  # default: no month 13, as before
+                MoneyForwardJdlRoundTripComparator().compare(candidate, reexport)
+        self.assertTrue(report.passed)
+        self.assertEqual(report.classification_counts, {"EXACT_PRESERVED": 1})
+
+    def test_other_month13_forms_and_invalid_dates_are_rejected(self) -> None:
+        from accounting_converter.adapters.input.jdl.observed_parser import JdlMigrationParseError
+
+        # another day, another year, month 14, day 00, calendar-invalid, padded / short
+        for text in ("20261330", "20251331", "20271331", "20261431", "20261300", "20260230", "2026133", "202613310"):
+            with self.subTest(date=text), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                path = self._write(root / "c.csv", [self._row(date_value=text)])
+                with self.assertRaises(JdlMigrationParseError):
+                    MoneyForwardJdlRoundTripComparator(closing_year_ends=self.YEAR_END).compare(path, path)
+
+    def test_ordinary_dates_are_unchanged_by_the_closing_option(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = self._write(root / "c.csv", [self._row(date_value="20260731")])
+            moved = self._write(root / "r.csv", [self._row(date_value="20261331")])
+            same = MoneyForwardJdlRoundTripComparator(closing_year_ends=self.YEAR_END).compare(path, path)
+            # a closing entry re-exported as an ordinary journal (or the reverse) is a real change
+            changed = MoneyForwardJdlRoundTripComparator(closing_year_ends=self.YEAR_END).compare(moved, path)
+        self.assertTrue(same.passed)
+        self.assertFalse(changed.passed)
+        self.assertEqual(changed.classification_counts, {"UNEXPECTED_CHANGE": 1})
+        self.assertEqual(changed.differences[0].field, "date")
+
+    def test_closing_rows_are_compared_column_by_column(self) -> None:
+        before, after = self._row(date_value="20261331"), self._row(date_value="20261331")
+        after[21] = after[11] = "1001"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            report = MoneyForwardJdlRoundTripComparator(closing_year_ends=self.YEAR_END).compare(
+                self._write(root / "c.csv", [before]), self._write(root / "r.csv", [after]))
+        self.assertFalse(report.passed)
+        self.assertEqual(report.classification_counts, {"UNEXPECTED_CHANGE": 2})
+
+    def test_a_written_zero_tax_becoming_one_is_never_a_normalization(self) -> None:
+        # Company A, voucher 1240: 売上 10% 外税 1 yen written with tax 0, re-exported with tax 1.
+        before, after = self._row(), self._row()
+        before[19:23] = ["10%", "外税", "1000", "0"]
+        after[19:23] = ["10%", "外税", "1000", "1"]
+        blank_to_zero = self._row()
+        blank_to_zero[22] = ""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            report = MoneyForwardJdlRoundTripComparator().compare(
+                self._write(root / "c.csv", [before]), self._write(root / "r.csv", [after]))
+            blank = MoneyForwardJdlRoundTripComparator().compare(
+                self._write(root / "b.csv", [blank_to_zero]), self._write(root / "z.csv", [self._row()]))
+        self.assertFalse(report.passed)
+        self.assertEqual(report.classification_counts, {"UNEXPECTED_CHANGE": 1})
+        self.assertEqual(report.differences[0].field, "credit_tax_amount")
+        self.assertTrue(blank.passed)  # only blank <-> 0 is the known normalization
 
     @staticmethod
     def _write(

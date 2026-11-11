@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 import csv
 from dataclasses import dataclass
+from datetime import date
 from enum import Enum
 import io
 from pathlib import Path
@@ -79,11 +80,15 @@ class MoneyForwardJdlRoundTripComparator:
             tuple[str, str, str, str]
         ] = frozenset(),
         description_trailing_space_suffixes: frozenset[str] = frozenset(),
+        closing_year_ends: frozenset[date] = frozenset(),
     ) -> None:
         # (side, parent account code, zero-padded code, exact subaccount name)
         self._numeric_subaccount_normalizations = numeric_subaccount_normalizations
         # Empty (default) = not in the Evidence scope: any 摘要 change is UNEXPECTED_CHANGE.
         self._description_trailing_space_suffixes = description_trailing_space_suffixes
+        # Empty (default) = no month-13 date is readable. Only the fiscal year ends the caller verified against the
+        # closing_entries Evidence; the date column is still compared as text (20261331 must stay 20261331).
+        self._closing_year_ends = closing_year_ends
 
     _FIELDS = (
         "flag",
@@ -254,8 +259,7 @@ class MoneyForwardJdlRoundTripComparator:
             )
         return False
 
-    @staticmethod
-    def _parse_for_comparison(path: Path):
+    def _parse_for_comparison(self, path: Path):
         text = path.read_bytes().decode("cp932", errors="strict")
         rows = list(csv.reader(io.StringIO(text, newline="")))
         header = tuple(MoneyForwardJdlRoundTripComparator._FIELDS)
@@ -280,7 +284,8 @@ class MoneyForwardJdlRoundTripComparator:
         writer = csv.writer(normalized, lineterminator="\n")
         writer.writerow(source_header)
         writer.writerows(data_rows)
-        return JdlMigrationParser().parse_text(normalized.getvalue(), file_name=path.name)
+        return JdlMigrationParser(closing_year_ends=self._closing_year_ends).parse_text(
+            normalized.getvalue(), file_name=path.name)
 
     @staticmethod
     def _rows(entries) -> tuple[tuple[str, ...], ...]:

@@ -15,6 +15,7 @@ import csv
 import io
 import json
 from collections import defaultdict
+from datetime import date
 from pathlib import Path
 
 from accounting_converter.application.moneyforward_roundtrip import (
@@ -51,9 +52,11 @@ def _groups(rows: list[list[str]]) -> list[list[list[str]]]:
 
 
 def compare(candidate: Path, reexport: Path, *,
-            description_trailing_space_suffixes: frozenset[str] = frozenset()) -> dict[str, object]:
+            description_trailing_space_suffixes: frozenset[str] = frozenset(),
+            closing_year_ends: frozenset[date] = frozenset()) -> dict[str, object]:
     """strict_passed: nothing but canonical normalizations. passed_with_evidenced_information_loss:
-    additionally only Evidence-backed losses (empty suffixes = none allowed); those need acceptance."""
+    additionally only Evidence-backed losses (empty suffixes = none allowed); those need acceptance.
+    closing_year_ends: fiscal year ends whose month-13 決算整理 date may be read (empty = none)."""
     candidate_rows = _rows(candidate)
     normalizations = frozenset(
         (side, row[account], row[code].zfill(4), row[name])
@@ -63,7 +66,8 @@ def compare(candidate: Path, reexport: Path, *,
     )
     comparator = MoneyForwardJdlRoundTripComparator(
         numeric_subaccount_normalizations=normalizations,
-        description_trailing_space_suffixes=description_trailing_space_suffixes)
+        description_trailing_space_suffixes=description_trailing_space_suffixes,
+        closing_year_ends=closing_year_ends)
     report = comparator.compare(candidate, reexport)
     failures = [item for item in report.differences if item.classification in FAILURES]
     loss_rows = report.information_loss_rows

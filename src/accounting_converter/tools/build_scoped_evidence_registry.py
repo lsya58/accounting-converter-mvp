@@ -62,6 +62,8 @@ def _relation(cell: str, amount: Decimal, tax: str) -> str:
             return ""
         if written == company:
             return "COMPANY"
+        if written == floor == 0:
+            return "ZERO"  # scoped_evidence.ZERO_RELATION: a written 0 is never FLOOR Evidence
         if written == floor:
             return "FLOOR"
         raise ValueError("unclassified explicit tax in a PASS case")

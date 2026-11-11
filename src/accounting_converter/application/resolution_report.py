@@ -83,6 +83,11 @@ _CODE_RULES: dict[str, Rule] = {r.key: r for r in (
          "分割案の借貸・金額・税額・科目・摘要が元と一致することは、再構成検査で確認済みです。",
          "税理士が分割を了承したら、その内容をアプリに記録してください（会社・行数設定ごと）。", (WHERE_APP, WHERE_TAX), ACT_SPLIT,
          "分割案を確認して承認を記録…", tax_accountant=True),
+    Rule("SYSTEM_EVIDENCE:EXPLICIT_TAX_ZERO_UNVERIFIED", "税額0円がJDLで保持されるか未確認です",
+         "端数のある金額（例: 売上10%の1円）に、元データの税額0円をそのまま書く明細があります。0円の明示税額をJDLが保持するかは"
+         "実機で確認されていません（実機の再Exportで0円が1円に変わった例があります）。", "0円以外の切捨て値は、実機で保持を確認済みです。",
+         "税額を書き換えずに止めています。追加の実機確認が必要です（設定や承認では解消しません）。税額の扱いは税理士の判断です。",
+         (WHERE_DEV, WHERE_TAX), tax_accountant=True, technical_evidence=True),
     Rule("SYSTEM_EVIDENCE:CLOSING_ENTRY_REPRESENTATION", "決算仕訳のJDL CSVでの表し方が未確認です",
          "本決算のうち実機で確認した形だけを決算整理仕訳（日付13月）で出力します。それ以外（中間決算など）のCSVでの保持方法は未確認です。",
          "本決算の取込・再Exportは実機確認済みです。", "追加の実機確認が必要です。通常仕訳や本決算への置き換えは会計判断なので行いません。承認では解除できません。",

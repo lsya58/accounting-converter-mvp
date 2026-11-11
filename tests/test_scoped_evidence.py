@@ -312,6 +312,27 @@ class RelationTest(unittest.TestCase):
         self.assertIsNone(scoped.relation_of("XS", d(11000), d(1000)))
         self.assertEqual(scoped.relation_of("NP", d(1100), None), "NONE")
 
+    def test_a_written_zero_with_a_fraction_is_its_own_unobserved_relation(self):
+        """Company A voucher 1240 (2026-11-11): 売上10% 外税 1 yen written with tax 0 was re-exported with tax 1.
+        Every FLOOR / HALF_LOW / FLOOR_HIGH case that round-tripped wrote a tax > 0, and JDL recomputed a written 0
+        on 課税仕入 (noncredit probe C10/C8). So a written 0 never borrows those relations."""
+        d = Decimal
+        for cell, amount in (("S10", 1), ("S10", 5), ("S10", 10), ("P10", 6), ("P10", 10), ("R8", 7), ("T80", 7)):
+            with self.subTest(cell=cell, amount=amount):
+                self.assertEqual(scoped.relation_of(cell, d(amount), d(0)), scoped.ZERO_RELATION)
+                for side_ in ("DEBIT", "CREDIT"):
+                    self.assertEqual(scoped.relation_accounts(side_, cell, scoped.ZERO_RELATION), {})
+                    for account in ("9251", "6121", "8471", "7121"):
+                        self.assertFalse(scoped.relation_covers_account(side_, cell, scoped.ZERO_RELATION, account))
+        # unchanged: a written floor value above 0, every rounding agreeing on 0, no amount at all
+        self.assertEqual(scoped.relation_of("S10", d(1105), d(100)), "FLOOR")
+        self.assertTrue(scoped.relation_covers_account("CREDIT", "S10", "FLOOR", "9251"))
+        for amount in (1, 2, 3, 4, 5):  # 仕入 四捨五入 = floor = 0 (22 such real lines kept 0 in company A's round trip)
+            self.assertEqual(scoped.relation_of("P10", d(amount), d(0)), "")
+        self.assertEqual(scoped.relation_of("S10", d(0), d(0)), "")
+        self.assertIsNone(scoped.relation_of("P10", d(55000), d(0)))  # no fraction: 0 is simply wrong (recomputed)
+        self.assertNotIn(scoped.ZERO_RELATION, {t[3] for case in SCOPED_CASES for t in case.taxed})
+
 
 class CompositionTest(unittest.TestCase):
     def assertScoped(self, entry, ctx=None):
@@ -517,6 +538,31 @@ class OutputTest(unittest.TestCase):
         # the same relation on an account that DID round-trip still passes
         ok = self.rows_of(sales_journal(1, "6121", "1105", "101"))
         self.assertEqual(ok.validation_results, ())
+
+    def test_a_written_zero_on_a_fractional_sales_amount_is_blocked_in_diagnosis_and_output(self):
+        # 9251 has FLOOR Evidence (written 100 on 1,105): it does not reach a written 0 on 1 yen.
+        self.assertIsNotNone(match(sales_journal(1, "9251", "1105", "100")).evidence)
+        for account, amount in (("9251", "1"), ("6121", "5")):
+            result = match(sales_journal(1, account, amount, "0"))
+            self.assertIsNone(result.evidence)
+            self.assertIn("EXPLICIT_TAX_ZERO_UNVERIFIED", result.mismatch_fields)
+        gaps, _ = composition.line_gaps(composition.ScopedLine("CREDIT", "9251", "S10", Decimal(1), Decimal(0)))
+        self.assertEqual(gaps, ["EXPLICIT_TAX_ZERO_UNVERIFIED"])
+        # the output stage refuses it on its own, even if a caller forged the scoped profile
+        ctx = context()
+        entry = journal([(side("1111", "NO", "1"), side("9251", "S10", "1", None))])
+        entry = replace(entry, lines=[
+            replace(entry.lines[0], tax_info=None),
+            replace(entry.lines[1], tax_info=TaxInfo(
+                category="10%", rate=Decimal("10"), tax_inclusion="EXCLUDED", tax_amount=Decimal("0"),
+                metadata={"jdl_tax_scope": "売　上", "jdl_tax_input_method": "外税"})),
+        ])
+        entry.metadata[JDL_OUTPUT_METADATA_KEY] = JdlEvidenceProfile.SCOPED_COMPOSED_TAX_EXCLUDED_PROPORTIONAL.value
+        result = JdlOutputPreflight(ctx).evaluate((entry,), jdl_ibex_35_5_output_profile())
+        self.assertFalse(result.supported)
+        self.assertIn("JDL-OUT-TAX-AMOUNT-PATTERN", {item.rule_id for item in result.validation_results})
+        # the same account and relation with a written floor value above 0 still passes
+        self.assertEqual(self.rows_of(sales_journal(1, "9251", "1105", "100")).validation_results, ())
 
     def test_preflight_refuses_what_composition_would_not_release(self):
         ctx = context()
