@@ -2,7 +2,14 @@
 
 **この文書は進捗の索引です。** 数字・判断の正本は [current_evidence_status.md](current_evidence_status.md)、実機操作の履歴は [jdl_real_evidence_log.md](jdl_real_evidence_log.md)、経緯は [yayoi_buddies_evidence_campaign.md](yayoi_buddies_evidence_campaign.md)。顧客の値は書かない。
 
-最終更新: 2026-11-10（Pilot-1・Pilot-2 実機往復の照合。どちらも正式判定は `NORMALIZATION_ACCEPTANCE_PENDING`）
+最終更新: 2026-11-10（READYのみ変換を追加・正式READYを2,480に訂正。Pilot-1・Pilot-2はどちらも `NORMALIZATION_ACCEPTANCE_PENDING`）
+
+### READYのみ変換と正式READYの訂正（2026-11-10、未commit）
+- **正式READYの訂正: 2,481 → 2,480（BLOCK 33 → 34）**。仕訳7519（2026-07-31・本決・負の金額の明細）は診断ではREADYだったが、JDL出力は負の金額を拒否する（`JDL-OUT-AMOUNT`）。全件変換はほかのBLOCKで止まるため表面化しなかった。診断に `HUMAN:NEGATIVE_AMOUNT`（負・端数の金額/税額）を追加し、出力と同じ基準にした（判定の緩和ではない。JDL出力仕様は不変）。
+- **READYのみ変換**（`application/yayoi_ready_only.py`、CLI `tools/yayoi_ready_only_output.py`、GUI「変換の準備状況」→「READYのみ変換…」）: 既定の全件変換は従来どおり（1件でもBLOCKなら出力しない）。利用者が明示的に選び、出力件数・除外件数・3つの確認・確認者名・保存先・最終確認がそろったときだけ、READYの仕訳を伝票単位で出力する。BLOCKの仕訳は出力せず、行・日付・伝票・金額・理由を除外一覧（`.excluded.csv`）に残す。監査記録は出力した仕訳だけを対象（`journal_scope`）にし、全件出力用の検証では通らない。最後に `.ready_only.json` が全ファイルをSHA-256で結ぶ。途中で失敗したら全ファイルを消す。**全件移行ではない**ことを画面・記録に必ず表示する。
+- **Windowsでの確認・JDL実機検証の準備**: [ready_only_windows_trial.md](ready_only_windows_trial.md)（新規cloneでのビルド手順、GUIチェックリスト、空の検証用複製への取込と厳密照合の項目）。既存のWindowsクローンは改行コード（CRLF）だけの差が約490件あり、`build_windows.ps1` の「クリーンな作業ツリー」条件と `.venv-build` の存在で止まるため、触らずに別フォルダへcloneしてビルドする。
+- 検証の追加（commit前の最終確認）: 改ざん検出に抜け（`not_migrated_journals` の書き換えがPASS）を見つけて修正。未移行件数・注意書き・確認記録（3つの確認と確認者）も検証対象にした。実データで、除外一覧・CSV・監査・manifest・元データのSHA-256の結び付け、書き換え8通りの検出、Pilot-1/2期間の行のバイト一致、全件変換の拒否を再確認。
+- 会社A（隔離環境）: 2,514仕訳 → 出力2,480仕訳・6,102行、除外34仕訳。`verify_ready_only_output` PASS、`yayoi_roundtrip_check --ready-only` で原本↔CSV一致・監査PASS（1,176仕訳・2,397項目、すべて確認済みの範囲）。Pilot-1・Pilot-2期間の行はPilotの取込CSVとバイト一致。ACT正式CSV `97426c9a…`・MF期別 `ec2bcc3b…`/`090f3633…` もバイト一致。
 
 ### Pilot-1 実機往復と Pilot-2 準備（2026-11-10、計画: [pilot_e2e_plan.md](pilot_e2e_plan.md)、campaign 第29章）
 - **Pilot-1（2025-12-01〜12-30、207仕訳・465明細）**: Windows EXE変換 → JDL実機Import → 再Export まで完了。欠落・重複・余分0、金額・借貸・日付・科目・補助・税区分・税額・伝票構造・決算区分は一致（既知の正規化2,199セル）、説明できない差分0。非保持171項目（親科目のみの補助・54組）は利用者確認済みで監査記録PASS。
@@ -89,7 +96,7 @@
 ## 1. READY（会社A 2,514仕訳）
 | 区分 | 件数 | 条件 |
 |---|---:|---|
-| **正式READY（保存済み設定＝16行）** | **2,481** | AppDataのコピーで再計算（2026-11-08） |
+| **正式READY（保存済み設定＝16行）** | **2,480** | AppDataのコピーで再計算（2026-11-10。7519を負の金額でBLOCKに訂正。以前の2,481は出力できない1件を含んでいた） |
 | 条件付き: 16行・伝票分割の承認後 | 2,500 | 試算。税理士の承認記録が必要 |
 | 条件付き: 16行・＋控除不可SIGNOFF | 2,503 | 試算 |
 | 条件付き: アプリの行数を64にした場合 | 2,508 | 試算。保存設定の変更が必要（Human判断）。控除不可3・4012・1739・3605は止まる |
@@ -142,7 +149,8 @@
 - 補助30種類の登録判断、付箋の扱い、科目・税区分の確認 — current_evidence_status.md 参照。
 - 保存設定の振替伝票入力行数を16→64に変えるか（変えると分割・控除不可の承認は無効になり記録し直し）。
 
-## 6. 現在のBLOCK理由（16行・保存設定、正式READY 2,481 に対する残り33）
+## 6. 現在のBLOCK理由（16行・保存設定、正式READY 2,480 に対する残り34）
+- 2026-11-10: 7519（本決・負の金額）が加わり34件。以下の33件の内訳は不変。
 - 仕訳別一覧・分類（A〜E）・試算・次の実装: [yayoi_buddies_block33_plan.md](yayoi_buddies_block33_plan.md)（2026-11-10 再計算: 16行で分割承認＋SIGNOFFなら2,503、64行＋分割承認なら2,509）
 - `HUMAN:VOUCHER_SPLIT_APPROVAL` 19（分割承認待ち）／`HUMAN:VOUCHER_ROW_LIMIT_EXCEEDED` 11（分割規則の対象外の16行超）
 - 税区分（控除不可）3、構造Evidence不足3（425ほか）、決算（中決3605）1
@@ -175,5 +183,7 @@
 | 2026-11-09 | 承認スコープ修正後: Linux 1,428件 OK（skip 61: PySide6なし60・pypdfなし1）。Windows offscreen 1,428件 skip 0、failures 2＋errors 15（HEADでも再現する既存のOS依存17件と同一。今回の `test_noncredit_approval`・`test_resolution_report` 53件は倍率1／1.25／1.5でOK）。ACT・MF出力バイト一致 | 控除不可の承認を仕訳単位に |
 | 2026-11-09 | Linux 1,416件 OK（skip 60: PySide6なし59・pypdfなし1）。Windows offscreen `test_resolution_report` 27件 OK（倍率1／1.25／1.5）。Windows全体 1,416件: failures 2＋errors 15（すべてHEADのコードでも同じく再現＝既存のOS依存: CSV改行・CP932読込・パス・成果物順。今回の変更と無関係） | 控除不可3仕訳の依存関係・税区分確認UI |
 | 2026-11-10 | Linux 1,446件 OK（skip 61）。Pilot-1 実機往復の最終整備: 摘要末尾空白・80%経過措置・監査JSONのSHA-256対応付け・許容判断ツールの回帰18件を追加（変更前は1,428件） | 実機の再操作なし。Pilot-1 実データの回帰（取込CSVのバイト一致）を含む |
+| 2026-11-11 | Linux 1,475件 OK（skip 65）。READYのみ変換の改ざん検出に6通りを追加（件数・注意書き・確認記録）。Windows全体は変更前HEADと同じ31件の既存失敗（新規0） | READY-only commit前の最終確認 |
+| 2026-11-10 | Linux 1,475件 OK（skip 65: PySide6なし64・pypdfなし1）。READYのみ変換の回帰23件（合成18・会社A実データ1・Qt画面4）と負の金額の診断を追加。Windows（PySide6 6.12.0, offscreen）で新しいQtテスト4件・`test_resolution_report`・GUI契約テストOK | ACT・MF出力バイト一致 |
 | 2026-11-10 | Linux 1,452件 OK（skip 61）。Pilot-2の追加Evidence（半角3個）: エントリ履歴・未観測の並びの拒否・行ごとのEvidence紐づけ・Pilot-2実データ回帰を追加（直前は1,446件） | Pilot-1の45行の結果は不変 |
 | 2026-11-08 | 表示修正後: Linux全体OK、Windows Qt関連（比較・レイアウト）OK | Windows実画面での確認項目は報告参照。Windows固有の失敗11件は未解決のまま別管理 |
