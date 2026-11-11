@@ -322,6 +322,8 @@ def _key_of(code: str, noncredit: bool, negative: bool) -> str:
         return NONCREDIT_KEY
     if code == "HUMAN:VOUCHER_ROW_LIMIT_EXCEEDED":
         return NEGATIVE_KEY if negative else OVER_OTHER_KEY
+    if code == "HUMAN:NEGATIVE_AMOUNT":
+        return NEGATIVE_KEY
     if code not in _CODE_RULES and code.startswith("SYSTEM_EVIDENCE:"):
         return EVIDENCE_KEY  # every technical Evidence gap is one item; the codes stay in full in `codes`
     if code not in _CODE_RULES and code.startswith("SYSTEM_IMPLEMENTATION:"):

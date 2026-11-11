@@ -972,6 +972,39 @@ class AccountingConverterController:
             raise ValueError("入力形式と会社設定の整合を確認してください。")
         return compare_limits(source, resolved.profile, resolved.context)
 
+    def _resolved_for_yayoi_source(self, company_id, source_path):
+        from accounting_converter.application.yayoi_sources import detect_format
+
+        source = Path(source_path)
+        resolved = self.company_setting_service.resolve_for_source(
+            company_id, detect_format(source).identity().stable_key)
+        if not resolved.available:
+            raise ValueError("入力形式と会社設定の整合を確認してください。")
+        return source, resolved
+
+    def plan_yayoi_ready_only(self, company_id, source_path):
+        """Read-only: which journals a READY-only output would write and which it would leave out (and why)."""
+        from accounting_converter.application import yayoi_ready_only as ro
+
+        source, resolved = self._resolved_for_yayoi_source(company_id, source_path)
+        return ro.plan_ready_only(source, resolved.profile, resolved.context, company_id,
+                                  self.yayoi_conversion_workflow)
+
+    def execute_yayoi_ready_only(self, company_id, source_path, plan, confirmation, output_path):
+        """Write the READY journals only, after the user's explicit confirmation of exactly `plan`.
+
+        Re-diagnoses first (prepare_ready_only refuses any change). Returns (result or None, reasons)."""
+        from accounting_converter.application import yayoi_ready_only as ro
+
+        source, resolved = self._resolved_for_yayoi_source(company_id, source_path)
+        prepared = ro.prepare_ready_only(
+            plan, confirmation, input_path=source, output_path=Path(output_path), profile=resolved.profile,
+            context=resolved.context, company_setting_validated=resolved.available,
+            workflow=self.yayoi_conversion_workflow)
+        if prepared.summary.readiness.value != "READY":
+            return None, tuple(prepared.summary.blocking_reasons)
+        return ro.execute_ready_only(prepared, plan, confirmation), ()
+
     def company_resolution_report(self, company_id, source_path):
         """Read-only: the formal diagnosis grouped into resolvable items (application/resolution_report).
 

@@ -334,6 +334,23 @@ class QtTest(unittest.TestCase):
         dialog.context_toggle.setChecked(True)
         self.assertIn("正の金額", dialog.context_text.text())
 
+    def test_ready_only_is_a_separate_button_and_only_when_part_is_ready(self):
+        class WithReadyOnly(FakeController):
+            def plan_yayoi_ready_only(self, company_id, source):
+                raise AssertionError("the plan is computed only when the user opens READYのみ変換")
+
+        dialog = self._own(ResolutionCenterDialog(WithReadyOnly(self._report()), "c", Path("s"), {}, None))
+        self.assertFalse(dialog.ready_only_button.isHidden())
+        self.assertIn("全件移行ではありません", dialog.ready_only_button.text())
+        self.assertIn("変換できません", dialog.summary.text())  # the whole input is still not convertible
+        # Without the controller method (or with no READY journal) there is no button.
+        self.assertTrue(self._own(ResolutionCenterDialog(FakeController(self._report()), "c", Path("s"), {},
+                                                         None)).ready_only_button.isHidden())
+        none_ready = rr.build_report({"x:3605": frozenset({"SYSTEM_EVIDENCE:CLOSING_ENTRY_REPRESENTATION"})}, {},
+                                     saved_limit=16)
+        self.assertTrue(self._own(ResolutionCenterDialog(WithReadyOnly(none_ready), "c", Path("s"), {},
+                                                         None)).ready_only_button.isHidden())
+
     def test_all_blocker_codes_are_in_the_detail_view(self):
         dialog = self._own(ResolutionCenterDialog(FakeController(self._report()), "c", Path("s"), {}, None))
         self._select(dialog, rr.NONCREDIT_KEY)

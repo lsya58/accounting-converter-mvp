@@ -76,7 +76,8 @@ def _subaccount_code(profile, account: str, sub: str | None) -> str:
     return "?"
 
 
-def source_view(source: Path, profile, context):
+def source_view(source: Path, profile, context, journal_ids=None):
+    """journal_ids: only these source journals (a READY-only output); None = the whole source."""
     source_format = format_for_identity_key(profile.source_format_identity.stable_key) or detect_format(source)
     # The JDL vouchers expected: a Human-approved split turns one journal into its parts (voucher_split).
     from accounting_converter.application.voucher_split import apply_split
@@ -84,7 +85,8 @@ def source_view(source: Path, profile, context):
     from accounting_converter.application.closing_entries import mark_closing
 
     entries = MoneyForwardDescriptionReplacementPolicy(profile).apply(
-        apply_split(mark_closing(source_format.read(source), profile, context), profile, context)).entries
+        apply_split(mark_closing([e for e in source_format.read(source) if journal_ids is None or e.id in journal_ids],
+                                 profile, context), profile, context)).entries
     lines, descriptions, structure = Counter(), Counter(), Counter()
     rows = 0
     physical = []  # one item per JDL physical row, in output order (source provenance)
@@ -147,8 +149,10 @@ def trailing_space_rows(candidate: Path, reexport: Path, loss_rows, physical,
 
 
 def check(source: Path, profile, context, candidate: Path, reexport: Path | None, *,
-          company_setting_id: str | None = None, acceptance: Path | None = None) -> dict:
-    entries, source_journals, source_rows, s_lines, s_desc, s_struct, physical = source_view(source, profile, context)
+          company_setting_id: str | None = None, acceptance: Path | None = None, journal_ids=None) -> dict:
+    """journal_ids: a READY-only output's journals (from its manifest); the excluded journals are not expected."""
+    entries, source_journals, source_rows, s_lines, s_desc, s_struct, physical = source_view(
+        source, profile, context, journal_ids)
     c_journals, c_rows, c_lines, c_desc, c_struct = candidate_view(candidate)
     totals = {
         side: (sum(k[4] for k, n in s_lines.items() for _ in range(n) if k[1] == side),
@@ -171,7 +175,7 @@ def check(source: Path, profile, context, candidate: Path, reexport: Path | None
                                              "credit_total_equal", "tax_total_equal"))
         and all(not any(v.values()) for v in source_vs_candidate.values() if isinstance(v, dict))
     )
-    preservation = verify_non_retained_audit(source, candidate, profile, context)
+    preservation = verify_non_retained_audit(source, candidate, profile, context, journal_ids=journal_ids)
     result = {
         "source": {"journals": source_journals, "physical_rows": source_rows},
         "candidate": {"journals": c_journals, "physical_rows": c_rows},
@@ -265,12 +269,26 @@ def main() -> int:
     parser.add_argument("--reexport", type=Path, help="JDL re-export of the same period from the test company")
     parser.add_argument("--acceptance", type=Path,
                         help="the user's acceptance of the 摘要 trailing-space loss (jdl_description_trailing_space_acceptance)")
+    parser.add_argument("--ready-only", action="store_true",
+                        help="the candidate is a READY-only output: compare only its journals (from <candidate>.ready_only.json)")
     parser.add_argument("--record-out", type=Path,
                         help="write the row-level 摘要 loss record here (data/private only; customer data)")
     args = parser.parse_args()
     profiles = ConversionProfileStore(args.company_store / "profiles")
     resolved = CompanySettingStore(args.company_store / "companies", profiles).resolve(args.company_id)
+    journal_ids = None
+    if args.ready_only:
+        from accounting_converter.application import yayoi_ready_only as ro
+
+        verification = ro.verify_ready_only_output(args.source, args.candidate, resolved.profile, resolved.context,
+                                                   args.company_id)
+        if verification["verdict"] != "PASS":
+            print(json.dumps({"verdict": "FAIL", "ready_only_files": verification}, ensure_ascii=False, indent=2))
+            return 1
+        manifest = json.loads(ro.manifest_path_for(args.candidate).read_text(encoding="utf-8"))
+        journal_ids = ro.ready_ids_from_manifest(manifest, args.source, resolved.profile)
     result = check(args.source, resolved.profile, resolved.context, args.candidate, args.reexport,
+                   journal_ids=journal_ids,
                    company_setting_id=args.company_id, acceptance=args.acceptance)
     if args.record_out is not None and "description_trailing_space_loss" in result:
         write_record(result, args.record_out)

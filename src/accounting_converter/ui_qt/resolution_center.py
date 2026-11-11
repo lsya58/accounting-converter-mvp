@@ -487,6 +487,11 @@ class ResolutionCenterDialog(QDialog):
         self.status = QLabel()
         self.status.setObjectName("muted")
         footer.addWidget(self.status, 1)
+        # Separate mode, only when part of the input is READY and part is not; never the default conversion.
+        self.ready_only_button = QPushButton("READYのみ変換…（全件移行ではありません）")
+        self.ready_only_button.setVisible(False)
+        self.ready_only_button.clicked.connect(self._open_ready_only)
+        footer.addWidget(self.ready_only_button)
         self.rediagnose_button = QPushButton("再診断")
         self.rediagnose_button.clicked.connect(self.refresh)
         close = QPushButton("閉じる")
@@ -521,6 +526,7 @@ class ResolutionCenterDialog(QDialog):
             self.details.setPlainText("")
             self.action_button.setVisible(False)
             self.why_no_button.setText("")
+            self.ready_only_button.setVisible(False)
             return
         QApplication.restoreOverrideCursor()
         report = self.report
@@ -581,8 +587,15 @@ class ResolutionCenterDialog(QDialog):
             self.action_button.setVisible(False)
             self.why_no_button.setText("")
             self.details.setPlainText("")
+        self.ready_only_button.setVisible(report.blocked > 0 and report.ready > 0
+                                          and hasattr(self.controller, "plan_yayoi_ready_only"))
         approved = not report.split_policy_problems
         self.status.setText("再診断しました（保存済み設定）。" + ("伝票分割: 承認記録あり。" if approved else ""))
+
+    def _open_ready_only(self) -> None:
+        from .ready_only_dialog import ReadyOnlyConversionDialog
+
+        ReadyOnlyConversionDialog(self.controller, self.company_id, self.source_path, self).exec()
 
     def _open_comparison(self) -> None:
         if self.comparison is None:

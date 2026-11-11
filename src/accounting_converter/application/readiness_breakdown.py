@@ -31,6 +31,7 @@ PRIORITY: tuple[tuple[str, str, str], ...] = (
     ("HUMAN:DESCRIPTION_REPLACEMENT", "摘要", "JDLに入らない摘要の置き換えを確認してください。"),
     ("HUMAN:VOUCHER_SPLIT_APPROVAL", "伝票分割の承認", "行数超過の仕訳を分割できます（各伝票はJDL実機で確認済み）。分割してよいかの税理士確認を記録してください（tools/yayoi_voucher_split approve）。"),
     ("HUMAN:VOUCHER_ROW_LIMIT_EXCEEDED", "行数超過", "振替伝票入力行数を超えています。分割するかJDLで手入力してください（自動分割はしません）。"),
+    ("HUMAN:NEGATIVE_AMOUNT", "負の金額", "JDLのCSV取込は負の金額を受け付けません（実機確認）。符号・借貸・税額は変えません。弥生側での表し方を税理士と確認してください。"),
     ("SYSTEM_EVIDENCE:CLOSING_ENTRY_REPRESENTATION", "決算仕訳", "本決はJDL実機で確認済みの形だけ決算整理仕訳（日付13月）で出力します。中決と未確認の形は止めます。通常仕訳への置き換えは会計判断です。"),
 )
 _EVIDENCE_TAX = frozenset({

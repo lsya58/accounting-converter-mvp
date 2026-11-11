@@ -199,6 +199,14 @@ class _DescriptionAndEvidenceRoutePolicy:
         return self._evidence_policy.apply(described.entries)
 
 
+NEGATIVE_AMOUNT_BLOCKER = "HUMAN:NEGATIVE_AMOUNT"
+
+
+def _not_writable_amount(line) -> bool:
+    values = [line.amount] + ([line.tax_info.tax_amount] if line.tax_info and line.tax_info.tax_amount is not None else [])
+    return any(Decimal(value) < 0 or Decimal(value) != Decimal(value).to_integral_value() for value in values)
+
+
 class YayoiJournalReportJdlWorkflow:
     def __init__(self, registry=None) -> None:
         self.registry = registry or production_adapter_registry()
@@ -247,6 +255,11 @@ class YayoiJournalReportJdlWorkflow:
                 }[result.field])
         assignments = {}
         likely: dict[str, set[str]] = {entry.id: set() for entry in entries}
+        for entry in entries:
+            # The JDL output refuses a negative or fractional amount / tax (JDL-OUT-AMOUNT); JDL's CSV import rejected
+            # "-" too (negative_probe_20261109). Diagnose it here so READY always means "the output accepts it".
+            if any(_not_writable_amount(line) for line in entry.lines):
+                blockers[entry.id].add(NEGATIVE_AMOUNT_BLOCKER)
         for entry in entries:
             # 経過措置割合（80%/70%…）と取引日の期間が合わない行は、確認済みの税区分対応があっても変換しない。
             if credit_period.period_mismatch(entry):
@@ -421,6 +434,10 @@ class YayoiJournalReportJdlWorkflow:
                 "振替伝票入力行数を超える仕訳のうち、分割規則の対象で、分割後の各伝票の形はJDL実機で確認済みのものがあります。"
                 "分割してよいかの税理士確認を記録するまで変換しません（自動では分割しません）。"
             ),
+            NEGATIVE_AMOUNT_BLOCKER: (
+                "負の金額（または端数のある金額）の明細を含む仕訳があります。JDLのCSV取込は負の金額を受け付けません。"
+                "符号・借貸・税額は変えません。弥生側での表し方を税理士と確認してください。"
+            ),
             "HUMAN:VOUCHER_ROW_LIMIT_EXCEEDED": (
                 "JDLの振替伝票入力行数を超える仕訳があります。JDLは行数が多すぎる伝票を取り込めません"
                 "（分割するか、JDLで手入力してください。アプリは自動で分割しません）。"
@@ -451,17 +468,34 @@ class YayoiJournalReportJdlWorkflow:
         )
         if reasons:
             return FirstReleasePreparedConversion(summary)
+        assert profile is not None and context is not None and output_path is not None
+        request, service = self.formal_service(input_path, output_path, profile, context, assessment)
+        return FirstReleasePreparedConversion(summary, request, service)
+
+    def formal_service(self, input_path: Path, output_path: Path, profile, context, assessment, *,
+                       only_journals: frozenset[str] | None = None):
+        """The production conversion (request, service). only_journals: READY-only output (yayoi_ready_only) reads
+        just these source journals, before the approved split; every other stage is unchanged."""
+        source_format = self._source_format(input_path, profile)
+        confirmed_fields = frozenset(confirmed_optional_fields(profile))
+        source_adapter = _AuditOnlyFieldsRemovedAdapter(source_format.adapter(), confirmed_fields)
+        if only_journals is not None:
+            source_adapter = _OnlyJournals(source_adapter, frozenset(only_journals))
+        assignments = assessment.assignments
+        if only_journals is not None:
+            # The route policy refuses an assignment for a journal it never sees: keep only the written ones
+            # (an approved split's parts are named "<journal id>#part…").
+            assignments = {key: value for key, value in assignments.items()
+                           if key.split("#part", 1)[0] in only_journals}
         output_lookup = self.registry.get_exact_output(
             jdl_ibex_cashbook_official_journal_import_schema_definition().identity
         )
-        assert profile is not None and context is not None and output_path is not None
         route = _DescriptionAndEvidenceRoutePolicy(
             DescriptionReplacementPolicy(profile),
-            ExplicitJdlEvidenceRoutePolicy(assessment.assignments, route_id=ROUTE_ID),
+            ExplicitJdlEvidenceRoutePolicy(assignments, route_id=ROUTE_ID),
         )
         service = ConversionService(
-            input_adapter=_VoucherSplitAdapter(
-                _AuditOnlyFieldsRemovedAdapter(source_format.adapter(), confirmed_fields), profile, context),
+            input_adapter=_VoucherSplitAdapter(source_adapter, profile, context),
             structural_validator=source_format.validator(),
             mapping_engine=MappingEngine(mapping_rule_set_from_profile(profile)),
             business_validator=ValidationPipeline((BalanceRule(), YayoiToJdlLossRule(confirmed_fields))),
@@ -480,7 +514,7 @@ class YayoiJournalReportJdlWorkflow:
             conversion_profile=profile,
             target_runtime_context=context,
         )
-        return FirstReleasePreparedConversion(summary, request, service)
+        return request, service
 
     def probe_cases(self, input_path: Path, profile, context, probe_gaps: frozenset[str] = PROBE_GAPS) -> dict:
         """journal id -> (case, JDL serializer profile) for journals that may be probed.
@@ -870,11 +904,24 @@ def dropped_subaccount_values(entry: JournalEntry, profile) -> tuple[tuple[int, 
     return tuple(found)
 
 
-def expected_non_retained(source: Path, profile, context=None) -> list[dict]:
-    """One record per source journal that has values JDL will not hold, in source order."""
+def journal_scope(journal_ids) -> dict | None:
+    """What a READY-only audit covers (None = the whole source, the default formal output)."""
+    if journal_ids is None:
+        return None
+    ordered = sorted(journal_ids)
+    return {"mode": "READY_ONLY", "journals": len(ordered),
+            "journal_ids_sha256": hashlib.sha256("\n".join(ordered).encode("utf-8")).hexdigest()}
+
+
+def expected_non_retained(source: Path, profile, context=None, journal_ids=None) -> list[dict]:
+    """One record per source journal that has values JDL will not hold, in source order.
+
+    journal_ids: only these source journals (READY-only output); None = every journal."""
     source_format = format_for_identity_key(profile.source_format_identity.stable_key) or detect_format(source)
     records = []
     for entry in source_format.read(source):
+        if journal_ids is not None and entry.id not in journal_ids:
+            continue
         values = non_retained_values(entry) + dropped_subaccount_values(entry, profile)
         noncredit = noncredit_approval.audit_lines(entry, profile)
         split = voucher_split.audit_record(entry, profile, context)
@@ -902,13 +949,13 @@ def _atomic_json(path: Path, payload: dict) -> None:
     temp.replace(path)
 
 
-def begin_non_retained_audit(source: Path, output: Path, profile, context=None) -> Path | None:
+def begin_non_retained_audit(source: Path, output: Path, profile, context=None, journal_ids=None) -> Path | None:
     """Before the CSV exists: write the audit as .pending (no output hash yet).
 
     If the run stops after the CSV is written, the .pending file shows that the
     pair is incomplete; verify_non_retained_audit then fails.
     """
-    records = expected_non_retained(source, profile, context)
+    records = expected_non_retained(source, profile, context, journal_ids)
     if not records:
         return None
     for path in (audit_path_for(output), pending_audit_path_for(output)):
@@ -927,6 +974,8 @@ def begin_non_retained_audit(source: Path, output: Path, profile, context=None) 
         "value_count": sum(len(item["not_in_jdl"]) for item in records),
         **_noncredit_summary(records),
         **_split_summary(records),
+        # Only a READY-only output carries this key: earlier audit files stay byte-identical.
+        **({"journal_scope": journal_scope(journal_ids)} if journal_ids is not None else {}),
         "journals": records,
     })
     return pending
@@ -997,13 +1046,15 @@ def locate_non_retained_audit(output: Path) -> tuple[Path | None, str]:
     return None, AUDIT_AMBIGUOUS if matches else AUDIT_NOT_FOUND
 
 
-def verify_non_retained_audit(source: Path, output: Path, profile, context=None) -> dict:
+def verify_non_retained_audit(source: Path, output: Path, profile, context=None, journal_ids=None) -> dict:
     """Separate verdict for the information JDL does not hold.
 
     NOT_NEEDED: nothing left out. PASS: the audit exists, is final, belongs to
     this source and this CSV, and lists exactly the expected values.
+    journal_ids: a READY-only output's journals; its audit must name exactly that scope (and a full-output
+    audit must name none), so one can never pass for the other.
     """
-    expected = expected_non_retained(source, profile, context)
+    expected = expected_non_retained(source, profile, context, journal_ids)
     final, how = locate_non_retained_audit(output)
     # An interrupted run of either name leaves a .pending file.
     pending_paths = {pending_audit_path_for(output)}
@@ -1026,6 +1077,7 @@ def verify_non_retained_audit(source: Path, output: Path, profile, context=None)
     result["audit_names_this_file"] = payload.get("jdl_output_file") == output.name
     checks = {
         "schema": payload.get("schema") == AUDIT_SCHEMA,
+        "journal_scope": payload.get("journal_scope") == journal_scope(journal_ids),
         "source_sha256": payload.get("source_sha256") == hashlib.sha256(source.read_bytes()).hexdigest(),
         "output_sha256": payload.get("jdl_output_sha256") == hashlib.sha256(output.read_bytes()).hexdigest(),
         "journal_count": payload.get("journal_count") == len(payload.get("journals", ())) == len(expected),
