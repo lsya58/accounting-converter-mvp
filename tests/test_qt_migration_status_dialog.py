@@ -64,22 +64,91 @@ class DialogTest(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_approval_tab_lists_details_and_previews_without_writing(self):
+    def _dialog(self, env, **kwargs):
+        dialog = MigrationStatusDialog(controller_for(env.fixture, env.root), COMPANY, env.source)
+        self.addCleanup(dialog.deleteLater)
+        for name, value in kwargs.items():
+            setattr(dialog, name, value)
+        if kwargs:
+            dialog.refresh_items()
+        return dialog
+
+    def _select(self, dialog, *needles):
+        """Select the list rows whose item ids contain any needle (like the user clicking them)."""
+        dialog.item_list.clearSelection()
+        for row, entry in enumerate(dialog.entries):
+            if entry[0] == "item" and any(n in entry[1].item_id for n in needles):
+                dialog.item_list.item(row).setSelected(True)
+
+    def test_the_preview_button_shows_the_result_when_clicked(self):
+        """Regression: `clicked` passes `checked` (False); the slot used to treat it as the item list and failed silently."""
+        from tests.test_approval_explanation import extras
+
         with tempfile.TemporaryDirectory() as directory, evidence_covers_test_company():
             env = ApprovalEnv(directory)
+            record, catalog = extras(env)
             digest = store_digest(env.root)
-            dialog = MigrationStatusDialog(controller_for(env.fixture, env.root), COMPANY, env.source)
-            self.addCleanup(dialog.deleteLater)
-            self.assertGreaterEqual(dialog.item_list.count(), 2)
-            self.assertIn("会社ID", dialog.item_detail.text())
-            self.assertIn("未判断", dialog.item_detail.text())
-            dialog.run_preview(["SPLIT-V1"])
-            self.assertIn("承認後の予測", dialog.preview_text.text())
-            self.assertIn("承認は記録していません", dialog.preview_text.text())
-            self.assertGreater(dialog.preview_table.rowCount(), 0)
-            self.assertEqual(store_digest(env.root), digest)
+            dialog = self._dialog(env, trailing_space_record=record, catalog_path=catalog)
+            self.assertEqual(len([e for e in dialog.entries if e[0] == "item"]), 5)
+            self.assertEqual([e for e in dialog.entries if e[0] == "guide"], [])
+            self._select(dialog, "SPLIT-V1")
+            dialog.preview_button.click()                                  # the real button, not run_preview(...)
+            self.assertIn("承認した場合の予測", dialog.preview_text.text())
+            self.assertIn("承認は記録しておらず", dialog.preview_text.text())
+            self.assertEqual(dialog.released_table.rowCount(), 1)
+            self.assertEqual(dialog.remaining_table.rowCount(), 1)
+            self.assertIn("未承認", dialog.remaining_table.item(0, 4).text())
+            self.assertEqual(dialog.released_table.item(0, 1).text(), "1")   # 伝票No. and 日付 are shown
+            self.assertIn("控除不可の未承認条件", dialog.preview_text.text())
+            self.assertEqual(store_digest(env.root), digest)               # read-only
+            self.assertFalse(list(env.root.rglob("*.jsonl")))              # and no ledger entry
+            self._select(dialog, "NONCREDIT")
+            dialog.preview_button.click()
+            self.assertIn("EQUIVALENCE_CONFIRMED", dialog.preview_text.text())   # missing prerequisites are shown
+
+    def test_the_button_never_stays_silent(self):
+        with tempfile.TemporaryDirectory() as directory, evidence_covers_test_company():
+            env = ApprovalEnv(directory)
+            dialog = self._dialog(env)
+            dialog.item_list.clearSelection()
+            dialog.item_list.setCurrentRow(-1)
+            dialog.preview_button.click()
+            self.assertIn("選んでください", dialog.preview_text.text())
+            guide_row = next(r for r, e in enumerate(dialog.entries) if e[0] == "guide")
+            dialog.item_list.clearSelection()
+            dialog.item_list.item(guide_row).setSelected(True)
+            dialog.preview_button.click()
+            self.assertIn("別の承認経路", dialog.preview_text.text())
+            self._select(dialog, "SPLIT-V1")
+
+            def boom(*args, **kwargs):
+                raise RuntimeError("synthetic failure")
+
+            dialog.controller.approval_preview_view = boom
+            dialog.preview_button.click()
+            self.assertIn("試算できませんでした", dialog.preview_text.text())
+            self.assertIn("synthetic failure", dialog.preview_text.text())
+            self.assertIn("承認は記録されていません", dialog.preview_text.text())
+
+    def test_the_detail_is_in_plain_language_and_keeps_the_technical_information(self):
+        with tempfile.TemporaryDirectory() as directory, evidence_covers_test_company():
+            env = ApprovalEnv(directory)
+            dialog = self._dialog(env)
+            self.assertEqual([e[1].guide_id for e in dialog.entries if e[0] == "guide"], ["TRAILING-SPACE", "POLICY"])
+            nc_row = next(r for r, e in enumerate(dialog.entries) if e[0] == "item" and e[1].kind == "NONCREDIT_JOURNAL")
+            dialog.item_list.setCurrentRow(nc_row)
+            text = dialog.item_detail.text()
+            for needle in ("1. 何の取引・仕訳か", "2. 元の弥生での処理", "3. JDLで提案している処理", "4. 変換によって失われる",
+                           "5. 税理士に判断してほしいこと", "8. 承認できない場合の対応候補", "9. 現在の承認状態", "未判断",
+                           "課対仕入10%", "非仕入"):
+                self.assertIn(needle, text)
+            self.assertNotIn("EVID-YAYOI", text)                      # technical details are one toggle away
+            dialog.technical_toggle.setChecked(True)
+            text = dialog.item_detail.text()
+            self.assertIn(COMPANY, text)
+            self.assertIn("EVID-YAYOI", text)
             labels = [b.text() for b in dialog.findChildren(type(dialog.preview_button))]
-            self.assertFalse(any("承認を記録" in text for text in labels))
+            self.assertFalse(any("承認を記録" in label for label in labels))
 
     def test_tracker_tab_counts_filters_and_csv(self):
         with tempfile.TemporaryDirectory() as directory:

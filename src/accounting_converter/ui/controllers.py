@@ -990,29 +990,75 @@ class AccountingConverterController:
         return ro.plan_ready_only(source, resolved.profile, resolved.context, company_id,
                                   self.yayoi_conversion_workflow)
 
-    def approval_items(self, company_id, source_path, ledger_path=None):
-        """Read-only (D0): items waiting for the tax accountant and their ledger state. Nothing is recorded here."""
+    def _approval_inputs(self, company_id, source_path, trailing_space_record=None, catalog_path=None):
+        """Read-only: (source, resolved, entries, pending items). The two optional private inputs are the 摘要末尾空白
+        record and the operating-policy catalog; without them those two items are not listed (the screen says so)."""
+        import json
+
         from accounting_converter.application import approval_ledger as al
         from accounting_converter.application.yayoi_sources import detect_format
 
         source, resolved = self._resolved_for_yayoi_source(company_id, source_path)
+        policies = ()
+        if catalog_path:
+            catalog = json.loads(Path(catalog_path).read_text(encoding="utf-8"))
+            if catalog.get("company_id") != company_id:
+                raise ValueError("運用方針の定義ファイルは、別の会社のものです。")
+            policies = tuple(catalog.get("policies") or ())
         entries = detect_format(source).diagnose(source).entries
-        items = al.pending_items(entries, resolved.profile, resolved.context, company_id)
-        ledger = al.ApprovalLedger(
+        items = al.pending_items(entries, resolved.profile, resolved.context, company_id,
+                                 trailing_space_record=Path(trailing_space_record) if trailing_space_record else None,
+                                 policies=policies)
+        return source, resolved, entries, items
+
+    def _approval_ledger(self, company_id, ledger_path=None):
+        from accounting_converter.application import approval_ledger as al
+
+        return al.ApprovalLedger(
             Path(ledger_path) if ledger_path else al.default_ledger_path(Path(self.profile_store.root_dir).parent, company_id),
             company_id)
+
+    def approval_items(self, company_id, source_path, ledger_path=None, trailing_space_record=None, catalog_path=None):
+        """Read-only (D0): items waiting for the tax accountant and their ledger state. Nothing is recorded here."""
+        _, _, _, items = self._approval_inputs(company_id, source_path, trailing_space_record, catalog_path)
+        ledger = self._approval_ledger(company_id, ledger_path)
         return tuple((item, ledger.status(item.item_id)) for item in items)
 
-    def approval_preview(self, company_id, source_path, item_ids):
-        """Read-only (D0): READY/BLOCK now and if the named items were approved (in-memory trial, never saved)."""
+    def approval_overview(self, company_id, source_path, ledger_path=None, trailing_space_record=None, catalog_path=None):
+        """Read-only (D0): the items, their ledger state, a plain-language explanation of each and the guides for the
+        decisions whose inputs are not loaded. A broken ledger is reported, never hidden and never repaired."""
         from accounting_converter.application import approval_ledger as al
-        from accounting_converter.application.yayoi_sources import detect_format
+        from accounting_converter.application import approval_explanation as ex
 
-        source, resolved = self._resolved_for_yayoi_source(company_id, source_path)
-        entries = detect_format(source).diagnose(source).entries
-        items = {i.item_id: i for i in al.pending_items(entries, resolved.profile, resolved.context, company_id)}
-        return al.preview(source, resolved.profile, resolved.context, company_id,
-                          [(items[i], None) for i in item_ids if i in items], workflow=self.yayoi_conversion_workflow)
+        _, resolved, entries, items = self._approval_inputs(company_id, source_path, trailing_space_record, catalog_path)
+        ledger, ledger_error, states = self._approval_ledger(company_id, ledger_path), None, {}
+        for item in items:
+            try:
+                states[item.item_id] = ledger.status(item.item_id)
+            except al.ApprovalError as error:
+                ledger_error = str(error)
+                states[item.item_id] = "台帳を読めません"
+        return {"items": tuple((item, states[item.item_id]) for item in items),
+                "explanations": ex.explain_all(entries, items, resolved.profile, resolved.context, company_id),
+                "guides": ex.guides_for(items), "ledger_error": ledger_error}
+
+    def approval_preview(self, company_id, source_path, item_ids, trailing_space_record=None, catalog_path=None):
+        """Read-only (D0): READY/BLOCK now and if the named items were approved (in-memory trial, never saved)."""
+        return self.approval_preview_view(company_id, source_path, item_ids, trailing_space_record, catalog_path)[0]
+
+    def approval_preview_view(self, company_id, source_path, item_ids, trailing_space_record=None, catalog_path=None):
+        """(Preview, PreviewView): the trial and its plain-language form. Writes nothing (no setting, no ledger)."""
+        from accounting_converter.application import approval_explanation as ex
+        from accounting_converter.application import approval_ledger as al
+
+        source, resolved, _, items = self._approval_inputs(company_id, source_path, trailing_space_record, catalog_path)
+        by_id = {item.item_id: item for item in items}
+        unknown = [i for i in item_ids if i not in by_id]
+        if unknown:
+            raise ValueError("承認待ちにない項目です: " + ", ".join(unknown))
+        preview = al.preview(source, resolved.profile, resolved.context, company_id,
+                             [(by_id[i], None) for i in item_ids], workflow=self.yayoi_conversion_workflow)
+        return preview, ex.describe_preview(preview, items, resolved.context, company_id)
 
     def migration_tracker_status(self, company_id, source_path, output_path, tracker_path):
         """Read-only (D2): the tracker of a READY-only run and its integrity check."""
