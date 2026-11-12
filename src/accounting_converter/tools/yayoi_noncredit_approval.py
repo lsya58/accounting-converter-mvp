@@ -99,15 +99,16 @@ def approve(args) -> dict:
     if missing:
         raise SystemExit(f"journal not found exactly once in --source: {', '.join(missing)}")
     journals = [by_label[j][0] for j in wanted]
-    nc.approve_noncredit_identity(
-        profiles, resolved.profile.profile_id, args.company_id, resolved.context, args.identity,
+    from accounting_converter.application import approval_ledger
+
+    approval_ledger.approve_noncredit_direct(
+        profiles, companies, args.company_id, resolved.profile.profile_id, resolved.context, args.identity,
         human_approver=args.human_approver, tax_accountant=args.tax_accountant,
         signoff_reference=args.signoff_reference, signoff_date=date.fromisoformat(args.signoff_date),
         rate_distinction_loss_acknowledged=True,
         judge_report_sha256=hashlib.sha256(report_bytes).hexdigest(),
         journals=journals, source_entries=entries, labels={entry.id: entry.id.rsplit(":", 1)[-1] for entry in journals},
     )
-    companies.refresh_profile_fingerprint(args.company_id)
     return status(args.company_store, args.company_id, args.source)
 
 

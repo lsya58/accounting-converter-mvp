@@ -188,6 +188,7 @@ class VoucherSplitApprovalDialog(QDialog):
     def __init__(self, controller, company_id: str, source_path, journal_ids, parent=None) -> None:
         super().__init__(parent)
         self.controller, self.company_id = controller, company_id
+        self.source_path = source_path
         self.saved = False
         self.setWindowTitle("伝票分割の承認")
         self.resize(900, 640)
@@ -222,7 +223,8 @@ class VoucherSplitApprovalDialog(QDialog):
         self.scope.setWordWrap(True)
         layout.addWidget(self.scope)
         self.scope_more = QLabel(
-            f"分割規則: {rr_rule()}。行数を変更すると承認は無効になり、記録し直しが必要です。"
+            f"分割規則: {rr_rule()}。承認の範囲は、この画面で確認した仕訳だけです（今後の仕訳には適用しません）。"
+            "行数を変更すると承認は無効になり、記録し直しが必要です。"
             "16行と64行では承認を共有しません。ほかのBLOCKが残る仕訳は承認後も変換できず、正式診断で再確認します。")
         self.scope_more.setWordWrap(True)
         self.scope_more.setVisible(False)
@@ -360,7 +362,8 @@ class VoucherSplitApprovalDialog(QDialog):
         state = self.controller.approve_voucher_split(
             self.company_id, human_approver=self.approver.text(), tax_accountant=self.accountant.text(),
             signoff_reference=self.reference.text(), signoff_date=date(qdate.year(), qdate.month(), qdate.day()),
-            explicitly_confirmed=self.confirm.isChecked())
+            explicitly_confirmed=self.confirm.isChecked(), source_path=self.source_path,
+            journal_ids=tuple(rr.short_id(b["journal"]) for b in self.briefs))
         if state.developer_error is not None:
             QMessageBox.warning(self, "承認を記録できませんでした", state.user_message)
             return
@@ -492,6 +495,10 @@ class ResolutionCenterDialog(QDialog):
         self.ready_only_button.setVisible(False)
         self.ready_only_button.clicked.connect(self._open_ready_only)
         footer.addWidget(self.ready_only_button)
+        self.migration_button = QPushButton("承認・未移行の管理…")
+        self.migration_button.setVisible(False)
+        self.migration_button.clicked.connect(self._open_migration_status)
+        footer.addWidget(self.migration_button)
         self.rediagnose_button = QPushButton("再診断")
         self.rediagnose_button.clicked.connect(self.refresh)
         close = QPushButton("閉じる")
@@ -527,6 +534,7 @@ class ResolutionCenterDialog(QDialog):
             self.action_button.setVisible(False)
             self.why_no_button.setText("")
             self.ready_only_button.setVisible(False)
+            self.migration_button.setVisible(False)
             return
         QApplication.restoreOverrideCursor()
         report = self.report
@@ -589,8 +597,14 @@ class ResolutionCenterDialog(QDialog):
             self.details.setPlainText("")
         self.ready_only_button.setVisible(report.blocked > 0 and report.ready > 0
                                           and hasattr(self.controller, "plan_yayoi_ready_only"))
+        self.migration_button.setVisible(report.blocked > 0 and hasattr(self.controller, "approval_items"))
         approved = not report.split_policy_problems
         self.status.setText("再診断しました（保存済み設定）。" + ("伝票分割: 承認記録あり。" if approved else ""))
+
+    def _open_migration_status(self) -> None:
+        from .migration_status_dialog import MigrationStatusDialog
+
+        MigrationStatusDialog(self.controller, self.company_id, self.source_path, self).exec()
 
     def _open_ready_only(self) -> None:
         from .ready_only_dialog import ReadyOnlyConversionDialog

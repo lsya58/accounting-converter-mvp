@@ -26,7 +26,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from accounting_converter.domain.journal import JournalEntry, Side
-from accounting_converter.domain.journal_identity import JOURNAL_CONTENT_IDENTITY_KEY
+from accounting_converter.domain.journal_identity import JOURNAL_CONTENT_IDENTITY_KEY, stable_journal_identity
 from accounting_converter.domain.journal_rows import LINE_ROW_KEY, ROW_ORDER_KEY, journal_physical_rows
 from accounting_converter.domain.mapping import MappingStatus, MappingValue
 
@@ -176,20 +176,113 @@ def reconstruction_problems(original: JournalEntry, chunks: tuple[JournalEntry, 
 
 
 # ---------------------------------------------------------------- Human approval (company scoped)
+# Every approval states WHICH journals it covers (never implied). Stored in the policy metadata.
+SCOPE_KEY = "split_scope"
+SCOPE_JOURNALS = "JOURNALS_V1"        # only the journals named by content identity (e.g. the 19 previewed)
+SCOPE_PERIOD = "PERIOD_V1"            # qualifying journals dated within [start, end] (both inclusive)
+SCOPE_COMPANY_WIDE = "COMPANY_WIDE_V1"  # every qualifying journal of this company and row limit, future ones too
+SCOPES = (SCOPE_JOURNALS, SCOPE_PERIOD, SCOPE_COMPANY_WIDE)
+SCOPE_JOURNALS_KEY = "split_journals"  # JSON list of content identities (sha256)
+SCOPE_START_KEY, SCOPE_END_KEY = "split_period_start", "split_period_end"
+
+
+@dataclass(frozen=True)
+class SplitScope:
+    kind: str
+    journals: tuple[str, ...] = ()            # content identities (JOURNALS_V1)
+    period: tuple[date, date] | None = None   # (start, end) (PERIOD_V1)
+
+    @classmethod
+    def for_journals(cls, entries) -> "SplitScope":
+        from accounting_converter.domain.journal_identity import stable_journal_identity
+
+        return cls(SCOPE_JOURNALS, tuple(dict.fromkeys(stable_journal_identity(entry) or "" for entry in entries)))
+
+    def problems(self) -> tuple[str, ...]:
+        if self.kind not in SCOPES:
+            return ("SPLIT_SCOPE_MISSING",)
+        if self.kind == SCOPE_JOURNALS and (not self.journals or any(
+                not isinstance(sha, str) or len(sha) != 64 for sha in self.journals)):
+            return ("SPLIT_SCOPE_JOURNALS_INVALID",)
+        if self.kind == SCOPE_PERIOD and (self.period is None or not all(isinstance(d, date) for d in self.period)
+                                          or self.period[0] > self.period[1]):
+            return ("SPLIT_SCOPE_PERIOD_INVALID",)
+        return ()
+
+    def metadata(self) -> dict:
+        import json
+
+        meta = {SCOPE_KEY: self.kind}
+        if self.kind == SCOPE_JOURNALS:
+            meta[SCOPE_JOURNALS_KEY] = json.dumps(sorted(self.journals))
+        if self.kind == SCOPE_PERIOD:
+            meta[SCOPE_START_KEY], meta[SCOPE_END_KEY] = self.period[0].isoformat(), self.period[1].isoformat()
+        return meta
+
+    @classmethod
+    def from_metadata(cls, meta: dict) -> "SplitScope":
+        import json
+
+        kind = meta.get(SCOPE_KEY)
+        if kind == SCOPE_JOURNALS:
+            try:
+                journals = json.loads(meta.get(SCOPE_JOURNALS_KEY, "[]"))
+            except (TypeError, ValueError):
+                journals = []
+            return cls(kind, tuple(journals) if isinstance(journals, list) else ())
+        if kind == SCOPE_PERIOD:
+            try:
+                return cls(kind, period=(date.fromisoformat(meta[SCOPE_START_KEY]), date.fromisoformat(meta[SCOPE_END_KEY])))
+            except (KeyError, TypeError, ValueError):
+                return cls(kind)
+        return cls(kind if isinstance(kind, str) else "")
+
+    def covers(self, entry: JournalEntry) -> bool:
+        from accounting_converter.domain.journal_identity import stable_journal_identity
+
+        if self.problems():
+            return False
+        if self.kind == SCOPE_JOURNALS:
+            sha = stable_journal_identity(entry)
+            return sha is not None and sha in self.journals
+        if self.kind == SCOPE_PERIOD:
+            day = entry.date if isinstance(entry.date, date) else None
+            return day is not None and self.period[0] <= day <= self.period[1]
+        return self.kind == SCOPE_COMPANY_WIDE
+
+    def describe(self) -> str:
+        if self.kind == SCOPE_JOURNALS:
+            return f"指定した{len(self.journals)}仕訳のみ（内容が変わった仕訳・他の仕訳には適用しない）"
+        if self.kind == SCOPE_PERIOD and self.period:
+            return f"{self.period[0].isoformat()}〜{self.period[1].isoformat()} の日付の仕訳（規則に合うもの）"
+        if self.kind == SCOPE_COMPANY_WIDE:
+            return "この会社・行数の、規則に合うすべての仕訳（今後の仕訳を含む）"
+        return "適用範囲が未指定（無効）"
+
+
 def approve_split_policy(store, profile_id: str, company_setting_id: str, context, *, human_approver: str,
-                         tax_accountant: str, signoff_reference: str, signoff_date: date):
-    """Record the Human's statement that the tax accountant accepted this rule for this company and row limit."""
+                         tax_accountant: str, signoff_reference: str, signoff_date: date, scope: SplitScope | None,
+                         extra_metadata: dict | None = None):
+    """Record the Human's statement that the tax accountant accepted this rule for this company and row limit,
+    for the journals of `scope` only (required: an approval never covers journals it does not state)."""
     problems = []
     if context is None or context.voucher_row_limit is None:
         problems.append("ROW_LIMIT_UNCONFIRMED")
+    if context is None or getattr(context, "company_setting_id", None) != company_setting_id:
+        problems.append("COMPANY_DIFFERS_FROM_SETTING")  # the JDL setting was resolved for another company (or none)
     if not all(isinstance(v, str) and v.strip() for v in (human_approver, tax_accountant, signoff_reference)) \
             or not isinstance(signoff_date, date):
         problems.append("SIGNOFF_MISSING")
+    problems.extend(scope.problems() if isinstance(scope, SplitScope) else ("SPLIT_SCOPE_MISSING",))
     if problems:
         raise ValueError("伝票分割の承認はできません: " + ", ".join(problems))
     profile = store.get(profile_id)
     policies = dict(profile.loss_policy_mappings)
+    existing = (policies.get(POLICY_KEY).metadata or {}).get("company_setting_id") if POLICY_KEY in policies else None
+    if existing is not None and existing != company_setting_id:
+        raise ValueError("伝票分割の承認はできません: FOREIGN_COMPANY_APPROVAL_IN_PROFILE（このプロファイルに別の会社の承認があります）")
     policies[POLICY_KEY] = MappingValue(POLICY_KEY, RULE, MappingStatus.USER_CONFIRMED, metadata={
+        **(extra_metadata or {}),
         "rule": RULE,
         "company_setting_id": company_setting_id,
         "profile_id": profile_id,
@@ -199,8 +292,14 @@ def approve_split_policy(store, profile_id: str, company_setting_id: str, contex
         "signoff_reference": signoff_reference.strip(),
         "signoff_date": signoff_date.isoformat(),
         "approved_at": datetime.now(timezone.utc).isoformat(),
+        **scope.metadata(),
     })
     return store.update(replace(profile, loss_policy_mappings=policies, updated_at=datetime.now(timezone.utc)))
+
+
+def policy_scope(profile) -> SplitScope | None:
+    policy = (getattr(profile, "loss_policy_mappings", None) or {}).get(POLICY_KEY)
+    return SplitScope.from_metadata(policy.metadata or {}) if policy is not None else None
 
 
 def policy_problems(profile, context) -> tuple[str, ...]:
@@ -215,7 +314,37 @@ def policy_problems(profile, context) -> tuple[str, ...]:
         problems.append("APPROVAL_INVALID")
     if not all(str(meta.get(k, "")).strip() for k in ("human_approver", "tax_accountant", "signoff_reference", "signoff_date")):
         problems.append("SIGNOFF_MISSING")
+    problems.extend(SplitScope.from_metadata(meta).problems())  # an approval without a stated scope is invalid
+    # The approval names the company it was recorded for; the company converting now must be that company. A context
+    # that did not come from a resolved company setting cannot prove it, so the approval is not used.
+    recorded = meta.get("company_setting_id")
+    current = getattr(context, "company_setting_id", None)
+    if not recorded:
+        problems.append("APPROVAL_COMPANY_UNRECORDED")
+    elif current is None:
+        problems.append("COMPANY_UNVERIFIED")
+    elif recorded != current:
+        problems.append("COMPANY_DIFFERS_FROM_APPROVAL")
     return tuple(problems)
+
+
+def ambiguous_identities(entries) -> frozenset[str]:
+    """Content identities that occur more than once in the source: an approval of "that journal" cannot tell the
+    copies apart, so a journals-scoped approval never covers them (same rule as the 控除不可 sign-off)."""
+    from collections import Counter
+
+    counts = Counter(stable_journal_identity(entry) for entry in entries)
+    return frozenset(sha for sha, n in counts.items() if sha is not None and n > 1)
+
+
+def approval_covers(entry: JournalEntry, profile, context, ambiguous: frozenset[str] = frozenset()) -> bool:
+    """A valid approval exists AND its scope names this (original) journal."""
+    if profile is None or context is None or policy_problems(profile, context):
+        return False
+    scope = policy_scope(profile)
+    if scope is None or not scope.covers(entry):
+        return False
+    return not (scope.kind == SCOPE_JOURNALS and stable_journal_identity(entry) in ambiguous)
 
 
 def counterpart_mapped_to_no_tax(entry: JournalEntry, plan: SplitPlan, profile, context) -> bool:
@@ -241,7 +370,11 @@ def apply_split(entries, profile, context, *, assume_approved: bool = False) -> 
     if profile is None or context is None or (policy_problems(profile, context) and not assume_approved):
         return list(entries)
     result = []
+    ambiguous = ambiguous_identities(entries)
     for entry in entries:
+        if not assume_approved and not approval_covers(entry, profile, context, ambiguous):
+            result.append(entry)  # outside the approval's stated scope: never split
+            continue
         plan = plan_split(entry, context.voucher_row_limit)
         if plan is None or not counterpart_mapped_to_no_tax(entry, plan, profile, context):
             result.append(entry)
@@ -250,9 +383,9 @@ def apply_split(entries, profile, context, *, assume_approved: bool = False) -> 
     return result
 
 
-def audit_record(entry: JournalEntry, profile, context) -> dict | None:
+def audit_record(entry: JournalEntry, profile, context, ambiguous: frozenset[str] = frozenset()) -> dict | None:
     """What the audit file keeps for a split journal (None when the journal is not split)."""
-    if profile is None or context is None or policy_problems(profile, context):
+    if not approval_covers(entry, profile, context, ambiguous):
         return None
     plan = plan_split(entry, context.voucher_row_limit)
     if plan is None or not counterpart_mapped_to_no_tax(entry, plan, profile, context):
@@ -275,4 +408,5 @@ def audit_record(entry: JournalEntry, profile, context) -> dict | None:
         "tax_accountant": meta.get("tax_accountant", ""),
         "tax_accountant_signoff_reference": meta.get("signoff_reference", ""),
         "tax_accountant_signoff_date": meta.get("signoff_date", ""),
+        "approval_scope": meta.get(SCOPE_KEY, ""),
     }

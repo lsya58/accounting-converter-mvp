@@ -359,8 +359,11 @@ class YayoiJournalReportJdlWorkflow:
         per_journal: dict[str, set[str]] = {entry.id: set() for entry in source_entries}
         for key, value in blockers.items():
             per_journal[origin[key]].update(value)
-        if not split_approved:
-            for journal_id in {o for k, o in origin.items() if k != o}:
+        source_by_id = {entry.id: entry for entry in source_entries}
+        split_ambiguous = voucher_split.ambiguous_identities(source_entries)
+        for journal_id in {o for k, o in origin.items() if k != o}:
+            # Split only when the approval is valid AND its stated scope names this journal.
+            if not (split_approved and voucher_split.approval_covers(source_by_id[journal_id], profile, context, split_ambiguous)):
                 found = per_journal[journal_id]
                 technical = any(not b.startswith("HUMAN:") for b in found)
                 # Parts all verified: only the Human's recorded approval is missing. Otherwise still over the limit.
@@ -919,12 +922,14 @@ def expected_non_retained(source: Path, profile, context=None, journal_ids=None)
     journal_ids: only these source journals (READY-only output); None = every journal."""
     source_format = format_for_identity_key(profile.source_format_identity.stable_key) or detect_format(source)
     records = []
-    for entry in source_format.read(source):
+    all_entries = list(source_format.read(source))
+    split_ambiguous = voucher_split.ambiguous_identities(all_entries)
+    for entry in all_entries:
         if journal_ids is not None and entry.id not in journal_ids:
             continue
         values = non_retained_values(entry) + dropped_subaccount_values(entry, profile)
         noncredit = noncredit_approval.audit_lines(entry, profile)
-        split = voucher_split.audit_record(entry, profile, context)
+        split = voucher_split.audit_record(entry, profile, context, split_ambiguous)
         closing = closing_entries.audit_record(entry, profile, context)
         if values or noncredit or split or closing:
             record = {

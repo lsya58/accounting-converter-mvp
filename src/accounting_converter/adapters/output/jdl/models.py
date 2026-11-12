@@ -208,6 +208,11 @@ class JdlTargetContext:
     # Human-transcribed JDL 会社設定「振替伝票入力行数」(rows per voucher).
     # None = not confirmed; never inferred. Not part of the Tax Context identity.
     voucher_row_limit: int | None = None
+    # The company setting this context was resolved for (CompanySettingStore.resolve sets it from the existing
+    # company_setting_id). Never stored in jdl-context.json and not part of any identity hash: it only lets an
+    # approval saved in a (possibly shared) profile be checked against the company that is converting. None = the
+    # context did not come from a resolved company setting, so a company-bound approval cannot be verified.
+    company_setting_id: str | None = None
 
     def parent_has_subaccounts(self, *, code: str | None = None, name: str | None = None) -> bool:
         """JDL requires a subaccount on a parent with any registered subaccount,

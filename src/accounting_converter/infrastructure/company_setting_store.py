@@ -567,7 +567,8 @@ class CompanySettingStore:
                 reason_codes=tuple(item.rule_id for item in runtime.validation_results),
             )
         return ResolvedCompanySetting(
-            setting, CompanySettingStatus.AVAILABLE, profile, context,
+            setting, CompanySettingStatus.AVAILABLE, profile,
+            replace(context, company_setting_id=setting.company_setting_id),
             "会社設定を利用できます。",
         )
 

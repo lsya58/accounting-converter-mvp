@@ -94,6 +94,7 @@ SIGNOFF_MISSING = "NONCREDIT_TAX_ACCOUNTANT_SIGNOFF_MISSING"
 APPROVAL_MISSING = "NONCREDIT_APPROVAL_MISSING"
 APPROVAL_INVALID = "NONCREDIT_APPROVAL_INVALID"
 LINE_SHAPE_UNVERIFIED = "NONCREDIT_LINE_NOT_DEBIT_INTERNAL_TAX_ZERO"
+COMPANY_CONTEXT_MISMATCH = "NONCREDIT_APPROVAL_COMPANY_DIFFERS_FROM_SETTING"
 SCOPE_IDENTITY_WIDE = "NONCREDIT_APPROVAL_NOT_SCOPED_TO_JOURNALS"
 JOURNAL_NOT_APPROVED = "NONCREDIT_JOURNAL_NOT_APPROVED"
 JOURNAL_AMBIGUOUS = "NONCREDIT_JOURNAL_IDENTITY_NOT_UNIQUE"
@@ -201,6 +202,8 @@ def approve_noncredit_identity(
     from accounting_converter.application.mapping_review import MappingConfirmationService
 
     problems = list(technical_problems(identity, company_setting_id, context))
+    if context is None or getattr(context, "company_setting_id", None) != company_setting_id:
+        problems.append(COMPANY_CONTEXT_MISMATCH)
     fields = (human_approver, tax_accountant, signoff_reference)
     if not all(isinstance(value, str) and value.strip() for value in fields) or not isinstance(signoff_date, date):
         problems.append(SIGNOFF_MISSING)
@@ -282,6 +285,8 @@ def mapping_problems(identity: str, mapping: MappingValue | None, profile, conte
     meta = mapping.metadata or {}
     company = meta.get("noncredit_company_setting_id")
     problems = list(technical_problems(identity, company, context))
+    if context is None or getattr(context, "company_setting_id", None) != company:
+        problems.append(COMPANY_CONTEXT_MISMATCH)  # recorded for another company, or the company cannot be verified
     expected = {
         "noncredit_approval_kind": APPROVAL_KIND,
         "noncredit_evidence_id": TECHNICAL_EVIDENCE.evidence_id,

@@ -51,7 +51,7 @@ def card_voucher(debits: int, *, first_row_shared=False, amount=1100, voucher=1,
 def approve(fixture, **overrides):
     resolved = fixture.resolved()
     kwargs = dict(human_approver="担当者A", tax_accountant="税理士B", signoff_reference="分割の確認書 No.1",
-                  signoff_date=date(2026, 11, 7))
+                  signoff_date=date(2026, 11, 7), scope=vs.SplitScope(vs.SCOPE_COMPANY_WIDE))
     kwargs.update(overrides)
     vs.approve_split_policy(fixture.profiles, resolved.profile.profile_id, COMPANY, resolved.context, **kwargs)
     fixture._rebind()

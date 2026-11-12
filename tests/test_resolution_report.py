@@ -256,10 +256,17 @@ class ControllerReportTest(unittest.TestCase):
             state = controller.approve_voucher_split("company-yayoi", human_approver="a", tax_accountant="",
                                                      signoff_reference="c", signoff_date=date(2026, 11, 9), explicitly_confirmed=True)
             self.assertIsNotNone(state.developer_error)
-            # explicit, complete: recorded, and the formal diagnosis (not the approval) decides READY
+            # explicit and complete but no reviewed journals: no scope, nothing is recorded
             state = controller.approve_voucher_split("company-yayoi", human_approver="a", tax_accountant="b",
                                                      signoff_reference="c", signoff_date=date(2026, 11, 9), explicitly_confirmed=True)
+            self.assertIsNotNone(state.developer_error)
+            self.assertIn("SPLIT_SCOPE_MISSING", state.user_message)
+            # explicit, complete, scoped to the reviewed journals: recorded; the formal diagnosis decides READY
+            state = controller.approve_voucher_split("company-yayoi", human_approver="a", tax_accountant="b",
+                                                     signoff_reference="c", signoff_date=date(2026, 11, 9), explicitly_confirmed=True,
+                                                     source_path=fixture.source, journal_ids=item.journals)
             self.assertIsNone(state.developer_error, state.user_message)
+            self.assertEqual(voucher_split.policy_scope(fixture.resolved().profile).kind, voucher_split.SCOPE_JOURNALS)
             report, _ = controller.company_resolution_report("company-yayoi", fixture.source)
             self.assertEqual(report.split_policy_problems, ())
             self.assertIsNone(report.item(voucher_split.APPROVAL_BLOCKER))

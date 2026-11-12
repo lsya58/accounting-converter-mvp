@@ -990,6 +990,39 @@ class AccountingConverterController:
         return ro.plan_ready_only(source, resolved.profile, resolved.context, company_id,
                                   self.yayoi_conversion_workflow)
 
+    def approval_items(self, company_id, source_path, ledger_path=None):
+        """Read-only (D0): items waiting for the tax accountant and their ledger state. Nothing is recorded here."""
+        from accounting_converter.application import approval_ledger as al
+        from accounting_converter.application.yayoi_sources import detect_format
+
+        source, resolved = self._resolved_for_yayoi_source(company_id, source_path)
+        entries = detect_format(source).diagnose(source).entries
+        items = al.pending_items(entries, resolved.profile, resolved.context, company_id)
+        ledger = al.ApprovalLedger(
+            Path(ledger_path) if ledger_path else al.default_ledger_path(Path(self.profile_store.root_dir).parent, company_id),
+            company_id)
+        return tuple((item, ledger.status(item.item_id)) for item in items)
+
+    def approval_preview(self, company_id, source_path, item_ids):
+        """Read-only (D0): READY/BLOCK now and if the named items were approved (in-memory trial, never saved)."""
+        from accounting_converter.application import approval_ledger as al
+        from accounting_converter.application.yayoi_sources import detect_format
+
+        source, resolved = self._resolved_for_yayoi_source(company_id, source_path)
+        entries = detect_format(source).diagnose(source).entries
+        items = {i.item_id: i for i in al.pending_items(entries, resolved.profile, resolved.context, company_id)}
+        return al.preview(source, resolved.profile, resolved.context, company_id,
+                          [(items[i], None) for i in item_ids if i in items], workflow=self.yayoi_conversion_workflow)
+
+    def migration_tracker_status(self, company_id, source_path, output_path, tracker_path):
+        """Read-only (D2): the tracker of a READY-only run and its integrity check."""
+        from accounting_converter.application import migration_tracker as mt
+
+        source, resolved = self._resolved_for_yayoi_source(company_id, source_path)
+        tracker = mt.load(Path(tracker_path))
+        integrity = mt.check(tracker, source, Path(output_path), resolved.profile, resolved.context, company_id)
+        return tracker, integrity, mt.final_reconciliation(tracker, integrity)
+
     def execute_yayoi_ready_only(self, company_id, source_path, plan, confirmation, output_path):
         """Write the READY journals only, after the user's explicit confirmation of exactly `plan`.
 
@@ -1095,9 +1128,12 @@ class AccountingConverterController:
 
     def approve_voucher_split(
         self, company_setting_id: str, *, human_approver: str, tax_accountant: str,
-        signoff_reference: str, signoff_date, explicitly_confirmed: bool,
+        signoff_reference: str, signoff_date, explicitly_confirmed: bool, source_path=None, journal_ids=(),
     ) -> AppState:
         """Record, for this company and its CURRENT 振替伝票入力行数, that the tax accountant accepted the split rule.
+
+        Scope: ONLY the journals the user reviewed (`journal_ids` of `source_path`, by content identity). The screen
+        never records a company-wide or future-journal approval (that is an explicit CLI decision only).
 
         Only a user's explicit action calls this. It approves the rule (not an Evidence gap): the existing
         diagnosis still decides which journals become READY. A later row-limit change invalidates the approval.
@@ -1108,11 +1144,21 @@ class AccountingConverterController:
             return self._fail_state("承認の記録には、税理士が了承したことの明示的な確認が必要です。", ValueError("confirmation missing"))
         try:
             resolved = self.company_store.resolve(company_setting_id)
-            voucher_split.approve_split_policy(
-                self.profile_store, resolved.profile.profile_id, company_setting_id, resolved.context,
-                human_approver=human_approver, tax_accountant=tax_accountant,
-                signoff_reference=signoff_reference, signoff_date=signoff_date)
-            self.company_store.refresh_profile_fingerprint(company_setting_id)
+            scope = None
+            if source_path is not None and journal_ids:
+                from accounting_converter.application.yayoi_sources import detect_format
+
+                wanted = set(journal_ids)
+                named = [entry for entry in detect_format(Path(source_path)).diagnose(Path(source_path)).entries
+                         if entry.id.rsplit(":", 1)[-1] in wanted]
+                if len(named) == len(wanted):
+                    scope = voucher_split.SplitScope.for_journals(named)
+            from accounting_converter.application import approval_ledger
+
+            approval_ledger.approve_split_direct(
+                self.profile_store, self.company_store, company_setting_id, resolved.profile.profile_id,
+                resolved.context, human_approver=human_approver, tax_accountant=tax_accountant,
+                signoff_reference=signoff_reference, signoff_date=signoff_date, scope=scope)
         except Exception as error:
             return self._fail_state(
                 str(error) if isinstance(error, ValueError) else
