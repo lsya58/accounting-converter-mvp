@@ -3,33 +3,50 @@ from __future__ import annotations
 from accounting_converter.ui.view_models import UserFacingStatus
 
 
-# Calm, professional palette: one accent, soft neutrals, clear status colors.
-# Readability first: body text contrast >= 7:1 on surface, status text >= 4.5:1.
+# Design tokens (docs/development/ui_ux_renewal_plan.md 3.1, Fluent 2 x Modern Enterprise). Measured contrast:
+# body text >= 14:1 on page/surface, status text >= 5.6:1 on its own background, control borders >= 3:1.
+TOKENS = {
+    "bg.page": "#F7F8FA", "bg.surface": "#FFFFFF", "bg.subtle": "#F1F3F6",
+    "border.default": "#E1E5EB", "border.control": "#828C9B",
+    "text.primary": "#1B2433", "text.secondary": "#505B6B", "text.disabled": "#6F7988", "bg.disabled": "#EEF1F4",
+    "accent": "#1F3A68", "accent.hover": "#18305A", "accent.pressed": "#12264A", "accent.soft": "#E8EDF5",
+    "focus": "#3D6FD1",
+    "status.ready": "#146C43", "status.ready.bg": "#E6F4EC",
+    "status.block": "#8A4B00", "status.block.bg": "#FFF3DC", "status.block.border": "#F0C985",
+    "status.pending": "#1F3A68", "status.pending.bg": "#EEF1F6",
+    "status.evidence": "#57409B", "status.evidence.bg": "#F1EDFA",
+    "status.error": "#B3261E", "status.error.bg": "#FDECEA",
+    "status.neutral": "#505B6B", "status.neutral.bg": "#EEF1F6",
+}
+SPACING = {"xs": 4, "s": 8, "m": 12, "l": 16, "xl": 24, "xxl": 32}
+RADIUS = {"control": 4, "card": 8}
+
+# The original keys (the UI contract and older screens use them), now taking their values from the tokens.
 COLORS = {
-    "page": "#F3F5F9",
-    "surface": "#FFFFFF",
-    "border": "#E2E7EF",
-    "text": "#172033",
-    "muted": "#5B6577",
-    "accent": "#2457D6",
-    "accent_hover": "#1D49B8",
-    "accent_pressed": "#183C99",
-    "accent_soft": "#EAF0FD",
-    "ready": "#16703A",
-    "ready_soft": "#E5F5EA",
-    "confirm": "#8A5300",
-    "confirm_soft": "#FFF4DC",
-    "blocked": "#B42323",
-    "blocked_soft": "#FDECEC",
-    "evidence": "#5133A6",
-    "evidence_soft": "#F0ECFB",
-    "neutral": "#4B5568",
-    "neutral_soft": "#EEF1F6",
-    "disabled_text": "#6B7484",
-    "disabled_surface": "#EDF0F4",
-    "focus": "#2457D6",
-    "input_border": "#C9D1DD",
-    "header": "#F6F8FB",
+    "page": TOKENS["bg.page"],
+    "surface": TOKENS["bg.surface"],
+    "border": TOKENS["border.default"],
+    "text": TOKENS["text.primary"],
+    "muted": TOKENS["text.secondary"],
+    "accent": TOKENS["accent"],
+    "accent_hover": TOKENS["accent.hover"],
+    "accent_pressed": TOKENS["accent.pressed"],
+    "accent_soft": TOKENS["accent.soft"],
+    "ready": TOKENS["status.ready"],
+    "ready_soft": TOKENS["status.ready.bg"],
+    "confirm": TOKENS["status.block"],          # amber: needs a person / BLOCK
+    "confirm_soft": TOKENS["status.block.bg"],
+    "blocked": TOKENS["status.error"],          # red: stopped / error
+    "blocked_soft": TOKENS["status.error.bg"],
+    "evidence": TOKENS["status.evidence"],
+    "evidence_soft": TOKENS["status.evidence.bg"],
+    "neutral": TOKENS["status.neutral"],
+    "neutral_soft": TOKENS["status.neutral.bg"],
+    "disabled_text": TOKENS["text.disabled"],
+    "disabled_surface": TOKENS["bg.disabled"],
+    "focus": TOKENS["focus"],
+    "input_border": TOKENS["border.control"],
+    "header": TOKENS["bg.subtle"],
 }
 
 
@@ -92,12 +109,12 @@ QToolTip {{
 QFrame#card {{
     background: {COLORS['surface']};
     border: 1px solid {COLORS['border']};
-    border-radius: 14px;
+    border-radius: 8px;
 }}
-QLabel#title {{ font-size: 26px; font-weight: 700; letter-spacing: 0.2px; }}
+QLabel#title {{ font-size: 22px; font-weight: 600; }}
 QLabel#subtitle, QLabel#muted {{ color: {COLORS['muted']}; }}
 QLabel:disabled {{ color: {COLORS['disabled_text']}; }}
-QLabel#sectionTitle {{ font-size: 16px; font-weight: 700; }}
+QLabel#sectionTitle {{ font-size: 16px; font-weight: 600; }}
 QLabel#statusTitle {{ font-size: 20px; font-weight: 700; }}
 QLabel#stepBadge {{
     color: {COLORS['accent']};
@@ -110,15 +127,15 @@ QLabel#stepBadge {{
     font-weight: 700;
 }}
 QPushButton {{
-    min-height: 38px;
-    padding: 0 18px;
+    min-height: 32px;
+    padding: 0 16px;
     color: {COLORS['text']};
     border: 1px solid {COLORS['input_border']};
-    border-radius: 9px;
+    border-radius: 4px;
     background: {COLORS['surface']};
     font-weight: 600;
 }}
-QPushButton:hover {{ background: {COLORS['neutral_soft']}; border-color: #AEB8C7; }}
+QPushButton:hover {{ background: {COLORS['neutral_soft']}; border-color: {COLORS['text']}; }}
 QPushButton:pressed {{ background: #E3E8F0; }}
 QPushButton:focus {{ border: 2px solid {COLORS['focus']}; }}
 QPushButton:disabled {{
@@ -127,39 +144,39 @@ QPushButton:disabled {{
     border-color: {COLORS['border']};
 }}
 QPushButton#primaryButton {{
-    min-height: 50px;
-    min-width: 210px;
+    min-height: 36px;
+    min-width: 160px;
     color: white;
     background: {COLORS['accent']};
     border: 0;
-    border-radius: 11px;
-    font-size: 16px;
+    border-radius: 4px;
+    font-size: 15px;
     font-weight: 700;
 }}
 QPushButton#primaryButton:hover {{ background: {COLORS['accent_hover']}; }}
 QPushButton#primaryButton:pressed {{ background: {COLORS['accent_pressed']}; }}
-QPushButton#primaryButton:focus {{ border: 3px solid #9DB7F2; }}
-QPushButton#primaryButton:disabled {{ color: #8B93A1; background: #DCE1E8; }}
+QPushButton#primaryButton:focus {{ border: 2px solid {COLORS['focus']}; }}
+QPushButton#primaryButton:disabled {{ color: {COLORS['disabled_text']}; background: {COLORS['disabled_surface']}; }}
 QFrame#dropZone {{
-    background: #FAFBFD;
-    border: 2px dashed #B6C1D1;
-    border-radius: 14px;
+    background: {COLORS['surface']};
+    border: 2px dashed {COLORS['input_border']};
+    border-radius: 8px;
 }}
 QFrame#dropZone[dragActive="true"] {{
     background: {COLORS['accent_soft']};
     border-color: {COLORS['accent']};
 }}
 QLineEdit, QComboBox, QListWidget, QTableWidget {{
-    min-height: 38px;
-    padding: 0 12px;
+    min-height: 32px;
+    padding: 0 10px;
     color: {COLORS['text']};
     background: {COLORS['surface']};
     border: 1px solid {COLORS['input_border']};
-    border-radius: 9px;
+    border-radius: 4px;
     selection-background-color: {COLORS['accent_soft']};
     selection-color: {COLORS['text']};
 }}
-QLineEdit:hover, QComboBox:hover {{ border-color: #AEB8C7; }}
+QLineEdit:hover, QComboBox:hover {{ border-color: {COLORS['text']}; }}
 QLineEdit:focus, QComboBox:focus, QListWidget:focus, QTableWidget:focus {{
     border: 2px solid {COLORS['focus']};
 }}
@@ -201,11 +218,11 @@ QCheckBox::indicator {{
 QTableWidget {{
     color: {COLORS['text']};
     background: {COLORS['surface']};
-    alternate-background-color: #F9FAFC;
+    alternate-background-color: {COLORS['header']};
     gridline-color: {COLORS['border']};
     selection-background-color: {COLORS['accent_soft']};
     selection-color: {COLORS['text']};
-    border-radius: 12px;
+    border-radius: 8px;
     padding: 0;
 }}
 QTableWidget::item {{ padding: 8px 10px; border-bottom: 1px solid {COLORS['border']}; }}
@@ -223,7 +240,7 @@ QHeaderView::section {{
 QTabWidget::pane {{
     background: {COLORS['surface']};
     border: 1px solid {COLORS['border']};
-    border-radius: 12px;
+    border-radius: 8px;
     top: -1px;
 }}
 QTabBar {{ background: {COLORS['surface']}; }}
@@ -264,7 +281,7 @@ QScrollBar:vertical {{
 }}
 QScrollBar::handle:vertical {{
     min-height: 34px;
-    background: #C3CBD8;
+    background: {COLORS['input_border']};
     border-radius: 4px;
 }}
 QScrollBar::handle:vertical:hover {{ background: #9DA8B9; }}
@@ -276,15 +293,15 @@ QScrollBar:horizontal {{
 }}
 QScrollBar::handle:horizontal {{
     min-width: 34px;
-    background: #C3CBD8;
+    background: {COLORS['input_border']};
     border-radius: 4px;
 }}
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0; }}
 QLabel#warningCard {{
     color: {COLORS['confirm']};
     background: {COLORS['confirm_soft']};
-    border: 1px solid #F1D49A;
-    border-radius: 10px;
+    border: 1px solid {TOKENS['status.block.border']};
+    border-radius: 8px;
     padding: 12px 14px;
 }}
 QWidget#reviewDetailPane {{ background: {COLORS['page']}; }}
@@ -297,7 +314,7 @@ QStackedWidget {{ background: {COLORS['page']}; }}
 QFrame#appHeader {{
     background: {COLORS['surface']};
     border: 1px solid {COLORS['border']};
-    border-radius: 16px;
+    border-radius: 8px;
 }}
 QLabel#brandMark {{
     color: white;
@@ -310,7 +327,7 @@ QLabel#brandMark {{
 QFrame#metricTile {{
     background: {COLORS['surface']};
     border: 1px solid {COLORS['border']};
-    border-radius: 14px;
+    border-radius: 8px;
 }}
 QLabel#metricLabel {{ color: {COLORS['muted']}; font-size: 12px; font-weight: 600; }}
 QLabel#metricValue {{ font-size: 17px; font-weight: 700; }}
@@ -329,8 +346,8 @@ QFrame#recognitionPanel {{
 QLabel#infoCard {{
     color: {COLORS['accent_pressed']};
     background: {COLORS['accent_soft']};
-    border: 1px solid #C9D7F8;
-    border-radius: 10px;
+    border: 1px solid {COLORS['accent_soft']};
+    border-radius: 8px;
     padding: 10px 14px;
 }}
 /* Table-centred review screens: compact rows and in-cell controls. */
@@ -380,6 +397,39 @@ QToolButton#paneToggle:checked {{
     border-color: {COLORS['accent']};
 }}
 QTabWidget#reviewTabs QTabBar::tab {{ padding: 8px 12px; margin-right: 2px; }}
+/* ---- shared components (ui_qt/components.py) ---- */
+QPushButton#dangerButton {{ color: {TOKENS['status.error']}; border: 1px solid {TOKENS['status.error']}; }}
+QPushButton#dangerButton:hover {{ background: {TOKENS['status.error.bg']}; }}
+QPushButton#subtleButton {{ color: {COLORS['accent']}; background: transparent; border: 1px solid transparent; }}
+QPushButton#subtleButton:hover {{ background: {COLORS['accent_soft']}; }}
+QPushButton#subtleButton:focus {{ border: 2px solid {COLORS['focus']}; }}
+QLabel#statusBadge {{ border-radius: 4px; padding: 2px 8px; font-size: 12px; font-weight: 600; }}
+QLabel#statusBadge[tone="ready"] {{ color: {TOKENS['status.ready']}; background: {TOKENS['status.ready.bg']}; }}
+QLabel#statusBadge[tone="block"] {{ color: {TOKENS['status.block']}; background: {TOKENS['status.block.bg']}; }}
+QLabel#statusBadge[tone="pending"] {{ color: {TOKENS['status.pending']}; background: {TOKENS['status.pending.bg']}; }}
+QLabel#statusBadge[tone="evidence"] {{ color: {TOKENS['status.evidence']}; background: {TOKENS['status.evidence.bg']}; }}
+QLabel#statusBadge[tone="error"] {{ color: {TOKENS['status.error']}; background: {TOKENS['status.error.bg']}; }}
+QLabel#statusBadge[tone="neutral"] {{ color: {TOKENS['status.neutral']}; background: {TOKENS['status.neutral.bg']}; }}
+QFrame#metricCard {{ background: {COLORS['surface']}; border: 1px solid {COLORS['border']}; border-radius: 8px; }}
+QFrame#metricCard[tone="ready"] {{ border-left: 4px solid {TOKENS['status.ready']}; }}
+QFrame#metricCard[tone="block"] {{ border-left: 4px solid {TOKENS['status.block']}; }}
+QFrame#metricCard[tone="pending"] {{ border-left: 4px solid {TOKENS['status.pending']}; }}
+QFrame#metricCard[tone="neutral"] {{ border-left: 4px solid {TOKENS['border.control']}; }}
+QLabel#metricCardLabel {{ color: {COLORS['muted']}; font-size: 12px; font-weight: 600; }}
+QLabel#metricCardValue {{ font-size: 24px; font-weight: 600; }}
+QLabel#metricCardHint {{ color: {COLORS['muted']}; font-size: 12px; }}
+QLabel#messageBar {{ border-radius: 4px; padding: 8px 12px; }}
+QLabel#messageBar[level="info"] {{ color: {TOKENS['accent']}; background: {TOKENS['accent.soft']}; border: 1px solid {TOKENS['border.default']}; }}
+QLabel#messageBar[level="success"] {{ color: {TOKENS['status.ready']}; background: {TOKENS['status.ready.bg']}; border: 1px solid {TOKENS['status.ready.bg']}; }}
+QLabel#messageBar[level="warning"] {{ color: {TOKENS['status.block']}; background: {TOKENS['status.block.bg']}; border: 1px solid {TOKENS['status.block.border']}; }}
+QLabel#messageBar[level="error"] {{ color: {TOKENS['status.error']}; background: {TOKENS['status.error.bg']}; border: 1px solid {TOKENS['status.error']}; }}
+QLabel#modeBanner {{ border-radius: 4px; padding: 6px 10px; font-weight: 600; }}
+QLabel#modeBanner[mode="view"] {{ color: {TOKENS['text.secondary']}; background: {TOKENS['bg.subtle']}; border: 1px solid {TOKENS['border.default']}; }}
+QLabel#modeBanner[mode="trial"] {{ color: {TOKENS['accent']}; background: {TOKENS['accent.soft']}; border: 1px dashed {TOKENS['accent']}; }}
+QLabel#modeBanner[mode="unapproved"] {{ color: {TOKENS['status.block']}; background: {TOKENS['status.block.bg']}; border: 1px solid {TOKENS['status.block.border']}; }}
+QFrame#detailCard {{ background: {COLORS['surface']}; border: 1px solid {COLORS['border']}; border-radius: 8px; }}
+QLabel#detailCardTitle {{ font-size: 14px; font-weight: 600; }}
+QTableWidget#journalTable::item {{ padding: 4px 8px; }}
 """
 
 
@@ -397,7 +447,7 @@ def apply_light_theme(app) -> None:
         QPalette.ColorRole.Window: COLORS["page"],
         QPalette.ColorRole.WindowText: COLORS["text"],
         QPalette.ColorRole.Base: COLORS["surface"],
-        QPalette.ColorRole.AlternateBase: "#F9FAFC",
+        QPalette.ColorRole.AlternateBase: COLORS["header"],
         QPalette.ColorRole.Text: COLORS["text"],
         QPalette.ColorRole.Button: COLORS["surface"],
         QPalette.ColorRole.ButtonText: COLORS["text"],
