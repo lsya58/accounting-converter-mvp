@@ -121,9 +121,9 @@ def make_button(text: str, kind: str = "secondary", *, description: str = "", sh
 
 
 MODES = {
-    "view": "👁 閲覧のみ（保存しません）",
-    "trial": "試算（承認・保存していません）",
-    "unapproved": "未承認（承認は台帳CLIの正式手順で記録します）",
+    "view": "◇ 閲覧のみ（保存しません）",
+    "trial": "◆ 試算（承認・保存していません）",
+    "unapproved": "? 未承認（承認は台帳CLIの正式手順で記録します）",
 }
 
 
@@ -272,7 +272,7 @@ class SortItem(QTableWidgetItem):
 class JournalTable(QTableWidget):
     """Read-only, sortable, selectable by row, stretching last column; numbers right-aligned."""
 
-    def __init__(self, columns, *, name: str, numeric=(), parent=None) -> None:
+    def __init__(self, columns, *, name: str, numeric=(), stretch=(), parent=None) -> None:
         super().__init__(0, len(columns), parent)
         self.setObjectName("journalTable")
         self.setHorizontalHeaderLabels(list(columns))
@@ -285,6 +285,19 @@ class JournalTable(QTableWidget):
         self.setWordWrap(False)
         self.setAccessibleName(name)
         self.numeric = set(numeric)
+        # Long text columns share the width (elided, full text in the tooltip); the others fit their content. This
+        # keeps the table inside the window instead of scrolling sideways.
+        self.stretch = set(stretch)
+        header = self.horizontalHeader()
+        for column in range(len(columns)):
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.Stretch if column in self.stretch
+                                        else QHeaderView.ResizeMode.ResizeToContents)
+        header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        header.setMinimumSectionSize(72)
+        if self.stretch:
+            header.setStretchLastSection(False)
+            self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.setSortingEnabled(True)
 
     def set_rows(self, rows) -> None:
@@ -295,17 +308,11 @@ class JournalTable(QTableWidget):
             for c, cell in enumerate(row):
                 text, key, tip = (cell, None, "") if isinstance(cell, str) else (tuple(cell) + ("", ""))[:3]
                 item = SortItem(text, key)
-                if tip:
-                    item.setToolTip(tip)
+                item.setToolTip("\n".join(x for x in (text, tip) if x))   # the full text, even when elided
                 if c in self.numeric:
                     item.setTextAlignment(int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
                 self.setItem(r, c, item)
         self.setSortingEnabled(True)
-        self.resizeColumnsToContents()
-        header = self.horizontalHeader()
-        for c in range(self.columnCount() - 1):    # keep wide text columns from forcing horizontal scrolling
-            if header.sectionSize(c) > 320:
-                header.resizeSection(c, 320)
 
 
 def fit_to_screen(dialog, width: int, height: int) -> None:
