@@ -26,7 +26,12 @@ class ComponentTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
+        cls._previous_sheet = cls.app.styleSheet()
         cls.app.setStyleSheet(APP_STYLE_SHEET)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.app.setStyleSheet(cls._previous_sheet)
 
     def test_every_status_has_a_symbol_words_and_an_accessible_name(self):
         for key, status in ui.STATUSES.items():

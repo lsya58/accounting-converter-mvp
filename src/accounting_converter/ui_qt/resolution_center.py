@@ -481,6 +481,10 @@ class ResolutionCenterDialog(QDialog):
         self.detail_layout.addWidget(self.details)
         self.detail_layout.addStretch(1)
         self.detail_scroll.setWidget(self.detail_page)
+        # The pane scrolls vertically only, so it must never be narrower than its content: otherwise the content is
+        # clipped at the dialog's minimum width (it scrolls nowhere sideways).
+        self.detail_scroll.setMinimumWidth(self.detail_page.minimumSizeHint().width()
+                                           + self.detail_scroll.verticalScrollBar().sizeHint().width())
         split.addWidget(self.detail_scroll)
         split.setStretchFactor(1, 1)
         split.setSizes([250, 790])
