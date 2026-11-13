@@ -1,6 +1,8 @@
 """READYのみ変換 dialog (skipped where PySide6 is not installed; run it on Windows). Synthetic data."""
 from __future__ import annotations
 
+from tests import _appdata_guard  # noqa: F401  (keeps tests away from the real application data)
+
 import os
 import tempfile
 import unittest

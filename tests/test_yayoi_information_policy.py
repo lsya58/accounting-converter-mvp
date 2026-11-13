@@ -1,6 +1,8 @@
 """Yayoi information JDL cannot hold (付箋・生成元・部門): GUI path. Synthetic data only."""
 from __future__ import annotations
 
+from tests import _appdata_guard  # noqa: F401  (keeps tests away from the real application data)
+
 import json
 import os
 import tempfile

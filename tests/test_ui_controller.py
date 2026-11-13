@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests import _appdata_guard  # noqa: F401  (keeps tests away from the real application data)
+
 import tempfile
 import unittest
 from dataclasses import replace
@@ -231,10 +233,8 @@ class UiControllerTests(unittest.TestCase):
         ):
             path = default_profile_store_dir()
 
-        self.assertEqual(
-            str(path),
-            r"C:\Users\demo\AppData\Local/AccountingConverter/profiles",
-        )
+        # Compare as paths: the separator differs between Windows and Linux.
+        self.assertEqual(path, Path(r"C:\Users\demo\AppData\Local") / "AccountingConverter" / "profiles")
 
     def test_gui_entry_module_is_importable_without_starting_tk(self) -> None:
         import accounting_converter.ui.app as app

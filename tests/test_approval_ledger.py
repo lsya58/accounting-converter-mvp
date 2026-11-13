@@ -1,6 +1,8 @@
 """D0: pending approvals, preview, ledger and guarded apply (application/approval_ledger). Synthetic data only."""
 from __future__ import annotations
 
+from tests import _appdata_guard  # noqa: F401  (keeps tests away from the real application data)
+
 import hashlib
 import json
 import tempfile

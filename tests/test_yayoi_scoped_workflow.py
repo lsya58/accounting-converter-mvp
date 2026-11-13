@@ -1,6 +1,8 @@
 """Yayoi → JDL with the campaign Evidence: diagnosis, conversion, row limit, tax candidates. Synthetic data only."""
 from __future__ import annotations
 
+from tests import _appdata_guard  # noqa: F401  (keeps tests away from the real application data)
+
 import csv
 import io
 import os

@@ -1,6 +1,8 @@
 """承認・未移行の管理: controller (read-only) and the Qt dialog (skipped without PySide6; run it on Windows)."""
 from __future__ import annotations
 
+from tests import _appdata_guard  # noqa: F401  (keeps tests away from the real application data)
+
 import os
 import tempfile
 import unittest
@@ -51,19 +53,8 @@ class ControllerTest(unittest.TestCase):
 class DialogTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        # The screen logs failures (log_local_exception) to %LOCALAPPDATA%\\AccountingConverter\\logs. A test must never
-        # write into the real application's folder, so the log goes to a temporary one.
-        from unittest import mock
-
-        cls._log_dir = tempfile.TemporaryDirectory()
-        cls._env = mock.patch.dict(os.environ, {"LOCALAPPDATA": cls._log_dir.name})
-        cls._env.start()
         cls.app = QApplication.instance() or QApplication([])
 
-    @classmethod
-    def tearDownClass(cls):
-        cls._env.stop()
-        cls._log_dir.cleanup()
 
     def _dialog(self, env, **kwargs):
         dialog = MigrationStatusDialog(controller_for(env.fixture, env.root), COMPANY, env.source)

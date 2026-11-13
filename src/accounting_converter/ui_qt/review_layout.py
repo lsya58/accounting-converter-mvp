@@ -93,17 +93,34 @@ class CollapsibleSection(QWidget):
         return self.toggle.isChecked()
 
 
+SETTINGS_FILE_ENV = "ACCOUNTING_CONVERTER_SETTINGS_FILE"
+
+
+def app_settings() -> QSettings:
+    """The app's UI preferences (pane visibility, remembered toggles).
+
+    Normally the Windows registry (QSettings native format). When ACCOUNTING_CONVERTER_SETTINGS_FILE names a file,
+    an INI file there is used instead; the test suite sets it so that GUI tests never write the real user settings.
+    """
+    import os
+
+    path = os.environ.get(SETTINGS_FILE_ENV)
+    if path:
+        return QSettings(path, QSettings.Format.IniFormat)
+    return QSettings("AccountingConverter", "AccountingConverter")
+
+
 def remembered_toggle(text: str, key: str, default: bool) -> QToolButton:
     """A checkable button whose state is remembered between sessions."""
     button = QToolButton()
     button.setObjectName("paneToggle")
     button.setCheckable(True)
     button.setText(text)
-    value = QSettings("AccountingConverter", "AccountingConverter").value(key, default)
+    value = app_settings().value(key, default)
     button.setChecked(value in (True, "true", "1", 1))
     # A fresh QSettings per change: keeping one alive in the closure can
     # outlive the application and crash on exit.
     button.toggled.connect(
-        lambda checked: QSettings("AccountingConverter", "AccountingConverter").setValue(key, bool(checked))
+        lambda checked: app_settings().setValue(key, bool(checked))
     )
     return button

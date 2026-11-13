@@ -4,7 +4,7 @@ from collections import Counter
 from dataclasses import replace
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, QUrl, Qt
+from PySide6.QtCore import QUrl, Qt
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -78,6 +78,7 @@ from accounting_converter.infrastructure.local_diagnostic_log import (
 from .bulk_review import BulkCandidateDialog, DescriptionRulesDialog
 from .review_layout import (
     CollapsibleSection,
+    app_settings,
     checkbox_cell,
     count_item,
     dense_table,
@@ -101,7 +102,7 @@ def _restore_dialog_geometry(
     height_ratio: float,
 ) -> None:
     """Restore a dialog inside a currently available screen."""
-    settings = QSettings("AccountingConverter", "AccountingConverter")
+    settings = app_settings()
     saved_geometry = settings.value(settings_key)
     if saved_geometry is not None:
         dialog.restoreGeometry(saved_geometry)
@@ -1896,7 +1897,7 @@ class CompanyMappingUpdateDialog(QDialog):
             )
             if answer != QMessageBox.StandardButton.Discard:
                 return
-        QSettings("AccountingConverter", "AccountingConverter").setValue(
+        app_settings().setValue(
             self._GEOMETRY_KEY, self.saveGeometry()
         )
         super().done(result)
@@ -4424,7 +4425,7 @@ class TaxMappingConfirmationDialog(QDialog):
         layout.addWidget(footer, 0)
 
     def done(self, result: int) -> None:
-        QSettings("AccountingConverter", "AccountingConverter").setValue(
+        app_settings().setValue(
             self._GEOMETRY_KEY, self.saveGeometry()
         )
         super().done(result)

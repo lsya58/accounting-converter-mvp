@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests import _appdata_guard  # noqa: F401  (keeps tests away from the real application data)
+
 import ast
 import tempfile
 import tomllib

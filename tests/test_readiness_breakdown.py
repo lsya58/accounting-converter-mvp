@@ -2,6 +2,8 @@
 GUI-controller == CLI-workflow equivalence on the same stored setting. Synthetic values only."""
 from __future__ import annotations
 
+from tests import _appdata_guard  # noqa: F401  (keeps tests away from the real application data)
+
 import tempfile
 import unittest
 from pathlib import Path

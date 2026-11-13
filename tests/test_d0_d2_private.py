@@ -2,6 +2,8 @@
 or written to the saved settings; the source is read through a same-bytes copy under the name the EXE read."""
 from __future__ import annotations
 
+from tests import _appdata_guard  # noqa: F401  (keeps tests away from the real application data)
+
 import shutil
 import tempfile
 import unittest

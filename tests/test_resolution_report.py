@@ -1,6 +1,8 @@
 """解決項目モデル・準備状況画面・分割承認の接続。Synthetic data only; Qt tests run offscreen."""
 from __future__ import annotations
 
+from tests import _appdata_guard  # noqa: F401  (keeps tests away from the real application data)
+
 import os
 import tempfile
 import unittest

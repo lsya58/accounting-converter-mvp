@@ -1,4 +1,5 @@
 """Read-only production comparisons, using synthetic companies only."""
+from tests import _appdata_guard  # noqa: F401  (keeps tests away from the real application data)
 import os
 import tempfile
 import unittest

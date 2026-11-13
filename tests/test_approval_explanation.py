@@ -1,6 +1,8 @@
 """Approval screen content (application/approval_explanation) and the controller behind it. Synthetic data only."""
 from __future__ import annotations
 
+from tests import _appdata_guard  # noqa: F401  (keeps tests away from the real application data)
+
 import json
 import tempfile
 import unittest
