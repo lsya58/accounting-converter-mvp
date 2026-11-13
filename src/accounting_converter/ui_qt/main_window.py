@@ -5,7 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import QUrl, Qt
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -75,7 +75,13 @@ from accounting_converter.infrastructure.local_diagnostic_log import (
     log_local_exception,
 )
 
+from accounting_converter.ui import home_view as hv
+
+from . import components as ui
 from .bulk_review import BulkCandidateDialog, DescriptionRulesDialog
+from .navigation import NavigationRail
+from .pages import scroll_page
+from .pages.home import HomePage
 from .review_layout import (
     CollapsibleSection,
     app_settings,
@@ -126,99 +132,103 @@ def _restore_dialog_geometry(
 
 
 class AccountingConverterMainWindow(QMainWindow):
+    """Left navigation + pages (Phase 3A, docs/development/ui_ux_renewal_plan.md 2).
+
+    The existing widgets and handlers are kept as they were and only placed on pages: the company and the source
+    live in the controller's AppState (one state for every page), so switching pages never loses them and never
+    reads or writes a setting. The home page's Yayoi counts come from a read-only background diagnosis
+    (controller.home_yayoi_overview) whose result is shown only if its request key still matches the screen."""
+
     def __init__(self, controller: AccountingConverterController | None = None) -> None:
         super().__init__()
         self.controller = controller or AccountingConverterController()
         self.profile_ids: list[str] = []
         self.setWindowTitle("会計データ変換")
-        self.resize(900, 780)
-        self.setMinimumSize(720, 620)
+        self.resize(1280, 800)
+        self.setMinimumSize(1024, 700)
+        self.home_task = ui.BackgroundTask(self)
+        self.home_task.finished.connect(self._on_home_finished)
+        self.home_task.failed.connect(self._on_home_failed)
+        self.home_task.busy_changed.connect(lambda _busy: self._render_home())
+        self._home_result: tuple | None = None      # (request key, overview)
+        self._home_error: tuple | None = None       # (request key, message)
+        self._home_pending = False
         self._build()
         self.controller.load_profiles()
         self._render(self.controller.load_company_settings())
 
+    # ------------------------------------------------------------------ layout: navigation + pages
     def _build(self) -> None:
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        page = QWidget()
-        page.setObjectName("page")
-        outer = QVBoxLayout(page)
-        outer.setContentsMargins(28, 28, 28, 36)
-        outer.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        root = QWidget()
+        root.setObjectName("appRoot")
+        row = QHBoxLayout(root)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
+        self.nav = NavigationRail(hv.NAV_ITEMS, self)
+        row.addWidget(self.nav)
+        right = QWidget()
+        right.setObjectName("page")
+        column = QVBoxLayout(right)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(0)
+        row.addWidget(right, 1)
+        self.setCentralWidget(root)
 
-        content = QWidget()
-        content.setMaximumWidth(820)
-        content.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        layout = QVBoxLayout(content)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(16)
-        outer.addWidget(content)
-        scroll.setWidget(page)
-        self.setCentralWidget(scroll)
-
-        # Header: product name, what it does, settings.
-        header_frame = QFrame()
-        header_frame.setObjectName("appHeader")
-        header = QHBoxLayout(header_frame)
-        header.setContentsMargins(22, 18, 22, 18)
-        header.setSpacing(14)
-        brand = QLabel("会")
-        brand.setObjectName("brandMark")
-        brand.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        titles = QVBoxLayout()
-        titles.setSpacing(2)
-        title = QLabel("会計データ変換")
-        title.setObjectName("title")
-        self.subtitle = QLabel("Money Forward / 弥生の仕訳データをJDL用CSVへ安全に変換します")
-        self.subtitle.setObjectName("subtitle")
-        titles.addWidget(title)
-        titles.addWidget(self.subtitle)
-        self.settings_button = QPushButton("設定")
-        self.settings_button.clicked.connect(self._open_settings)
-        header.addWidget(brand, alignment=Qt.AlignmentFlag.AlignTop)
-        header.addLayout(titles, 1)
-        header.addWidget(self.settings_button, alignment=Qt.AlignmentFlag.AlignVCenter)
-        layout.addWidget(header_frame)
-
-        # Overview: the four facts a user checks before converting.
-        overview = QGridLayout()
-        overview.setHorizontalSpacing(12)
-        overview.setVerticalSpacing(12)
-        self.metric_source = self._metric_tile("入力元")
-        self.metric_format = self._metric_tile("読み込んだ形式")
-        self.metric_company = self._metric_tile("会社設定")
-        self.metric_check = self._metric_tile("実行前チェック")
-        for index, (tile, _value, _hint) in enumerate(
-            (self.metric_source, self.metric_format, self.metric_company, self.metric_check)
-        ):
-            overview.addWidget(tile, index // 2, index % 2)
-        layout.addLayout(overview)
-
-        company_card, company_layout = self._card("会社を選ぶ", step="1")
-        company_row = QHBoxLayout()
+        # Context bar (every page): which company and which source the pages work on.
+        context = QFrame()
+        context.setObjectName("contextBar")
+        context.setAccessibleName("作業中の会社と仕訳データ")
+        bar = QHBoxLayout(context)
+        bar.setContentsMargins(24, 10, 24, 10)
+        bar.setSpacing(12)
+        company_caption = QLabel("会社")
+        company_caption.setObjectName("metricLabel")
         self.company_combo = QComboBox()
         self.company_combo.setPlaceholderText("会社設定を選択")
+        self.company_combo.setAccessibleName("作業する会社")
+        self.company_combo.setMinimumContentsLength(16)
+        self.company_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.company_combo.currentIndexChanged.connect(self._select_company)
-        company_row.addWidget(self.company_combo, 1)
-        company_settings_button = QPushButton("会社設定")
-        company_settings_button.clicked.connect(self._open_settings)
-        company_row.addWidget(company_settings_button)
-        company_layout.addLayout(company_row)
-        layout.addWidget(company_card)
+        company_caption.setBuddy(self.company_combo)
+        texts = QVBoxLayout()
+        texts.setSpacing(0)
+        self.context_file_label = QLabel("仕訳データ: 未選択")
+        self.context_file_label.setObjectName("sectionTitle")
+        self.context_file_label.setAccessibleName("作業中の仕訳データ")
+        self.subtitle = QLabel("Money Forward / 弥生の仕訳データをJDL用CSVへ安全に変換します")
+        self.subtitle.setObjectName("subtitle")
+        self.subtitle.setWordWrap(True)
+        texts.addWidget(self.context_file_label)
+        texts.addWidget(self.subtitle)
+        bar.addWidget(company_caption)
+        bar.addWidget(self.company_combo)
+        bar.addLayout(texts, 1)
+        column.addWidget(context)
 
-        file_card, file_layout = self._card("仕訳データを選ぶ（CSV / TXT）", step="2")
-        file_hint = QLabel("会計ソフトから出力したファイルをそのまま選べます。形式は中身から判定し、元のファイルは変更しません。")
-        file_hint.setObjectName("muted")
-        file_hint.setWordWrap(True)
-        file_layout.addWidget(file_hint)
+        self.stack = QStackedWidget()
+        self.stack.setAccessibleName("ページ")
+        column.addWidget(self.stack, 1)
+        self.pages: dict[str, QWidget] = {}
+
+        # ホーム
+        self.home_page = HomePage()
+        self.home_page.navigate.connect(self.show_page)
+        self.home_page.refresh_requested.connect(lambda: self._start_home_overview(force=True))
+        self._add_page(hv.NAV_HOME, self.home_page)
+
+        # データ取込
+        scroll, layout = scroll_page(
+            "データ取込", "会計ソフトから出力した仕訳データ（CSV / TXT）を選びます。形式は中身から判定し、元のファイルは変更しません。",
+            name="importContent")
+        file_card, file_layout = self._card("仕訳データを選ぶ（CSV / TXT）")
         self.drop_zone = CsvDropZone()
+        self.drop_zone.choose_button.setToolTip("仕訳データのファイルを選びます（Ctrl+O）")
+        self.drop_zone.choose_button.setAccessibleName("仕訳データのファイルを選ぶ")
         self.drop_zone.choose_button.clicked.connect(self._choose_input)
         self.drop_zone.file_selected.connect(self._select_input)
         self.drop_zone.rejected.connect(self._show_drop_error)
         file_layout.addWidget(self.drop_zone)
         layout.addWidget(file_card)
-
         self.recognition_card, recognition_layout = self._card("認識結果")
         self.file_name_label = QLabel("ファイルはまだ選択されていません")
         self.file_name_label.setObjectName("sectionTitle")
@@ -230,22 +240,36 @@ class AccountingConverterMainWindow(QMainWindow):
         self.recognition_card.setObjectName("recognitionPanel")  # inset panel, not a nested card
         self.recognition_card.hide()
         file_layout.addWidget(self.recognition_card)
+        next_row = QHBoxLayout()
+        next_row.addStretch(1)
+        self.import_next_button = ui.make_button(
+            "変換診断を開く", description="読み込んだ仕訳データの実行前チェックの結果を表示します")
+        self.import_next_button.clicked.connect(lambda _checked=False: self.show_page(hv.NAV_DIAGNOSIS))
+        next_row.addWidget(self.import_next_button)
+        layout.addLayout(next_row)
+        layout.addStretch(1)
+        self._add_page(hv.NAV_IMPORT, scroll)
 
-        output_card, output_layout = self._card("保存先を選ぶ", step="3")
-        output_row = QHBoxLayout()
-        self.output_label = QLabel("保存先はまだ選択されていません")
-        self.output_label.setWordWrap(True)
-        output_button = QPushButton("変更")
-        output_button.clicked.connect(self._choose_output)
-        output_row.addWidget(self.output_label, 1)
-        output_row.addWidget(output_button)
-        output_layout.addLayout(output_row)
-        layout.addWidget(output_card)
-
-        status_card, status_layout = self._card("実行前チェックと変換", step="4")
+        # 変換診断
+        scroll, layout = scroll_page(
+            "変換診断", "実行前チェックの結果です。表示しても設定・承認は変わりません。", name="diagnosisContent")
+        overview = QGridLayout()
+        overview.setHorizontalSpacing(12)
+        overview.setVerticalSpacing(12)
+        self.metric_source = self._metric_tile("入力元")
+        self.metric_format = self._metric_tile("読み込んだ形式")
+        self.metric_company = self._metric_tile("会社設定")
+        self.metric_check = self._metric_tile("実行前チェック")
+        for index, (tile, _value, _hint) in enumerate(
+            (self.metric_source, self.metric_format, self.metric_company, self.metric_check)
+        ):
+            overview.addWidget(tile, 0, index)
+        layout.addLayout(overview)
+        status_card, status_layout = self._card("実行前チェック")
         status_row = QHBoxLayout()
         self.status_title = QLabel("仕訳データ（CSV / TXT）を選択してください")
         self.status_title.setObjectName("statusTitle")
+        self.status_title.setWordWrap(True)
         self.status_badge = QLabel("未準備")
         self.status_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status_badge.setContentsMargins(10, 5, 10, 5)
@@ -254,26 +278,6 @@ class AccountingConverterMainWindow(QMainWindow):
         self.status_detail = QLabel("変換する仕訳データ（CSV / TXT）を選択してください。")
         self.status_detail.setObjectName("muted")
         self.status_detail.setWordWrap(True)
-        action_row = QHBoxLayout()
-        self.settings_action = QPushButton("確認する")
-        self.settings_action.clicked.connect(self._confirm_current_csv)
-        self.copy_guidance_button = QPushButton("確認項目をコピー")
-        self.copy_guidance_button.clicked.connect(self._copy_guidance)
-        self.copy_diagnostics_button = QPushButton("診断情報をコピー")
-        self.copy_diagnostics_button.clicked.connect(self._copy_diagnostics)
-        self.readiness_main_button = QPushButton("変換の準備状況…")
-        self.readiness_main_button.setToolTip("変換できない仕訳の理由と、必要な対応を確認します（設定や承認は変更しません）")
-        self.readiness_main_button.clicked.connect(self._open_resolution_center_main)
-        self.convert_button = QPushButton("JDL用に変換する")
-        self.convert_button.setObjectName("primaryButton")
-        self.convert_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.convert_button.clicked.connect(self._convert)
-        action_row.addWidget(self.settings_action)
-        action_row.addWidget(self.copy_guidance_button)
-        action_row.addWidget(self.copy_diagnostics_button)
-        action_row.addWidget(self.readiness_main_button)
-        action_row.addStretch(1)
-        action_row.addWidget(self.convert_button)
         # Owners of what still blocks conversion, as labelled pills (not color alone).
         self.owner_row = QHBoxLayout()
         self.owner_row.setSpacing(8)
@@ -285,12 +289,101 @@ class AccountingConverterMainWindow(QMainWindow):
             self.owner_pills[owner] = pill
             self.owner_row.addWidget(pill)
         self.owner_row.addStretch(1)
+        action_row = QHBoxLayout()
+        self.readiness_main_button = QPushButton("変換の準備状況（理由別の一覧）を開く…")
+        self.readiness_main_button.setObjectName("primaryButton")
+        self.readiness_main_button.setAccessibleName("変換の準備状況（理由別の一覧）を開く")
+        self.readiness_main_button.setToolTip("変換できない仕訳の理由と、必要な対応を確認します（設定や承認は変更しません）")
+        self.readiness_main_button.clicked.connect(self._open_resolution_center_main)
+        self.copy_guidance_button = QPushButton("確認項目をコピー")
+        self.copy_guidance_button.clicked.connect(self._copy_guidance)
+        self.copy_diagnostics_button = QPushButton("診断情報をコピー")
+        self.copy_diagnostics_button.clicked.connect(self._copy_diagnostics)
+        action_row.addWidget(self.readiness_main_button)
+        action_row.addStretch(1)
+        action_row.addWidget(self.copy_guidance_button)
+        action_row.addWidget(self.copy_diagnostics_button)
+        self.readiness_scope_label = QLabel("理由別の一覧（変換の準備状況）は弥生のデータで使えます。")
+        self.readiness_scope_label.setObjectName("muted")
+        self.readiness_scope_label.setWordWrap(True)
         status_layout.addLayout(status_row)
         status_layout.addLayout(self.owner_row)
         status_layout.addWidget(self.status_detail)
         status_layout.addLayout(action_row)
+        status_layout.addWidget(self.readiness_scope_label)
         layout.addWidget(status_card)
+        layout.addStretch(1)
+        self._add_page(hv.NAV_DIAGNOSIS, scroll)
 
+        # 要確認
+        scroll, layout = scroll_page(
+            "要確認", "人の確認が必要な項目を開きます。保存を伴う確認は、各画面の確認ダイアログでだけ保存します。",
+            name="reviewContent")
+        mapping_card, mapping_layout = self._card("対応の確認（科目・補助科目・税区分・摘要）")
+        self.review_status_label = QLabel()
+        self.review_status_label.setWordWrap(True)
+        mapping_layout.addWidget(self.review_status_label)
+        mapping_row = QHBoxLayout()
+        self.settings_action = QPushButton("対応の確認を開く")
+        self.settings_action.setObjectName("primaryButton")
+        self.settings_action.clicked.connect(self._confirm_current_csv)
+        mapping_row.addWidget(self.settings_action)
+        mapping_row.addStretch(1)
+        mapping_layout.addLayout(mapping_row)
+        layout.addWidget(mapping_card)
+        decision_card, decision_layout = self._card("税理士の判断・未移行の仕訳（弥生）")
+        self.decision_status_label = QLabel()
+        self.decision_status_label.setObjectName("muted")
+        self.decision_status_label.setWordWrap(True)
+        decision_layout.addWidget(self.decision_status_label)
+        decision_row = QHBoxLayout()
+        self.migration_status_button = ui.make_button(
+            "税理士の判断・未移行の仕訳を開く…",
+            description="承認待ちの項目の試算と、未移行の仕訳の一覧を表示します（閲覧・試算のみ。承認はCLI）")
+        self.migration_status_button.clicked.connect(self._open_migration_status)
+        decision_row.addWidget(self.migration_status_button)
+        decision_row.addStretch(1)
+        decision_layout.addLayout(decision_row)
+        layout.addWidget(decision_card)
+        layout.addStretch(1)
+        self._add_page(hv.NAV_REVIEW, scroll)
+
+        # 出力・照合
+        scroll, layout = scroll_page(
+            "出力・照合", "JDL用CSVを作成します。作成前に確認画面を表示し、既存のファイルは上書きしません。", name="outputContent")
+        output_card, output_layout = self._card("保存先")
+        output_row = QHBoxLayout()
+        self.output_label = QLabel("保存先はまだ選択されていません")
+        self.output_label.setWordWrap(True)
+        output_button = ui.make_button("保存先を選ぶ…", description="JDL用CSVの保存先を選びます（ファイルはまだ作成しません）")
+        output_button.clicked.connect(self._choose_output)
+        output_row.addWidget(self.output_label, 1)
+        output_row.addWidget(output_button)
+        output_layout.addLayout(output_row)
+        layout.addWidget(output_card)
+        convert_card, convert_layout = self._card("変換")
+        self.output_status_label = QLabel()
+        self.output_status_label.setWordWrap(True)
+        convert_layout.addWidget(self.output_status_label)
+        convert_row = QHBoxLayout()
+        self.ready_only_button = ui.make_button(
+            "READYの仕訳だけを出力…",
+            description="弥生のデータで、変換できる仕訳だけを出力します（3つの了承と確認者名の入力が必要です）")
+        self.ready_only_button.clicked.connect(self._open_ready_only)
+        self.convert_button = QPushButton("JDL用に変換する")
+        self.convert_button.setObjectName("primaryButton")
+        self.convert_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.convert_button.setAccessibleName("JDL用に変換する（全件）")
+        self.convert_button.clicked.connect(self._convert)
+        convert_row.addWidget(self.ready_only_button)
+        convert_row.addStretch(1)
+        convert_row.addWidget(self.convert_button)
+        convert_layout.addLayout(convert_row)
+        self.ready_only_scope_label = QLabel("READYの仕訳だけの出力は弥生のデータでだけ使えます。")
+        self.ready_only_scope_label.setObjectName("muted")
+        self.ready_only_scope_label.setWordWrap(True)
+        convert_layout.addWidget(self.ready_only_scope_label)
+        layout.addWidget(convert_card)
         self.result_card, result_layout = self._card("変換結果")
         self.result_label = QLabel()
         self.result_label.setWordWrap(True)
@@ -309,6 +402,51 @@ class AccountingConverterMainWindow(QMainWindow):
         result_layout.addLayout(result_actions)
         self.result_card.hide()
         layout.addWidget(self.result_card)
+        layout.addStretch(1)
+        self._add_page(hv.NAV_OUTPUT, scroll)
+
+        # 設定
+        scroll, layout = scroll_page(
+            "設定", "会社の追加・名前変更・削除、JDL科目一覧（PDF）の取込・更新、JDL税設定、取引先、対応設定の取込を行います。",
+            name="settingsContent")
+        settings_card, settings_layout = self._card("選択中の会社の設定")
+        self.settings_summary = QLabel()
+        self.settings_summary.setWordWrap(True)
+        self.settings_summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        settings_layout.addWidget(self.settings_summary)
+        settings_row = QHBoxLayout()
+        self.settings_button = ui.make_button(
+            "会社設定・JDL設定を開く…", "primary",
+            description="会社の追加・変更・削除、JDL科目一覧・税設定・取引先の設定画面を開きます")
+        self.settings_button.clicked.connect(self._open_settings)
+        settings_row.addWidget(self.settings_button)
+        settings_row.addStretch(1)
+        settings_layout.addLayout(settings_row)
+        layout.addWidget(settings_card)
+        layout.addStretch(1)
+        self._add_page(hv.NAV_SETTINGS, scroll)
+
+        self.nav.current_changed.connect(self._on_page_changed)
+        QShortcut(QKeySequence("Ctrl+O"), self, activated=self._choose_input)
+        QShortcut(QKeySequence("F5"), self, activated=lambda: self._start_home_overview(force=True))
+        self.nav.set_current(hv.NAV_HOME)
+
+    def _add_page(self, key: str, widget: QWidget) -> None:
+        self.pages[key] = widget
+        self.stack.addWidget(widget)
+
+    def show_page(self, key: str) -> None:
+        """Switch the visible page (view only: nothing is read, diagnosed or saved by switching)."""
+        self.nav.set_current(key)
+
+    def current_page(self) -> str:
+        return self.nav.current
+
+    def _on_page_changed(self, key: str) -> None:
+        self.stack.setCurrentWidget(self.pages[key])
+        if key == hv.NAV_HOME and hasattr(self, "home_page"):
+            self._start_home_overview()       # read-only; reuses the result while the request key is unchanged
+            self._render_home()
 
     @staticmethod
     def _card(title_text: str, step: str | None = None) -> tuple[QFrame, QVBoxLayout]:
@@ -546,6 +684,116 @@ class AccountingConverterMainWindow(QMainWindow):
         if dialog.goto:
             self._confirm_current_csv()
 
+    def _yayoi_selected(self) -> bool:
+        return hv.is_yayoi(self.controller.state)
+
+    def _open_migration_status(self) -> None:
+        """税理士の判断・未移行の仕訳 (D0 / D2): the existing view-and-trial dialog, opened directly (1 click)."""
+        from .migration_status_dialog import MigrationStatusDialog
+
+        state = self.controller.state
+        if not self._yayoi_selected():
+            return
+        MigrationStatusDialog(self.controller, state.selected_company_setting_id, state.selected_file, self).exec()
+        self._after_dialog()
+
+    def _open_ready_only(self) -> None:
+        """READYの仕訳だけを出力: the existing dialog with its own confirmations (unchanged)."""
+        from .ready_only_dialog import ReadyOnlyConversionDialog
+
+        state = self.controller.state
+        if not self._yayoi_selected():
+            return
+        ReadyOnlyConversionDialog(self.controller, state.selected_company_setting_id, state.selected_file, self).exec()
+        self._after_dialog()
+
+    def _after_dialog(self) -> None:
+        """A dialog may have saved something (only through its own confirmation): show the current state again."""
+        self._render(self.controller.state)
+
+    # ------------------------------------------------------------------ home (read-only background diagnosis)
+    def home_request_key(self):
+        """(company, source path, source size + mtime, saved-setting fingerprints) or None when not a Yayoi source."""
+        state = self.controller.state
+        if not hv.is_yayoi(state):
+            return None
+        path = Path(state.selected_file)
+        try:
+            stat = path.stat()
+            source = (str(path), stat.st_size, stat.st_mtime_ns)
+        except OSError:
+            source = (str(path), None, None)
+        fingerprint = None
+        store = getattr(self.controller, "company_store", None)
+        if store is not None:
+            try:
+                setting = store.get(state.selected_company_setting_id)
+                fingerprint = (setting.conversion_profile_id, setting.profile_fingerprint, setting.context_fingerprint)
+            except Exception:  # noqa: BLE001 - an unreadable setting makes the key differ (result dropped)
+                fingerprint = ("UNREADABLE",)
+        return ("home", state.selected_company_setting_id, source, fingerprint)
+
+    def _start_home_overview(self, force: bool = False) -> None:
+        key = self.home_request_key()
+        if key is None or not hasattr(self.controller, "home_yayoi_overview"):
+            return
+        if not force and ((self._home_result and self._home_result[0] == key)
+                          or (self._home_error and self._home_error[0] == key)):
+            return
+        if self.home_task.busy:
+            if force or self.home_task._current != key:
+                self.home_task.invalidate()      # the running result is for another selection: drop it
+                self._home_pending = True
+            return
+        if force:
+            self._home_result = self._home_error = None
+        controller, company, source = self.controller, key[1], Path(key[2][0])
+        self.home_task.start(key, lambda: controller.home_yayoi_overview(company, source))
+
+    def _on_home_finished(self, key, result) -> None:
+        if key != self.home_request_key():
+            return                                # company / source / setting changed meanwhile: never shown
+        self._home_result, self._home_error = (key, result), None
+        self._render_home()
+
+    def _on_home_failed(self, key, error) -> None:
+        log_local_exception("home_yayoi_overview", error)
+        if key != self.home_request_key():
+            return
+        self._home_result, self._home_error = None, (key, f"{type(error).__name__}: {error}")
+        self._render_home()
+
+    def _render_home(self) -> None:
+        if not hasattr(self, "home_page"):
+            return
+        state = self.controller.state
+        key = self.home_request_key()
+        result = self._home_result[1] if self._home_result and self._home_result[0] == key else None
+        error = self._home_error[1] if self._home_error and self._home_error[0] == key else None
+        busy = self.home_task.busy
+        if not busy and self._home_pending:
+            self._home_pending = False
+            self._start_home_overview()
+            busy = self.home_task.busy
+        presentation = hv.build_home(state, tax_context_text=self._tax_context_text(state), yayoi=result,
+                                     yayoi_busy=busy and result is None, yayoi_error=error)
+        self.home_page.render(presentation, busy=busy)
+        self.nav.set_count(hv.NAV_REVIEW, presentation.review_count)
+
+    def _tax_context_text(self, state: AppState) -> str:
+        company_id = state.selected_company_setting_id
+        context = None
+        if company_id and hasattr(self.controller, "company_tax_context"):
+            try:
+                context = self.controller.company_tax_context(company_id)
+            except Exception:  # noqa: BLE001 - shown as 確認が必要 (never guessed)
+                context = None
+        return SettingsDialog._tax_context_summary(context)
+
+    def closeEvent(self, event) -> None:
+        self.home_task.shutdown()
+        super().closeEvent(event)
+
     def _open_settings(self) -> None:
         dialog = SettingsDialog(self.controller, self)
         dialog.exec()
@@ -658,6 +906,7 @@ class AccountingConverterMainWindow(QMainWindow):
         self.readiness_main_button.setVisible(
             state.selected_file is not None and state.selected_company_setting_id is not None
             and recognition is not None and recognition.format is RecognizedFormat.YAYOI)
+        self._render_pages(state, presentation)
         result = state.result_presentation
         self.result_card.setVisible(result is not None)
         if result is not None:
@@ -674,6 +923,46 @@ class AccountingConverterMainWindow(QMainWindow):
                     )
                 )
             )
+        if self.nav.current == hv.NAV_HOME:
+            self._start_home_overview()
+        self._render_home()
+
+    def _render_pages(self, state: AppState, presentation) -> None:
+        """The page-specific texts and which Yayoi-only actions are usable (others say why they are not)."""
+        fmt = hv.source_format(state)
+        yayoi = hv.is_yayoi(state)
+        has_input = state.selected_file is not None and state.selected_company_setting_id is not None
+        self.context_file_label.setText(
+            f"仕訳データ: {state.selected_file.name}" if state.selected_file else "仕訳データ: 未選択")
+        self.readiness_scope_label.setVisible(not yayoi)
+        pending = (state.pending_account_confirmations + state.pending_subaccount_confirmations
+                   + state.pending_tax_confirmations)
+        if fmt is RecognizedFormat.JDL:
+            self.settings_action.setText("JDL移行内容の確認を開く")
+        else:
+            self.settings_action.setText("対応の確認を開く")
+        self.settings_action.setAccessibleName(self.settings_action.text())
+        self.settings_action.setEnabled(has_input)
+        self.review_status_label.setText(
+            "会社と仕訳データを選ぶと確認できます。" if not has_input else
+            f"未確認: 科目 {state.pending_account_confirmations:,}件 / 補助科目 "
+            f"{state.pending_subaccount_confirmations:,}件 / 税区分 {state.pending_tax_confirmations:,}件"
+            if pending else "未確認の対応はありません（内容の見直しや変更もここから開けます）。")
+        self.migration_status_button.setEnabled(yayoi)
+        self.decision_status_label.setText(
+            "承認待ちの項目の試算と未移行の仕訳の一覧を表示します（閲覧・試算のみ。承認の記録はCLIの正式手順）。"
+            if yayoi else "弥生のデータでだけ使えます（Money Forward・JDL移行には税理士の判断・未移行の管理はありません）。")
+        self.ready_only_button.setVisible(yayoi)
+        self.ready_only_scope_label.setVisible(not yayoi and state.selected_file is not None)
+        self.output_status_label.setText(
+            f"{presentation.status_text}。" + ("全件を変換できます。" if presentation.conversion_enabled
+                                              else "全件の変換はまだできません（変換診断を確認してください）。"))
+        self.settings_summary.setText("\n".join((
+            f"会社: {next((c.display_name for c in state.companies if c.company_setting_id == state.selected_company_setting_id), '未選択')}",
+            f"JDL環境: {state.jdl_environment_label}",
+            f"科目一覧: {state.jdl_master_state}（最終更新日: {state.jdl_master_updated_at or '未確認'}）",
+            self._tax_context_text(state),
+        )))
 
 
 def _combo_targets(combo) -> set:

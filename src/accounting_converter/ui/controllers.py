@@ -1071,6 +1071,44 @@ class AccountingConverterController:
         return {"plan": plan, "items": items, "rows": uv.build_rows(plan, items), "ready": plan.ready_count,
                 "blocked": plan.excluded_count, "total": plan.total_journals, "source": source}
 
+    def home_yayoi_overview(self, company_id, source_path):
+        """Read-only (ホーム): the counts and the migration state for one Yayoi source, from the same production paths
+        the D2 screen uses (unmigrated_overview, the approval ledger, the READY-only run next to the source).
+
+        Nothing is written: no tracker is created, no ledger line is appended, no setting is saved. The migration is
+        reported complete only when an existing tracker's final reconciliation says MIGRATION_COMPLETE."""
+        from accounting_converter.application import approval_ledger as al
+
+        overview = self.unmigrated_overview(company_id, source_path)
+        rows = overview["rows"]
+        approvals_in_force, ledger_error = 0, None
+        ledger = self._approval_ledger(company_id)
+        try:
+            latest: dict[str, str] = {}
+            for entry in ledger.entries():
+                if entry.get("type") == "DECISION":
+                    latest[entry["item_id"]] = entry.get("decision")
+            approvals_in_force = sum(1 for decision in latest.values() if decision == al.APPROVED)
+        except (al.ApprovalError, ValueError, KeyError, OSError) as error:
+            ledger_error = str(error)
+        source = Path(source_path)
+        runs = tuple(self.find_ready_only_runs(company_id, source, [source.parent]))
+        accepted = [run for run in runs if run.accepted]
+        run_state = (self.open_migration_run(company_id, source, accepted[0].output)
+                     if len(accepted) == 1 else None)
+        final = run_state.get("final") if run_state and run_state.get("state") == "TRACKED" else None
+        return {
+            "total": overview["total"], "ready": overview["ready"], "blocked": overview["blocked"],
+            "accountant_journals": sum(1 for row in rows if row.accountant),
+            "pending_items": len(overview["items"]),
+            "approvals_in_force": approvals_in_force, "ledger_error": ledger_error,
+            "runs_found": len(accepted), "runs_rejected": len(runs) - len(accepted),
+            "run_state": run_state["state"] if run_state else None,
+            "run_output": str(run_state["output"]) if run_state else None,
+            "verdict": final["verdict"] if final else None,
+            "final_reasons": tuple(final["reasons"]) if final else (),
+        }
+
     def find_ready_only_runs(self, company_id, source_path, folders):
         """Read-only (D2): READY-only runs in the given folders (the app's own `<csv>.ready_only.json` files only) that
         name this company and this exact source file. Others are returned as rejected, with the reason."""

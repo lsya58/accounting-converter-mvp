@@ -319,7 +319,7 @@ class QtGuiContractTests(unittest.TestCase):
     def test_existing_company_can_review_only_new_accounts_and_subaccounts(self) -> None:
         source = Path("src/accounting_converter/ui_qt/main_window.py").read_text(encoding="utf-8")
         self.assertIn('QPushButton("対応内容を確認・変更")', source)
-        self.assertIn('QPushButton("確認する")', source)
+        self.assertIn('QPushButton("対応の確認を開く")', source)  # Phase 3A: 要確認 page entry
         self.assertIn("self._confirm_current_csv", source)
         self.assertIn("self._refresh_current_csv_readiness()", source)
         self.assertNotIn("self._review_required_mappings(path)", source)
@@ -464,7 +464,9 @@ class QtGuiContractTests(unittest.TestCase):
             "src/accounting_converter/application/moneyforward_conversion_workflow.py"
         ).read_text(encoding="utf-8")
         main_window = window.split("class SettingsDialog", maxsplit=1)[0]
-        self.assertIn('QPushButton("確認する")', main_window)
+        # Phase 3A: the single entry on the 要確認 page says what it opens.
+        self.assertIn('QPushButton("対応の確認を開く")', main_window)
+        self.assertIn("self.settings_action.clicked.connect(self._confirm_current_csv)", main_window)
         self.assertIn("CompanyMappingUpdateDialog", main_window)
         self.assertIn("TaxMappingConfirmationDialog", main_window)
         self.assertNotIn("新しい科目を確認", workflow)

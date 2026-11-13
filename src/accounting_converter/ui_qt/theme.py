@@ -430,6 +430,21 @@ QLabel#modeBanner[mode="unapproved"] {{ color: {TOKENS['status.block']}; backgro
 QFrame#detailCard {{ background: {COLORS['surface']}; border: 1px solid {COLORS['border']}; border-radius: 8px; }}
 QLabel#detailCardTitle {{ font-size: 14px; font-weight: 600; }}
 QTableWidget#journalTable::item {{ padding: 4px 8px; }}
+/* ---- main window: left navigation + pages (Phase 3A) ---- */
+QFrame#navRail {{ background: {TOKENS['bg.subtle']}; border: none; border-right: 1px solid {TOKENS['border.default']}; }}
+QLabel#navBrand {{ color: {TOKENS['text.primary']}; font-size: 14px; font-weight: 600; padding: 4px 12px 12px 12px; }}
+QPushButton#navButton {{
+    text-align: left; padding: 8px 12px; min-height: 20px; border: 1px solid transparent; border-radius: 4px;
+    background: transparent; color: {TOKENS['text.primary']}; font-weight: 400;
+}}
+QPushButton#navButton:hover {{ background: {TOKENS['accent.soft']}; }}
+QPushButton#navButton:checked {{
+    background: {TOKENS['bg.surface']}; color: {TOKENS['accent']}; font-weight: 600;
+    border: 1px solid {TOKENS['border.default']}; border-left: 3px solid {TOKENS['accent']};
+}}
+QPushButton#navButton:focus {{ border: 2px solid {TOKENS['focus']}; }}
+QFrame#contextBar {{ background: {TOKENS['bg.surface']}; border: none; border-bottom: 1px solid {TOKENS['border.default']}; }}
+QLabel#pageTitle {{ color: {TOKENS['text.primary']}; font-size: 20px; font-weight: 600; }}
 """
 
 
