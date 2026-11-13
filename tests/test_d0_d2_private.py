@@ -73,5 +73,43 @@ class CompanyAApprovalAndTrackerTest(unittest.TestCase):
         self.assertEqual(OUTPUT.read_bytes(), before)
 
 
+    def test_the_35_are_listed_without_picking_files_and_tracking_starts_only_when_asked(self):
+        from accounting_converter.application import migration_tracker as mt
+        from accounting_converter.infrastructure.application_preferences import ApplicationPreferencesStore
+        from accounting_converter.ui.controllers import AccountingConverterController
+        from accounting_converter.infrastructure.company_setting_store import CompanySettingStore
+        from accounting_converter.infrastructure.conversion_profile_store import ConversionProfileStore
+
+        work = Path(self.tmp.name) / "work"
+        work.mkdir()
+        shutil.copyfile(SOURCE, work / "バディーズCSV.txt")                  # the name the EXE read (the audit names it)
+        for path in OUTPUT.parent.glob(OUTPUT.name + "*"):
+            if path.is_file():
+                shutil.copyfile(path, work / path.name)
+        profiles = ConversionProfileStore(STORE / "profiles")
+        controller = AccountingConverterController(
+            profile_store=profiles, company_store=CompanySettingStore(STORE / "companies", profiles),
+            preferences_store=ApplicationPreferencesStore(Path(self.tmp.name) / "prefs.json"))
+        source = work / "バディーズCSV.txt"
+        data = controller.unmigrated_overview(COMPANY, source)
+        self.assertEqual((data["total"], data["ready"], data["blocked"]), (2514, 2479, 35))
+        self.assertEqual(len(data["rows"]), 35)
+        self.assertTrue(all(r.status == "未対応（管理表は未作成）" for r in data["rows"]))
+        row_425 = next(r for r in data["rows"] if r.source_row == 425)
+        self.assertEqual(row_425.accountant, ("伝票分割の承認（SPLIT-V1）", "控除不可の承認（NONCREDIT-425）"))
+        row_1240 = next(r for r in data["rows"] if r.source_row == 3461)           # voucher 1240: no approval releases it
+        self.assertEqual((row_1240.accountant, row_1240.voucher), ((), "1240"))
+        found = controller.find_ready_only_runs(COMPANY, source, [work])
+        self.assertEqual([c.accepted for c in found], [True])
+        output = found[0].output
+        self.assertEqual(controller.open_migration_run(COMPANY, source, output)["state"], "NO_TRACKER")
+        self.assertFalse(list(work.glob("*tracker*")))                              # viewing wrote nothing
+        controller.start_migration_tracking(COMPANY, source, output, "試験", explicitly_confirmed=True)
+        opened = controller.open_migration_run(COMPANY, source, output)
+        self.assertEqual((opened["state"], opened["final"]["verdict"]), ("TRACKED", "MIGRATION_INCOMPLETE"))
+        self.assertEqual({j["status"] for j in opened["tracker"]["journals"]}, {mt.NOT_STARTED})
+        self.assertEqual(len(opened["tracker"]["journals"]), 35)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,23 +1,27 @@
 """承認・未移行の管理 (D0 / D2): read-only views. Nothing here records an approval or changes a status.
 
-Tab 1 承認待ち: items waiting for the tax accountant (controller.approval_items), their detail and a preview of the
-production diagnosis as if the selected items were approved (controller.approval_preview: in-memory trial only).
-Recording and applying a decision stays on the CLI (tools/yayoi_approval_ledger), which checks the company, the
-source, the setting and the confirmed preview, takes a backup and writes an audit entry.
+Tab 1 税理士の判断（承認待ち）: the items waiting for the tax accountant, each explained in plain language, and a preview
+of the production diagnosis as if the selected items were approved (in-memory trial only). Recording and applying a
+decision stays on the CLI (tools/yayoi_approval_ledger).
 
-Tab 2 未移行管理: the tracker of a READY-only run (controller.migration_tracker_status): READY / BLOCK counts, the
-tracked journals with filters by reason and state, the detail of one journal, the open integrity problems and the
-overall verdict (never "complete" while anything is unproven), and the management sheet as CSV.
+Tab 2 未移行の仕訳（進捗管理）: the journals a READY-only run leaves out, shown from the production diagnosis with no
+file to pick (controller.unmigrated_overview). The app looks for the READY-only run of this exact source file in the
+source's folder (and in one folder the user names once): only the app's own `<csv>.ready_only.json` files, accepted only
+for this company and this source, then verified with the existing SHA / audit checks. If the run has a tracker, it is
+opened only when it belongs to exactly that run; if not, the list stays read-only until the user explicitly starts
+status management (one tracker is written next to the CSV; an existing one is never overwritten or reset).
+Nothing here changes READY / BLOCK, records an approval or moves a journal to "migrated".
 """
 from __future__ import annotations
 
+from decimal import Decimal
 from html import escape
 from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QHeaderView, QLabel,
-    QListWidget, QMessageBox, QPushButton, QScrollArea, QSplitter, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout,
+    QLineEdit, QListWidget, QMessageBox, QPushButton, QScrollArea, QSplitter, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout,
     QWidget,
 )
 
@@ -25,7 +29,7 @@ from accounting_converter.application import migration_tracker as mt
 from accounting_converter.infrastructure.local_diagnostic_log import log_local_exception
 
 TITLE = "承認・未移行の管理（閲覧・試算のみ）"
-TRACKER_COLUMNS = ("元の行", "伝票No.", "日付", "BLOCK理由", "状態", "対応方針", "担当者")
+TRACKER_COLUMNS = ("元の行", "伝票No.", "日付", "BLOCK理由", "現在の状態", "必要な税理士判断", "技術的な未解決条件", "次に必要な作業")
 PREVIEW_COLUMNS = ("元の行", "仕訳", "承認後", "残るBLOCK理由")
 ALL = "（すべて）"
 
@@ -87,8 +91,9 @@ class MigrationStatusDialog(QDialog):
         layout.addWidget(_label("この画面では承認を記録しません。承認の記録・適用は、確認手順のあるコマンド"
                                 "（yayoi_approval_ledger）で行います。未移行の状態も変更しません。", name="warningCard"))
         self.tabs = QTabWidget()
-        self.tabs.addTab(self._approval_tab(), "承認待ち")
-        self.tabs.addTab(self._tracker_tab(), "未移行管理")
+        self.tabs.addTab(self._approval_tab(), "税理士の判断（承認待ち）")
+        self.tabs.addTab(self._tracker_tab(), "未移行の仕訳（進捗管理）")
+        self.tabs.currentChanged.connect(self._on_tab_changed)
         layout.addWidget(self.tabs, 1)
         footer = QHBoxLayout()
         footer.addStretch(1)
@@ -299,128 +304,315 @@ class MigrationStatusDialog(QDialog):
                 cell.setToolTip(" ".join(item.codes))
                 self.remaining_table.setItem(row, column, cell)
 
-    # ------------------------------------------------------------ tracker
+    # ------------------------------------------------------------ unmigrated journals (D2)
     def _tracker_tab(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
         row = QHBoxLayout()
-        self.open_button = QPushButton("READY-only出力と管理表を開く…")
-        self.open_button.clicked.connect(self._choose_tracker)
-        row.addWidget(self.open_button)
-        self.export_button = QPushButton("管理表をCSVで出力…")
+        self.refresh_button = QPushButton("未移行の仕訳を診断して表示")
+        self.refresh_button.clicked.connect(lambda _checked=False: self.load_overview())
+        self.folder_button = QPushButton("READY-only出力のフォルダを指定…")
+        self.folder_button.clicked.connect(lambda _checked=False: self._choose_folder())
+        self.start_button = QPushButton("状態管理を開始（管理表を作成）…")
+        self.start_button.setEnabled(False)
+        self.start_button.clicked.connect(lambda _checked=False: self._on_start_clicked())
+        self.export_button = QPushButton("一覧をCSVで出力…")
         self.export_button.setEnabled(False)
-        self.export_button.clicked.connect(self._export)
-        row.addWidget(self.export_button)
+        self.export_button.clicked.connect(lambda _checked=False: self._export())
+        for widget in (self.refresh_button, self.folder_button, self.start_button, self.export_button):
+            row.addWidget(widget)
         row.addStretch(1)
         layout.addLayout(row)
-        self.tracker_counts = _label("管理表が開かれていません。", rich=True)
+        self.tracker_counts = _label("「未移行の仕訳を診断して表示」を押すと、現在の診断結果から未移行の仕訳を表示します"
+                                     "（ファイルを選ぶ必要はありません）。", rich=True)
         layout.addWidget(self.tracker_counts)
+        self.run_banner = _label("", rich=True, name="warningCard")
+        self.run_banner.setVisible(False)
+        layout.addWidget(self.run_banner)
+        run_row = QHBoxLayout()
+        run_row.addWidget(QLabel("READY-only出力"))
+        self.run_combo = QComboBox()
+        self.run_combo.activated.connect(lambda _index=0: self._on_run_chosen())
+        run_row.addWidget(self.run_combo, 1)
+        run_row.addWidget(QLabel("管理者名"))
+        self.creator_edit = QLineEdit()
+        self.creator_edit.setMaximumWidth(180)
+        run_row.addWidget(self.creator_edit)
+        layout.addLayout(run_row)
         filters = QHBoxLayout()
         filters.addWidget(QLabel("理由"))
         self.reason_filter = QComboBox()
-        self.reason_filter.currentIndexChanged.connect(self._fill_tracker)
+        self.reason_filter.currentIndexChanged.connect(lambda _i=0: self._fill_tracker())
         filters.addWidget(self.reason_filter, 1)
         filters.addWidget(QLabel("状態"))
         self.status_filter = QComboBox()
-        self.status_filter.currentIndexChanged.connect(self._fill_tracker)
+        self.status_filter.currentIndexChanged.connect(lambda _i=0: self._fill_tracker())
         filters.addWidget(self.status_filter, 1)
         layout.addLayout(filters)
-        split = QSplitter(Qt.Orientation.Horizontal)
+        split = QSplitter(Qt.Orientation.Vertical)
         self.tracker_table = QTableWidget(0, len(TRACKER_COLUMNS))
         self.tracker_table.setHorizontalHeaderLabels(TRACKER_COLUMNS)
         self.tracker_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.tracker_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.tracker_table.verticalHeader().setVisible(False)
+        self.tracker_table.horizontalHeader().setStretchLastSection(True)
         self.tracker_table.currentCellChanged.connect(lambda r, *_: self._show_journal(r))
         split.addWidget(self.tracker_table)
+        detail = QScrollArea()
+        detail.setWidgetResizable(True)
+        detail.setFrameShape(QFrame.Shape.NoFrame)
+        holder = QWidget()
+        holder_layout = QVBoxLayout(holder)
         self.journal_detail = _label("", rich=True)
-        split.addWidget(self.journal_detail)
-        split.setSizes([600, 380])
-        layout.addWidget(split, 1)
+        holder_layout.addWidget(self.journal_detail)
+        self.tracker_technical_toggle = QCheckBox("技術情報（会社ID・manifest・SHA-256・BLOCKコード）を表示")
+        self.tracker_technical_toggle.toggled.connect(lambda _c=False: self._show_journal(self.tracker_table.currentRow()))
+        holder_layout.addWidget(self.tracker_technical_toggle)
         self.open_issues = _label("", rich=True)
-        layout.addWidget(self.open_issues)
-        self._shown: list[dict] = []
+        holder_layout.addWidget(self.open_issues)
+        detail.setWidget(holder)
+        split.addWidget(detail)
+        split.setSizes([360, 220])
+        layout.addWidget(split, 1)
+        self._shown: list = []
+        self.overview_data = None
+        self.run_state = None
+        self.rows: tuple = ()
+        self.tracker = None
+        self.final = None
+        self.scan_folders: list[Path] = []
+        self.runs: list = []
+        self._tracker_loaded_once = False
         return page
 
-    def _choose_tracker(self) -> None:
-        output, _ = QFileDialog.getOpenFileName(self, "READY-only出力CSV", "", "CSV (*.csv)")
-        if not output:
-            return
-        tracker, _ = QFileDialog.getOpenFileName(self, "未移行管理表（JSON）", "", "JSON (*.json)")
-        if tracker:
-            self.load_tracker(Path(output), Path(tracker))
+    def _on_tab_changed(self, index: int) -> None:
+        if index == 1 and not self._tracker_loaded_once:
+            self.load_overview()
 
-    def load_tracker(self, output: Path, tracker_path: Path) -> None:
+    def load_overview(self) -> None:
+        """Diagnose and list the unmigrated journals (read-only), then look for a matching READY-only run."""
+        self._tracker_loaded_once = True
+        self.tracker_counts.setText("診断しています…（会社の全仕訳を再診断するため、数十秒かかることがあります）")
+        QApplication.processEvents()
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            self.tracker, self.integrity, self.verdict = self.controller.migration_tracker_status(
-                self.company_id, self.source_path, output, tracker_path)
-        except Exception as exc:
-            log_local_exception("migration_tracker_status", exc)
-            self.tracker = self.integrity = self.verdict = None
-            self.tracker_counts.setText("管理表を確認できませんでした（会社・出力・管理表の組合せを確認してください）。")
-            self.export_button.setEnabled(False)
+            self.overview_data = self.controller.unmigrated_overview(self.company_id, self.source_path)
+        except Exception as exc:  # shown on the screen, never swallowed
+            log_local_exception("unmigrated_overview", exc)
+            self.overview_data = None
+            self.rows = ()
+            self.tracker_counts.setText("未移行の仕訳を診断できませんでした: " + escape(f"{type(exc).__name__}: {exc}")
+                                        + "<br>入力ファイルと会社設定を確認してください。")
             return
         finally:
             QApplication.restoreOverrideCursor()
-        counts = self.integrity["counts"]
+        self.run_state = None
+        self.tracker = None
+        self.final = None
+        self.rows = self.overview_data["rows"]
+        self._refresh_runs()
+        self._render()
+
+    def _search_folders(self) -> list[Path]:
+        folders = [Path(self.source_path).parent, *self.scan_folders]
+        return list(dict.fromkeys(folders))
+
+    def _refresh_runs(self) -> None:
+        try:
+            self.runs = list(self.controller.find_ready_only_runs(self.company_id, self.source_path, self._search_folders()))
+        except Exception as exc:
+            log_local_exception("find_ready_only_runs", exc)
+            self.runs = []
+        accepted = [r for r in self.runs if r.accepted]
+        self.run_combo.clear()
+        for run in accepted:
+            self.run_combo.addItem(run.output.name, str(run.output))
+        if len(accepted) == 1:
+            self.use_run(accepted[0].output)       # exactly one verified-by-name candidate: open it (full checks follow)
+        else:
+            self._set_banner(self._no_run_text(accepted))
+
+    def _no_run_text(self, accepted) -> str:
+        rejected = [r for r in self.runs if not r.accepted]
+        if len(accepted) > 1:
+            return "READY-onlyの出力が複数あります。上の一覧から1つ選んでください（診断結果の表示は読み取り専用です）。"
+        text = ("読み込み中の元データに対応するREADY-only出力が見つかっていません。診断結果を表示しています"
+                "（表示のみ。状態管理は未開始）。出力フォルダを指定すると、状態を管理できます。")
+        if rejected:
+            text += "<br>見つかったが使わなかった出力: " + "、".join(f"{escape(r.output.name)}（{escape(r.reason)}）" for r in rejected)
+        return text
+
+    def _choose_folder(self) -> None:
+        folder = QFileDialog.getExistingDirectory(self, "READY-only出力が入っているフォルダ")
+        if folder:
+            self.add_folder(Path(folder))
+
+    def add_folder(self, folder: Path) -> None:
+        if folder not in self.scan_folders:
+            self.scan_folders.append(folder)
+        if self.overview_data is None:
+            self.load_overview()
+            return
+        self._refresh_runs()
+        self._render()
+
+    def _on_run_chosen(self) -> None:
+        path = self.run_combo.currentData()
+        if path:
+            self.use_run(Path(path))
+
+    def use_run(self, output: Path) -> None:
+        """Verify the run (existing SHA / audit checks) and load its tracker if it belongs to exactly this run."""
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            self.run_state = self.controller.open_migration_run(self.company_id, self.source_path, output)
+        except Exception as exc:
+            log_local_exception("open_migration_run", exc)
+            self.run_state = {"state": "REJECTED", "output": output, "tracker": None, "integrity": None, "final": None,
+                              "problems": [f"{type(exc).__name__}: {exc}"], "tracker_path": None}
+        finally:
+            QApplication.restoreOverrideCursor()
+        state = self.run_state["state"]
+        self.tracker = self.run_state["tracker"] if state == "TRACKED" else None
+        self.final = self.run_state["final"] if state == "TRACKED" else None
+        from accounting_converter.application import unmigrated_view as uv
+
+        self.rows = uv.build_rows(self.overview_data["plan"], self.overview_data["items"], self.tracker)
+        self._render()
+
+    def _set_banner(self, text: str) -> None:
+        self.run_banner.setText(text)
+        self.run_banner.setVisible(bool(text))
+
+    def _banner_for_state(self) -> str:
+        state, problems = self.run_state["state"], self.run_state["problems"]
+        name = escape(Path(self.run_state["output"]).name)
+        detail = "".join("<br>・" + escape(str(p)) for p in problems)
+        if state == "TRACKED":
+            return f"出力（{name}）と管理表が一致しています。状態は管理表から読み込んでいます。"
+        if state == "NO_TRACKER":
+            return (f"出力（{name}）を確認しました。状態管理はまだ始まっていません（表示のみ・状態はすべて「未対応」）。"
+                    "「状態管理を開始」を押すと、出力の隣に管理表を1つ作成します（既存の管理表は上書きしません）。")
+        if state == "REJECTED":
+            return f"この出力は使えません（検証に失敗）。診断結果だけを表示しています。{detail}"
+        if state == "TRACKER_MISMATCH":
+            return (f"出力（{name}）の隣にある管理表は、この出力と対応しないため使いません。状態は読み込んでいません"
+                    f"（管理表は変更・初期化しません）。{detail}")
+        return f"管理表を読み込めません。診断結果だけを表示しています。{detail}"
+
+    def _render(self) -> None:
+        data = self.overview_data
+        if data is None:
+            return
         self.tracker_counts.setText(
-            f"<b>元の仕訳 {counts['source_journals']:,}</b> ＝ READY-only出力 {counts['ready_only_output']:,} ＋ "
-            f"未移行（BLOCK） {counts['tracked']:,}　整合チェック: <b>{self.integrity['verdict']}</b>　"
-            f"移行全体: <b>{'完了' if self.verdict['verdict'] == 'MIGRATION_COMPLETE' else '未完了'}</b>")
-        reasons = sorted({b for j in self.tracker["journals"] for b in j["blockers"]})
-        for combo, values in ((self.reason_filter, reasons), (self.status_filter, [mt.STATES[s] for s in mt.STATES])):
+            f"<b>元の仕訳 {data['total']:,}</b> ＝ READY {data['ready']:,} ＋ 未移行（BLOCK） <b>{data['blocked']:,}</b>"
+            + (f"　移行全体: <b>{'完了' if self.final['verdict'] == 'MIGRATION_COMPLETE' else '未完了'}</b>"
+               if self.final else "　移行全体: <b>未完了（未移行が残っています）</b>")
+            + "<br>この一覧は読み取り専用です。表示するだけでは、READY／BLOCKも移行の状態も変わりません。")
+        if self.run_state is not None:
+            self._set_banner(self._banner_for_state())
+        self.start_button.setEnabled(bool(self.run_state and self.run_state["state"] == "NO_TRACKER"))
+        self.export_button.setEnabled(bool(self.rows))
+        reasons = sorted({title for r in self.rows for title in r.reasons})
+        statuses = []
+        for r in self.rows:
+            if r.status not in statuses:
+                statuses.append(r.status)
+        for combo, values in ((self.reason_filter, reasons), (self.status_filter, statuses)):
+            current = combo.currentText()
             combo.blockSignals(True)
             combo.clear()
             combo.addItems([ALL, *values])
+            if current in values:
+                combo.setCurrentText(current)
             combo.blockSignals(False)
-        issues = [f"{k}: {v}" for k, v in self.integrity["problems"].items() if v] + self.verdict["reasons"]
-        self.open_issues.setText("<b>未解決事項</b><br>" + "<br>".join(escape(str(i)) for i in issues))
-        self.export_button.setEnabled(True)
+        issues = []
+        if self.run_state is not None and self.run_state["state"] == "TRACKED":
+            issues = [f"{k}: {v}" for k, v in self.run_state["integrity"]["problems"].items() if v] + self.final["reasons"]
+        elif self.run_state is not None:
+            issues = list(self.run_state["problems"])
+        self.open_issues.setText("<b>未解決事項</b><br>" + "<br>".join(escape(str(i)) for i in issues) if issues else "")
         self._fill_tracker()
 
     def _fill_tracker(self) -> None:
-        if self.tracker is None:
-            return
         reason, status = self.reason_filter.currentText(), self.status_filter.currentText()
-        self._shown = [j for j in self.tracker["journals"]
-                       if (reason in ("", ALL) or reason in j["blockers"])
-                       and (status in ("", ALL) or mt.STATES.get(j["status"]) == status)]
+        self._shown = [r for r in self.rows if (reason in ("", ALL) or reason in r.reasons)
+                       and (status in ("", ALL) or r.status == status)]
         self.tracker_table.setRowCount(len(self._shown))
-        for row, j in enumerate(self._shown):
-            values = (str(j["source_row"]), j["voucher"], j["date"], " / ".join(j["reasons"]),
-                      mt.STATES.get(j["status"], j["status"]), j["plan"], j["owner"])
+        for row, r in enumerate(self._shown):
+            values = (str(r.source_row), r.voucher, r.date, " / ".join(r.reasons), r.status,
+                      " / ".join(r.accountant) or "—", " / ".join(r.technical) or "—", r.next_steps[0] if r.next_steps else "")
             for column, value in enumerate(values):
                 cell = QTableWidgetItem(value)
-                cell.setToolTip(" ".join(j["blockers"]))
+                cell.setToolTip(" ".join(r.codes))
                 self.tracker_table.setItem(row, column, cell)
+        if self._shown:
+            self.tracker_table.selectRow(0)       # the first journal's detail is shown without another click
+        else:
+            self.journal_detail.setText("")
 
     def _show_journal(self, row: int) -> None:
         if not 0 <= row < len(self._shown):
             return
-        j = self._shown[row]
-        fields = (("元の行", j["source_row"]), ("伝票No.・日付", f"{j['voucher']}・{j['date']}"),
-                  ("BLOCKコード", " ".join(j["blockers"])), ("状態", mt.STATES.get(j["status"], j["status"])),
-                  ("対応方針", j["plan"] or "—"), ("担当者", j["owner"] or "—"), ("メモ", j["memo"] or "—"),
-                  ("関連Evidence", " ".join(j["evidence_ids"]) or "—"),
-                  ("手入力", {None: "未定", True: "必要", False: "不要"}.get(j["manual_entry_required"], "—")),
-                  ("JDL入力", j["jdl_entry"] or "—"), ("照合", j["reconciliation"] or "—"),
-                  ("最終確認", f"{j['final_checker'] or '—'} {j['final_checked_at']}"),
-                  ("履歴", f"{len(j['history'])}件"))
-        self.journal_detail.setText("<table>" + "".join(
-            f"<tr><td><b>{escape(k)}</b></td><td>{escape(str(v))}</td></tr>" for k, v in fields) + "</table>")
+        r = self._shown[row]
+        fields = [("元の行", r.source_row), ("伝票No.・日付", f"{r.voucher}・{r.date}"), ("借方合計", f"{Decimal(r.debit_total):,}円"),
+                  ("BLOCK理由", "／".join(r.reasons)), ("現在の対応状態", r.status),
+                  ("必要な税理士判断", "／".join(r.accountant) or "（税理士の判断で解消する条件はありません）"),
+                  ("技術的な未解決条件", "／".join(r.technical) or "—"), ("次に必要な作業", "\n".join(r.next_steps))]
+        if r.plan or r.owner:
+            fields.extend((("対応方針", r.plan or "—"), ("担当者", r.owner or "—")))
+        html = "<table cellspacing='4'>" + "".join(
+            f"<tr><td valign='top'><b>{escape(k)}</b></td><td>{escape(str(v)).replace(chr(10), '<br>')}</td></tr>"
+            for k, v in fields) + "</table>"
+        if self.tracker_technical_toggle.isChecked():
+            plan = self.overview_data["plan"] if self.overview_data else None
+            tech = [("BLOCKコード", " ".join(r.codes)), ("会社ID", self.company_id)]
+            if plan is not None:
+                tech.append(("元データ（SHA-256）", plan.source_sha256))
+            if self.run_state is not None:
+                tech.append(("READY-only出力", str(self.run_state["output"])))
+                tech.append(("管理表の場所", str(self.run_state["tracker_path"])))
+                tech.append(("出力の状態", self.run_state["state"]))
+            html += "<p><b>技術情報</b></p><table cellspacing='4'>" + "".join(
+                f"<tr><td><b>{escape(k)}</b></td><td>{escape(str(v))}</td></tr>" for k, v in tech) + "</table>"
+        self.journal_detail.setText(html)
+
+    def _on_start_clicked(self) -> None:
+        if not (self.run_state and self.run_state["state"] == "NO_TRACKER"):
+            return
+        target = self.run_state["tracker_path"]
+        answer = QMessageBox.question(
+            self, TITLE,
+            f"状態管理を開始します。\n\n管理表を次の場所に1つ作成します（既存の管理表は上書きしません）:\n{target}\n\n"
+            f"未移行 {self.overview_data['blocked']}仕訳が、すべて「未対応」で登録されます。READY／BLOCKの判定は変わりません。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+        if answer == QMessageBox.StandardButton.Yes:
+            self.start_tracking(self.creator_edit.text())
+
+    def start_tracking(self, created_by: str) -> bool:
+        """Create the tracker (after the explicit confirmation), then open it through the same checks."""
+        try:
+            self.controller.start_migration_tracking(self.company_id, self.source_path, self.run_state["output"],
+                                                     created_by, explicitly_confirmed=True)
+        except Exception as exc:
+            log_local_exception("start_migration_tracking", exc)
+            self.run_banner.setText("管理表を作成できませんでした: " + escape(f"{type(exc).__name__}: {exc}"))
+            self.run_banner.setVisible(True)
+            return False
+        self.use_run(Path(self.run_state["output"]))
+        return True
 
     def _export(self) -> None:
-        if self.tracker is None:
-            return
-        path, _ = QFileDialog.getSaveFileName(self, "未移行管理表をCSVで保存", "", "CSV (*.csv)")
+        path, _ = QFileDialog.getSaveFileName(self, "未移行の一覧をCSVで保存", "", "CSV (*.csv)")
         if path:
             self.export_csv(Path(path))
 
     def export_csv(self, path: Path) -> bool:
+        from accounting_converter.application import unmigrated_view as uv
+
         if path.exists():
             QMessageBox.warning(self, TITLE, "既存のファイルは上書きしません。別の名前を選択してください。")
             return False
         with path.open("xb") as handle:
-            handle.write(mt.to_csv(self.tracker))
+            handle.write(uv.rows_csv(self.rows))
         return True

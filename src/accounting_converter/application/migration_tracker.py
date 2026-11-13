@@ -18,6 +18,7 @@ import hashlib
 import io
 import json
 from collections import Counter
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -454,3 +455,117 @@ def final_reconciliation(tracker: dict, integrity: dict, *, roundtrip: dict | No
     return {"verdict": "MIGRATION_INCOMPLETE" if reasons else "MIGRATION_COMPLETE", "reasons": reasons,
             "open_journals": open_rows, "tracker_state_sha256": tracker_state_sha256(tracker),
             "closed_journals": len(tracker["journals"]) - len(open_rows), "full_migration": not reasons}
+
+
+# ---------------------------------------------------------------- opening a READY-only run without picking files
+TRACKER_SUFFIX = ".migration_tracker.json"
+MANIFEST_SUFFIX = ".ready_only.json"
+
+CHECK_MESSAGES = {
+    "schema_and_mode": "READY-only出力の記録（manifest）の形式・種別が違います（改変の可能性）",
+    "source_sha256": "元データが、READY-only出力を作った時から変わっています",
+    "output_sha256": "出力CSVが変更されています（manifestのSHA-256と一致しません）",
+    "excluded_list_sha256": "除外一覧が変更されています", "excluded_list_content": "除外一覧の内容が現在の診断と一致しません",
+    "audit_bound": "監査記録が出力CSVと一致しません", "counts_add_up": "manifestの件数が合いません（改変の可能性）",
+    "not_migrated_statement": "manifestの未移行件数の記載が改変されています",
+    "follow_up_notes": "manifestの注意書きが改変されています", "confirmation_recorded": "manifestの確認記録が不正です",
+    "current_diagnosis_matches": "現在の診断が、出力を作った時の診断と一致しません（会社設定・承認・元データが変わった可能性）",
+    "excluded_equals_current_block": "未移行の一覧が、現在のBLOCKと一致しません",
+    "ready_rows_equal": "出力対象の行が、現在のREADYと一致しません",
+    "csv_vouchers": "出力CSVの伝票数がmanifestと一致しません", "csv_rows": "出力CSVの行数がmanifestと一致しません",
+    "csv_amounts": "出力CSVの金額がmanifestと一致しません",
+}
+
+
+def tracker_path_for(output: Path) -> Path:
+    """Where a run's tracker lives: next to its CSV, with a fixed suffix (never guessed from similar names)."""
+    return Path(output).with_name(Path(output).name + TRACKER_SUFFIX)
+
+
+def explain_failed_checks(verification: dict) -> list[str]:
+    if verification.get("manifest_present") is False or verification.get("output_present") is False:
+        return ["出力CSVまたはmanifest（.ready_only.json）が見つかりません"]
+    if verification.get("manifest_readable") is False:
+        return ["manifest（.ready_only.json）を読めません"]
+    failed = [key for key, ok in (verification.get("checks") or {}).items() if not ok]
+    return [CHECK_MESSAGES.get(key, f"検証項目 {key} が一致しません") for key in failed] or ["検証に失敗しました"]
+
+
+@dataclass(frozen=True)
+class RunCandidate:
+    output: Path
+    manifest: Path
+    accepted: bool
+    reason: str            # why it is not offered ("" when accepted)
+    counts: dict
+
+
+def discover_runs(folder: Path, company_id: str, source_sha256: str) -> tuple[RunCandidate, ...]:
+    """READY-only runs in ONE folder: only `<csv>.ready_only.json` files the app itself writes, paired with the CSV of
+    exactly that name. A run is offered only when its manifest names this company and this exact source file; the full
+    SHA / audit verification still happens when it is opened. Nothing is matched by similar names."""
+    found = []
+    for manifest in sorted(Path(folder).glob("*" + MANIFEST_SUFFIX)):
+        output = manifest.with_name(manifest.name[: -len(MANIFEST_SUFFIX)])
+        try:
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            found.append(RunCandidate(output, manifest, False, "manifestを読めません", {}))
+            continue
+        counts = data.get("counts") or {}
+        if not output.exists():
+            reason = "対応する出力CSVがありません"
+        elif data.get("schema") != "yayoi-jdl-ready-only-v1":
+            reason = "READY-only出力の記録ではありません"
+        elif data.get("company_setting_id") != company_id:
+            reason = "別の会社の出力です"
+        elif (data.get("source") or {}).get("sha256") != source_sha256:
+            reason = "読み込み中の元データと一致しません（元データが違う、または変更されています）"
+        else:
+            reason = ""
+        found.append(RunCandidate(output, manifest, not reason, reason, counts))
+    return tuple(found)
+
+
+def open_run(source: Path, output: Path, profile, context, company_id: str) -> dict:
+    """Verify a READY-only run with the existing checks, then load its tracker only if it belongs to exactly this run.
+
+    state: REJECTED (the run does not verify) / NO_TRACKER / TRACKER_INVALID / TRACKER_MISMATCH / TRACKED.
+    Never creates, repairs or overwrites anything."""
+    from accounting_converter.application import yayoi_ready_only as ro
+
+    verification = ro.verify_ready_only_output(source, output, profile, context, company_id)
+    result = {"output": output, "tracker_path": tracker_path_for(output), "tracker": None, "integrity": None,
+              "final": None, "problems": []}
+    if verification["verdict"] != "PASS":
+        return {**result, "state": "REJECTED", "problems": explain_failed_checks(verification)}
+    path = result["tracker_path"]
+    if not path.exists():
+        return {**result, "state": "NO_TRACKER"}
+    try:
+        tracker = load(path)
+    except (OSError, ValueError):
+        return {**result, "state": "TRACKER_INVALID", "problems": ["管理表を読めません、または形式が違います"]}
+    integrity = check(tracker, source, output, profile, context, company_id)
+    result.update(tracker=tracker, integrity=integrity)
+    if integrity["verdict"] != "PASS":
+        problems = [f"{key}: {value}" for key, value in integrity["problems"].items() if value]
+        return {**result, "state": "TRACKER_MISMATCH", "tracker": None,
+                "problems": ["この出力と対応しない管理表です（使いません）", *problems]}
+    return {**result, "state": "TRACKED", "final": final_reconciliation(tracker, integrity)}
+
+
+def start_tracking(source: Path, output: Path, profile, context, company_id: str, *, created_by: str) -> Path:
+    """The explicit start of status management: verify the run, write the tracker next to the CSV, never overwrite."""
+    path = tracker_path_for(output)
+    if path.exists():
+        raise TrackerError("管理表が既に存在します。上書き・初期化はしません（開いて確認してください）。")
+    tracker = create_tracker(source, output, profile, context, company_id, created_by=created_by)
+    temp = path.with_name(path.name + ".tmp")
+    with temp.open("xb") as handle:      # exclusive: a leftover temp file stops the start instead of being replaced
+        handle.write((json.dumps(tracker, ensure_ascii=False, indent=1) + "\n").encode("utf-8"))
+    if path.exists():
+        temp.unlink(missing_ok=True)
+        raise TrackerError("管理表が同時に作成されました。上書きはしません。")
+    temp.replace(path)
+    return path

@@ -1060,14 +1060,49 @@ class AccountingConverterController:
                              [(by_id[i], None) for i in item_ids], workflow=self.yayoi_conversion_workflow)
         return preview, ex.describe_preview(preview, items, resolved.context, company_id)
 
-    def migration_tracker_status(self, company_id, source_path, output_path, tracker_path):
-        """Read-only (D2): the tracker of a READY-only run and its integrity check."""
+    def unmigrated_overview(self, company_id, source_path):
+        """Read-only (D2): the journals a READY-only run leaves out, from the production diagnosis. Works with no
+        tracker and no output file. Returns {plan, items, rows, ready, blocked, total}."""
+        from accounting_converter.application import unmigrated_view as uv
+        from accounting_converter.application import yayoi_ready_only as ro
+
+        source, resolved, _, items = self._approval_inputs(company_id, source_path)
+        plan = ro.plan_ready_only(source, resolved.profile, resolved.context, company_id, self.yayoi_conversion_workflow)
+        return {"plan": plan, "items": items, "rows": uv.build_rows(plan, items), "ready": plan.ready_count,
+                "blocked": plan.excluded_count, "total": plan.total_journals, "source": source}
+
+    def find_ready_only_runs(self, company_id, source_path, folders):
+        """Read-only (D2): READY-only runs in the given folders (the app's own `<csv>.ready_only.json` files only) that
+        name this company and this exact source file. Others are returned as rejected, with the reason."""
+        import hashlib
+
+        from accounting_converter.application import migration_tracker as mt
+
+        source, _ = self._resolved_for_yayoi_source(company_id, source_path)
+        sha = hashlib.sha256(source.read_bytes()).hexdigest()
+        found = []
+        for folder in dict.fromkeys(Path(f) for f in folders):
+            found.extend(mt.discover_runs(folder, company_id, sha))
+        return tuple(found)
+
+    def open_migration_run(self, company_id, source_path, output_path):
+        """Read-only (D2): verify a READY-only run with the existing checks and load its tracker only if it belongs to
+        exactly this run. Never creates, repairs or overwrites anything."""
         from accounting_converter.application import migration_tracker as mt
 
         source, resolved = self._resolved_for_yayoi_source(company_id, source_path)
-        tracker = mt.load(Path(tracker_path))
-        integrity = mt.check(tracker, source, Path(output_path), resolved.profile, resolved.context, company_id)
-        return tracker, integrity, mt.final_reconciliation(tracker, integrity)
+        return mt.open_run(source, Path(output_path), resolved.profile, resolved.context, company_id)
+
+    def start_migration_tracking(self, company_id, source_path, output_path, created_by, explicitly_confirmed=False):
+        """The explicit start of status management: writes `<output>.migration_tracker.json` once (never overwrites).
+        Changes no READY / BLOCK decision and records no approval."""
+        from accounting_converter.application import migration_tracker as mt
+
+        if explicitly_confirmed is not True:
+            raise ValueError("管理表の作成には、明示的な確認が必要です。")
+        source, resolved = self._resolved_for_yayoi_source(company_id, source_path)
+        return mt.start_tracking(source, Path(output_path), resolved.profile, resolved.context, company_id,
+                                 created_by=created_by)
 
     def execute_yayoi_ready_only(self, company_id, source_path, plan, confirmation, output_path):
         """Write the READY journals only, after the user's explicit confirmation of exactly `plan`.
