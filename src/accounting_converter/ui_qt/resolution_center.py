@@ -11,7 +11,7 @@ from decimal import Decimal
 from html import escape
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QDateEdit, QDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView,
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea,
@@ -378,24 +378,39 @@ def rr_rule() -> str:
     return RULE
 
 
-class ResolutionCenterDialog(QDialog):
-    """変換の準備状況 (read-only report + buttons into the existing screens)."""
+def report_source_label(source_path) -> str:
+    from accounting_converter.application.yayoi_sources import detect_format
 
-    def __init__(self, controller, company_id: str, source_path, callbacks: dict | None = None, parent=None,
-                 *, unsaved_changes: bool = False) -> None:
+    return detect_format(source_path).label if Path(source_path).is_file() else "弥生の仕訳データ"
+
+
+def report_company_name(controller, company_id: str) -> str:
+    store = getattr(controller, "company_store", None)
+    if store is None:
+        return company_id
+    try:
+        return store.get(company_id).display_name
+    except Exception:  # noqa: BLE001 - the id is shown instead (never guessed)
+        return company_id
+
+
+class ResolutionPanel(QWidget):
+    """The reason-by-reason diagnosis (summary, items, detail): shared by the 変換診断 page and the dialog.
+
+    View only: it shows a report it is given (controller.company_resolution_report) and asks its owner to act through
+    signals. `can_do(item)` (from the owner) decides whether the item's button is usable; nothing is saved here."""
+
+    action_requested = Signal(object)    # the report item whose button was pressed
+    compare_requested = Signal()
+
+    def __init__(self, can_do=None, parent=None, *, unsaved_changes: bool = False) -> None:
         super().__init__(parent)
-        self.controller, self.company_id, self.source_path = controller, company_id, source_path
-        self.callbacks = callbacks or {}
-        self.goto: str | None = None  # a tab key the opener should show after this dialog closes
+        self.can_do = can_do or (lambda item: False)
         self.report = None
         self.comparison = None
-        self.setWindowTitle("変換の準備状況")
-        self.resize(1040, 700)
-        if self.screen():
-            size = self.screen().availableGeometry().size()
-            self.resize(min(1040, size.width()), min(700, size.height()))
+        self.setAccessibleName("変換の準備状況（理由別）")
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setContentsMargins(0, 0, 0, 0)
         self.summary = QLabel()
         self.summary.setWordWrap(True)
         self.summary.setTextFormat(Qt.TextFormat.RichText)
@@ -425,11 +440,13 @@ class ResolutionCenterDialog(QDialog):
         self.alternative.setTextFormat(Qt.TextFormat.RichText)
         comparison_row.addWidget(self.alternative, 1)
         self.compare_button = QPushButton("16行・64行を比較…")
-        self.compare_button.clicked.connect(self._open_comparison)
+        self.compare_button.clicked.connect(lambda _checked=False: self.compare_requested.emit())
         comparison_row.addWidget(self.compare_button)
         layout.addLayout(comparison_row)
         split = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter = split
         self.item_list = QListWidget()
+        self.item_list.setAccessibleName("BLOCKの理由（項目ごと）")
         self.item_list.setMinimumWidth(220)
         self.item_list.setWordWrap(True)
         self.item_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -439,6 +456,7 @@ class ResolutionCenterDialog(QDialog):
         self.detail_scroll.setWidgetResizable(True)
         self.detail_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.detail_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.detail_scroll.setAccessibleName("選んだ理由の詳細")
         self.detail_page = QWidget()
         self.detail_layout = QVBoxLayout(self.detail_page)
         self.detail_layout.setContentsMargins(8, 4, 8, 4)
@@ -466,7 +484,7 @@ class ResolutionCenterDialog(QDialog):
         self.detail_layout.addWidget(self.tax_detail)
         self.action_button = QPushButton()
         self.action_button.setObjectName("primaryButton")
-        self.action_button.clicked.connect(self._do_action)
+        self.action_button.clicked.connect(self._request_action)
         self.why_no_button = QLabel()
         self.why_no_button.setObjectName("muted")
         self.why_no_button.setWordWrap(True)
@@ -489,64 +507,29 @@ class ResolutionCenterDialog(QDialog):
         split.setStretchFactor(1, 1)
         split.setSizes([250, 790])
         layout.addWidget(split, 1)
-        footer = QHBoxLayout()
-        footer.addWidget(self.action_button)
-        self.status = QLabel()
-        self.status.setObjectName("muted")
-        footer.addWidget(self.status, 1)
-        # Separate mode, only when part of the input is READY and part is not; never the default conversion.
-        self.ready_only_button = QPushButton("READYのみ変換…（全件移行ではありません）")
-        self.ready_only_button.setVisible(False)
-        self.ready_only_button.clicked.connect(self._open_ready_only)
-        footer.addWidget(self.ready_only_button)
-        self.migration_button = QPushButton("承認・未移行の管理…")
-        self.migration_button.setVisible(False)
-        self.migration_button.clicked.connect(self._open_migration_status)
-        footer.addWidget(self.migration_button)
-        self.rediagnose_button = QPushButton("再診断")
-        self.rediagnose_button.clicked.connect(self.refresh)
-        close = QPushButton("閉じる")
-        close.clicked.connect(self.accept)
-        footer.addWidget(self.rediagnose_button)
-        footer.addWidget(close)
-        layout.addLayout(footer)
-        self.refresh()
 
     # ------------------------------------------------------------------ data
-    def refresh(self) -> None:
-        keep = self._current_key()
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            self.report, self.comparison = self.controller.company_resolution_report(self.company_id, self.source_path)
-        except Exception as exc:  # the screen must not invent a state it could not compute
-            log_local_exception("company_resolution_report", exc)
-            self.report = None
-            self.comparison = None
-            QApplication.restoreOverrideCursor()
-            self.summary.setText("診断できませんでした。入力ファイルと会社設定を確認してください。")
-            self.next_action.setText("入力ファイルと会社設定を確認してください")
-            self.alternative.setVisible(False)
-            self.compare_button.setVisible(False)
-            self.completed.setText("")
-            self.status.setText("正式診断を更新できませんでした。")
-            self.item_list.clear()
-            self.detail_text.setText("")
-            self.context_text.setText("")
-            self.tax_detail.setText("")
-            self.tax_detail_toggle.setVisible(False)
-            self.details.setPlainText("")
-            self.action_button.setVisible(False)
-            self.why_no_button.setText("")
-            self.ready_only_button.setVisible(False)
-            self.migration_button.setVisible(False)
-            return
-        QApplication.restoreOverrideCursor()
-        report = self.report
-        from accounting_converter.application.yayoi_sources import detect_format
+    def show_error(self, text: str = "診断できませんでした。入力ファイルと会社設定を確認してください。") -> None:
+        """The screen must not invent a state it could not compute: everything from the last report is cleared."""
+        self.report = None
+        self.comparison = None
+        self.summary.setText(escape(text))
+        self.next_action.setText("入力ファイルと会社設定を確認してください")
+        self.alternative.setVisible(False)
+        self.compare_button.setVisible(False)
+        self.completed.setText("")
+        self.item_list.clear()
+        self.detail_text.setText("")
+        self.context_text.setText("")
+        self.tax_detail.setText("")
+        self.tax_detail_toggle.setVisible(False)
+        self.details.setPlainText("")
+        self.action_button.setVisible(False)
+        self.why_no_button.setText("")
 
-        source_label = detect_format(self.source_path).label if Path(self.source_path).is_file() else "弥生の仕訳データ"
-        company_name = self.controller.company_store.get(self.company_id).display_name if hasattr(
-            self.controller, "company_store") else self.company_id
+    def show_report(self, report, comparison, *, source_label: str, company_name: str) -> None:
+        keep = self._current_key()
+        self.report, self.comparison = report, comparison
         self.summary.setText(
             f"{escape(source_label)} → JDL IBEX 出納帳35.5　|　会社設定: {escape(company_name)} "
             f"（{report.saved_limit or '未確認'}行）<br>"
@@ -568,7 +551,7 @@ class ResolutionCenterDialog(QDialog):
         self.item_list.blockSignals(True)
         self.item_list.clear()
         for item in report.items:
-            if self._can_do(item):
+            if self.can_do(item):
                 action = "税理士承認・分割案を開く" if item.action == rr.ACT_SPLIT else item.action_label
             elif item.tax_accountant and item.technical_evidence:
                 action = "税理士判断・技術検証"
@@ -599,28 +582,6 @@ class ResolutionCenterDialog(QDialog):
             self.action_button.setVisible(False)
             self.why_no_button.setText("")
             self.details.setPlainText("")
-        self.ready_only_button.setVisible(report.blocked > 0 and report.ready > 0
-                                          and hasattr(self.controller, "plan_yayoi_ready_only"))
-        self.migration_button.setVisible(report.blocked > 0 and hasattr(self.controller, "approval_items"))
-        approved = not report.split_policy_problems
-        self.status.setText("再診断しました（保存済み設定）。" + ("伝票分割: 承認記録あり。" if approved else ""))
-
-    def _open_migration_status(self) -> None:
-        from .migration_status_dialog import MigrationStatusDialog
-
-        MigrationStatusDialog(self.controller, self.company_id, self.source_path, self).exec()
-
-    def _open_ready_only(self) -> None:
-        from .ready_only_dialog import ReadyOnlyConversionDialog
-
-        ReadyOnlyConversionDialog(self.controller, self.company_id, self.source_path, self).exec()
-
-    def _open_comparison(self) -> None:
-        if self.comparison is None:
-            return
-        from .voucher_limit_comparison import VoucherLimitComparisonDialog
-
-        VoucherLimitComparisonDialog(self.comparison, self).exec()
 
     def _current_key(self) -> str | None:
         row = self.item_list.currentRow() if self.report is not None else -1
@@ -680,12 +641,12 @@ class ResolutionCenterDialog(QDialog):
         enabled = item.action != rr.ACT_NONE and bool(label)
         self.action_button.setVisible(enabled)
         self.action_button.setText(label)
-        self.action_button.setEnabled(enabled and self._can_do(item))
+        self.action_button.setEnabled(enabled and self.can_do(item))
         if not enabled:
             self.why_no_button.setText(
                 "この項目は、画面の操作だけでは解決できません（承認ボタンはありません）。" if item.technical_evidence or item.tax_accountant else "")
         else:
-            self.why_no_button.setText("" if self._can_do(item) else "この操作は現在の画面からは開けません。")
+            self.why_no_button.setText("" if self.can_do(item) else "この操作は現在の画面からは開けません。")
         lines = []
         for journal in report.journals:
             if journal.short_id in item.journals:
@@ -693,11 +654,118 @@ class ResolutionCenterDialog(QDialog):
         self.details.setPlainText(
             "BLOCKコード（この項目）:\n" + "\n".join(code_lines(item.codes)) + "\n\n仕訳別（その仕訳のすべてのBLOCKコード）:\n" + "\n".join(lines))
 
+    def _toggle_details(self, on: bool) -> None:
+        self.details.setVisible(on)
+
+    def _request_action(self, _checked: bool = False) -> None:
+        item = self._current_item()
+        if item is not None:
+            self.action_requested.emit(item)
+
+
+class ResolutionCenterDialog(QDialog):
+    """変換の準備状況 (read-only report + buttons into the existing screens). The body is a ResolutionPanel (the same
+    one the 変換診断 page shows); this dialog adds the footer and computes the report synchronously, as before."""
+
+    _PANEL_ATTRIBUTES = (
+        "summary", "next_action", "notice", "completed", "completed_toggle", "alternative", "compare_button",
+        "item_list", "detail_scroll", "detail_page", "detail_layout", "detail_text", "context_toggle", "context_text",
+        "tax_detail_toggle", "tax_detail", "action_button", "why_no_button", "show_details", "details")
+
+    def __init__(self, controller, company_id: str, source_path, callbacks: dict | None = None, parent=None,
+                 *, unsaved_changes: bool = False) -> None:
+        super().__init__(parent)
+        self.controller, self.company_id, self.source_path = controller, company_id, source_path
+        self.callbacks = callbacks or {}
+        self.goto: str | None = None  # a tab key the opener should show after this dialog closes
+        self.setWindowTitle("変換の準備状況")
+        self.resize(1040, 700)
+        if self.screen():
+            size = self.screen().availableGeometry().size()
+            self.resize(min(1040, size.width()), min(700, size.height()))
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 10)
+        self.panel = ResolutionPanel(self._can_do, self, unsaved_changes=unsaved_changes)
+        self.panel.action_requested.connect(lambda _item: self._do_action())
+        self.panel.compare_requested.connect(self._open_comparison)
+        for name in self._PANEL_ATTRIBUTES:          # the names the existing callers and tests use
+            setattr(self, name, getattr(self.panel, name))
+        layout.addWidget(self.panel, 1)
+        footer = QHBoxLayout()
+        footer.addWidget(self.action_button)
+        self.status = QLabel()
+        self.status.setObjectName("muted")
+        footer.addWidget(self.status, 1)
+        # Separate mode, only when part of the input is READY and part is not; never the default conversion.
+        self.ready_only_button = QPushButton("READYのみ変換…（全件移行ではありません）")
+        self.ready_only_button.setVisible(False)
+        self.ready_only_button.clicked.connect(self._open_ready_only)
+        footer.addWidget(self.ready_only_button)
+        self.migration_button = QPushButton("承認・未移行の管理…")
+        self.migration_button.setVisible(False)
+        self.migration_button.clicked.connect(self._open_migration_status)
+        footer.addWidget(self.migration_button)
+        self.rediagnose_button = QPushButton("再診断")
+        self.rediagnose_button.clicked.connect(self.refresh)
+        close = QPushButton("閉じる")
+        close.clicked.connect(self.accept)
+        footer.addWidget(self.rediagnose_button)
+        footer.addWidget(close)
+        layout.addLayout(footer)
+        self.refresh()
+
+    @property
+    def report(self):
+        return self.panel.report
+
+    @property
+    def comparison(self):
+        return self.panel.comparison
+
+    # ------------------------------------------------------------------ data
+    def refresh(self) -> None:
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            report, comparison = self.controller.company_resolution_report(self.company_id, self.source_path)
+        except Exception as exc:  # the screen must not invent a state it could not compute
+            log_local_exception("company_resolution_report", exc)
+            QApplication.restoreOverrideCursor()
+            self.panel.show_error()
+            self.status.setText("正式診断を更新できませんでした。")
+            self.ready_only_button.setVisible(False)
+            self.migration_button.setVisible(False)
+            return
+        QApplication.restoreOverrideCursor()
+        self.panel.show_report(report, comparison, source_label=report_source_label(self.source_path),
+                               company_name=report_company_name(self.controller, self.company_id))
+        self.ready_only_button.setVisible(report.blocked > 0 and report.ready > 0
+                                          and hasattr(self.controller, "plan_yayoi_ready_only"))
+        self.migration_button.setVisible(report.blocked > 0 and hasattr(self.controller, "approval_items"))
+        approved = not report.split_policy_problems
+        self.status.setText("再診断しました（保存済み設定）。" + ("伝票分割: 承認記録あり。" if approved else ""))
+
+    def _current_item(self):
+        return self.panel._current_item()
+
     def _can_do(self, item) -> bool:
         return item.action == rr.ACT_SPLIT or item.action in self.callbacks
 
-    def _toggle_details(self, on: bool) -> None:
-        self.details.setVisible(on)
+    def _open_migration_status(self) -> None:
+        from .migration_status_dialog import MigrationStatusDialog
+
+        MigrationStatusDialog(self.controller, self.company_id, self.source_path, self).exec()
+
+    def _open_ready_only(self) -> None:
+        from .ready_only_dialog import ReadyOnlyConversionDialog
+
+        ReadyOnlyConversionDialog(self.controller, self.company_id, self.source_path, self).exec()
+
+    def _open_comparison(self) -> None:
+        if self.panel.comparison is None:
+            return
+        from .voucher_limit_comparison import VoucherLimitComparisonDialog
+
+        VoucherLimitComparisonDialog(self.panel.comparison, self).exec()
 
     # ------------------------------------------------------------------ actions
     def _do_action(self) -> None:

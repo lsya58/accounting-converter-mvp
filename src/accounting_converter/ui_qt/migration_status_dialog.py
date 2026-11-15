@@ -52,6 +52,16 @@ def _label(text: str = "", rich: bool = False, name: str | None = None) -> QLabe
     return label
 
 
+def _plan_fingerprint(manifest_path: Path):
+    """The plan a READY-only output was made from, as written in its own record (read-only; None if unreadable)."""
+    import json
+
+    try:
+        return json.loads(Path(manifest_path).read_text(encoding="utf-8")).get("plan_fingerprint")
+    except (OSError, ValueError):
+        return None
+
+
 def _number(text: str):
     return int(text) if str(text).isdigit() else str(text)
 
@@ -589,20 +599,36 @@ class MigrationStatusDialog(QDialog):
             overview = controller.unmigrated_overview(company, source)
             runs = tuple(controller.find_ready_only_runs(company, source, folders))
             accepted = [r for r in runs if r.accepted]
-            state = controller.open_migration_run(company, source, accepted[0].output) if len(accepted) == 1 else None
-            return overview, runs, state
+            # Several outputs of the same source (e.g. an older READY count): only one made from the CURRENT
+            # diagnosis can verify, so that one is opened. Identified by the plan in its record, never by its name;
+            # the full verification still runs (open_migration_run).
+            current = [r for r in accepted if _plan_fingerprint(r.manifest) == overview["plan"].fingerprint]
+            chosen = accepted if len(accepted) == 1 else current
+            state = controller.open_migration_run(company, source, chosen[0].output) if len(chosen) == 1 else None
+            outdated = {str(r.output) for r in accepted if r not in current}
+            return overview, runs, state, outdated
 
         self._running = "overview"
         self._start("overview", tuple(str(f) for f in folders), job)
 
     def _show_overview(self, key, result) -> None:
         self._running = None
-        self.overview_data, runs, state = result
+        self.overview_data, runs, state, outdated = result
         self.runs = list(runs)
         accepted = [r for r in self.runs if r.accepted]
+        self.run_combo.blockSignals(True)
         self.run_combo.clear()
         for run in accepted:
-            self.run_combo.addItem(run.output.name, str(run.output))
+            journals = (run.counts or {}).get("output_journals")
+            label = run.output.name + (f"（{journals:,}仕訳）" if isinstance(journals, int) else "")
+            if str(run.output) in outdated:
+                label += "　旧い出力：現在の診断と不一致"
+            self.run_combo.addItem(label, str(run.output))
+        if state is not None:
+            index = self.run_combo.findData(str(state["output"]))
+            if index >= 0:
+                self.run_combo.setCurrentIndex(index)
+        self.run_combo.blockSignals(False)
         self._apply_run_state(state, accepted)
         self._after_task()
 

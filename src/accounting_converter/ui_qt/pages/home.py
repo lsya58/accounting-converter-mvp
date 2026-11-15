@@ -7,7 +7,7 @@ from __future__ import annotations
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
-from accounting_converter.ui.home_view import HomePresentation
+from accounting_converter.ui.home_view import PRIORITY_LABELS, HomePresentation
 
 from .. import components as ui
 from . import scroll_page
@@ -68,6 +68,14 @@ class HomePage(QWidget):
         self.presentation: HomePresentation | None = None
 
     def render(self, presentation: HomePresentation, *, busy: bool = False) -> None:
+        """Re-rendering (e.g. when the background diagnosis arrives) keeps the reader's scroll position."""
+        bar = self.scroll.verticalScrollBar()
+        position = bar.value()
+        self._render(presentation, busy)
+        self.scroll.widget().layout().activate()
+        bar.setValue(min(position, bar.maximum()))
+
+    def _render(self, presentation: HomePresentation, busy: bool) -> None:
         self.presentation = presentation
         self.company_card.set_lines(presentation.company_lines)
         for metric in (*presentation.metrics, presentation.migration):
@@ -91,10 +99,11 @@ class HomePage(QWidget):
         self._render_actions(presentation)
 
     def _render_actions(self, presentation: HomePresentation) -> None:
-        """Rebuilt each time: one row per action, the first one primary (one primary per screen)."""
-        if self.actions_widget is not None:
-            self.actions_box.removeWidget(self.actions_widget)
-            self.actions_widget.deleteLater()
+        """One row per action, the first one primary (one primary per screen). Rebuilt only when they change."""
+        if self.actions_widget is not None and getattr(self, "_shown_actions", None) == presentation.next_actions:
+            return
+        self._shown_actions = presentation.next_actions
+        previous = self.actions_widget          # removed only after the new rows are in place (no height dip)
         self.actions_widget = QWidget()
         self.actions_widget.setAccessibleName("次に必要な作業")
         rows = QVBoxLayout(self.actions_widget)
@@ -103,7 +112,9 @@ class HomePage(QWidget):
         self.action_buttons = []
         for number, action in enumerate(presentation.next_actions, start=1):
             row = QHBoxLayout()
-            text = QLabel(f"{number}. {action.text}")
+            priority = PRIORITY_LABELS.get(action.priority, "")
+            text = QLabel(f"{number}. " + (f"【{priority}】" if priority else "") + action.text)
+            text.setAccessibleName(f"優先{number}" + (f" {priority}" if priority else ""))
             text.setWordWrap(True)
             row.addWidget(text, 1)
             if action.target:
@@ -114,3 +125,7 @@ class HomePage(QWidget):
                 self.action_buttons.append(button)
             rows.addLayout(row)
         self.actions_box.addWidget(self.actions_widget)
+        if previous is not None:
+            self.actions_box.removeWidget(previous)
+            previous.hide()
+            previous.deleteLater()

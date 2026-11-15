@@ -362,6 +362,37 @@ class DialogTest(unittest.TestCase):
             self.assertFalse(dialog.start_button.isEnabled())
             self.assertEqual(path.read_bytes(), saved)
 
+    def test_with_an_older_output_of_the_same_source_the_current_one_is_opened(self):
+        """Old 2,480 / new 2,479 situation: both outputs name this company and source. The one made from the
+        current diagnosis is opened (and verified); the other is labelled as old, not deleted, not used."""
+        import json
+        import shutil
+
+        from accounting_converter.application import yayoi_ready_only as ro
+
+        with tempfile.TemporaryDirectory() as directory:
+            env, dialog = self._d2(directory)
+            output = env.run.output
+            older = output.with_name("older_" + output.name)
+            shutil.copyfile(output, older)
+            for path in (ro.manifest_path_for(output), ro.excluded_list_path_for(output), ro.audit_path_for(output)):
+                if path.exists():
+                    shutil.copyfile(path, older.with_name(older.name + path.name[len(output.name):]))
+            manifest = json.loads(ro.manifest_path_for(older).read_text(encoding="utf-8"))
+            manifest["plan_fingerprint"] = "0" * 64
+            ro.manifest_path_for(older).write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+            before = {p.name: p.read_bytes() for p in Path(directory).iterdir() if p.is_file()}
+            self._refresh(dialog)
+            self.assertEqual(dialog.run_state["state"], "NO_TRACKER")
+            self.assertEqual(Path(dialog.run_state["output"]), output)
+            labels = [dialog.run_combo.itemText(i) for i in range(dialog.run_combo.count())]
+            self.assertEqual(len(labels), 2)
+            self.assertTrue(any(older.name in label and "旧い出力" in label for label in labels))
+            self.assertTrue(any(label.startswith(output.name) and "旧い出力" not in label for label in labels))
+            self.assertIn(output.name, dialog.run_combo.currentText())
+            self.assertIn("状態管理はまだ始まっていません", dialog.d2_message.text())
+            self.assertEqual({p.name: p.read_bytes() for p in Path(directory).iterdir() if p.is_file()}, before)
+
     def test_a_foreign_or_modified_pairing_is_refused_on_the_screen_and_nothing_is_overwritten(self):
         import json
 

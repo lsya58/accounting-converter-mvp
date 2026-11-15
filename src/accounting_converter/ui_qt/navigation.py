@@ -63,12 +63,16 @@ class NavigationRail(QFrame):
             self.current = key
             self.current_changed.emit(key)
 
-    def set_count(self, key: str, count: int) -> None:
-        """A count next to the item (e.g. 要確認 3). Words, not colour; 0 shows nothing."""
-        label = self.labels[key]
-        text = f"{label}  {count:,}" if count else label
-        self.buttons[key].setText(text)
-        self.buttons[key].setAccessibleName(f"{label} {count:,}件" if count else label)
+    def set_status(self, key: str, text: str, description: str = "") -> None:
+        """Replace the item's text (e.g. 要確認（設定2件 / 判断22仕訳）). Words with units, never a bare or summed
+        number; the description is read aloud and shown as the tooltip."""
+        button = self.buttons[key]
+        button.setText(text)
+        button.setAccessibleName(text)
+        number = self.keys.index(key) + 1
+        detail = f"{description}（Ctrl+{number}）" if description else f"{self.labels[key]}（Ctrl+{number}）"
+        button.setToolTip(detail)
+        button.setAccessibleDescription(detail)
 
     def eventFilter(self, watched, event) -> bool:
         """Up / Down on a navigation item moves to the previous / next page (the button would only move focus)."""

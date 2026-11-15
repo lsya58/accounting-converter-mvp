@@ -42,7 +42,16 @@ class Metric:
 class NextAction:
     text: str
     target: str | None = None   # a NAV_* key, or None when there is nothing to open
-    button: str = ""            # the button text (says what it opens)
+    button: str = ""            # the button text: says where it goes and why (unique on the page)
+    priority: int = 9           # 1 = do first (see PRIORITY_LABELS)
+
+
+# Why one thing comes before another: nothing can be judged before the input exists; saved settings change the
+# diagnosis; the BLOCK reasons decide who acts; the accountant's decisions change READY; output comes last.
+PRIORITY_LABELS = {
+    1: "準備", 2: "設定の確認（変換前に必須）", 3: "変換できない仕訳の理由", 4: "税理士の判断",
+    5: "出力", 6: "未移行の管理", 9: "",
+}
 
 
 @dataclass(frozen=True)
@@ -54,7 +63,11 @@ class HomePresentation:
     message: tuple[str, str] | None = None   # (level, text) for components.MessageBar
     yayoi: bool = False
     format_key: str = "NONE"
-    review_count: int = 0                    # shown on the 要確認 navigation item
+    # 要確認: two different things with different units. They may overlap (a journal can wait for both), so they are
+    # never added together.
+    review_settings: int = 0                 # settings waiting for a confirmation (件: 科目・補助・税区分の設定の数)
+    review_journals: int | None = None       # journals needing the tax accountant's decision (仕訳); None = unknown
+    review_breakdown: tuple[tuple[str, int], ...] = ()
     notes: tuple[str, ...] = field(default_factory=tuple)
 
 
@@ -95,10 +108,34 @@ def company_lines(state: AppState, tax_context_text: str) -> tuple[str, ...]:
     )
 
 
-def _pending_confirmations(state: AppState) -> int:
+def pending_breakdown(state: AppState) -> tuple[tuple[str, int], ...]:
+    """Settings waiting for a confirmation, by kind (unit: 件 = settings, not journals). Zero kinds are left out."""
     queue = state.review_work_queue
-    return (state.pending_account_confirmations + state.pending_subaccount_confirmations
-            + state.pending_tax_confirmations + (queue.tax_evidence_settings if queue else 0))
+    return tuple((label, count) for label, count in (
+        ("科目", state.pending_account_confirmations),
+        ("補助科目", state.pending_subaccount_confirmations),
+        ("税区分", state.pending_tax_confirmations),
+        ("税区分（JDLでの確認待ち）", queue.tax_evidence_settings if queue else 0),
+    ) if count)
+
+
+def pending_text(breakdown) -> str:
+    return "・".join(f"{label} {_n(count)}件" for label, count in breakdown)
+
+
+def review_nav_text(settings: int, journals: int | None) -> tuple[str, str]:
+    """(navigation label, accessible / tooltip description). The two counts are shown with their units, never summed."""
+    parts = []
+    if settings:
+        parts.append(f"設定{_n(settings)}件")
+    if journals:
+        parts.append(f"判断{_n(journals)}仕訳")
+    label = "要確認" + ("\n" + "・".join(parts) if parts else "")
+    description = ("対応の確認: " + (f"{_n(settings)}件（科目・補助・税区分の設定の数）" if settings else "なし")
+                   + "。税理士の判断: " + (f"{_n(journals)}仕訳（仕訳の数）" if journals else
+                                          "なし" if journals == 0 else "未診断")
+                   + "。単位が違い、同じ仕訳が両方に関わることがあるため合計していません。")
+    return label, description
 
 
 def _migration(yayoi: dict | None) -> Metric:
@@ -118,7 +155,65 @@ def _migration(yayoi: dict | None) -> Metric:
     }.get(state, "状態を確認できません")
     if yayoi.get("blocked"):
         reason = f"未移行 {_n(yayoi['blocked'])}仕訳。" + reason
+    unused = [run for run in yayoi.get("runs") or () if not run.get("usable")]
+    if unused:
+        reason += f"（旧い・使えない出力 {len(unused)}件は使いません）"
     return Metric("移行全体", "未完了", reason, "block")
+
+
+RUN_COLUMNS = ("出力ファイル", "仕訳", "行", "作成日時", "出力のSHA-256", "現在の正式診断との照合", "実機での確認", "管理表")
+RUN_STATE_TEXT = {
+    "NO_TRACKER": "✓ 一致（検証PASS）", "TRACKED": "✓ 一致（検証PASS）",
+    "TRACKER_MISMATCH": "✓ 一致（検証PASS）", "TRACKER_INVALID": "✓ 一致（検証PASS）",
+    "OUTDATED": "‖ 旧い出力（現在の診断と不一致）・使いません", "REJECTED": "✕ 検証失敗・使いません",
+    "NOT_THIS_SOURCE": "✕ この元データ・会社の出力ではありません",
+}
+TRACKER_TEXT = {"NO_TRACKER": "未作成", "TRACKED": "管理中", "TRACKER_MISMATCH": "対応しない管理表（使いません）",
+                "TRACKER_INVALID": "読めません"}
+
+
+def run_rows(yayoi: dict | None) -> tuple[tuple[str, ...], ...]:
+    """One row per READY-only output found next to the source: identity (counts, time, SHA-256), the live check against
+    the current diagnosis, and the recorded real-JDL result for exactly these bytes (run_history)."""
+    from accounting_converter.ui.run_history import e2e_text
+
+    rows = []
+    for run in (yayoi or {}).get("runs") or ():
+        counts = run.get("counts") or {}
+        sha = run.get("output_sha256") or ""
+        rows.append((
+            run["file"],
+            f"{counts['output_journals']:,}" if isinstance(counts.get("output_journals"), int) else "—",
+            f"{counts['output_rows']:,}" if isinstance(counts.get("output_rows"), int) else "—",
+            (run.get("created_at") or "—")[:19].replace("T", " "),
+            sha[:12] + "…" if sha else "—",
+            RUN_STATE_TEXT.get(run.get("state"), run.get("state") or "—"),
+            ("" if run.get("usable") else "【参考・現在は使わない出力】") + e2e_text(tuple(run.get("history") or ())),
+            TRACKER_TEXT.get(run.get("state"), "—"),
+        ))
+    return tuple(rows)
+
+
+def run_cards(yayoi: dict | None) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """The same facts as run_rows, one card per output, in full (nothing elided): (title, lines)."""
+    from accounting_converter.ui.run_history import kind_label
+
+    cards = []
+    for run, row in zip((yayoi or {}).get("runs") or (), run_rows(yayoi)):
+        lines = [
+            f"内容: {row[1]}仕訳・{row[2]}行　作成: {row[3]}",
+            f"出力のSHA-256: {run.get('output_sha256') or '—'}",
+            f"現在の正式診断との照合: {row[5]}",
+            f"実機での確認: {row[6]}",
+            f"管理表: {row[7]}",
+        ]
+        lines += [f"理由: {problem}" for problem in run.get("problems") or ()]
+        lines += [f"記録（{r.recorded_on}・{kind_label(r.kind)} {r.verdict}）: {r.summary} 出典: {r.reference}"
+                  f"　対象: 会社設定 {r.company_setting_id}・{r.source_period[0]}〜{r.source_period[1]}・"
+                  f"行数 {dict(r.jdl_conditions).get('voucher_row_limit')}。docsの記録の転記であり、新しいEvidenceではありません。"
+                  for r in run.get("history") or ()]
+        cards.append((run["file"], tuple(lines)))
+    return tuple(cards)
 
 
 def build_home(state: AppState, *, tax_context_text: str = "JDL税設定: 確認が必要です",
@@ -129,16 +224,18 @@ def build_home(state: AppState, *, tax_context_text: str = "JDL税設定: 確認
     fmt = source_format(state)
     recognition = state.file_recognition
     total_text = _n(recognition.journal_count) if recognition and recognition.journal_count is not None else "—"
-    pending = _pending_confirmations(state)
+    breakdown = pending_breakdown(state)
+    pending = sum(count for _, count in breakdown)
     actions: list[NextAction] = []
     message = None
     notes: list[str] = []
+    review_journals: int | None = None
 
     if company is None:
         actions.append(NextAction("会社を選んでください（画面上部の「会社」）。会社がない場合は設定で追加します。",
-                                  "settings", "設定を開く"))
+                                  "settings", "設定へ（会社）", 1))
     if state.selected_file is None:
-        actions.append(NextAction("変換する仕訳データ（CSV / TXT）を選んでください。", "import", "データ取込を開く"))
+        actions.append(NextAction("変換する仕訳データ（CSV / TXT）を選んでください。", "import", "データ取込へ", 1))
         metrics = (
             Metric("元仕訳", "—", "仕訳データ未選択"),
             Metric("変換可能", "—", "仕訳データ未選択"),
@@ -146,12 +243,15 @@ def build_home(state: AppState, *, tax_context_text: str = "JDL税設定: 確認
             Metric("税理士の判断", "—", "仕訳データ未選択"),
             Metric("承認済み", "—", "仕訳データ未選択"),
         )
-        return HomePresentation(lines, metrics, Metric("移行全体", "—", "仕訳データ未選択"), tuple(actions),
-                                None, False, fmt.value, pending)
+        return HomePresentation(lines, metrics, Metric("移行全体", "—", "仕訳データ未選択"), _ordered(actions),
+                                None, False, fmt.value, pending, None, breakdown)
     if fmt is RecognizedFormat.UNKNOWN:
         message = ("error", "選んだファイルを対応している仕訳形式として認識できませんでした。元のファイルは変更していません。")
         actions.append(NextAction("Money Forward・弥生・JDLから出力した仕訳データを選び直してください。", "import",
-                                  "データ取込を開く"))
+                                  "データ取込へ", 1))
+    if pending:
+        actions.append(NextAction(f"変換前に確認が必要な設定があります: {pending_text(breakdown)}（設定の数）。",
+                                  "review", "要確認で設定を確認", 2))
 
     if fmt is RecognizedFormat.YAYOI and company is not None:
         accountant = approvals = "—"
@@ -162,7 +262,8 @@ def build_home(state: AppState, *, tax_context_text: str = "JDL税設定: 確認
             total_text = _n(yayoi["total"])
             ready_hint = "正式診断でREADY"
             blocked_hint = "未移行（READY-only出力に入らない）"
-            accountant = _n(yayoi["accountant_journals"])
+            review_journals = yayoi["accountant_journals"]
+            accountant = _n(review_journals)
             accountant_hint = f"仕訳（判断待ちの項目 {_n(yayoi['pending_items'])}件）"
             approvals = _n(yayoi["approvals_in_force"])
             approvals_hint = "承認台帳に記録された承認（記録はCLIの正式手順のみ）"
@@ -172,21 +273,32 @@ def build_home(state: AppState, *, tax_context_text: str = "JDL税設定: 確認
                 notes.append("元仕訳とREADY・BLOCKの合計が一致しません。診断情報をコピーして担当者へ確認してください。")
             if yayoi["blocked"]:
                 actions.append(NextAction(
-                    f"変換できない {_n(yayoi['blocked'])}仕訳の理由を確認してください。", "diagnosis", "変換診断を開く"))
-            if yayoi["accountant_journals"]:
+                    f"変換できない {_n(yayoi['blocked'])}仕訳の理由と担当を確認してください。",
+                    "diagnosis", "変換診断で理由を見る", 3))
+            if review_journals:
                 actions.append(NextAction(
-                    f"税理士の判断が必要な {_n(yayoi['accountant_journals'])}仕訳があります（承認の記録はCLI）。",
-                    "review", "要確認を開く"))
-            if yayoi.get("run_state") is None and yayoi.get("runs_found", 0) > 1:
+                    f"税理士の判断が必要な仕訳が {_n(review_journals)}仕訳あります（試算は画面、承認の記録はCLI）。",
+                    "review", "要確認で税理士の判断を見る", 4))
+            runs = tuple(yayoi.get("runs") or ())
+            usable = [r for r in runs if r.get("usable")]
+            unused = [r for r in runs if not r.get("usable")]
+            if unused:
+                notes.append(
+                    f"この元データの旧い・使えないREADY-only出力が {len(unused)}件あります（"
+                    + "、".join(f"{r['file']}: {RUN_STATE_TEXT.get(r.get('state'), r.get('state'))}" for r in unused)
+                    + "）。削除はしません。出力・照合で内容を確認できます。")
+            if len(usable) > 1:
                 actions.append(NextAction(
-                    f"この元データのREADY-only出力が {yayoi['runs_found']}件あります。未移行の管理で使う出力を1つ選んでください。",
-                    "review", "要確認を開く"))
-            elif yayoi.get("run_state") is None and yayoi["ready"]:
-                actions.append(NextAction("READYの仕訳だけを出力できます（未移行分は手入力・後日対応）。", "output",
-                                          "出力・照合を開く"))
-            elif yayoi.get("run_state") == "NO_TRACKER":
-                actions.append(NextAction("READY-only出力の未移行の管理を始められます（管理表は明示操作で作成）。",
-                                          "review", "要確認を開く"))
+                    f"現在の診断と一致するREADY-only出力が {len(usable)}件あります。未移行の管理で使う出力を1つ選んでください。",
+                    "review", "要確認で未移行の管理へ", 6))
+            elif not usable and yayoi["ready"]:
+                actions.append(NextAction(
+                    "現在の診断と一致するREADY-only出力はまだありません。READYの仕訳だけを出力できます（未移行分は手入力・後日対応）。",
+                    "output", "出力・照合へ", 5))
+            elif usable and usable[0].get("state") == "NO_TRACKER":
+                actions.append(NextAction(
+                    f"READY-only出力（{usable[0]['file']}）の未移行の管理を始められます（管理表は明示操作で作成）。",
+                    "review", "要確認で未移行の管理へ", 6))
         elif yayoi_busy:
             message = ("info", "診断しています…（全仕訳を正式診断します。保存はしません）")
         elif yayoi_error:
@@ -200,7 +312,6 @@ def build_home(state: AppState, *, tax_context_text: str = "JDL税設定: 確認
         )
         migration = _migration(yayoi) if (yayoi is not None or not yayoi_error) else Metric(
             "移行全体", "未完了", "診断できないため判定しません", "block")
-        review = pending + (yayoi["accountant_journals"] if yayoi else 0)
     else:
         summary = state.formal_ready_summary
         ready = _n(summary[0]) if summary else "—"
@@ -215,21 +326,32 @@ def build_home(state: AppState, *, tax_context_text: str = "JDL税設定: 確認
             Metric("承認済み", "対象外", excluded),
         )
         migration = Metric("移行全体", "対象外", "未移行の管理は弥生のREADY-only出力のみ")
-        review = pending
+        review_journals = 0 if fmt is not RecognizedFormat.YAYOI else None
         if fmt is RecognizedFormat.YAYOI and company is None:
             notes.append("会社を選ぶと弥生データの正式診断を行います。")
-    if pending:
-        actions.insert(0, NextAction(f"科目・補助・税区分などの確認が {_n(pending)}件あります。", "review", "要確認を開く"))
     if state.selected_file is not None and company is not None and state.selected_output_file is None:
-        actions.append(NextAction("JDL用CSVの保存先を選んでください。", "output", "出力・照合を開く"))
+        actions.append(NextAction("JDL用CSVの保存先を選んでください。", "output", "出力・照合へ", 5))
     if (state.conversion_available and state.selected_output_file is not None
             and not (state.result_presentation and state.result_presentation.successful)):
-        actions.append(NextAction("全件を変換できます。出力・照合で内容を確認して変換してください。", "output",
-                                  "出力・照合を開く"))
+        actions.append(NextAction("全件を変換できます。内容を確認して変換してください。", "output", "出力・照合へ", 5))
     if state.result_presentation is not None and state.result_presentation.successful:
-        actions.append(NextAction("変換が完了しました。保存したCSVをJDLで読み込んでください。", "output",
-                                  "出力・照合を開く"))
+        actions.append(NextAction("変換が完了しました。保存したCSVをJDLで読み込んでください。", "output", "出力・照合へ", 5))
     if not actions:
-        actions.append(NextAction("いま必要な作業はありません。", None, ""))
-    return HomePresentation(lines, metrics, migration, tuple(dict.fromkeys(actions)), message,
-                            fmt is RecognizedFormat.YAYOI, fmt.value, review, tuple(notes))
+        actions.append(NextAction("いま必要な作業はありません。", None, "", 9))
+    return HomePresentation(lines, metrics, migration, _ordered(actions), message,
+                            fmt is RecognizedFormat.YAYOI, fmt.value, pending, review_journals, breakdown,
+                            tuple(notes))
+
+
+def _ordered(actions: list[NextAction]) -> tuple[NextAction, ...]:
+    """By priority (stable); actions with the same button are merged into one row, so no button text repeats."""
+    merged: dict[str, NextAction] = {}
+    for action in sorted(actions, key=lambda a: a.priority):
+        key = action.button or action.text
+        if key in merged:
+            first = merged[key]
+            if action.text not in first.text:
+                merged[key] = NextAction(first.text + " " + action.text, first.target, first.button, first.priority)
+        else:
+            merged[key] = action
+    return tuple(merged.values())

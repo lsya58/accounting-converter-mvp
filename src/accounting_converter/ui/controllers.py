@@ -1092,22 +1092,76 @@ class AccountingConverterController:
         except (al.ApprovalError, ValueError, KeyError, OSError) as error:
             ledger_error = str(error)
         source = Path(source_path)
-        runs = tuple(self.find_ready_only_runs(company_id, source, [source.parent]))
-        accepted = [run for run in runs if run.accepted]
-        run_state = (self.open_migration_run(company_id, source, accepted[0].output)
-                     if len(accepted) == 1 else None)
-        final = run_state.get("final") if run_state and run_state.get("state") == "TRACKED" else None
+        runs = self._classify_ready_only_runs(company_id, source, overview["plan"])
+        usable = [run for run in runs if run["usable"]]
+        run_state = usable[0]["state"] if len(usable) == 1 else None
+        final = usable[0]["final"] if len(usable) == 1 else None
         return {
             "total": overview["total"], "ready": overview["ready"], "blocked": overview["blocked"],
             "accountant_journals": sum(1 for row in rows if row.accountant),
             "pending_items": len(overview["items"]),
             "approvals_in_force": approvals_in_force, "ledger_error": ledger_error,
-            "runs_found": len(accepted), "runs_rejected": len(runs) - len(accepted),
-            "run_state": run_state["state"] if run_state else None,
-            "run_output": str(run_state["output"]) if run_state else None,
+            "runs": tuple(runs),
+            "runs_found": len(usable), "runs_rejected": len(runs) - len(usable),
+            "run_state": run_state,
+            "run_output": str(usable[0]["output"]) if len(usable) == 1 else None,
             "verdict": final["verdict"] if final else None,
             "final_reasons": tuple(final["reasons"]) if final else (),
         }
+
+    def _classify_ready_only_runs(self, company_id, source: Path, plan) -> list[dict]:
+        """Every READY-only run next to the source, identified by content (SHA-256), never by its file name.
+
+        - not this company / not this exact source / unreadable: listed with the reason, not used;
+        - made from a different plan than the current diagnosis (e.g. an older READY count): "OUTDATED", not used
+          (the full verification would fail on exactly that check, so it is not repeated);
+        - otherwise the existing full verification (migration_tracker.open_run): only PASS runs are usable.
+        Read-only: nothing is created, repaired or overwritten."""
+        import hashlib
+        import json
+
+        from accounting_converter.application import migration_tracker as mt
+        from accounting_converter.ui.run_history import recorded_results
+
+        def sha(path: Path):
+            try:
+                return hashlib.sha256(path.read_bytes()).hexdigest()
+            except OSError:
+                return None
+
+        source_sha = sha(source)
+        resolved = None
+        out = []
+        for candidate in mt.discover_runs(source.parent, company_id, source_sha or ""):
+            try:
+                manifest = json.loads(candidate.manifest.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                manifest = {}
+            output_sha = sha(candidate.output) if candidate.output.exists() else None
+            record = {
+                "output": candidate.output, "file": candidate.output.name, "counts": dict(candidate.counts),
+                "created_at": manifest.get("created_at"), "output_sha256": output_sha,
+                "manifest_output_sha256": (manifest.get("output") or {}).get("sha256"),
+                "plan_fingerprint": manifest.get("plan_fingerprint"),
+                "history": recorded_results(source_sha, output_sha, manifest=manifest, company_setting_id=company_id),
+                "state": None, "final": None, "problems": [], "usable": False,
+            }
+            if not candidate.accepted:
+                record.update(state="NOT_THIS_SOURCE", problems=[candidate.reason])
+            elif output_sha != record["manifest_output_sha256"]:
+                record.update(state="REJECTED", problems=["出力CSVの内容が記録（SHA-256）と一致しません"])
+            elif record["plan_fingerprint"] != plan.fingerprint:
+                record.update(state="OUTDATED", problems=[
+                    "現在の正式診断と異なる計画で作成された出力です（"
+                    f"出力 {record['counts'].get('output_journals', '—')}仕訳 / 現在のREADY {plan.ready_count:,}仕訳）"])
+            else:
+                if resolved is None:
+                    _, resolved = self._resolved_for_yayoi_source(company_id, source)
+                opened = mt.open_run(source, candidate.output, resolved.profile, resolved.context, company_id)
+                record.update(state=opened["state"], final=opened.get("final"),
+                              problems=list(opened.get("problems") or ()), usable=opened["state"] != "REJECTED")
+            out.append(record)
+        return out
 
     def find_ready_only_runs(self, company_id, source_path, folders):
         """Read-only (D2): READY-only runs in the given folders (the app's own `<csv>.ready_only.json` files only) that

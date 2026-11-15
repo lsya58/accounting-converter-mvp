@@ -82,6 +82,7 @@ from .bulk_review import BulkCandidateDialog, DescriptionRulesDialog
 from .navigation import NavigationRail
 from .pages import scroll_page
 from .pages.home import HomePage
+from .resolution_center import ResolutionPanel, VoucherSplitApprovalDialog, report_company_name, report_source_label
 from .review_layout import (
     CollapsibleSection,
     app_settings,
@@ -153,6 +154,12 @@ class AccountingConverterMainWindow(QMainWindow):
         self._home_result: tuple | None = None      # (request key, overview)
         self._home_error: tuple | None = None       # (request key, message)
         self._home_pending = False
+        self.reasons_task = ui.BackgroundTask(self)
+        self.reasons_task.finished.connect(self._on_reasons_finished)
+        self.reasons_task.failed.connect(self._on_reasons_failed)
+        self.reasons_task.busy_changed.connect(lambda _busy: self._render_reasons_state())
+        self._reasons_key = None                    # request key of the report the panel shows
+        self._reasons_pending = False
         self._build()
         self.controller.load_profiles()
         self._render(self.controller.load_company_settings())
@@ -290,20 +297,14 @@ class AccountingConverterMainWindow(QMainWindow):
             self.owner_row.addWidget(pill)
         self.owner_row.addStretch(1)
         action_row = QHBoxLayout()
-        self.readiness_main_button = QPushButton("変換の準備状況（理由別の一覧）を開く…")
-        self.readiness_main_button.setObjectName("primaryButton")
-        self.readiness_main_button.setAccessibleName("変換の準備状況（理由別の一覧）を開く")
-        self.readiness_main_button.setToolTip("変換できない仕訳の理由と、必要な対応を確認します（設定や承認は変更しません）")
-        self.readiness_main_button.clicked.connect(self._open_resolution_center_main)
         self.copy_guidance_button = QPushButton("確認項目をコピー")
         self.copy_guidance_button.clicked.connect(self._copy_guidance)
         self.copy_diagnostics_button = QPushButton("診断情報をコピー")
         self.copy_diagnostics_button.clicked.connect(self._copy_diagnostics)
-        action_row.addWidget(self.readiness_main_button)
         action_row.addStretch(1)
         action_row.addWidget(self.copy_guidance_button)
         action_row.addWidget(self.copy_diagnostics_button)
-        self.readiness_scope_label = QLabel("理由別の一覧（変換の準備状況）は弥生のデータで使えます。")
+        self.readiness_scope_label = QLabel("理由別の診断（変換の準備状況）は弥生のデータで使えます。")
         self.readiness_scope_label.setObjectName("muted")
         self.readiness_scope_label.setWordWrap(True)
         status_layout.addLayout(status_row)
@@ -312,13 +313,55 @@ class AccountingConverterMainWindow(QMainWindow):
         status_layout.addLayout(action_row)
         status_layout.addWidget(self.readiness_scope_label)
         layout.addWidget(status_card)
-        layout.addStretch(1)
+        # 変換の準備状況 (reason by reason), shown on the page itself: the same panel as the dialog, loaded in the
+        # background (read-only). Its buttons open the existing screens; nothing is saved by viewing.
+        self.reasons_card, reasons_layout = self._card("変換できない理由と担当（理由別）")
+        self.reasons_mode = ui.ModeBanner("view", "保存済みの設定による正式な判定です。各項目のボタンは既存の確認画面を開きます。")
+        reasons_layout.addWidget(self.reasons_mode)
+        self.reasons_message = ui.MessageBar()
+        reasons_layout.addWidget(self.reasons_message)
+        self.reasons_panel = ResolutionPanel(self._reason_can_do)
+        self.reasons_panel.setMinimumHeight(560)
+        # On the page the list sits above the detail (the page is narrower than the dialog): the detail keeps the
+        # full width, so nothing is clipped and nothing scrolls sideways at 1024 px.
+        self.reasons_panel.splitter.setOrientation(Qt.Orientation.Vertical)
+        self.reasons_panel.splitter.setSizes([180, 380])
+        self.reasons_panel.item_list.setMinimumHeight(120)
+        self.reasons_panel.action_button.setAccessibleName("選んだ理由の対応画面を開く")
+        self.reasons_panel.action_requested.connect(self._reason_action)
+        self.reasons_panel.compare_requested.connect(self._reason_compare)
+        reasons_layout.addWidget(self.reasons_panel, 1)
+        reasons_footer = QHBoxLayout()
+        reasons_footer.addWidget(self.reasons_panel.action_button)
+        reasons_footer.addStretch(1)
+        self.reasons_to_output = ui.make_button(
+            "出力・照合へ（READYのみ出力）", "subtle", description="出力・照合ページを表示します（ページの切り替えのみ）")
+        self.reasons_to_output.clicked.connect(lambda _checked=False: self.show_page(hv.NAV_OUTPUT))
+        self.reasons_to_review = ui.make_button(
+            "要確認へ（税理士の判断・未移行）", "subtle", description="要確認ページを表示します（ページの切り替えのみ）")
+        self.reasons_to_review.clicked.connect(lambda _checked=False: self.show_page(hv.NAV_REVIEW))
+        self.reasons_refresh_button = ui.make_button(
+            "理由別の診断をやり直す", description="保存済みの設定で正式診断をやり直します（保存しません）")
+        self.reasons_refresh_button.clicked.connect(lambda _checked=False: self._start_reasons(force=True))
+        reasons_footer.addWidget(self.reasons_refresh_button)
+        reasons_layout.addLayout(reasons_footer)
+        links = QHBoxLayout()                        # a second row: the page stays inside 1024 px at every scale
+        links.addStretch(1)
+        links.addWidget(self.reasons_to_output)
+        links.addWidget(self.reasons_to_review)
+        reasons_layout.addLayout(links)
+        layout.addWidget(self.reasons_card, 1)
         self._add_page(hv.NAV_DIAGNOSIS, scroll)
 
         # 要確認
         scroll, layout = scroll_page(
             "要確認", "人の確認が必要な項目を開きます。保存を伴う確認は、各画面の確認ダイアログでだけ保存します。",
             name="reviewContent")
+        self.review_counts_label = QLabel()
+        self.review_counts_label.setObjectName("muted")
+        self.review_counts_label.setWordWrap(True)
+        self.review_counts_label.setAccessibleName("要確認の件数（単位つき）")
+        layout.addWidget(self.review_counts_label)
         mapping_card, mapping_layout = self._card("対応の確認（科目・補助科目・税区分・摘要）")
         self.review_status_label = QLabel()
         self.review_status_label.setWordWrap(True)
@@ -384,6 +427,24 @@ class AccountingConverterMainWindow(QMainWindow):
         self.ready_only_scope_label.setWordWrap(True)
         convert_layout.addWidget(self.ready_only_scope_label)
         layout.addWidget(convert_card)
+        self.runs_card, runs_layout = self._card("READY-only出力（この元データ）")
+        self.runs_message = QLabel()
+        self.runs_message.setObjectName("muted")
+        self.runs_message.setWordWrap(True)
+        runs_layout.addWidget(self.runs_message)
+        self.runs_box = QVBoxLayout()
+        self.runs_box.setSpacing(8)
+        runs_layout.addLayout(self.runs_box)
+        self.run_cards: list = []
+        self.runs_note = QLabel(
+            "「現在の正式診断との照合」はこの画面で毎回確認します（保存しません）。「実機での確認」はこの出力と同じ内容"
+            "（SHA-256）について記録された実機の結果だけを表示し、似た名前の別の出力の結果は使いません。"
+            "部分集合照合はそのCSV自体をJDLへ取り込んだ確認（実機E2E）ではありません。")
+        self.runs_note.setObjectName("muted")
+        self.runs_note.setWordWrap(True)
+        runs_layout.addWidget(self.runs_note)
+        self.runs_card.hide()
+        layout.addWidget(self.runs_card)
         self.result_card, result_layout = self._card("変換結果")
         self.result_label = QLabel()
         self.result_label.setWordWrap(True)
@@ -444,9 +505,20 @@ class AccountingConverterMainWindow(QMainWindow):
 
     def _on_page_changed(self, key: str) -> None:
         self.stack.setCurrentWidget(self.pages[key])
+        scroll = self.page_scroll(key)
+        if scroll is not None:
+            scroll.verticalScrollBar().setValue(0)    # a page always opens at its title (never under the header)
         if key == hv.NAV_HOME and hasattr(self, "home_page"):
             self._start_home_overview()       # read-only; reuses the result while the request key is unchanged
             self._render_home()
+        if key == hv.NAV_DIAGNOSIS and hasattr(self, "reasons_panel"):
+            self._start_reasons()
+
+    def page_scroll(self, key: str):
+        page = self.pages.get(key)
+        if isinstance(page, QScrollArea):
+            return page
+        return page.findChild(QScrollArea, "pageScroll") if page is not None else None
 
     @staticmethod
     def _card(title_text: str, step: str | None = None) -> tuple[QFrame, QVBoxLayout]:
@@ -668,22 +740,6 @@ class AccountingConverterMainWindow(QMainWindow):
         )
         self._render(self.controller.execute_conversion(answer == QMessageBox.StandardButton.Yes))
 
-    def _open_resolution_center_main(self) -> None:
-        from .resolution_center import ResolutionCenterDialog
-
-        state = self.controller.state
-        if not state.selected_file or not state.selected_company_setting_id:
-            return
-        # Items an existing screen resolves are opened through the normal confirmation flow ("確認する").
-        callbacks = {key: "review" for key in (
-            "ACCOUNTS_TAB", "SUBACCOUNTS_TAB", "DESCRIPTION_TAB", "TAX_REVIEW", "ROW_LIMIT", "INFORMATION_POLICY", "COMPANY_SETTING")}
-        dialog = ResolutionCenterDialog(
-            self.controller, state.selected_company_setting_id, state.selected_file, callbacks, self)
-        dialog.exec()
-        self._refresh_current_csv_readiness()
-        if dialog.goto:
-            self._confirm_current_csv()
-
     def _yayoi_selected(self) -> bool:
         return hv.is_yayoi(self.controller.state)
 
@@ -710,6 +766,109 @@ class AccountingConverterMainWindow(QMainWindow):
     def _after_dialog(self) -> None:
         """A dialog may have saved something (only through its own confirmation): show the current state again."""
         self._render(self.controller.state)
+
+    # ------------------------------------------------------------------ 変換診断: reasons (read-only background)
+    _REVIEW_ACTIONS = ("ACCOUNTS_TAB", "SUBACCOUNTS_TAB", "DESCRIPTION_TAB", "TAX_REVIEW", "ROW_LIMIT",
+                       "INFORMATION_POLICY", "COMPANY_SETTING")
+
+    def _reason_can_do(self, item) -> bool:
+        """Same rule as the dialog opened from the main window: the split approval screen, or the existing
+        confirmation flow (対応の確認) for the items that flow resolves."""
+        from accounting_converter.application import resolution_report as rr
+
+        return item.action == rr.ACT_SPLIT or item.action in self._REVIEW_ACTIONS
+
+    def _reason_action(self, item) -> None:
+        from accounting_converter.application import resolution_report as rr
+
+        state = self.controller.state
+        if not hv.is_yayoi(state) or not self._reason_can_do(item):
+            return
+        if item.action == rr.ACT_SPLIT:
+            dialog = VoucherSplitApprovalDialog(self.controller, state.selected_company_setting_id,
+                                                state.selected_file, item.journals, self)
+            dialog.exec()
+            if getattr(dialog, "saved", False):
+                self._after_saved_change()
+            return
+        self._confirm_current_csv()              # the existing confirmation flow (saves only on its own confirmation)
+        self._after_saved_change()
+
+    def _reason_compare(self) -> None:
+        comparison = self.reasons_panel.comparison
+        if comparison is None:
+            return
+        from .voucher_limit_comparison import VoucherLimitComparisonDialog
+
+        VoucherLimitComparisonDialog(comparison, self).exec()
+
+    def _after_saved_change(self) -> None:
+        """A dialog may have saved a setting: the diagnosis is recomputed (keys change with the setting fingerprint)."""
+        self._render(self.controller.state)
+        self._start_reasons(force=True)
+
+    def _start_reasons(self, force: bool = False) -> None:
+        key = self.home_request_key()
+        if key is None or not hasattr(self.controller, "company_resolution_report"):
+            return
+        key = ("reasons", *key[1:])
+        if not force and key == self._reasons_key:
+            return
+        if self.reasons_task.busy:
+            self.reasons_task.invalidate()
+            self._reasons_pending = True
+            return
+        controller, company, source = self.controller, key[1], Path(key[2][0])
+
+        def job():
+            report, comparison = controller.company_resolution_report(company, source)
+            return report, comparison, report_source_label(source), report_company_name(controller, company)
+
+        self.reasons_task.start(key, job)
+        self._render_reasons_state()
+
+    def _current_reasons_key(self):
+        key = self.home_request_key()
+        return ("reasons", *key[1:]) if key is not None else None
+
+    def _on_reasons_finished(self, key, result) -> None:
+        if key != self._current_reasons_key():
+            return                                # the company / source / setting changed: never shown
+        report, comparison, source_label, company_name = result
+        self._reasons_key = key
+        self.reasons_panel.show_report(report, comparison, source_label=source_label, company_name=company_name)
+        self.reasons_message.show_message(
+            "success", f"正式診断を表示しています（READY {report.ready:,} / BLOCK {report.blocked:,} / 全 {report.total:,}件）。")
+        self._render_reasons_state()
+
+    def _on_reasons_failed(self, key, error) -> None:
+        log_local_exception("company_resolution_report", error)
+        if key != self._current_reasons_key():
+            return
+        self._reasons_key = None
+        self.reasons_panel.show_error()
+        self.reasons_message.show_message(
+            "error", f"理由別の診断ができませんでした（{type(error).__name__}: {error}）。何も保存していません。"
+            "入力ファイルと会社設定を確認して、やり直してください。")
+        self._render_reasons_state()
+
+    def _render_reasons_state(self) -> None:
+        if not hasattr(self, "reasons_panel"):
+            return
+        busy = self.reasons_task.busy
+        if not busy and self._reasons_pending:
+            self._reasons_pending = False
+            self._start_reasons(force=True)
+            busy = self.reasons_task.busy
+        yayoi = hv.is_yayoi(self.controller.state)
+        self.reasons_card.setVisible(yayoi)
+        self.reasons_refresh_button.setEnabled(yayoi and not busy)
+        if yayoi and self._reasons_key != self._current_reasons_key():
+            # the panel still shows nothing or another selection's report: never leave it on screen
+            if self.reasons_panel.report is not None:
+                self.reasons_panel.show_error("会社・仕訳データ・設定が変わったため、前の診断結果は表示していません。")
+            if busy:
+                self.reasons_message.show_message("info", "理由別に診断しています…（全仕訳を正式診断します。保存はしません）")
 
     # ------------------------------------------------------------------ home (read-only background diagnosis)
     def home_request_key(self):
@@ -778,7 +937,43 @@ class AccountingConverterMainWindow(QMainWindow):
         presentation = hv.build_home(state, tax_context_text=self._tax_context_text(state), yayoi=result,
                                      yayoi_busy=busy and result is None, yayoi_error=error)
         self.home_page.render(presentation, busy=busy)
-        self.nav.set_count(hv.NAV_REVIEW, presentation.review_count)
+        label, description = hv.review_nav_text(presentation.review_settings, presentation.review_journals)
+        self.nav.set_status(hv.NAV_REVIEW, label, description)
+        self.review_counts_label.setText(description)
+        rows = hv.run_rows(result) if hv.is_yayoi(state) else ()
+        self._render_run_cards(hv.run_cards(result) if rows else ())
+        self.runs_card.setVisible(hv.is_yayoi(state))
+        self.runs_message.setText(
+            "この元データと同じフォルダにあるREADY-only出力です。出力の内容（SHA-256）で識別し、ファイル名では判断しません。"
+            "古い出力やファイルは削除・上書きしません。" if rows else
+            "診断中です…" if busy and result is None else
+            "この元データと同じフォルダにREADY-only出力はありません。")
+
+    def _render_run_cards(self, cards) -> None:
+        """One card per READY-only output. Plain-text labels, one per fact, so long lines wrap without clipping."""
+        if [card.property("facts") for card in self.run_cards] == [(title, lines) for title, lines in cards]:
+            return
+        for card in self.run_cards:
+            self.runs_box.removeWidget(card)
+            card.deleteLater()
+        self.run_cards = []
+        for title, lines in cards:
+            card = QFrame()
+            card.setObjectName("detailCard")
+            card.setProperty("facts", (title, lines))
+            card.setAccessibleName(title)
+            card.setAccessibleDescription(" ".join(lines))
+            box = QVBoxLayout(card)
+            box.setContentsMargins(12, 10, 12, 10)
+            box.setSpacing(2)
+            heading = QLabel(title)
+            heading.setObjectName("detailCardTitle")
+            heading.setWordWrap(True)
+            box.addWidget(heading)
+            for line in lines:
+                box.addWidget(ui.WrappingLabel("・" + line))
+            self.runs_box.addWidget(card)
+            self.run_cards.append(card)
 
     def _tax_context_text(self, state: AppState) -> str:
         company_id = state.selected_company_setting_id
@@ -792,6 +987,7 @@ class AccountingConverterMainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         self.home_task.shutdown()
+        self.reasons_task.shutdown()
         super().closeEvent(event)
 
     def _open_settings(self) -> None:
@@ -896,16 +1092,11 @@ class AccountingConverterMainWindow(QMainWindow):
         )
         self._render_overview(state, selected_company, badge)
         self.convert_button.setEnabled(presentation.conversion_enabled)
-        self.settings_action.setVisible(presentation.settings_action_visible)
         self.copy_guidance_button.setVisible(
             state.selected_file is not None
             and presentation.status.value in {"CONFIRM", "BLOCKED"}
         )
         self.copy_diagnostics_button.setVisible(state.selected_file is not None)
-        recognition = state.file_recognition
-        self.readiness_main_button.setVisible(
-            state.selected_file is not None and state.selected_company_setting_id is not None
-            and recognition is not None and recognition.format is RecognizedFormat.YAYOI)
         self._render_pages(state, presentation)
         result = state.result_presentation
         self.result_card.setVisible(result is not None)
@@ -925,7 +1116,10 @@ class AccountingConverterMainWindow(QMainWindow):
             )
         if self.nav.current == hv.NAV_HOME:
             self._start_home_overview()
+        if self.nav.current == hv.NAV_DIAGNOSIS:
+            self._start_reasons()
         self._render_home()
+        self._render_reasons_state()
 
     def _render_pages(self, state: AppState, presentation) -> None:
         """The page-specific texts and which Yayoi-only actions are usable (others say why they are not)."""

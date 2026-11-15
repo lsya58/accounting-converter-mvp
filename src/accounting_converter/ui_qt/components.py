@@ -178,6 +178,26 @@ class MessageBar(QLabel):
         self.setVisible(False)
 
 
+class WrappingLabel(QLabel):
+    """A word-wrapped plain-text label that always gets the height of all its lines.
+
+    Inside a scrolling page Qt sizes a wrapped label from its preferred width, so a label that wraps to three lines
+    at the real width can be given room for two (the last line is clipped). After every resize this label asks for
+    the height its current width needs."""
+
+    def __init__(self, text: str = "", parent=None) -> None:
+        super().__init__(text, parent)
+        self.setTextFormat(Qt.TextFormat.PlainText)
+        self.setWordWrap(True)
+        self.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        needed = self.heightForWidth(self.width())
+        if needed > 0 and self.minimumHeight() != needed:
+            self.setMinimumHeight(needed)
+
+
 # ---------------------------------------------------------------- metric card, detail card, collapsible text
 class MetricCard(QFrame):
     def __init__(self, label: str, value: str = "—", hint: str = "", tone: str = "neutral", parent=None) -> None:
