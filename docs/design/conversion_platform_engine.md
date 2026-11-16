@@ -92,6 +92,17 @@
 
 公開情報の詳細と未確認事項は [freee 仕訳帳CSV 調査記録](../research/freee_journal_csv_public_spec.md)。
 
+> **2026-11-16 E4（実出力Evidence反映）**：freeeテスト事業所の実出力（旧CSV 29列・新CSV 97列・JDL形式9列・弥生形式25列、架空6仕訳）で、3.1〜3.6 のうち公開情報からの推測を置き換えた。正は [調査記録](../research/freee_journal_csv_public_spec.md) §5。主な訂正：旧CSVの先頭列名は空文字・新CSVは `No`（どちらも表示用連番で不変IDではない）、新CSVに `摘要` 列は無く `借方備考`/`貸方備考`、旧CSVの `摘要` は取引先・品目・メモ・備考の連結、新CSVには税額・内税/外税・税率・経理方式・仕訳ID・行番号/行数がある、旧CSVの空欄片側は「科目空・金額0・対象外」。下表の「根拠」列のうち「記載」「仮定」は E2 時点のもの。
+
+**実Evidenceと推測の区別（E4）**
+
+| 区分 | 内容 |
+|---|---|
+| 実出力で確定（1サンプル） | 列名・列順・文字コード（UTF-8 BOMなし）・日付書式・空欄片側の形・複合仕訳の識別列・明示税額・税込経理・決算整理の値（0/1）・表示名の不一致・freee JDL/弥生形式の列構成と複合仕訳・決算整理の表現 |
+| 推測（実装では採用しない） | `内税` が JDL の税入力方法のどれに当たるか、`20261331` の意味、freee JDL形式が IBEX出納帳35.5で読めるか、freee弥生形式の補助科目・税額空欄の意味、仕訳番号の採番規則、受取利息の表示名が事業主借になる理由 |
+| 未観測（値が来たらBLOCK） | 外税・税抜経理・軽減8%・経過措置・個別対応・部門・セグメント・取引（口座）由来の仕訳・3行以上の複合仕訳・負の金額・Shift-JIS 出力 |
+
+
 ### 3.1 3つの出力の違い
 
 | | 新CSV | 旧CSV | freee標準 JDL形式 |
@@ -143,7 +154,8 @@
 | `application/freee_diagnosis.py` | blocker の分類（HUMAN / SYSTEM_EVIDENCE / SYSTEM_IMPLEMENTATION）、税区分の手がかり、JDLに列が無い情報の一覧、形の分布。顧客の値は出さない。`formal_ready` は方向が PRODUCTION でない限り 0 |
 | `tools/freee_journal_diagnose.py` | 読み取り専用 CLI（件数とコードのみ） |
 | `domain/source_information.py`、`domain/conversion_direction.py` | 2.2・2.4 の共通部品 |
-| `tests/test_freee_journal_csv.py` | 合成CSVで 17 テスト（ヘッダー指紋を検証済みにしても READY にならないことを含む） |
+| `tests/test_freee_journal_csv.py` | E4で38テスト：実ヘッダー列名＋架空の値の合成fixture（税額の0と空欄、空借方の保持、表示用連番が変わってもID・identity不変、行番号/行数・ID不一致の拒否、未観測値、税率不一致、備考の不一致、文字コード）、JDL9・弥生25の構造比較、private原本があるときだけSHA-256照合と件数確認（読み取りのみ） |
+| `application/freee_other_export_diagnosis.py`、`tools/freee_other_export_diagnose.py`（E4） | freee JDL形式9列・弥生形式25列の構造と、JDL 30列・既存弥生入力との差分コード。読み取り専用。変換・取込判定はしない |
 
 ## 4. E3：次の変換方向
 
@@ -183,8 +195,8 @@ target を増やす方向（3〜5）は、`OutputAdapter` 実装・target contex
 
 ## 6. 次の実装ステップ
 
-1. **Human**: freee の実エクスポート（新CSV・旧CSV、Shift-JIS/UTF-8）と会社の税設定を入手し `data/private/` に置く（[依頼リスト](../research/freee_journal_csv_public_spec.md#4-実データで確認が必要なこと依頼リスト)）
-2. SYSTEM: 実サンプルを `freee_journal_diagnose` で診断し、列表・仮定列・税の表現を確定。指紋を登録（この時点で `ADAPTER` としての登録を検討、方向は DIAGNOSE_ONLY のまま）
+1. ~~**Human**: freee の実エクスポートを入手~~ → 2026-11-15 テスト事業所の架空6仕訳で取得済み（UTF-8のみ・税込経理のみ）。追加の最小Probeは [調査記録](../research/freee_journal_csv_public_spec.md) §5.7
+2. ~~SYSTEM: 実サンプルで列表・税の表現を確定~~ → E4 で観測ヘッダーとして登録（`OBSERVED_HEADER_FINGERPRINTS`）。**検証済み（`VERIFIED_HEADER_FINGERPRINTS`）は空のまま**、`InputAdapter` 登録も行わない。方向は DIAGNOSE_ONLY
 3. SYSTEM: freee 用 `FormatIdentity` を `known_formats` に、`ConversionProfile` 用の source identity を定義
 4. SYSTEM＋Human: 税区分・科目・口座→補助の確認シート（既存の弥生シートを流用）
 5. SYSTEM: freee 専用の欠落ルールと非保持監査（`SourceFieldValue` ベース）。既存の弥生監査は変更しない

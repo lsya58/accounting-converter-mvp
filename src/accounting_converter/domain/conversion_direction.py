@@ -60,12 +60,13 @@ KNOWN_DIRECTIONS: tuple[ConversionDirection, ...] = (
         "freee_journal_csv->jdl_ibex_cashbook_35_5",
         "freee会計 仕訳帳CSV（新CSV／旧CSV）", "JDL IBEX 出納帳 35.5 仕訳CSV",
         DirectionStage.DIAGNOSE_ONLY,
-        "公開仕様の断片と合成データだけ。実freee出力サンプル・JDL実機Evidenceなし",
+        "実出力1サンプル（テスト事業所・架空6仕訳、2026-11-15）で旧29列/新97列を観測。JDL実機Evidenceなし",
     ),
     ConversionDirection(
         "freee_jdl_kaikeinet->jdl_ibex_cashbook_35_5",
         "freee会計 JDL形式（会計net向け）", "JDL IBEX 出納帳 35.5",
-        DirectionStage.RESEARCH, "freee公式は会計net対応と記載。IBEX出納帳35.5での取込は未確認",
+        DirectionStage.RESEARCH,
+        "freee公式は会計net対応と記載。9列・諸口展開・13月日付を実出力で観測。IBEX出納帳35.5での取込は未確認",
     ),
     ConversionDirection(
         "jdl_ibex_cashbook->moneyforward",

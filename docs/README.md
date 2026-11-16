@@ -27,8 +27,8 @@
 - [Capability composition 設計](design/mf_tax_capability_composition.md): Evidenceを組み合わせて出力可否を決める方式
 - [弥生「仕訳日記帳」汎用形式](design/yayoi_journal_report_source.md): 弥生の実データの形式・列の扱い・税と金額の観測
 - [JDL→Money Forward の判断記録](design/jdl_to_mf_decision.md): 逆方向を今は作らない理由と、代わりに進めるJDL出力の入力元非依存化
-- [共通変換エンジン（E0〜E3）](design/conversion_platform_engine.md): 現行エンジンの構造、共通モデルの拡張、freee診断試作、次の変換方向の比較
-- [freee 仕訳帳CSV 調査記録](research/freee_journal_csv_public_spec.md): 公開情報で分かったこと・未検証のこと・必要なサンプル
+- [共通変換エンジン（E0〜E4）](design/conversion_platform_engine.md): 現行エンジンの構造、共通モデルの拡張、freee診断試作、次の変換方向の比較
+- [freee 仕訳帳CSV 調査記録](research/freee_journal_csv_public_spec.md): 公開情報と実出力Evidence（旧29列・新97列・JDL9列・弥生25列）で分かったこと・未検証のこと・次のProbe
 - `design/`: 設計と実装境界
 - `research/`: 調査時点の観測・履歴。現在値は上記statusを優先
 - `tests/evidence/`: privacy-safeなEvidence原本
