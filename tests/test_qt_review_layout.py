@@ -9,7 +9,7 @@ import unittest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:
-    from PySide6.QtCore import Qt
+    from PySide6.QtCore import QCoreApplication, QEvent, Qt
     from PySide6.QtWidgets import QApplication, QCheckBox, QStackedWidget, QTableWidget, QToolButton, QWidget
 
     from accounting_converter.application.company_mapping_update import (
@@ -86,12 +86,33 @@ def visible_rows(table: QTableWidget) -> float:
     return table.viewport().height() / table.verticalHeader().defaultSectionSize()
 
 
+def flush_deferred_deletes() -> None:
+    """deleteLater() is only honoured by an event loop; unittest has none, so deliver the deferred deletes by hand
+    (otherwise every closed dialog and its widgets stay alive until the process ends)."""
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    QCoreApplication.processEvents()
+
+
+def dispose_widget(widget) -> None:
+    """Hide and destroy a widget the test created, and deliver the deletion now."""
+    widget.hide()
+    widget.deleteLater()
+    flush_deferred_deletes()
+
+
 @unittest.skipUnless(PYSIDE6_AVAILABLE, "PySide6 is not installed")
 class ReviewLayoutTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
+        # The app-wide sheet is shared state: put back what was there so later modules do not inherit it.
+        cls._previous_sheet = cls.app.styleSheet()
         cls.app.setStyleSheet(APP_STYLE_SHEET)
+
+    @classmethod
+    def tearDownClass(cls):
+        flush_deferred_deletes()
+        cls.app.setStyleSheet(cls._previous_sheet)
 
     def open_dialog(self, review, width, height):
         dialog = CompanyMappingUpdateDialog(object(), review)
@@ -99,8 +120,9 @@ class ReviewLayoutTest(unittest.TestCase):
         dialog.resize(int(width * 0.9), int(height * 0.92))
         dialog.show()
         self.app.processEvents()
-        # hide() rather than close: closing with unsaved checks asks for confirmation.
-        self.addCleanup(dialog.hide)
+        # hide() rather than close: closing with unsaved checks asks for confirmation. The dialog has no parent, so
+        # it is destroyed explicitly (a hidden top-level widget is otherwise kept alive until the process ends).
+        self.addCleanup(dispose_widget, dialog)
         return dialog
 
     def table_in(self, dialog, key):
@@ -224,8 +246,14 @@ class BulkDialogLayoutTest(unittest.TestCase):
         # deleted from Python can crash PySide on teardown).
         cls.owner = QWidget()
 
+    @classmethod
+    def tearDownClass(cls):
+        dispose_widget(cls.owner)       # the children (the dialogs) go with their owner
+
     def dialog(self):
-        return BulkCandidateDialog("科目", self.rows(), self.owner)
+        dialog = BulkCandidateDialog("科目", self.rows(), self.owner)
+        self.addCleanup(dispose_widget, dialog)
+        return dialog
 
     def rows(self):
         return [
