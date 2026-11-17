@@ -71,7 +71,7 @@ class Sales10SelfExportProbeTest(unittest.TestCase):
         self.assertEqual(rows[0][probe.FIELDS["貸方消費税"]], "100")
         self.assertEqual(rows[0][probe.FIELDS["日付"]], "20260524")
         self.assertEqual(rows[0][probe.FIELDS["摘要"]], probe.IMPORT_MARKER)
-        self.assertEqual(json.loads(manifest.read_text())["production_allowed"], False)
+        self.assertEqual(json.loads(manifest.read_text(encoding="utf-8"))["production_allowed"], False)
         with self.assertRaises(FileExistsError):
             self.generate(self.root / "self_export.csv")
 
@@ -87,7 +87,7 @@ class Sales10SelfExportProbeTest(unittest.TestCase):
         output, manifest = self.generate(self.self_export(tax_scope="売　上", description=""))
         self.assertEqual(_journal_rows(output)[0][probe.FIELDS["貸方課区"]], "売　上")
         self.assertEqual(
-            json.loads(manifest.read_text())["self_export_selection_basis"],
+            json.loads(manifest.read_text(encoding="utf-8"))["self_export_selection_basis"],
             "SINGLE_ROW_EXACT_DATE_NO_DESCRIPTION",
         )
 

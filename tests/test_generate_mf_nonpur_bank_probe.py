@@ -90,7 +90,7 @@ class NonpurBankProbeTest(unittest.TestCase):
         self.assertEqual(rows[0][2], "20260528")
         self.assertEqual(rows[0][13:18], ("1311", "普通預金", "普通預金", "0002", "テスト銀行"))
         self.assertEqual(rows[0][8], "非仕入")
-        self.assertFalse(json.loads(manifest.read_text())["production_allowed"])
+        self.assertFalse(json.loads(manifest.read_text(encoding="utf-8"))["production_allowed"])
         self.assertNotIn(b"\n", output.read_bytes().replace(b"\r\n", b""))
         with self.assertRaises(FileExistsError):
             self.generate()

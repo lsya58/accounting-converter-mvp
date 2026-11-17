@@ -72,7 +72,7 @@ class OutpurSelfExportProbeTest(unittest.TestCase):
             self.assertEqual(row[probe.FIELDS[f"{side}税区"]], "")
             self.assertEqual(row[probe.FIELDS[f"{side}税入力方法"]], "")
             self.assertEqual(row[probe.FIELDS[f"{side}消費税"]], "0")
-        metadata = json.loads(manifest.read_text())
+        metadata = json.loads(manifest.read_text(encoding="utf-8"))
         self.assertFalse(metadata["production_allowed"])
         self.assertEqual(metadata["human_selected_jdl_ui_label"], "0 対象外")
         with self.assertRaises(FileExistsError):

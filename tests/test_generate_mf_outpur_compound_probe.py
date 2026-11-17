@@ -51,7 +51,7 @@ class OutpurCompoundProbeTest(unittest.TestCase):
             ],
             "subaccount_context_mappings": [],
             "tax_mappings": [{"source_value": "対象外仕入", "status": "UNRESOLVED"}],
-        }, ensure_ascii=False))
+        }, ensure_ascii=False), encoding="utf-8")
 
     def _write_source(self) -> None:
         stream = io.StringIO(newline="")
@@ -95,7 +95,7 @@ class OutpurCompoundProbeTest(unittest.TestCase):
         self.assertEqual(rows[9][23], "ROW-1-9")
         self.assertEqual(rows[0][8:10], ("", ""))
         self.assertEqual(rows[0][12], "0")
-        data = json.loads(manifest.read_text())
+        data = json.loads(manifest.read_text(encoding="utf-8"))
         self.assertFalse(data["production_allowed"])
         self.assertEqual(data["source_tax_mapping_status"], "UNRESOLVED")
         self.assertEqual(len(data["cases"]), 11)
