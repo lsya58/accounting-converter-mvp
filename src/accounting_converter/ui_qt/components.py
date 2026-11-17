@@ -41,6 +41,10 @@ STATUSES = {
     "RECONCILED": Status("✔", "照合済み", "ready"),
     "NOT_REQUIRED": Status("–", "対応不要", "neutral"),
     "ERROR": Status("✕", "使えません", "error"),
+    # settings / mapping review (Phase 3C): confirmed or not by a person, or waiting for something else
+    "CONFIRMED": Status("✔", "確認済み", "ready"),
+    "UNCONFIRMED": Status("?", "未確認", "pending"),
+    "NEEDS_JDL": Status("⊕", "JDL側で登録が必要", "block"),
 }
 
 # migration tracker status code -> STATUSES key (application/migration_tracker.STATES)

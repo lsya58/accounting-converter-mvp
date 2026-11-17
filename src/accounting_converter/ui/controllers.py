@@ -2199,6 +2199,120 @@ class AccountingConverterController:
             return "設定が完了していません: " + "、".join(pending)
         return "会社設定を利用できます。"
 
+    def company_settings_facts(self, company_setting_id: str | None):
+        """設定ページ用 (read-only): what the saved company setting says, for ui.settings_view. Loads the saved
+        setting, profile and JDL context and writes nothing (no draft is created, no confirmation is recorded).
+        A value that cannot be read is left empty and named in `errors`, never replaced by a default."""
+        from accounting_converter.adapters.output.jdl.scoped_evidence import verified_row_limits
+        from accounting_converter.application.yayoi_review import confirmed_optional_fields
+        from accounting_converter.ui import settings_view as sv
+
+        if not company_setting_id:
+            return None
+        errors: list[str] = []
+        try:
+            resolved = self.company_setting_service.resolve_for_source(company_setting_id)
+        except Exception as error:
+            log_local_exception("company_settings_facts_resolve", error)
+            return sv.SettingsFacts(
+                company_setting_id, "", errors=("会社設定を読み込めませんでした",))
+        setting, profile, context = resolved.setting, resolved.profile, resolved.context
+        label = self._source_label(setting.expected_source_format_key)
+        kind = {"弥生": sv.YAYOI, "Money Forward": sv.MONEYFORWARD, "JDL": sv.JDL}.get(label, sv.UNSUPPORTED)
+
+        def stamp(value) -> str:
+            return value.astimezone().strftime("%Y/%m/%d %H:%M")
+
+        malformed = resolved.status.value == "MALFORMED"       # the store returns a placeholder setting: not real data
+        if malformed:
+            errors.append(resolved.user_message or "会社設定を読み込めませんでした")
+        draft = "JDL_CONTEXT_DRAFT_UNCONFIRMED" in resolved.reason_codes
+        try:
+            draft = draft or self.account_pdf_draft_store.is_draft(self.company_store.context_path(setting))
+        except Exception as error:
+            log_local_exception("company_settings_facts_draft", error)
+            errors.append("JDL設定の種類を判別できませんでした")
+
+        def pair(*mappings):
+            values = [item for group in mappings for item in group.values()]
+            return (sum(1 for item in values if item.is_resolved), len(values))
+
+        fields: dict = {}
+        if context is not None:
+            fields.update(
+                context_loaded=True, product=context.product, version=context.version,
+                context_confirmed=context.confirmation_state.value == "CONFIRMED",
+                provenance=context.provenance.value, accounts=len(context.account_master),
+                subaccounts=len(context.subaccounts), departments=len(context.departments),
+                unusable_subaccounts=len(context.unusable_subaccounts),
+                department_processing=bool(context.department_processing_enabled),
+                tax_mode=context.tax_processing_mode.value,
+                taxation_method=context.effective_taxation_method.value,
+                credit_method=context.effective_input_tax_credit_method.value,
+                simplified_category=(context.simplified_business_category.value
+                                     if context.simplified_business_category else ""),
+                sales_rounding=context.sales_tax_rounding.value,
+                purchase_rounding=context.purchase_tax_rounding.value,
+                voucher_row_limit=context.voucher_row_limit,
+            )
+        if profile is not None:
+            fields.update(
+                account_mappings=pair(profile.account_mappings),
+                subaccount_mappings=pair(profile.subaccount_mappings, profile.subaccount_context_mappings),
+                tax_mappings=pair(profile.tax_mappings),
+                pending_field_types=tuple(profile_pending_setup_field_types(profile)),
+                profile_id=profile.profile_id, profile_updated_at=stamp(profile.updated_at),
+                target_format_key=profile.target_format_identity.stable_key,
+                source_format_key=profile.source_format_identity.stable_key,
+            )
+            if kind == sv.YAYOI:
+                fields["information_fields_confirmed"] = len(confirmed_optional_fields(profile))
+        elif resolved.available:
+            errors.append("対応設定を読み込めませんでした")
+        if kind == sv.MONEYFORWARD and context is not None:
+            try:
+                fields["trade_partner_confirmed"] = bool(
+                    self.company_trade_partner_policy_service.state(company_setting_id).confirmed)
+            except Exception as error:
+                log_local_exception("company_settings_facts_trade_partner", error)
+                errors.append("取引先情報の扱いを読み込めませんでした")
+        state = self.state
+        if state.selected_company_setting_id == company_setting_id:
+            fields.update(master_state=state.jdl_master_state, master_updated_at=state.jdl_master_updated_at or "")
+        return sv.SettingsFacts(
+            company_id=company_setting_id, display_name=setting.display_name, source_kind=kind,
+            status=resolved.status.value, status_message=resolved.user_message, reason_codes=resolved.reason_codes,
+            created_at="" if malformed else stamp(setting.created_at),
+            updated_at="" if malformed else stamp(setting.updated_at), context_draft=draft and context is None,
+            verified_row_limits=tuple(sorted(verified_row_limits())),
+            profile_fingerprint=setting.profile_fingerprint, context_fingerprint=setting.context_fingerprint,
+            errors=tuple(errors), **fields,
+        )
+
+    def company_mapping_review_snapshot(self, company_setting_id: str, source_path):
+        """対応の確認ページ用 (read-only): the same review the confirmation screens compute, including the already
+        confirmed items, for one company and one source. It never calls `ensure_selected_tax_requirements` (that
+        registers tax placeholders in the profile): tax categories not yet registered are shown as unconfirmed and
+        are registered only when the Human opens the confirmation screen. Runs off the UI thread; touches no widget."""
+        from accounting_converter.ui.mapping_review_view import MappingSnapshot
+
+        review = self.review_company_mapping_updates(company_setting_id, Path(source_path), include_confirmed=True)
+        observed = review.observed_tax_categories or review.tax_categories
+        counts = dict(review.tax_category_counts)
+        resolved = self.company_setting_service.resolve_for_source(company_setting_id)
+        ready = bool(resolved.available and resolved.profile is not None and resolved.context is not None)
+        tax_review = saved = None
+        if observed and ready:
+            tax_review = self.company_tax_mapping_review(
+                company_setting_id, affected_counts=counts, observed_source_values=observed)
+            saved = tuple(
+                (value, mapping.target_value or "")
+                for value in observed
+                if (mapping := resolved.profile.tax_mappings.get(value)) is not None and mapping.is_resolved)
+        return MappingSnapshot(
+            review=review, tax_review=tax_review, saved_tax=saved or (),
+            observed_tax=tuple((value, counts.get(value, 0)) for value in observed), tax_context_ready=ready)
+
     def _auto_select_company_for_recognized_file(self) -> None:
         source_key = self._recognized_source_key()
         if source_key is None or not self.state.companies:

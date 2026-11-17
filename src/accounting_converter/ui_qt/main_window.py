@@ -76,12 +76,16 @@ from accounting_converter.infrastructure.local_diagnostic_log import (
 )
 
 from accounting_converter.ui import home_view as hv
+from accounting_converter.ui import mapping_review_view as mv
+from accounting_converter.ui import settings_view as sv
 
 from . import components as ui
 from .bulk_review import BulkCandidateDialog, DescriptionRulesDialog
 from .navigation import NavigationRail
 from .pages import scroll_page
 from .pages.home import HomePage
+from .pages.mapping_review import MappingReviewPanel
+from .pages.settings import SettingsPage
 from .resolution_center import ResolutionPanel, VoucherSplitApprovalDialog, report_company_name, report_source_label
 from .review_layout import (
     CollapsibleSection,
@@ -160,6 +164,13 @@ class AccountingConverterMainWindow(QMainWindow):
         self.reasons_task.busy_changed.connect(lambda _busy: self._render_reasons_state())
         self._reasons_key = None                    # request key of the report the panel shows
         self._reasons_pending = False
+        self.mapping_task = ui.BackgroundTask(self)  # 対応の確認 (read-only review of the selected company + source)
+        self.mapping_task.finished.connect(self._on_mapping_finished)
+        self.mapping_task.failed.connect(self._on_mapping_failed)
+        self.mapping_task.busy_changed.connect(lambda _busy: self._render_mapping_state())
+        self._mapping_key = None                    # request key of the review the panel shows
+        self._mapping_pending = False
+        self._settings_stale = True                 # the settings page is rebuilt when it is shown / after a change
         self._build()
         self.controller.load_profiles()
         self._render(self.controller.load_company_settings())
@@ -373,6 +384,12 @@ class AccountingConverterMainWindow(QMainWindow):
         mapping_row.addWidget(self.settings_action)
         mapping_row.addStretch(1)
         mapping_layout.addLayout(mapping_row)
+        # 対応の確認 on the page (Phase 3C-2): the same review the confirmation screens use, shown read-only and loaded
+        # in the background. Its buttons open the existing screens directly (no intermediate dialog).
+        self.mapping_panel = MappingReviewPanel()
+        self.mapping_panel.open_group.connect(self._open_mapping_group)
+        self.mapping_panel.reload_requested.connect(lambda: self._start_mapping(force=True))
+        mapping_layout.addWidget(self.mapping_panel)
         layout.addWidget(mapping_card)
         decision_card, decision_layout = self._card("税理士の判断・未移行の仕訳（弥生）")
         self.decision_status_label = QLabel()
@@ -466,26 +483,14 @@ class AccountingConverterMainWindow(QMainWindow):
         layout.addStretch(1)
         self._add_page(hv.NAV_OUTPUT, scroll)
 
-        # 設定
-        scroll, layout = scroll_page(
-            "設定", "会社の追加・名前変更・削除、JDL科目一覧（PDF）の取込・更新、JDL税設定、取引先、対応設定の取込を行います。",
-            name="settingsContent")
-        settings_card, settings_layout = self._card("選択中の会社の設定")
-        self.settings_summary = QLabel()
-        self.settings_summary.setWordWrap(True)
-        self.settings_summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        settings_layout.addWidget(self.settings_summary)
-        settings_row = QHBoxLayout()
-        self.settings_button = ui.make_button(
-            "会社設定・JDL設定を開く…", "primary",
-            description="会社の追加・変更・削除、JDL科目一覧・税設定・取引先の設定画面を開きます")
-        self.settings_button.clicked.connect(self._open_settings)
-        settings_row.addWidget(self.settings_button)
-        settings_row.addStretch(1)
-        settings_layout.addLayout(settings_row)
-        layout.addWidget(settings_card)
-        layout.addStretch(1)
-        self._add_page(hv.NAV_SETTINGS, scroll)
+        # 設定 (Phase 3C-1): the selected company's settings in six sections, view only. Each button opens the
+        # existing screen for that setting directly; they save only on their own confirmation.
+        self.settings_page = SettingsPage()
+        self.settings_page.action_requested.connect(self._settings_action)
+        self.settings_page.diagnosis_requested.connect(lambda: self.show_page(hv.NAV_DIAGNOSIS))
+        self.settings_page.legacy_requested.connect(self._open_settings)
+        self.settings_button = self.settings_page.legacy_button
+        self._add_page(hv.NAV_SETTINGS, self.settings_page)
 
         self.nav.current_changed.connect(self._on_page_changed)
         QShortcut(QKeySequence("Ctrl+O"), self, activated=self._choose_input)
@@ -513,6 +518,10 @@ class AccountingConverterMainWindow(QMainWindow):
             self._render_home()
         if key == hv.NAV_DIAGNOSIS and hasattr(self, "reasons_panel"):
             self._start_reasons()
+        if key == hv.NAV_REVIEW and hasattr(self, "mapping_panel"):
+            self._start_mapping()
+        if key == hv.NAV_SETTINGS and hasattr(self, "settings_page"):
+            self._render_settings()
 
     def page_scroll(self, key: str):
         page = self.pages.get(key)
@@ -574,7 +583,10 @@ class AccountingConverterMainWindow(QMainWindow):
         self._render(self.controller.select_file(path))
         self._refresh_current_csv_readiness()
 
-    def _confirm_current_csv(self) -> None:
+    def _confirm_current_csv(self, *, only: str | None = None, initial_tab: str | None = None) -> None:
+        """The existing confirmation flow (saves only on its own confirmation). `only` narrows it for a deep link
+        from the 要確認 page: "mapping" = the accounts / subaccounts / descriptions dialog, "tax" = the tax
+        confirmation. None = the whole flow, exactly as before."""
         state = self.controller.state
         company_id = state.selected_company_setting_id
         path = state.selected_file
@@ -622,14 +634,17 @@ class AccountingConverterMainWindow(QMainWindow):
                 company_id, affected_counts=dict(review.tax_category_counts),
                 observed_source_values=review.observed_tax_categories or review.tax_categories,
             )
-        if review.items or review.descriptions or (tax_review and tax_review.items):
+        if only != "tax" and (review.items or review.descriptions or (tax_review and tax_review.items)):
             dialog = CompanyMappingUpdateDialog(
-                self.controller, review, self, tax_review=tax_review
+                self.controller, review, self, tax_review=tax_review, initial_tab=initial_tab
             )
             if dialog.exec() != QDialog.DialogCode.Accepted:
                 self._refresh_current_csv_readiness()
                 return
             review = self.controller.review_company_mapping_updates(company_id, path)
+        if only == "mapping":
+            self._refresh_current_csv_readiness()
+            return
         if review.observed_tax_categories or review.tax_categories:
             tax_review = tax_review or self.controller.company_tax_mapping_review(
                 company_id, affected_counts=dict(review.tax_category_counts),
@@ -801,6 +816,186 @@ class AccountingConverterMainWindow(QMainWindow):
         from .voucher_limit_comparison import VoucherLimitComparisonDialog
 
         VoucherLimitComparisonDialog(comparison, self).exec()
+
+    # ------------------------------------------------------------------ 設定 (Phase 3C-1): view + direct entries
+    def _render_settings(self, force: bool = False) -> None:
+        """Rebuild the settings page from the saved company setting (read-only)."""
+        if not hasattr(self, "settings_page") or not (self._settings_stale or force):
+            return
+        self._settings_stale = False
+        company_id = self.controller.state.selected_company_setting_id
+        try:
+            facts = self.controller.company_settings_facts(company_id)
+        except Exception as error:  # noqa: BLE001 - shown on the page (never an empty page)
+            log_local_exception("company_settings_facts", error)
+            self.settings_page.render(sv.build_settings_overview(None))
+            self.settings_page.message.show_message(
+                "error", f"設定を読み込めませんでした（{type(error).__name__}）。何も変更していません。"
+                "会社設定を確認するか、診断情報をコピーして連絡してください。")
+            return
+        self.settings_page.render(sv.build_settings_overview(facts))
+
+    def _settings_facts_now(self):
+        try:
+            return self.controller.company_settings_facts(self.controller.state.selected_company_setting_id)
+        except Exception:  # noqa: BLE001 - the caller treats None as "not known"
+            return None
+
+    def _settings_action(self, action: str) -> None:
+        """One setting's existing screen, opened directly. Nothing is saved here: each screen saves only on its
+        own confirmation. Afterwards the page is rebuilt and, if a setting changed, the way to the diagnosis is shown."""
+        state = self.controller.state
+        company_id = state.selected_company_setting_id
+        before = self.settings_page.overview
+        if action == sv.ACT_ADD_COMPANY:
+            CompanyAddDialog(self.controller, self).exec()
+        elif action in (sv.ACT_MAPPING, sv.ACT_JDL_MIGRATION, sv.ACT_TAX_MAPPING, sv.ACT_INFORMATION):
+            self.show_page(hv.NAV_REVIEW)           # page switch only; the review itself is loaded read-only
+            return
+        elif not company_id:
+            self.settings_page.message.show_message("warning", "会社を選んでから操作してください。")
+            return
+        elif action == sv.ACT_RENAME_COMPANY:
+            current = next((c.display_name for c in state.companies if c.company_setting_id == company_id), "")
+            dialog = CompanyRenameDialog(current, self)
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                self.controller.rename_company_setting(company_id, dialog.display_name)
+        elif action == sv.ACT_DELETE_COMPANY:
+            answer = QMessageBox.question(self, "会社設定を削除", "この会社設定を削除しますか。対応設定と元のJDL設定は削除されません。")
+            if answer == QMessageBox.StandardButton.Yes:
+                self.controller.delete_company_setting(company_id)
+        elif action == sv.ACT_TAX_CONTEXT:
+            JdlTaxContextConfirmationDialog(self.controller, company_id, self).exec()
+        elif action == sv.ACT_TRADE_PARTNER:
+            TradePartnerPolicyDialog(self.controller, company_id, self).exec()
+        elif action == sv.ACT_ROW_LIMIT:
+            from .voucher_row_limit import VoucherRowLimitDialog
+
+            facts = self._settings_facts_now()
+            VoucherRowLimitDialog(self.controller, company_id, (), facts.voucher_row_limit if facts else None,
+                                  self).exec()
+        elif action == sv.ACT_REFRESH_MASTER:
+            self._refresh_master_from_page(company_id)
+        self._after_settings_dialog(before)
+
+    def _refresh_master_from_page(self, company_id: str) -> None:
+        filename, _ = QFileDialog.getOpenFileName(self, "新しいJDL科目一覧PDFを選択", "", "PDF files (*.pdf)")
+        if not filename:
+            return
+        try:
+            plan = self.controller.plan_company_master_refresh(company_id, Path(filename))
+        except Exception as exc:  # noqa: BLE001
+            log_local_exception("jdl_account_master_refresh_plan", exc)
+            self.settings_page.message.show_message(
+                "error", "JDL科目一覧を確認できませんでした。何も保存していません。PDFを確認してやり直してください。")
+            return
+        CompanyMasterRefreshDialog(self.controller, plan, self).exec()
+
+    def _after_settings_dialog(self, before) -> None:
+        """A screen may have saved a setting (only through its own confirmation): show the current state again."""
+        self._render(self.controller.state)
+        self._settings_stale = True
+        self._render_settings(force=True)
+        # A saved setting changes the overview (values, counts, fingerprints); opening and closing does not.
+        changed = before is not None and before.has_company and before != self.settings_page.overview
+        self.settings_page.show_saved(changed)
+        if changed:                                  # nothing is recomputed when the screen was only opened and closed
+            self._prepare_if_complete()
+
+    # ------------------------------------------------------------------ 対応の確認 (Phase 3C-2): read-only background
+    def mapping_request_key(self):
+        """(company, source path + size + mtime, saved-setting fingerprints) or None when there is nothing to review
+        (no company / source, or a JDL migration source, which has its own review)."""
+        state = self.controller.state
+        recognition = state.file_recognition
+        if (state.selected_company_setting_id is None or state.selected_file is None or recognition is None
+                or recognition.format in (RecognizedFormat.JDL, RecognizedFormat.UNKNOWN)):
+            return None
+        path = Path(state.selected_file)
+        try:
+            stat = path.stat()
+            source = (str(path), stat.st_size, stat.st_mtime_ns)
+        except OSError:
+            source = (str(path), None, None)
+        fingerprint = None
+        store = getattr(self.controller, "company_store", None)
+        if store is not None:
+            try:
+                setting = store.get(state.selected_company_setting_id)
+                fingerprint = (setting.conversion_profile_id, setting.profile_fingerprint, setting.context_fingerprint)
+            except Exception:  # noqa: BLE001 - an unreadable setting makes the key differ (result dropped)
+                fingerprint = ("UNREADABLE",)
+        return ("mapping", state.selected_company_setting_id, source, fingerprint)
+
+    def _start_mapping(self, force: bool = False) -> None:
+        key = self.mapping_request_key()
+        if key is None or not hasattr(self.controller, "company_mapping_review_snapshot"):
+            self._render_mapping_state()
+            return
+        if not force and key == self._mapping_key:
+            return                                  # the same company, source and settings: not read again
+        if self.mapping_task.busy:
+            if force or self.mapping_task._current != key:
+                self.mapping_task.invalidate()      # the running result is for another selection: dropped on arrival
+                self._mapping_pending = True
+            return
+        controller, company, source = self.controller, key[1], Path(key[2][0])
+        self._mapping_key = None
+        self.mapping_panel.show_loading()
+        self.mapping_task.start(key, lambda: controller.company_mapping_review_snapshot(company, source))
+
+    def _on_mapping_finished(self, key, snapshot) -> None:
+        if key != self.mapping_request_key():
+            return                                  # company / source / setting changed meanwhile: never shown
+        self._mapping_key = key
+        self.mapping_panel.show_view(mv.build_mapping_review(snapshot))
+        self._render_pages(self.controller.state, present_main_screen(self.controller.state))
+        self._render_mapping_state()
+
+    def _on_mapping_failed(self, key, error) -> None:
+        log_local_exception("company_mapping_review_snapshot", error)
+        if key != self.mapping_request_key():
+            return
+        self._mapping_key = None
+        self.mapping_panel.show_error(
+            f"対応の確認を読み込めませんでした（{type(error).__name__}: {error}）。何も保存していません。"
+            "仕訳データと会社設定を確認して、「対応の確認を再読込」を押してください。")
+        self._render_mapping_state()
+
+    def _render_mapping_state(self) -> None:
+        if not hasattr(self, "mapping_panel"):
+            return
+        busy = self.mapping_task.busy
+        if not busy and self._mapping_pending:
+            self._mapping_pending = False
+            self._start_mapping(force=True)
+            busy = self.mapping_task.busy
+        self.mapping_panel.reload_button.setEnabled(not busy and self.mapping_request_key() is not None)
+        key = self.mapping_request_key()
+        if key is None:
+            state = self.controller.state
+            recognition = state.file_recognition
+            self._mapping_key = None
+            if recognition is not None and recognition.format is RecognizedFormat.JDL:
+                self.mapping_panel.show_idle(
+                    "JDL仕訳データ（JDL→JDL移行）の対応は「JDL移行内容の確認を開く」で確認します。")
+            else:
+                self.mapping_panel.show_idle("会社と仕訳データを選ぶと、対応の確認の内容がここに表示されます。")
+
+    def _open_mapping_group(self, group: str) -> None:
+        """A group's button: the EXISTING confirmation screen for it, opened directly (no intermediate dialog).
+        It saves only on its own confirmation; afterwards the page and the diagnosis keys follow the new setting."""
+        before = self.mapping_request_key()
+        if group == mv.G_TAX:
+            self._confirm_current_csv(only="tax")
+        else:
+            tab = {mv.G_ACCOUNT: "accounts", mv.G_SUBACCOUNT: "subaccounts", mv.G_DESCRIPTION: "descriptions",
+                   mv.G_RETENTION: "other"}.get(group)
+            self._confirm_current_csv(only="mapping", initial_tab=tab)
+        if self.mapping_request_key() != before:     # a setting was saved: the diagnosis keys changed with it
+            self._after_saved_change()
+        else:
+            self._render(self.controller.state)      # nothing saved: no diagnosis is repeated
 
     def _after_saved_change(self) -> None:
         """A dialog may have saved a setting: the diagnosis is recomputed (keys change with the setting fingerprint)."""
@@ -988,6 +1183,7 @@ class AccountingConverterMainWindow(QMainWindow):
     def closeEvent(self, event) -> None:
         self.home_task.shutdown()
         self.reasons_task.shutdown()
+        self.mapping_task.shutdown()
         super().closeEvent(event)
 
     def _open_settings(self) -> None:
@@ -998,6 +1194,7 @@ class AccountingConverterMainWindow(QMainWindow):
 
     def _select_company(self, index: int) -> None:
         company_id = self.company_combo.itemData(index) if index >= 0 else None
+        self.settings_page.show_saved(False)      # a notice about another company's change must not stay
         self._render(self.controller.select_company_setting(company_id))
         if self.controller.state.selected_file:
             self._refresh_current_csv_readiness()
@@ -1120,6 +1317,7 @@ class AccountingConverterMainWindow(QMainWindow):
             self._start_reasons()
         self._render_home()
         self._render_reasons_state()
+        self._render_mapping_state()
 
     def _render_pages(self, state: AppState, presentation) -> None:
         """The page-specific texts and which Yayoi-only actions are usable (others say why they are not)."""
@@ -1137,7 +1335,12 @@ class AccountingConverterMainWindow(QMainWindow):
             self.settings_action.setText("対応の確認を開く")
         self.settings_action.setAccessibleName(self.settings_action.text())
         self.settings_action.setEnabled(has_input)
+        view = (self.mapping_panel.view if has_input and self._mapping_key is not None
+                and self._mapping_key == self.mapping_request_key() else None)
         self.review_status_label.setText(
+            f"一覧の読み込み結果: 人の確認が必要 {sum(g.count(mv.UNCONFIRMED) + g.count(mv.WAITING_PARENT) for g in view.groups):,}件"
+            f" / JDL側の登録・確認待ち {sum(g.count(mv.NEEDS_JDL) + g.count(mv.NEEDS_EVIDENCE) for g in view.groups):,}件"
+            "（下の一覧。内容の見直しや変更もここから開けます）。" if view is not None else
             "会社と仕訳データを選ぶと確認できます。" if not has_input else
             f"未確認: 科目 {state.pending_account_confirmations:,}件 / 補助科目 "
             f"{state.pending_subaccount_confirmations:,}件 / 税区分 {state.pending_tax_confirmations:,}件"
@@ -1151,12 +1354,11 @@ class AccountingConverterMainWindow(QMainWindow):
         self.output_status_label.setText(
             f"{presentation.status_text}。" + ("全件を変換できます。" if presentation.conversion_enabled
                                               else "全件の変換はまだできません（変換診断を確認してください）。"))
-        self.settings_summary.setText("\n".join((
-            f"会社: {next((c.display_name for c in state.companies if c.company_setting_id == state.selected_company_setting_id), '未選択')}",
-            f"JDL環境: {state.jdl_environment_label}",
-            f"科目一覧: {state.jdl_master_state}（最終更新日: {state.jdl_master_updated_at or '未確認'}）",
-            self._tax_context_text(state),
-        )))
+        self._settings_stale = True
+        if self.nav.current == hv.NAV_SETTINGS:
+            self._render_settings()
+        if self.nav.current == hv.NAV_REVIEW:
+            self._start_mapping()
 
 
 def _combo_targets(combo) -> set:
@@ -2217,7 +2419,8 @@ class CompanyMappingUpdateDialog(QDialog):
     _GEOMETRY_KEY = "company_mapping_update_dialog/geometry_v2"
 
     def __init__(
-        self, controller, review, parent=None, *, tax_review=None, tax_message: str = ""
+        self, controller, review, parent=None, *, tax_review=None, tax_message: str = "",
+        initial_tab: str | None = None,
     ) -> None:
         super().__init__(parent)
         self.controller = controller
@@ -2352,6 +2555,8 @@ class CompanyMappingUpdateDialog(QDialog):
             self._refresh_subaccounts(source_value)
         self._update_action()
         self._select_first_unresolved_tab()
+        if initial_tab in self.category_tabs:          # a deep link from the 要確認 page: open that tab directly
+            self.tabs.setCurrentIndex(self.category_tabs[initial_tab])
         self._initial_review_state = self._review_state()
 
     def _review_state(self) -> tuple:
