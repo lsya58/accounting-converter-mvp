@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import replace
+from html import escape
 from pathlib import Path
 
 from PySide6.QtCore import QUrl, Qt
@@ -876,8 +877,7 @@ class AccountingConverterMainWindow(QMainWindow):
             if dialog.exec() == QDialog.DialogCode.Accepted:
                 self.controller.rename_company_setting(company_id, dialog.display_name)
         elif action == sv.ACT_DELETE_COMPANY:
-            answer = QMessageBox.question(self, "会社設定を削除", "この会社設定を削除しますか。対応設定と元のJDL設定は削除されません。")
-            if answer == QMessageBox.StandardButton.Yes:
+            if confirm_company_deletion(self, self.controller, company_id):
                 self.controller.delete_company_setting(company_id)
         elif action == sv.ACT_TAX_CONTEXT:
             JdlTaxContextConfirmationDialog(self.controller, company_id, self).exec()
@@ -1211,6 +1211,7 @@ class AccountingConverterMainWindow(QMainWindow):
         self.home_task.shutdown()
         self.reasons_task.shutdown()
         self.mapping_task.shutdown()
+        ui.shutdown_running_tasks()                 # e.g. a closed 変換診断 dialog's diagnosis: joined, never killed
         super().closeEvent(event)
 
     def _open_settings(self) -> None:
@@ -1633,8 +1634,7 @@ class SettingsDialog(QDialog):
         company_id = self.company_combo.currentData()
         if not company_id:
             return
-        answer = QMessageBox.question(self, "会社設定を削除", "この会社設定を削除しますか。対応設定と元のJDL設定は削除されません。")
-        if answer == QMessageBox.StandardButton.Yes:
+        if confirm_company_deletion(self, self.controller, company_id):
             self._reload_companies(self.controller.delete_company_setting(company_id))
 
     def _confirm_tax(self) -> None:
@@ -5165,6 +5165,106 @@ class TaxMappingConfirmationDialog(QDialog):
         )
         if state.user_message == "税区分の確認を保存しました。":
             self.accept()
+
+
+class CompanyDeleteDialog(QDialog):
+    """会社設定の削除 (irreversible): the company is named, what is deleted / kept is listed, and the delete button is
+    enabled only while the typed name equals the company name EXACTLY (no trimming, no width / case folding, so a
+    similar name never matches). Cancel is the default button; Enter never deletes. The dialog deletes nothing itself:
+    the caller deletes `company_id` (fixed when the dialog opened) only after exec() returned Accepted."""
+
+    DELETED = ("この会社設定（会社名と、使用する対応設定の指定）",
+               "会社設定に保存したJDL設定のコピー（会社の追加時に作成した jdl-context.json）")
+    KEPT = ("対応設定（科目・補助科目・税区分などの変換プロファイル）",
+            "承認台帳の記録",
+            "JDL側の会社・データと、取込に使った元のJDL設定ファイル",
+            "仕訳データ（CSV）と、作成済みのJDL用CSV・監査記録",
+            "ほかの会社の設定")
+
+    def __init__(self, company_id: str, display_name: str, parent=None) -> None:
+        super().__init__(parent)
+        self.company_id, self.display_name = company_id, display_name
+        self.setWindowTitle("会社設定を削除")
+        self.setMinimumWidth(560)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(28, 26, 28, 24)
+        layout.setSpacing(12)
+        title = QLabel("会社設定を削除します（取り消せません）")
+        title.setObjectName("dangerZoneTitle")
+        layout.addWidget(title)
+        target = QLabel(f"<b>削除する会社:</b> {escape(display_name)}<br>"
+                        f"<span>会社設定ID: {escape(company_id)}</span>")
+        target.setTextFormat(Qt.TextFormat.RichText)
+        target.setWordWrap(True)
+        target.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        target.setAccessibleName(f"削除する会社: {display_name}")
+        layout.addWidget(target)
+        scope = QLabel(
+            "<b>削除されるもの</b><ul style='margin:0'>" + "".join(f"<li>{escape(t)}</li>" for t in self.DELETED)
+            + "</ul><b>削除されないもの</b><ul style='margin:0'>" + "".join(f"<li>{escape(t)}</li>" for t in self.KEPT)
+            + "</ul>この会社を選んでいる場合は選択が解除されます。次回起動時に選ぶ会社の記録（最後に選んだ会社）は、"
+            "どの会社を削除した場合も消えます。")
+        scope.setTextFormat(Qt.TextFormat.RichText)
+        scope.setWordWrap(True)
+        scope.setAccessibleName("削除の影響範囲")
+        layout.addWidget(scope)
+        prompt = QLabel("確認のため、会社名をそのまま入力してください（前後の空白・全角半角の違いも一致が必要です）。")
+        prompt.setWordWrap(True)
+        layout.addWidget(prompt)
+        self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText(display_name)
+        self.name_edit.setAccessibleName("確認のための会社名")
+        self.name_edit.setAccessibleDescription(f"「{display_name}」と入力すると削除できます")
+        self.name_edit.textChanged.connect(self._update)
+        prompt.setBuddy(self.name_edit)
+        layout.addWidget(self.name_edit)
+        self.state_label = QLabel()
+        self.state_label.setObjectName("muted")
+        self.state_label.setWordWrap(True)
+        layout.addWidget(self.state_label)
+        actions = QHBoxLayout()
+        self.cancel_button = QPushButton("キャンセル")
+        self.cancel_button.setDefault(True)        # Enter = cancel (never delete)
+        self.cancel_button.clicked.connect(self.reject)
+        self.delete_button = ui.make_button(
+            "この会社設定を削除する", "danger", description="入力した会社名が一致したときだけ押せます（取り消せません）")
+        self.delete_button.setAutoDefault(False)
+        self.delete_button.setDefault(False)
+        self.delete_button.clicked.connect(self._confirm)
+        actions.addStretch(1)
+        actions.addWidget(self.cancel_button)
+        actions.addWidget(self.delete_button)
+        layout.addLayout(actions)
+        self._update()
+        self.name_edit.setFocus()
+
+    def matches(self) -> bool:
+        return bool(self.display_name) and self.name_edit.text() == self.display_name
+
+    def _update(self, _text: str = "") -> None:
+        ok = self.matches()
+        self.delete_button.setEnabled(ok)
+        if ok:
+            self.state_label.setText("会社名が一致しました。削除ボタンで確定します（Enterキーでは削除しません）。")
+        elif self.name_edit.text():
+            self.state_label.setText("会社名が一致しません。削除できません。")
+        else:
+            self.state_label.setText("会社名が未入力です。削除できません。")
+
+    def _confirm(self, _checked: bool = False) -> None:
+        if self.matches():                      # re-checked at the click (never accepted on a stale state)
+            self.accept()
+
+
+def confirm_company_deletion(parent, controller, company_id: str) -> bool:
+    """Open the deletion confirmation for `company_id`; True only when the user typed the exact name and pressed
+    delete. The name comes from the saved company list (never from what is displayed elsewhere)."""
+    name = next((c.display_name for c in controller.state.companies if c.company_setting_id == company_id), None)
+    if not name:
+        QMessageBox.warning(parent, "会社設定を削除", "削除する会社設定が見つかりません。何も削除していません。")
+        return False
+    dialog = CompanyDeleteDialog(company_id, name, parent)
+    return dialog.exec() == QDialog.DialogCode.Accepted and dialog.matches() and dialog.company_id == company_id
 
 
 class CompanyRenameDialog(QDialog):

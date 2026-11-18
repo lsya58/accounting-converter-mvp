@@ -367,11 +367,28 @@ class _Worker(QObject):
         self.finished.emit(self.key, result)
 
 
+_RUNNING: set = set()   # every task whose thread runs: kept referenced until the thread has been joined
+
+
+def shutdown_running_tasks() -> None:
+    """At application exit: join every thread still running (including released tasks). Never terminate()."""
+    for task in list(_RUNNING):
+        try:
+            task.shutdown()
+        except RuntimeError:                      # its Qt object is already gone: nothing is left to join
+            _RUNNING.discard(task)
+
+
 class BackgroundTask(QObject):
     """One read-only job at a time, off the UI thread. Results come back on the UI thread with their key.
 
     start() refuses (returns False) while a job runs. invalidate() makes the running job's result stale: it is
-    dropped when it arrives. The job must not touch widgets and must not write settings."""
+    dropped when it arrives. The job must not touch widgets and must not write settings.
+
+    An owner that closes while its job runs calls release() instead of shutdown(): the GUI is not blocked, the
+    result is dropped, nothing is sent to the owner any more, and the task deletes itself once the job has ended and
+    its thread is joined (a running QThread is never destroyed). Create such a task WITHOUT a Qt parent, so that the
+    owner's destruction cannot destroy the running thread; _RUNNING keeps it alive meanwhile."""
 
     finished = Signal(object, object)
     failed = Signal(object, object)
@@ -383,6 +400,7 @@ class BackgroundTask(QObject):
         self._worker: _Worker | None = None
         self._current = None
         self.dropped = 0
+        self.released = False
 
     @property
     def busy(self) -> bool:
@@ -398,6 +416,7 @@ class BackgroundTask(QObject):
         worker.finished.connect(self._done, Qt.ConnectionType.QueuedConnection)
         worker.failed.connect(self._error, Qt.ConnectionType.QueuedConnection)
         self._thread, self._worker = thread, worker
+        _RUNNING.add(self)
         self.busy_changed.emit(True)
         thread.start()
         return True
@@ -406,13 +425,36 @@ class BackgroundTask(QObject):
         self._current = None
 
     def _stop(self) -> None:
+        # Called when the job has ended (its result is being delivered): the thread only has to leave its event loop,
+        # so this wait is short and does not depend on the GUI.
         thread = self._thread
         self._thread = self._worker = None
         if thread is not None:
             thread.quit()
             thread.wait()
             thread.deleteLater()
+        _RUNNING.discard(self)
         self.busy_changed.emit(False)
+        if self.released:
+            self.deleteLater()
+
+    def release(self) -> None:
+        """The owner is closing: drop the result, stop signalling the owner, delete once the job has ended."""
+        if self.released:
+            return
+        self.released = True
+        self.invalidate()
+        import warnings
+
+        for signal in (self.finished, self.failed, self.busy_changed):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                try:
+                    signal.disconnect()
+                except (RuntimeError, TypeError):
+                    pass
+        if not self.busy:
+            self.deleteLater()
 
     @Slot(object, object)
     def _done(self, key, result) -> None:
@@ -440,3 +482,6 @@ class BackgroundTask(QObject):
             self._thread.wait()
             self._thread.deleteLater()
             self._thread = self._worker = None
+        _RUNNING.discard(self)
+        if self.released:
+            self.deleteLater()        # a released task joined at exit must not stay behind (its result is dropped)

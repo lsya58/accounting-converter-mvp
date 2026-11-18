@@ -114,7 +114,13 @@ class BackgroundTaskTest(unittest.TestCase):
 
     def _task(self):
         task = ui.BackgroundTask()
-        self.addCleanup(task.shutdown)              # never leave a thread running past the test
+        def cleanup():                              # never leave a thread running past the test
+            try:
+                task.shutdown()
+            except RuntimeError:                    # released and deleted by the test itself: nothing left to join
+                pass
+
+        self.addCleanup(cleanup)
         got = {"done": [], "failed": []}
         task.finished.connect(lambda key, result: got["done"].append((key, result)))
         task.failed.connect(lambda key, error: got["failed"].append((key, type(error).__name__)))
@@ -130,6 +136,53 @@ class BackgroundTaskTest(unittest.TestCase):
         key, worker_thread = got["done"][0]
         self.assertEqual(key, ("company", "sha", "A"))
         self.assertNotEqual(worker_thread, main)
+
+    def test_release_never_blocks_and_the_thread_is_joined_after_the_job_ends(self):
+        import time
+        from PySide6.QtCore import QCoreApplication, QEvent
+
+        task, got = self._task()
+        gate, deleted, busy = threading.Event(), [], []
+        task.busy_changed.connect(busy.append)
+        task.destroyed.connect(lambda *_: deleted.append(1))
+        task.start("k", lambda: gate.wait(10) and "late result")
+        started = time.monotonic()
+        task.release()                                      # the owner closes while the job runs
+        self.assertLess(time.monotonic() - started, 0.5)    # returned at once (no wait on the GUI thread)
+        self.assertTrue(task.busy)
+        self.assertIn(task, ui._RUNNING)                    # kept alive: the running thread is never destroyed
+        busy.clear()
+        gate.set()
+        self.assertTrue(wait_until(lambda: not task.busy))
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        QCoreApplication.processEvents()
+        self.assertEqual(got["done"], [])                   # the owner receives nothing after release
+        self.assertEqual(busy, [])
+        self.assertNotIn(task, ui._RUNNING)
+        self.assertEqual(deleted, [1])                      # deleted only after the thread was joined
+
+    def test_an_idle_release_deletes_and_exit_joins_every_running_thread(self):
+        from PySide6.QtCore import QCoreApplication, QEvent
+
+        idle, _ = self._task()
+        deleted = []
+        idle.destroyed.connect(lambda *_: deleted.append(1))
+        idle.release()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        self.assertEqual(deleted, [1])
+        running, _ = self._task()
+        gate = threading.Event()
+        running.start("k", lambda: gate.wait(10))
+        running.release()
+        threading.Timer(0.2, gate.set).start()
+        deleted_running = []
+        running.destroyed.connect(lambda *_: deleted_running.append(1))
+        ui.shutdown_running_tasks()                         # application exit: joined (never terminate())
+        self.assertFalse(running.busy)
+        self.assertNotIn(running, ui._RUNNING)
+        running.release()                                   # a second release is harmless (no double release)
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        self.assertEqual(deleted_running, [1])              # deleted once, even though it was joined by shutdown
 
     def test_a_stale_result_is_dropped_and_errors_are_delivered(self):
         task, got = self._task()

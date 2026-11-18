@@ -94,6 +94,81 @@ class ReadyOnlyDialogTest(unittest.TestCase):
             self.assertIn("未移行 1仕訳", status)
             self.assertFalse(dialog.write_button.isEnabled())  # one run per dialog
 
+    # ---------------------------------------------------------------- Phase 5A: the final confirmation (UI only)
+    def test_the_target_and_what_is_missing_are_shown_before_anything_is_acknowledged(self):
+        with tempfile.TemporaryDirectory() as directory:
+            dialog, _ = self._dialog(directory)
+            self.assertIn("company-yayoi", dialog.target.text())               # no store: the id, never a guess
+            self.assertIn(Path(dialog.source_path).name, dialog.target.text())
+            self.assertIn("BLOCKの仕訳は出力に含まれません", dialog.counts.text())
+            self.assertIn("出力するには", dialog.status.text())
+            self.assertIn("確認者の名前を入力してください", dialog.status.text())
+            for box in (dialog.ack_partial, dialog.ack_duplicate, dialog.ack_follow_up):
+                box.setChecked(True)
+            self.assertNotIn("すべて確認してください", dialog.status.text())
+            dialog.confirmed_by.setText("   ")                                 # blank is not a name
+            self.assertFalse(dialog.write_button.isEnabled())
+            dialog.confirmed_by.setText("架空の確認者")
+            self.assertIn("出力できます", dialog.status.text())
+            self.assertFalse(dialog.write_button.autoDefault())                # Enter never starts the output
+
+    def test_an_existing_file_is_refused_before_the_final_question_and_left_unchanged(self):
+        from unittest import mock
+
+        from accounting_converter.ui_qt import ready_only_dialog as rod
+
+        with tempfile.TemporaryDirectory() as directory:
+            dialog, controller = self._dialog(directory)
+            for box in (dialog.ack_partial, dialog.ack_duplicate, dialog.ack_follow_up):
+                box.setChecked(True)
+            dialog.confirmed_by.setText("架空の確認者")
+            existing = Path(directory) / "old_ready_only.csv"
+            existing.write_bytes(b"previous output")
+            with mock.patch.object(rod.QFileDialog, "getSaveFileName", return_value=(str(existing), "")), \
+                    mock.patch.object(rod.QMessageBox, "question",
+                                      side_effect=AssertionError("never asked for an existing file")):
+                dialog._write()
+            self.assertIn("上書きしません", dialog.status.text())
+            self.assertEqual(existing.read_bytes(), b"previous output")
+            self.assertEqual(controller.writes, 0)
+            self.assertIsNone(dialog.result)                                   # an old file is never the result
+            # the write step refuses as well (the check is not only in the screen)
+            dialog.write(existing)
+            self.assertIn("上書きしません", dialog.status.text())
+            self.assertEqual(existing.read_bytes(), b"previous output")
+
+    def test_cancelling_writes_nothing_and_a_failure_names_its_cause(self):
+        from unittest import mock
+
+        from accounting_converter.ui_qt import ready_only_dialog as rod
+
+        with tempfile.TemporaryDirectory() as directory:
+            dialog, controller = self._dialog(directory)
+            for box in (dialog.ack_partial, dialog.ack_duplicate, dialog.ack_follow_up):
+                box.setChecked(True)
+            dialog.confirmed_by.setText("架空の確認者")
+            before = sorted(p.name for p in Path(directory).rglob("*"))
+            target = Path(directory) / "new.csv"
+            with mock.patch.object(rod.QFileDialog, "getSaveFileName", return_value=("", "")):
+                dialog._write()
+            self.assertIn("出力しませんでした", dialog.status.text())
+            with mock.patch.object(rod.QFileDialog, "getSaveFileName", return_value=(str(target), "")), \
+                    mock.patch.object(rod.QMessageBox, "question", return_value=rod.QMessageBox.StandardButton.No):
+                dialog._write()
+            self.assertIn("出力しませんでした", dialog.status.text())
+            self.assertEqual(sorted(p.name for p in Path(directory).rglob("*")), before)
+            self.assertEqual(controller.writes, 0)
+
+            def broken(*args):
+                raise PermissionError("denied")
+
+            controller.execute_yayoi_ready_only = broken
+            with mock.patch.object(rod, "log_local_exception"):
+                dialog.write(target)
+            self.assertIn("PermissionError", dialog.status.text())
+            self.assertIsNone(dialog.result)
+            self.assertTrue(dialog.write_button.isEnabled())                   # still not written: can retry
+
     def test_nothing_is_offered_when_all_journals_are_ready(self):
         from tests.test_yayoi_ready_only import Run
         from tests.test_yayoi_scoped_workflow import sales_voucher

@@ -762,7 +762,9 @@ class ResolutionCenterDialog(QDialog):
         footer.addWidget(self.rediagnose_button)
         footer.addWidget(close)
         layout.addLayout(footer)
-        self.task = ui.BackgroundTask(self)
+        # No Qt parent: destroying the dialog must never destroy a running thread (see BackgroundTask.release).
+        self.task = ui.BackgroundTask()
+        self.destroyed.connect(self.task.release)  # destroyed without done() (e.g. with its parent): same release
         self.task.finished.connect(self._on_finished)
         self.task.failed.connect(self._on_failed)
         self.task.busy_changed.connect(self._on_busy)
@@ -836,12 +838,12 @@ class ResolutionCenterDialog(QDialog):
 
     def done(self, result: int) -> None:
         # Closed first: a re-diagnosis that was waiting for the running one (_pending) must not start afterwards, and
-        # the stale result that is still queued is dropped. The job touches no widget, so joining the thread cannot
-        # wait on the GUI (it ends when the diagnosis ends; the wait is that remaining time, never longer).
+        # the stale result that is still queued is dropped. The dialog closes at once (the GUI is not blocked): a
+        # running diagnosis is released and its thread is joined when it ends (never destroyed while it runs).
         self._closed = True
         self._pending = False
         self._generation += 1
-        self.task.shutdown()
+        self.task.release()
         super().done(result)
 
     def _current_item(self):

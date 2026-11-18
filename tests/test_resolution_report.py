@@ -684,8 +684,9 @@ class QtTest(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertIs(dialog.report, second)                      # never the result started before the save
 
-    def test_closing_during_a_diagnosis_joins_the_thread(self):
+    def test_closing_during_a_diagnosis_does_not_block_and_drops_the_result(self):
         import threading
+        import time
 
         gate = threading.Event()
 
@@ -695,12 +696,55 @@ class QtTest(unittest.TestCase):
                 return self.report, None
 
         dialog = ResolutionCenterDialog(Slow(self._report()), "c", Path("s"), {}, None)
-        self.addCleanup(lambda: (dialog.deleteLater(), self.app.processEvents()))
-        threading.Timer(0.2, gate.set).start()
+        self.addCleanup(lambda: (gate.set(), dialog.deleteLater(), self.app.processEvents()))
+        started = time.monotonic()
         dialog.reject()
-        self.assertFalse(dialog.busy)
+        self.assertLess(time.monotonic() - started, 0.5)          # closed at once: the GUI is not blocked
+        self.assertTrue(dialog.busy)                              # the job still runs, owned by nobody's widget
+        task = dialog.task
+        self.assertIsNone(task.parent())                          # the dialog's destruction cannot destroy it
+        gate.set()
+        from tests.test_qt_components import wait_until
+
+        self.assertTrue(wait_until(lambda: not task.busy, 10000))
         self.app.processEvents()
         self.assertIsNone(dialog.report)                          # the dropped result is not shown afterwards
+        self.assertEqual(dialog.panel.state, "loading")
+
+    def test_a_normal_close_after_the_result_releases_the_idle_task(self):
+        from PySide6.QtCore import QCoreApplication, QEvent
+
+        dialog = self._own(ResolutionCenterDialog(FakeController(self._report()), "c", Path("s"), {}, None))
+        deleted = []
+        dialog.task.destroyed.connect(lambda *_: deleted.append(1))
+        dialog.accept()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        self.assertEqual(deleted, [1])
+        self.assertIsNotNone(dialog.report)                       # what was shown is unchanged (nothing saved)
+
+    def test_a_dialog_destroyed_without_done_never_destroys_a_running_thread(self):
+        import threading
+        from PySide6.QtCore import QCoreApplication, QEvent
+        from accounting_converter.ui_qt import components as ui
+        from tests.test_qt_components import wait_until
+
+        gate = threading.Event()
+
+        class Slow(FakeController):
+            def company_resolution_report(self, company_id, source):
+                gate.wait(10)
+                return self.report, None
+
+        dialog = ResolutionCenterDialog(Slow(self._report()), "c", Path("s"), {}, None)
+        task = dialog.task
+        self.addCleanup(gate.set)
+        dialog.deleteLater()                                      # e.g. its parent window is destroyed
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        self.assertTrue(task.released)
+        self.assertIn(task, ui._RUNNING)
+        gate.set()
+        self.assertTrue(wait_until(lambda: task not in ui._RUNNING, 10000))
+        self.app.processEvents()
 
     def test_a_rediagnosis_waiting_for_the_running_one_does_not_start_after_closing(self):
         import threading

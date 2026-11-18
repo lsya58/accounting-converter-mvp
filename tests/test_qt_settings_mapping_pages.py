@@ -150,10 +150,10 @@ class SettingsPageTest(PagesTestBase):
                                                                     return_value=("", "")) as picker:
                 self._click(page.action_buttons[sv.ACT_REFRESH_MASTER][0])
                 self.assertTrue(picker.called)                    # no file chosen: nothing is planned or saved
-            with self.subTest("delete asks first"), mock.patch.object(
-                    mw.QMessageBox, "question", return_value=mw.QMessageBox.StandardButton.No) as ask:
+            with self.subTest("delete asks first (the exact company name; cancelled here)"), mock.patch.object(
+                    mw.CompanyDeleteDialog, "exec", recorder(opened, "delete")):
                 self._click(page.action_buttons[sv.ACT_DELETE_COMPANY][0])
-                self.assertTrue(ask.called)
+                self.assertEqual(opened[-1], "delete")
                 self.assertIn(COMPANY, {c.company_setting_id for c in window.controller.state.companies})
             self.assertFalse(page.saved_bar.isVisible())            # opened and closed: no change, no notice
             self.assertEqual(listing(Path(directory)), before)

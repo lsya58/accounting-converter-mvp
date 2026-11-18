@@ -1,6 +1,6 @@
 """READYのみ変換: writes only the READY journals, never presented as a full migration.
 
-Opened from 変換の準備状況. The plan (which journals are written / excluded and why) is the production diagnosis
+Opened from the 出力・照合 page (and the 変換診断 dialog when nothing is unsaved). The plan (which journals are written / excluded and why) is the production diagnosis
 (controller.plan_yayoi_ready_only). Nothing is written until the user ticks all three acknowledgements, enters a
 name, chooses a new file and confirms the counts once more. The result always says how many journals are still
 NOT migrated.
@@ -19,13 +19,23 @@ from PySide6.QtWidgets import (
 from accounting_converter.application import yayoi_ready_only as ro
 from accounting_converter.infrastructure.local_diagnostic_log import log_local_exception
 
+from . import components as ui
+
 TITLE = "READYのみ変換（全件移行ではありません）"
 COLUMNS = ("元の行", "日付", "伝票No.", "借方金額合計", "除外の理由")
 
 
 def counts_html(plan) -> str:
     return (f"<span style='font-size:16px; font-weight:700'>入力 {plan.total_journals:,}仕訳 ＝ "
-            f"変換対象（READY） {plan.ready_count:,}仕訳 ＋ 除外（未移行のまま残る） {plan.excluded_count:,}仕訳</span>")
+            f"変換対象（READY） {plan.ready_count:,}仕訳 ＋ 除外（未移行のまま残る） {plan.excluded_count:,}仕訳</span><br>"
+            "除外する仕訳は、変換診断でBLOCKの仕訳です。BLOCKの仕訳は出力に含まれません。"
+            "件数は仕訳の数です（CSVの行数・借貸の明細行数ではありません）。")
+
+
+def target_text(company_name: str, source_path) -> str:
+    """Which company and which source this run is for (shown before anything is acknowledged)."""
+    name = Path(source_path).name if source_path else "（未選択）"
+    return f"対象の会社: {company_name}　｜　仕訳データ: {name}"
 
 
 def result_text(result) -> str:
@@ -40,8 +50,16 @@ class ReadyOnlyConversionDialog(QDialog):
         self.plan = None
         self.result = None
         self.setWindowTitle(TITLE)
-        self.resize(900, 640)
+        ui.fit_to_screen(self, 900, 640)
         layout = QVBoxLayout(self)
+        from .resolution_center import report_company_name
+
+        self.target = QLabel(target_text(report_company_name(controller, company_id), source_path))
+        self.target.setObjectName("sectionTitle")
+        self.target.setWordWrap(True)
+        self.target.setToolTip(str(source_path))
+        self.target.setAccessibleName("出力の対象")
+        layout.addWidget(self.target)
         self.banner = QLabel("<b>これは全件移行ではありません。</b>READYの仕訳だけをJDL取込CSVに出力します。"
                              "除外した仕訳はJDLに入らず、未移行のまま残ります。")
         self.banner.setObjectName("warningCard")
@@ -64,6 +82,7 @@ class ReadyOnlyConversionDialog(QDialog):
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.horizontalHeader().setSectionResizeMode(len(COLUMNS) - 1, QHeaderView.ResizeMode.Stretch)
         self.table.verticalHeader().setVisible(False)
+        self.table.setAccessibleName("除外される仕訳（未移行・BLOCK）")
         layout.addWidget(self.table, 1)
         self.notes = QLabel("<br>".join(escape(n) for n in ro.FOLLOW_UP_NOTES))
         self.notes.setTextFormat(Qt.TextFormat.RichText)
@@ -77,13 +96,17 @@ class ReadyOnlyConversionDialog(QDialog):
             box.toggled.connect(self._update)
             layout.addWidget(box)
         name_row = QHBoxLayout()
-        name_row.addWidget(QLabel("確認者"))
+        name_label = QLabel("確認者")
+        name_row.addWidget(name_label)
         self.confirmed_by = QLineEdit()
+        self.confirmed_by.setAccessibleName("確認者の名前")
+        name_label.setBuddy(self.confirmed_by)
         self.confirmed_by.textChanged.connect(self._update)
         name_row.addWidget(self.confirmed_by, 1)
         layout.addLayout(name_row)
         self.status = QLabel()
         self.status.setWordWrap(True)
+        self.status.setAccessibleName("出力の状態")
         layout.addWidget(self.status)
         footer = QHBoxLayout()
         self.write_button = QPushButton("保存先を選んでREADYのみ出力…")
@@ -92,6 +115,8 @@ class ReadyOnlyConversionDialog(QDialog):
         footer.addWidget(self.write_button)
         footer.addStretch(1)
         close = QPushButton("閉じる")
+        close.setAutoDefault(False)
+        self.write_button.setAutoDefault(False)     # Enter never starts the output
         close.clicked.connect(self.accept)
         footer.addWidget(close)
         layout.addLayout(footer)
@@ -136,7 +161,21 @@ class ReadyOnlyConversionDialog(QDialog):
                 and not confirmation.problems(self.plan))
 
     def _update(self) -> None:
-        self.write_button.setEnabled(self.ready_to_write())
+        ready = self.ready_to_write()
+        self.write_button.setEnabled(ready)
+        if self.result is not None:
+            return                                   # the result (and its files) stays on screen
+        if self.plan is None:
+            self.status.setText("出力できません: 診断できませんでした。")
+        elif not self.plan.available:
+            self.status.setText("出力できません: " + ("／".join(ro.PROBLEM_MESSAGES.get(p, p) for p in self.plan.problems)
+                                                 or "READYのみ変換の対象ではありません。"))
+        elif ready:
+            self.status.setText("出力できます。保存先を選ぶと、件数をもう一度確認してから出力します。")
+        else:
+            confirmation = self.confirmation()
+            missing = confirmation.problems(self.plan) if confirmation is not None else ()
+            self.status.setText("出力するには: " + " ".join(missing))
 
     def _write(self) -> None:
         if not self.ready_to_write():
@@ -144,6 +183,12 @@ class ReadyOnlyConversionDialog(QDialog):
         plan = self.plan
         path, _ = QFileDialog.getSaveFileName(self, "READYのみのJDL取込CSVを保存", "", "CSV (*.csv)")
         if not path:
+            self.status.setText("保存先を選ばなかったため、出力しませんでした。")
+            return
+        existing = [p.name for p in ro.run_paths(Path(path)) if p.exists()]
+        if existing:                                 # refused before the final question (the write refuses as well)
+            self.status.setText("出力していません: 既存のファイルは上書きしません（" + "、".join(existing)
+                                + "）。別の保存先を選択してください。")
             return
         answer = QMessageBox.question(
             self, TITLE,
@@ -163,7 +208,7 @@ class ReadyOnlyConversionDialog(QDialog):
                 self.company_id, self.source_path, self.plan, self.confirmation(), output)
         except Exception as exc:
             log_local_exception("execute_yayoi_ready_only", exc)
-            result, reasons = None, ("出力できませんでした。ファイルは残していません。",)
+            result, reasons = None, (f"出力できませんでした（{type(exc).__name__}）。ファイルは残していません。",)
         finally:
             QApplication.restoreOverrideCursor()
         if result is None or result.status != "SUCCESS":
