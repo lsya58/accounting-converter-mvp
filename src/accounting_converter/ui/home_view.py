@@ -256,7 +256,9 @@ def build_home(state: AppState, *, tax_context_text: str = "JDL税設定: 確認
     if fmt is RecognizedFormat.YAYOI and company is not None:
         accountant = approvals = "—"
         ready = blocked = "—"
-        ready_hint = blocked_hint = accountant_hint = approvals_hint = ""
+        # Before the diagnosis has a result the counts are unknown: say so, never show them as 0.
+        not_yet = "診断中" if yayoi_busy else ("診断できません" if yayoi_error else "未診断")
+        ready_hint = blocked_hint = accountant_hint = approvals_hint = not_yet
         if yayoi is not None:
             ready, blocked = _n(yayoi["ready"]), _n(yayoi["blocked"])
             total_text = _n(yayoi["total"])

@@ -8,15 +8,21 @@ module only sorts and labels it:
     UNCONFIRMED   the accountant / the office has to choose or confirm (人の確認)
     NEEDS_JDL     the JDL side has no matching account / subaccount: register it in JDL, or pick another (JDL側の登録)
     NEEDS_EVIDENCE no real-JDL Evidence exists for this tax or shape: nobody can confirm it on screen (JDLでの確認待ち)
+    NEEDS_ACCOUNTANT  the JDL technical Evidence exists, but the accountant's sign-off is not recorded (税理士の確認待ち:
+                  e.g. 控除不可, recorded per journal by the CLI procedure; no button here records it)
   and a failure to read anything at all is an ERROR message, not a row;
-- a candidate is shown as a candidate (with its basis), never as a decision. Nothing is confirmed by being shown.
+- a candidate is shown as a candidate (with its basis), never as a decision. Nothing is confirmed by being shown;
+- three counts are never mixed: items (件, the rows of this page), journals (仕訳, accounts / subaccounts / retention)
+  and journal lines (明細行, tax categories: one debit or credit line of a journal). None of them is a CSV row count;
+- every row says what has to happen next (`next_action`). For NEEDS_EVIDENCE that is a JDL real-machine Evidence: no
+  button on any screen turns it into 確認済み.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-UNCONFIRMED, CONFIRMED, NEEDS_JDL, NEEDS_EVIDENCE, WAITING_PARENT = (
-    "UNCONFIRMED", "CONFIRMED", "NEEDS_JDL", "NEEDS_EVIDENCE", "WAITING_PARENT")
+UNCONFIRMED, CONFIRMED, NEEDS_JDL, NEEDS_EVIDENCE, WAITING_PARENT, NEEDS_ACCOUNTANT = (
+    "UNCONFIRMED", "CONFIRMED", "NEEDS_JDL", "NEEDS_EVIDENCE", "WAITING_PARENT", "NEEDS_ACCOUNTANT")
 
 STATE_WORDS = {
     UNCONFIRMED: "未確認（人の確認が必要）",
@@ -24,8 +30,9 @@ STATE_WORDS = {
     NEEDS_JDL: "JDL側で登録が必要",
     NEEDS_EVIDENCE: "JDLでの確認待ち（実機の確認が必要）",
     WAITING_PARENT: "親科目の確認待ち",
+    NEEDS_ACCOUNTANT: "税理士の確認待ち（確認の記録が必要）",
 }
-_ORDER = {UNCONFIRMED: 0, WAITING_PARENT: 1, NEEDS_JDL: 2, NEEDS_EVIDENCE: 3, CONFIRMED: 9}
+_ORDER = {UNCONFIRMED: 0, WAITING_PARENT: 1, NEEDS_ACCOUNTANT: 2, NEEDS_JDL: 3, NEEDS_EVIDENCE: 4, CONFIRMED: 9}
 
 # Group keys (also the tab the existing dialog opens at).
 G_ACCOUNT, G_SUBACCOUNT, G_TAX, G_DESCRIPTION, G_RETENTION = "accounts", "subaccounts", "tax", "descriptions", "retention"
@@ -44,13 +51,22 @@ class ReviewRow:
     candidate: str = ""              # the confirmed target, or the best candidate (never both blank when known)
     basis: str = ""                  # why this candidate / what the confirmation means
     reason: str = ""                 # for NEEDS_*: what is missing
-    journals: int | None = None      # how many journals (仕訳) or rows (行, tax categories) use it
+    journals: int | None = None      # how many journals (仕訳) or journal lines (明細行, tax categories) use it
     unit: str = "仕訳"
     technical: str = ""              # codes for the collapsed technical section
 
     @property
     def state_words(self) -> str:
         return STATE_WORDS[self.state]
+
+    @property
+    def usage(self) -> str:
+        return f"{self.journals:,}{self.unit}" if self.journals else "—"
+
+    @property
+    def next_action(self) -> str:
+        """What has to happen next, in words (never a decision: the existing confirmation screens decide and save)."""
+        return next_action(self.group, self.state, self.parent)
 
 
 @dataclass(frozen=True)
@@ -96,6 +112,42 @@ class MappingReviewView:
     @property
     def pending_total(self) -> int:
         return sum(len(g.pending) for g in self.groups)
+
+    @property
+    def accountant_waiting(self) -> tuple[ReviewRow, ...]:
+        """Rows whose JDL technical Evidence exists but whose accountant sign-off is not recorded."""
+        return tuple(r for g in self.groups for r in g.rows if r.state == NEEDS_ACCOUNTANT)
+
+    @property
+    def evidence_waiting(self) -> tuple[ReviewRow, ...]:
+        """Rows that only a JDL real-machine Evidence can resolve (shown apart, with their basis and size)."""
+        return tuple(r for g in self.groups for r in g.rows if r.state == NEEDS_EVIDENCE)
+
+
+UNIT_JOURNAL, UNIT_LINE = "仕訳", "明細行"
+COUNT_NOTE = ("件数の単位: 「件」は確認する項目の数、「仕訳」は仕訳の数（科目・補助科目・保持方法）、"
+              "「明細行」は仕訳の借方・貸方の各行の数（税区分）です。どれもCSVの行数ではなく、合計しません。")
+ACCOUNTANT_LOCK = ("この画面や確認画面のボタンでは記録できません。記録のない仕訳は変換しません（BLOCK）。"
+                   "JDL実機の技術確認とは別の確認です。")
+EVIDENCE_LOCK = ("この項目は、JDL実機での確認（Evidence）が記録されるまで変換できません（BLOCK）。"
+                 "この画面や確認画面のボタン操作では確認済みにできません。")
+
+_NEXT = {
+    UNCONFIRMED: "「{button}」から確認画面を開き、対応先を選んで確認します（保存は確認画面で確認した後だけ）。",
+    WAITING_PARENT: "先に親科目「{parent}」の対応を確認します。その後、JDLの補助の候補が表示されます。",
+    NEEDS_JDL: "JDLで科目・補助を登録して「設定」からJDL科目一覧を更新するか、確認画面で別の対応先を選びます。",
+    NEEDS_ACCOUNTANT: ("税理士が内容を確認し、確認（SIGNOFF）を仕訳ごとにCLIの正式手順で記録します。" + ACCOUNTANT_LOCK),
+    NEEDS_EVIDENCE: "JDL実機でこの内容を含む仕訳の取込を確認し、その結果（Evidence）が記録されるのを待ちます。" + EVIDENCE_LOCK,
+    CONFIRMED: "対応は不要です（変える場合だけ確認画面で見直します）。",
+}
+_BUTTON_WORDS = {
+    G_ACCOUNT: "科目を確認", G_SUBACCOUNT: "補助科目を確認", G_TAX: "税区分を確認",
+    G_DESCRIPTION: "摘要を確認", G_RETENTION: "保持方法を確認",
+}
+
+
+def next_action(group: str, state: str, parent: str = "") -> str:
+    return _NEXT[state].format(button=_BUTTON_WORDS.get(group, "確認"), parent=parent or "親科目")
 
 
 def _sorted(rows) -> tuple[ReviewRow, ...]:
@@ -166,25 +218,34 @@ def _tax_rows(snapshot: MappingSnapshot) -> list[ReviewRow]:
                 rows.append(ReviewRow(
                     G_TAX, item.source_value, UNCONFIRMED, candidate=item.target_display or "",
                     basis="税理士が確認する対応先の候補", reason=item.reason or "",
-                    journals=item.affected_row_count or counts.get(item.source_value) or None, unit="行",
+                    journals=item.affected_row_count or counts.get(item.source_value) or None, unit=UNIT_LINE,
                     technical=f"{item.blocker_code} / {item.action_owner}"))
             else:
+                # Who has to act decides the state, not the fact that a person cannot confirm it on this screen:
+                # SYSTEM_EVIDENCE = no real-JDL Evidence; a 控除不可 item owned by HUMAN = the JDL technical Evidence
+                # exists and the accountant's sign-off is missing; anything else is shown as unconfirmed with its reason.
+                code, owner = str(item.blocker_code or ""), str(item.action_owner or "")
+                if owner == "SYSTEM_EVIDENCE":
+                    state, default_reason = NEEDS_EVIDENCE, "この税区分には、現在のJDL設定で使える実機の確認がありません。"
+                elif owner == "HUMAN" and code.startswith("YAYOI-JDL-TAX-NONCREDIT"):
+                    state, default_reason = NEEDS_ACCOUNTANT, "税理士の確認（SIGNOFF）が記録されていません。"
+                else:
+                    state, default_reason = UNCONFIRMED, "確認の前に、表示されている理由を解決します。"
                 rows.append(ReviewRow(
-                    G_TAX, item.source_value, NEEDS_EVIDENCE, reason=item.reason or
-                    "この税区分には、現在のJDL設定で使える実機の確認がありません。",
-                    journals=item.affected_row_count or counts.get(item.source_value) or None, unit="行",
-                    technical=f"{item.blocker_code} / {item.action_owner}"))
+                    G_TAX, item.source_value, state, reason=item.reason or default_reason,
+                    journals=item.affected_row_count or counts.get(item.source_value) or None, unit=UNIT_LINE,
+                    technical=f"{code} / {owner}"))
     saved = dict(snapshot.saved_tax)
     for source, rows_used in snapshot.observed_tax:
         if source in pending:
             continue
         if source in saved:
             rows.append(ReviewRow(G_TAX, source, CONFIRMED, candidate=saved[source],
-                                  basis="この会社で確認済みの対応", journals=rows_used or None, unit="行"))
+                                  basis="この会社で確認済みの対応", journals=rows_used or None, unit=UNIT_LINE))
         else:
             rows.append(ReviewRow(
                 G_TAX, source, UNCONFIRMED, basis="まだ確認されていません（確認画面を開くと候補と確認の可否が表示されます）",
-                journals=rows_used or None, unit="行", technical="NOT_YET_REGISTERED"))
+                journals=rows_used or None, unit=UNIT_LINE, technical="NOT_YET_REGISTERED"))
     return rows
 
 

@@ -205,6 +205,15 @@ class HomePresentationTest(unittest.TestCase):
         self.assertEqual(home.message[0], "info")
         self.assertIn("保存はしません", home.message[1])
 
+    def test_an_undiagnosed_count_is_named_undiagnosed_never_zero(self):
+        for kwargs, word in (({}, "未診断"), ({"yayoi_busy": True}, "診断中"), ({"yayoi_error": "x"}, "診断できません")):
+            home = hv.build_home(state(), **kwargs)
+            for label in ("変換可能", "BLOCK", "税理士の判断", "承認済み"):
+                with self.subTest(word=word, label=label):
+                    self.assertEqual(metric(home, label).value, "—")
+                    self.assertNotIn("0", metric(home, label).value)
+                    self.assertEqual(metric(home, label).hint, word)
+
     def test_no_source_and_no_company(self):
         home = hv.build_home(state(file=False))
         self.assertTrue(all(m.value == "—" for m in home.metrics))

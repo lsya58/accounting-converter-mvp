@@ -159,6 +159,16 @@ class Field:
         self.confirmed = bool(meaning)
 
 
+class SettingsSummaryTest(unittest.TestCase):
+    def test_section_summaries_show_the_main_values(self):
+        overview = sv.build_settings_overview(facts())
+        by_key = {s.key: s.summary for s in overview.sections}
+        self.assertIn("勘定科目の対応", by_key["accounts"])
+        self.assertIn("補助科目の対応", by_key["accounts"])
+        self.assertTrue(by_key["conditions"].startswith("振替伝票入力行数: "))
+        self.assertIn("利用できます", by_key["company"])
+
+
 class MappingReviewViewTest(unittest.TestCase):
     def view(self, review, **snapshot):
         return mv.build_mapping_review(mv.MappingSnapshot(review=review, **snapshot))
@@ -198,9 +208,61 @@ class MappingReviewViewTest(unittest.TestCase):
         self.assertEqual(rows_by_source["課税売上 10%"].state, mv.CONFIRMED)
         self.assertEqual(rows_by_source["課税売上 10%"].candidate, "課税売上10%")
         self.assertEqual(rows_by_source["新税区分"].state, mv.UNCONFIRMED)           # never silently "confirmed"
-        self.assertTrue(all(r.unit == "行" for r in rows_by_source.values()))
+        self.assertTrue(all(r.unit == "明細行" for r in rows_by_source.values()))   # journal lines, not CSV rows
         self.assertEqual(sum(len(g.pending) for g in view.groups), 3)
         self.assertEqual([step[1] for step in view.next_steps], [mv.G_TAX])
+
+    def test_every_state_has_its_own_next_action_and_evidence_cannot_be_confirmed_on_screen(self):
+        tax_review = TaxMappingSetupReview(items=(
+            TaxMappingSetupItem("特殊税", reason="この税区分の実機の確認がありません", affected_row_count=7),
+        ), context_compatible=True)
+        view = self.view(Review([item(source="雑費"), item(source="特殊科目", blocker_code="NO-ACCOUNT"),
+                                 item(source="売上", already_confirmed=True)]),
+                         tax_review=tax_review, observed_tax=(("特殊税", 7),))
+        waiting = view.evidence_waiting
+        self.assertEqual([(r.source, r.usage) for r in waiting], [("特殊税", "7明細行")])   # basis + size, own unit
+        self.assertIn("Evidence", waiting[0].next_action)
+        self.assertIn("確認済みにできません", waiting[0].next_action)
+        self.assertEqual(waiting[0].reason, "この税区分の実機の確認がありません")
+        rows = {r.source: r for r in view.group(mv.G_ACCOUNT).rows}
+        self.assertIn("科目を確認", rows["雑費"].next_action)                    # a person confirms on the screen
+        self.assertIn("JDLで科目・補助を登録", rows["特殊科目"].next_action)     # JDL registration, not a person
+        self.assertIn("対応は不要", rows["売上"].next_action)
+        actions = {mv.next_action(mv.G_TAX, s) for s in (mv.UNCONFIRMED, mv.NEEDS_JDL, mv.NEEDS_EVIDENCE, mv.CONFIRMED)}
+        self.assertEqual(len(actions), 4)                                        # never the same words for two states
+        self.assertIn("CSVの行数ではなく", mv.COUNT_NOTE)
+
+    def test_an_accountant_signoff_wait_is_not_a_jdl_evidence_wait(self):
+        """Company A's 控除不可: the JDL technical Evidence exists; what is missing is the accountant's sign-off."""
+        signoff = "YAYOI-JDL-TAX-NONCREDIT-TAX-ACCOUNTANT-SIGNOFF-REQUIRED"
+        tax_review = TaxMappingSetupReview(items=(
+            TaxMappingSetupItem("課対仕入10%｜区分記載｜控除不可", reason="JDL実機の技術確認は済み。税理士の確認が必要です。",
+                                action_owner="HUMAN", blocker_code=signoff, affected_row_count=2),
+            TaxMappingSetupItem("課対仕入8%（軽）｜区分記載｜控除不可", reason="JDL実機の技術確認は済み。税理士の確認が必要です。",
+                                action_owner="HUMAN", blocker_code=signoff, affected_row_count=1),
+            TaxMappingSetupItem("別の税区分", reason="実機の確認がありません", affected_row_count=3),     # SYSTEM_EVIDENCE
+            TaxMappingSetupItem("設定違い", action_owner="SYSTEM_IMPLEMENTATION", blocker_code="MF-JDL-TAX-ROUTE-MISMATCH",
+                                reason="会社設定の入力元・変換先形式が一致していません。", affected_row_count=4),
+        ), context_compatible=True)
+        view = self.view(Review(), tax_review=tax_review, observed_tax=(
+            ("課対仕入10%｜区分記載｜控除不可", 2), ("課対仕入8%（軽）｜区分記載｜控除不可", 1), ("別の税区分", 3), ("設定違い", 4)))
+        rows = {r.source: r for r in view.group(mv.G_TAX).rows}
+        self.assertEqual(rows["課対仕入10%｜区分記載｜控除不可"].state, mv.NEEDS_ACCOUNTANT)
+        self.assertEqual(rows["課対仕入8%（軽）｜区分記載｜控除不可"].state, mv.NEEDS_ACCOUNTANT)
+        self.assertEqual(rows["別の税区分"].state, mv.NEEDS_EVIDENCE)             # only this one lacks JDL Evidence
+        self.assertEqual(rows["設定違い"].state, mv.UNCONFIRMED)                   # neither Evidence nor sign-off
+        self.assertEqual([r.source for r in view.accountant_waiting],
+                         ["課対仕入10%｜区分記載｜控除不可", "課対仕入8%（軽）｜区分記載｜控除不可"])
+        self.assertEqual([r.source for r in view.evidence_waiting], ["別の税区分"])
+        waiting = rows["課対仕入10%｜区分記載｜控除不可"]
+        self.assertIn("SIGNOFF", waiting.next_action)
+        self.assertIn("CLI", waiting.next_action)
+        self.assertIn("BLOCK", waiting.next_action)
+        self.assertNotIn("Evidence が記録される", waiting.next_action)
+        self.assertNotIn("実機で取込を確認", waiting.next_action)
+        self.assertEqual(len({mv.STATE_WORDS[s] for s in (mv.UNCONFIRMED, mv.NEEDS_JDL, mv.NEEDS_EVIDENCE,
+                                                         mv.NEEDS_ACCOUNTANT)}), 4)
+        self.assertEqual(waiting.usage, "2明細行")
 
     def test_nothing_pending_is_a_success_and_confirmed_stay_reviewable(self):
         view = self.view(Review([item(already_confirmed=True)]))

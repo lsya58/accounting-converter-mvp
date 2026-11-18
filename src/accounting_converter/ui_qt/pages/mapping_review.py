@@ -6,6 +6,8 @@ Nothing is confirmed or saved here: the buttons only ask the window to open the 
 (`open_group`), which save only on their own explicit confirmation."""
 from __future__ import annotations
 
+from html import escape
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
@@ -14,7 +16,7 @@ from accounting_converter.ui import mapping_review_view as mv
 from .. import components as ui
 
 BADGE_KEY = {mv.UNCONFIRMED: "UNCONFIRMED", mv.CONFIRMED: "CONFIRMED", mv.NEEDS_JDL: "NEEDS_JDL",
-             mv.NEEDS_EVIDENCE: "EVIDENCE", mv.WAITING_PARENT: "UNCONFIRMED"}
+             mv.NEEDS_EVIDENCE: "EVIDENCE", mv.WAITING_PARENT: "UNCONFIRMED", mv.NEEDS_ACCOUNTANT: "PENDING"}
 GROUP_BUTTONS = {
     mv.G_ACCOUNT: "科目を確認…", mv.G_SUBACCOUNT: "補助科目を確認…", mv.G_TAX: "税区分を確認…",
     mv.G_DESCRIPTION: "摘要を確認…", mv.G_RETENTION: "保持方法を確認…",
@@ -34,9 +36,22 @@ def _clear(layout) -> None:
             _clear(item.layout())
 
 
+DETAIL_PROMPT = "行を選ぶと（クリック、または↑↓キー）、根拠・理由の全文と次に必要な行動をここに表示します。"
+
+
+def row_detail_html(row: mv.ReviewRow) -> str:
+    """The full text of one row: nothing is elided here (the table cells are)."""
+    parts = [("状態", _STATE_TEXT.get(row.state, mv.STATE_WORDS[row.state])), ("元の名前", row.source)]
+    if row.parent:
+        parts.append(("親科目", row.parent))
+    parts += [("対応先の候補", row.candidate or "—"), ("根拠・理由", "／".join(x for x in (row.reason, row.basis) if x) or "—"),
+              ("対象", row.usage), ("次に必要な行動", row.next_action)]
+    return "<br>".join(f"<b>{escape(label)}</b>: {escape(text)}" for label, text in parts)
+
+
 def _table(rows, group_key: str, name: str) -> ui.JournalTable:
     with_parent = group_key == mv.G_SUBACCOUNT
-    columns = ["状態", "元の名前"] + (["親科目"] if with_parent else []) + ["対応先の候補", "根拠・理由", "件数"]
+    columns = ["状態", "元の名前"] + (["親科目"] if with_parent else []) + ["対応先の候補", "根拠・理由", "使用数"]
     last = len(columns) - 1
     stretch = {columns.index("根拠・理由"), columns.index("対応先の候補")}
     table = ui.JournalTable(columns, name=name, numeric=(last,), stretch=tuple(sorted(stretch)))
@@ -46,8 +61,7 @@ def _table(rows, group_key: str, name: str) -> ui.JournalTable:
         cells = [(ui.badge_text(BADGE_KEY[row.state], _STATE_TEXT.get(row.state)), mv._ORDER[row.state]), row.source]
         if with_parent:
             cells.append(row.parent)
-        cells += [row.candidate or "—", reason or "—",
-                  (f"{row.journals:,}{row.unit}", row.journals or 0) if row.journals else "—"]
+        cells += [row.candidate or "—", reason or "—", (row.usage, row.journals or 0) if row.journals else "—"]
         data.append(cells)
     table.set_rows(data)
     table.sortItems(0, Qt.SortOrder.AscendingOrder)           # 未確認 first (the state column sorts by its order)
@@ -57,11 +71,37 @@ def _table(rows, group_key: str, name: str) -> ui.JournalTable:
     shown = min(max(len(rows), 1), MAX_VISIBLE_ROWS)
     height += shown * table.verticalHeader().defaultSectionSize()
     table.setFixedHeight(height + 6)
+    table.review_rows = {(r.source, r.parent): r for r in rows}    # looked up by the displayed names (re-sortable)
+    table.with_parent = with_parent
     return table
 
 
+def _attach_detail(table: ui.JournalTable, title: str) -> ui.WrappingLabel:
+    """A label under the table that shows the selected row in full (long reasons are elided in the cells)."""
+    detail = ui.WrappingLabel()
+    detail.setObjectName("rowDetail")
+    detail.setTextFormat(Qt.TextFormat.RichText)
+    detail.setText(escape(DETAIL_PROMPT))
+    detail.setAccessibleName(f"{title}の選択した行の詳細")
+
+    def show(current_row, _column=0, _previous_row=0, _previous_column=0) -> None:
+        if 0 <= current_row < table.rowCount():
+            # the reader may have re-sorted the table: find the row by the names it displays
+            parent = table.item(current_row, 2).text() if table.with_parent else ""
+            match = table.review_rows.get((table.item(current_row, 1).text(), parent))
+            if match is not None:
+                detail.setText(row_detail_html(match))
+                detail.setAccessibleDescription(detail.text())
+                return
+        detail.setText(escape(DETAIL_PROMPT))
+
+    table.currentCellChanged.connect(show)
+    table.show_detail = show
+    return detail
+
+
 _STATE_TEXT = {mv.UNCONFIRMED: "未確認", mv.NEEDS_JDL: "JDL側で登録が必要", mv.NEEDS_EVIDENCE: "JDLでの確認待ち",
-               mv.WAITING_PARENT: "親科目の確認待ち"}
+               mv.WAITING_PARENT: "親科目の確認待ち", mv.NEEDS_ACCOUNTANT: "税理士の確認待ち"}
 
 
 class MappingReviewPanel(QWidget):
@@ -84,6 +124,12 @@ class MappingReviewPanel(QWidget):
         self.metric_row.setContentsMargins(0, 0, 0, 0)
         self.metric_row.setSpacing(12)
         layout.addWidget(self.metrics)
+        self.evidence_card = ui.DetailCard("JDLでの確認待ち（実機での確認が必要。画面の操作では確認できません）")
+        self.evidence_card.setObjectName("evidenceCard")
+        layout.addWidget(self.evidence_card)
+        self.accountant_card = ui.DetailCard("税理士の確認待ち（JDL実機の技術確認とは別。確認の記録が必要です）")
+        self.accountant_card.setObjectName("evidenceCard")
+        layout.addWidget(self.accountant_card)
         self.notes = ui.WrappingLabel()
         self.notes.setObjectName("muted")
         layout.addWidget(self.notes)
@@ -102,7 +148,10 @@ class MappingReviewPanel(QWidget):
         self.technical_section.hide()
         self.metrics.hide()
         self.notes.hide()
+        self.evidence_card.hide()
+        self.accountant_card.hide()
         self.view: mv.MappingReviewView | None = None
+        self.details: dict[str, ui.WrappingLabel] = {}
         self.group_buttons: dict[str, object] = {}
         self.tables: dict[str, ui.JournalTable] = {}
         self.confirmed_tables: dict[str, ui.JournalTable] = {}
@@ -110,11 +159,13 @@ class MappingReviewPanel(QWidget):
     # ------------------------------------------------------------------ states
     def _reset(self) -> None:
         self.view = None
-        self.group_buttons, self.tables, self.confirmed_tables = {}, {}, {}
+        self.group_buttons, self.tables, self.confirmed_tables, self.details = {}, {}, {}, {}
         _clear(self.groups_box)
         _clear(self.metric_row)
         self.metrics.hide()
         self.notes.hide()
+        self.evidence_card.hide()
+        self.accountant_card.hide()
         self.technical_section.hide()
 
     def show_idle(self, text: str) -> None:
@@ -138,7 +189,9 @@ class MappingReviewPanel(QWidget):
         counts = {state: sum(g.count(state) for g in view.groups) for state in mv.STATE_WORDS}
         person = counts[mv.UNCONFIRMED] + counts[mv.WAITING_PARENT]
         for label, value, hint, tone in (
-            ("人の確認が必要", person, "税理士・事務所が選ぶ・確認する項目", "pending" if person else "ready"),
+            ("設定の確認が必要", person, "税理士・事務所が対応先を選ぶ・確認する項目", "pending" if person else "ready"),
+            ("税理士の確認待ち", counts[mv.NEEDS_ACCOUNTANT], "JDL実機の確認は済み。確認の記録が必要な項目",
+             "pending" if counts[mv.NEEDS_ACCOUNTANT] else "neutral"),
             ("JDL側で登録が必要", counts[mv.NEEDS_JDL], "JDLに同じ科目・補助がない項目", "block" if counts[mv.NEEDS_JDL] else "neutral"),
             ("JDLでの確認待ち", counts[mv.NEEDS_EVIDENCE], "実機の確認がなく、画面では確認できない項目",
              "block" if counts[mv.NEEDS_EVIDENCE] else "neutral"),
@@ -146,9 +199,26 @@ class MappingReviewPanel(QWidget):
         ):
             self.metric_row.addWidget(ui.MetricCard(label, f"{value:,}件", hint, tone), 1)
         self.metrics.show()
+        waiting = view.evidence_waiting
+        if waiting:
+            lines = [f"{mv.GROUP_TITLES[r.group]}「{r.source}」: 対象 {r.usage}。根拠: {r.reason or '実機の確認がありません'}"
+                     for r in waiting]
+            lines.append("次に必要な行動: JDL実機でこの内容を含む仕訳の取込を確認し、結果（Evidence）が記録されるのを待ちます。")
+            lines.append(mv.EVIDENCE_LOCK)
+            self.evidence_card.set_lines(lines)
+            self.evidence_card.setAccessibleName(f"JDLでの確認待ち {len(waiting):,}件")
+        accountant = view.accountant_waiting
+        if accountant:
+            lines = [f"{mv.GROUP_TITLES[r.group]}「{r.source}」: 対象 {r.usage}。根拠: {r.reason}" for r in accountant]
+            lines.append("次に必要な行動: 税理士が内容を確認し、確認（SIGNOFF）を仕訳ごとにCLIの正式手順で記録します。")
+            lines.append(mv.ACCOUNTANT_LOCK)
+            self.accountant_card.set_lines(lines)
+            self.accountant_card.setAccessibleName(f"税理士の確認待ち {len(accountant):,}件")
         notes = list(view.notes)
         if view.journals:
-            notes.append(f"元データの仕訳 {view.journals:,}仕訳が対象です。件数は項目の数で、仕訳の数とは別です。")
+            notes.append(f"元データの仕訳 {view.journals:,}仕訳が対象です。")
+        notes.append(mv.COUNT_NOTE)
+        notes.append("税理士の判断（仕訳ごとの判断・承認）は「変換診断」で扱い、この画面の件数には含みません。")
         self.notes.setText("\n".join(notes))
         self.notes.setVisible(bool(notes))
         technical = []
@@ -180,8 +250,12 @@ class MappingReviewPanel(QWidget):
             head.addWidget(ui.StatusBadge("NOT_REQUIRED", "該当なし"))
         elif person:
             head.addWidget(ui.StatusBadge("UNCONFIRMED", f"未確認 {person:,}件"))
+        elif group.pending and all(r.state == mv.NEEDS_EVIDENCE for r in group.pending):
+            head.addWidget(ui.StatusBadge("EVIDENCE", f"JDLでの確認待ち {len(group.pending):,}件"))
+        elif group.pending and all(r.state == mv.NEEDS_ACCOUNTANT for r in group.pending):
+            head.addWidget(ui.StatusBadge("PENDING", f"税理士の確認待ち {len(group.pending):,}件"))
         elif group.pending:
-            head.addWidget(ui.StatusBadge("EVIDENCE", f"確認待ち {len(group.pending):,}件"))
+            head.addWidget(ui.StatusBadge("NEEDS_JDL", f"JDL側の対応待ち {len(group.pending):,}件"))
         else:
             head.addWidget(ui.StatusBadge("CONFIRMED", f"確認済み {len(group.confirmed):,}件"))
         if person:
@@ -196,9 +270,14 @@ class MappingReviewPanel(QWidget):
             table = _table(group.pending, group.key, f"{group.title}（未確認・対応待ち）")
             self.tables[group.key] = table
             layout.addWidget(table)
+            self.details[group.key] = _attach_detail(table, group.title)
+            layout.addWidget(self.details[group.key])
             hints = []
             if any(r.state == mv.NEEDS_JDL for r in group.pending):
                 hints.append("「JDL側で登録が必要」は、人が確認しても解決しません。JDLで科目・補助を登録するか、別の対応先を選びます。")
+            if any(r.state == mv.NEEDS_ACCOUNTANT for r in group.pending):
+                hints.append("「税理士の確認待ち」は、JDL実機の技術確認は済んでいて、税理士の確認の記録がない状態です。"
+                             "この画面では記録できません。")
             if any(r.state == mv.NEEDS_EVIDENCE for r in group.pending):
                 hints.append("「JDLでの確認待ち」は、実機の確認がなく画面では確認できません。確認が済むのを待ちます。")
             if hints:
@@ -212,7 +291,12 @@ class MappingReviewPanel(QWidget):
         if group.confirmed:
             table = _table(group.confirmed, group.key, f"{group.title}（確認済み）")
             self.confirmed_tables[group.key] = table
-            section = ui.CollapsibleSection(f"確認済み {len(group.confirmed):,}件を表示", table)
+            box = QWidget()
+            box_layout = QVBoxLayout(box)
+            box_layout.setContentsMargins(0, 0, 0, 0)
+            box_layout.addWidget(table)
+            box_layout.addWidget(_attach_detail(table, f"{group.title}（確認済み）"))
+            section = ui.CollapsibleSection(f"確認済み {len(group.confirmed):,}件を表示", box)
             section.setAccessibleName(f"{group.title}の確認済み {len(group.confirmed):,}件")
             layout.addWidget(section)
         return card

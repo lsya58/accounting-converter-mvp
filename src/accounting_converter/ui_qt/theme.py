@@ -429,6 +429,12 @@ QLabel#modeBanner[mode="trial"] {{ color: {TOKENS['accent']}; background: {TOKEN
 QLabel#modeBanner[mode="unapproved"] {{ color: {TOKENS['status.block']}; background: {TOKENS['status.block.bg']}; border: 1px solid {TOKENS['status.block.border']}; }}
 QFrame#detailCard {{ background: {COLORS['surface']}; border: 1px solid {COLORS['border']}; border-radius: 8px; }}
 QLabel#detailCardTitle {{ font-size: 14px; font-weight: 600; }}
+/* ---- Phase 4A: Evidence waiting, row detail, key values, operations that remove something ---- */
+QFrame#evidenceCard {{ background: {TOKENS['status.evidence.bg']}; border: 1px solid {COLORS['border']}; border-left: 4px solid {TOKENS['status.evidence']}; border-radius: 8px; }}
+QLabel#rowDetail {{ color: {TOKENS['text.primary']}; background: {TOKENS['bg.subtle']}; border: 1px solid {TOKENS['border.default']}; border-radius: 4px; padding: 6px 10px; }}
+QLabel#keyValue {{ color: {TOKENS['text.primary']}; font-size: 14px; font-weight: 600; }}
+QFrame#dangerZone {{ background: {COLORS['surface']}; border: 1px solid {TOKENS['status.error']}; border-radius: 8px; }}
+QLabel#dangerZoneTitle {{ color: {TOKENS['status.error']}; font-weight: 600; }}
 QTableWidget#journalTable::item {{ padding: 4px 8px; }}
 /* ---- main window: left navigation + pages (Phase 3A) ---- */
 QFrame#navRail {{ background: {TOKENS['bg.subtle']}; border: none; border-right: 1px solid {TOKENS['border.default']}; }}

@@ -212,7 +212,8 @@ def _company(f: SettingsFacts) -> SettingSection:
                    NOT_APPLICABLE, action=ACT_DELETE_COMPANY, action_label="削除…",
                    impact="削除するとこの会社は選べなくなります。確認ダイアログで確定します。"),
     )
-    return SettingSection("company", "会社の基本情報", "どの会社の設定を見ているか", rows, _worst(rows))
+    summary = f"{f.display_name or '（名称なし）'} ／ " + ("利用できます" if usable else "確認が必要です")
+    return SettingSection("company", "会社の基本情報", summary, rows, _worst(rows))
 
 
 # ------------------------------------------------------------------ 2. 会計ソフト・変換先
@@ -274,7 +275,9 @@ def _accounts(f: SettingsFacts) -> SettingSection:
         else "未確認の補助科目があります。", action=ACT_MAPPING, action_label="対応の確認へ",
         impact="親科目のみで変換する場合は、補助の情報がJDLに入らないことを確認する必要があります。")
     rows = (master_row, counts, account_row, sub_row)
-    return SettingSection("accounts", "科目・補助科目", "JDLの科目一覧と、元データの科目の対応", rows, _worst(rows))
+    summary = (f"JDL科目一覧: {f.master_state or '未設定'} ／ 勘定科目の対応: {_ratio(f.account_mappings)}"
+               f" ／ 補助科目の対応: {_ratio(f.subaccount_mappings)}")
+    return SettingSection("accounts", "科目・補助科目", summary, rows, _worst(rows))
 
 
 # ------------------------------------------------------------------ 4. 消費税設定
@@ -379,7 +382,7 @@ def _conditions(f: SettingsFacts) -> SettingSection:
             "department", "部門処理", "使う" if f.department_processing else "使わない",
             CONFIRMED, impact="JDL側の設定です。部門を使わない会社では、元データの部門はJDLへ出力されません。"))
     rows = tuple(rows)
-    return SettingSection("conditions", "変換条件", "振替伝票入力行数と、JDLに入らない情報の扱い", rows, _worst(rows))
+    return SettingSection("conditions", "変換条件", f"振替伝票入力行数: {limit_value}", rows, _worst(rows))
 
 
 # ------------------------------------------------------------------ 6. 技術情報・設定履歴

@@ -19,6 +19,9 @@ BADGE_KEY = {sv.CONFIRMED: "CONFIRMED", sv.UNCONFIRMED: "UNCONFIRMED", sv.WAITIN
              sv.NOT_APPLICABLE: "NOT_REQUIRED", sv.UNREADABLE: "ERROR"}
 BADGE_TEXT = {sv.UNREADABLE: "読み込めません", sv.WAITING_EVIDENCE: "JDLでの確認待ち"}
 SECTION_NUMBERS = {"company": "1", "software": "2", "accounts": "3", "tax": "4", "conditions": "5", "technical": "6"}
+ATTENTION = (sv.UNREADABLE, sv.UNCONFIRMED, sv.WAITING_EVIDENCE)
+_ROW_ORDER = {sv.UNREADABLE: 0, sv.UNCONFIRMED: 1, sv.WAITING_EVIDENCE: 2, sv.CONFIRMED: 3, sv.NOT_APPLICABLE: 4}
+DANGER_ACTIONS = (sv.ACT_DELETE_COMPANY,)
 
 
 def _clear(layout) -> None:
@@ -161,20 +164,75 @@ class SettingsPage(QWidget):
                 else BADGE_TEXT.get(badge_state)))
         layout.addLayout(head)
         summary = QLabel(section.summary)
-        summary.setObjectName("muted")
+        summary.setObjectName("keyValue")              # the section's main values, readable at a glance
         summary.setWordWrap(True)
+        summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        summary.setAccessibleName(f"{section.title}の主な設定値")
         layout.addWidget(summary)
         if section.key == "technical":
             body_section, body = ui.collapsible_text("技術情報を表示（会社ID・改訂履歴・指紋）")
             body.setText("<br>".join(f"<b>{_esc(r.label)}</b>: {_esc(r.value)}" for r in section.rows))
             layout.addWidget(body_section)
             return card
+        rows = sorted((r for r in section.rows if r.action not in DANGER_ACTIONS),
+                      key=lambda r: _ROW_ORDER[r.state])          # what needs a confirmation first (stable)
+        danger = [r for r in section.rows if r.action in DANGER_ACTIONS]
+        attention = any(r.state in ATTENTION for r in rows)
+        # While something here needs a confirmation, confirmed values without an action are folded away (they stay
+        # one click away). Rows with a button are always shown: every existing screen stays reachable.
+        folded = [r for r in rows if attention and r.state == sv.CONFIRMED and not self._has_button(r)]
+        shown = [r for r in rows if r not in folded]
+        layout.addLayout(self._grid(shown))
+        if folded:
+            box = QWidget()
+            box_layout = QVBoxLayout(box)
+            box_layout.setContentsMargins(0, 0, 0, 0)
+            box_layout.addLayout(self._grid(folded))
+            fold = ui.CollapsibleSection(f"確認済みの設定 {len(folded):,}項目を表示", box)
+            fold.setAccessibleName(f"{section.title}の確認済みの設定 {len(folded):,}項目")
+            layout.addWidget(fold)
+        impacts = [f"<b>{_esc(r.label)}</b>: {_esc(r.impact)}" for r in section.rows if r.impact]
+        if impacts:
+            impact_section, body = ui.collapsible_text("変更した場合の影響（READY / BLOCK）")
+            body.setText("<br>".join(impacts))
+            layout.addWidget(impact_section)
+        if danger:
+            layout.addWidget(self._danger_zone(danger))
+        return card
+
+    @staticmethod
+    def _has_button(row) -> bool:
+        return bool(row.action) and (row.state != sv.CONFIRMED or row.key in _ALWAYS_EDITABLE)
+
+    def _danger_zone(self, rows) -> QWidget:
+        """Operations that remove something, kept apart from ordinary settings (each asks again before it acts)."""
+        zone = QFrame()
+        zone.setObjectName("dangerZone")
+        zone.setAccessibleName("取り消せない操作")
+        layout = QVBoxLayout(zone)
+        layout.setContentsMargins(14, 10, 14, 12)
+        layout.setSpacing(6)
+        title = QLabel("取り消せない操作（確認ダイアログで確定します）")
+        title.setObjectName("dangerZoneTitle")
+        layout.addWidget(title)
+        for row in rows:
+            line = QHBoxLayout()
+            text = ui.WrappingLabel(f"{row.label}: {row.value}。{row.impact}")
+            line.addWidget(text, 1)
+            button = ui.make_button(row.action_label, "danger", description=f"{row.label}: {row.impact}")
+            button.clicked.connect(lambda _checked=False, a=row.action: self.action_requested.emit(a))
+            line.addWidget(button, 0, Qt.AlignmentFlag.AlignTop)
+            self.action_buttons.setdefault(row.action, []).append(button)
+            layout.addLayout(line)
+        return zone
+
+    def _grid(self, rows) -> QGridLayout:
         grid = QGridLayout()
         grid.setHorizontalSpacing(12)
         grid.setVerticalSpacing(8)
         grid.setColumnStretch(1, 1)
         row_number = 0
-        for row in section.rows:
+        for row in rows:
             label = QLabel(row.label)
             label.setWordWrap(True)
             label.setMinimumWidth(150)
@@ -190,9 +248,8 @@ class SettingsPage(QWidget):
             if row.state != sv.NOT_APPLICABLE or row.state_text:
                 grid.addWidget(ui.StatusBadge(BADGE_KEY[row.state], row.state_text or BADGE_TEXT.get(row.state)),
                                row_number, 2, Qt.AlignmentFlag.AlignTop)
-            if row.action and (row.state != sv.CONFIRMED or row.key in _ALWAYS_EDITABLE):
-                kind = "danger" if row.action == sv.ACT_DELETE_COMPANY else "secondary"
-                button = ui.make_button(row.action_label, kind, description=f"{row.label}: {row.note or row.impact}")
+            if self._has_button(row):
+                button = ui.make_button(row.action_label, "secondary", description=f"{row.label}: {row.note or row.impact}")
                 button.clicked.connect(lambda _checked=False, a=row.action: self.action_requested.emit(a))
                 grid.addWidget(button, row_number, 3, Qt.AlignmentFlag.AlignTop)
                 self.action_buttons.setdefault(row.action, []).append(button)
@@ -202,13 +259,7 @@ class SettingsPage(QWidget):
                 note.setObjectName("muted")
                 grid.addWidget(note, row_number, 1, 1, 3)
                 row_number += 1
-        layout.addLayout(grid)
-        impacts = [f"<b>{_esc(r.label)}</b>: {_esc(r.impact)}" for r in section.rows if r.impact]
-        if impacts:
-            impact_section, body = ui.collapsible_text("変更した場合の影響（READY / BLOCK）")
-            body.setText("<br>".join(impacts))
-            layout.addWidget(impact_section)
-        return card
+        return grid
 
 
 # Settings that are confirmed but can still be changed on purpose (the same button as when unconfirmed).

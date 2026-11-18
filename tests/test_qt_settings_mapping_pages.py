@@ -18,7 +18,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 try:
     from PySide6.QtCore import QCoreApplication, QEvent, Qt
     from PySide6.QtTest import QTest
-    from PySide6.QtWidgets import QApplication, QDialog, QFrame, QScrollArea
+    from PySide6.QtWidgets import QApplication, QDialog, QFrame, QLabel, QPushButton, QScrollArea
 
     from accounting_converter.application.company_mapping_update import (
         CompanyMappingUpdateItem,
@@ -160,6 +160,29 @@ class SettingsPageTest(PagesTestBase):
             self.assertFalse(window.reasons_task.busy)               # nothing was diagnosed because of it
             self.assertNotIn(sv.ACT_TRADE_PARTNER, page.action_buttons)   # a Yayoi company has no 取引先 setting
 
+    def test_delete_is_kept_apart_and_the_main_values_are_readable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _env, window = self._window(directory)
+            self._page(window, hv.NAV_SETTINGS)
+            page = window.settings_page
+            zones = page.findChildren(QFrame, "dangerZone")
+            self.assertEqual(len(zones), 1)
+            delete = page.action_buttons[sv.ACT_DELETE_COMPANY]
+            self.assertEqual(len(delete), 1)                              # one way to delete, inside the zone
+            self.assertIs(delete[0].parentWidget(), zones[0])
+            self.assertEqual(delete[0].objectName(), "dangerButton")
+            for buttons in page.action_buttons.values():                  # no other button looks like a deletion
+                for button in buttons:
+                    if button is not delete[0]:
+                        self.assertNotEqual(button.objectName(), "dangerButton", button.text())
+            values = [label for label in page.findChildren(QLabel, "keyValue") if label.isVisible()]
+            self.assertEqual(len(values), 6)                              # every section shows its main values
+            self.assertTrue(all(label.text().strip() for label in values))
+            for buttons in page.action_buttons.values():                  # folding never hides an existing screen
+                for button in buttons:
+                    if button.parentWidget() is not zones[0]:
+                        self.assertTrue(button.isVisible(), button.text())
+
     def test_the_old_settings_dialog_is_still_reachable(self):
         with tempfile.TemporaryDirectory() as directory:
             _env, window = self._window(directory)
@@ -249,10 +272,12 @@ class MappingPanelTest(PagesTestBase):
         tax = TaxMappingSetupReview(items=(
             TaxMappingSetupItem("課税仕入 10%", "課税仕入10%", human_confirmable=True, action_owner="HUMAN"),
             TaxMappingSetupItem("特殊税", reason="実機の確認がありません"),
+            TaxMappingSetupItem("課対仕入10%｜区分記載｜控除不可", reason="JDL実機の技術確認は済み。税理士の確認が必要です。",
+                                action_owner="HUMAN", blocker_code="YAYOI-JDL-TAX-NONCREDIT-TAX-ACCOUNTANT-SIGNOFF-REQUIRED"),
         ), context_compatible=True)
         return mv.build_mapping_review(mv.MappingSnapshot(
             review=review, tax_review=tax, saved_tax=(("課税売上 10%", "課税売上10%"),),
-            observed_tax=(("課税仕入 10%", 4), ("特殊税", 1), ("課税売上 10%", 8))))
+            observed_tax=(("課税仕入 10%", 4), ("特殊税", 1), ("課税売上 10%", 8), ("課対仕入10%｜区分記載｜控除不可", 2))))
 
     def test_panel_shows_unconfirmed_first_folds_confirmed_and_separates_the_kinds_of_waiting(self):
         panel = MappingReviewPanel()
@@ -275,7 +300,7 @@ class MappingPanelTest(PagesTestBase):
         for _ in range(4):
             QApplication.processEvents()
         cards = [c for c in panel.metrics.findChildren(ui_components.MetricCard) if c.isVisible()]
-        self.assertEqual(len(cards), 4)
+        self.assertEqual(len(cards), 5)
         for card in cards:                                              # nothing is squeezed below its content
             self.assertGreaterEqual(card.height(), card.minimumSizeHint().height())
         for table in (*panel.tables.values(), *panel.confirmed_tables.values()):
@@ -299,6 +324,56 @@ class MappingPanelTest(PagesTestBase):
         for key in (mv.G_ACCOUNT, mv.G_TAX):
             QTest.mouseClick(panel.group_buttons[key], Qt.MouseButton.LeftButton)
         self.assertEqual(got, [mv.G_ACCOUNT, mv.G_TAX])
+
+    def test_a_selected_row_shows_its_full_reason_and_next_action_and_evidence_waits_are_apart(self):
+        panel = MappingReviewPanel()
+        self.addCleanup(panel.deleteLater)
+        panel.resize(1000, 900)
+        panel.show()
+        panel.show_view(self.synthetic_view())
+        QApplication.processEvents()
+        # Evidence waits: their own card with the basis, the size and the next action; nothing to click there
+        self.assertTrue(panel.evidence_card.isVisible())
+        text = panel.evidence_card.plain_text()
+        self.assertIn("特殊税", text)
+        self.assertIn("1明細行", text)
+        self.assertIn("実機の確認がありません", text)
+        self.assertIn("確認済みにできません", text)
+        self.assertEqual(panel.evidence_card.findChildren(QPushButton), [])
+        self.assertIn("CSVの行数ではなく", panel.notes.text())
+        # the accountant's sign-off wait is NOT shown as a JDL Evidence wait: own card, no button, own words
+        self.assertTrue(panel.accountant_card.isVisible())
+        sign = panel.accountant_card.plain_text()
+        self.assertIn("控除不可", sign)
+        self.assertIn("SIGNOFF", sign)
+        self.assertIn("2明細行", sign)
+        self.assertIn("CLI", sign)
+        self.assertEqual(panel.accountant_card.findChildren(QPushButton), [])
+        self.assertNotIn("控除不可", text)                            # not in the JDL Evidence card
+        tax_table = panel.tables[mv.G_TAX]
+        states = {tax_table.item(r, 1).text(): tax_table.item(r, 0).text() for r in range(tax_table.rowCount())}
+        self.assertTrue(states["課対仕入10%｜区分記載｜控除不可"].startswith("? 税理士の確認待ち"))
+        self.assertTrue(states["特殊税"].startswith("⧗ JDLでの確認待ち"))
+        # the row detail: empty prompt first, then the full text of the row chosen with the keyboard
+        tax = panel.tables[mv.G_TAX]
+        detail = panel.details[mv.G_TAX]
+        self.assertTrue(detail.isVisible())
+        self.assertIn("行を選ぶと", detail.text())
+        self.assertEqual(tax.horizontalHeaderItem(tax.columnCount() - 1).text(), "使用数")
+        tax.setFocus()
+        evidence_row = next(r for r in range(tax.rowCount()) if tax.item(r, 0).text().startswith("⧗"))
+        tax.setCurrentCell(evidence_row, 0)
+        QApplication.processEvents()
+        self.assertIn("特殊税", detail.text())
+        self.assertIn("次に必要な行動", detail.text())
+        self.assertIn("Evidence", detail.text())
+        self.assertTrue(detail.accessibleName())
+        tax.sortItems(1, Qt.SortOrder.DescendingOrder)               # re-sorted by the reader: still the right row
+        for r in range(tax.rowCount()):
+            tax.setCurrentCell(r, 1)
+            QApplication.processEvents()
+            self.assertIn(tax.item(r, 1).text(), detail.text())
+        self.assertFalse(panel.confirmed_tables[mv.G_ACCOUNT].isVisible())     # confirmed rows are still folded
 
     def test_error_idle_and_loading_states_are_messages_not_rows(self):
         panel = MappingReviewPanel()
