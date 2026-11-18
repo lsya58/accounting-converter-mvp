@@ -269,7 +269,8 @@ class MainWindowTest(unittest.TestCase):
                 target = (mw.VoucherSplitApprovalDialog if item.action == rr.ACT_SPLIT
                           else mw.CompanyMappingUpdateDialog)
                 with mock.patch.object(target, "exec", lambda dialog, n=item.key: opened.append(n) or 0), \
-                        mock.patch.object(window, "_confirm_current_csv", lambda n=item.key: opened.append(n)):
+                        mock.patch.object(window, "_confirm_current_csv",
+                                          lambda *a, n=item.key, **k: opened.append(n)):
                     self._click(panel.action_button)
                 self.assertEqual(opened[-1], item.key)
             if panel.compare_button.isVisible():

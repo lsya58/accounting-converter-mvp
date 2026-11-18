@@ -1,8 +1,11 @@
-"""変換の準備状況: what is missing, what the user can do, and the buttons that reach the EXISTING screens.
+"""変換診断（理由別）: what is missing, what the user can do, and the buttons that reach the EXISTING screens.
 
 The READY / BLOCK decision is the production assessment (controller.company_resolution_report); this screen only
 displays it. A button exists only where an existing screen can resolve the item; Evidence gaps and tax-accountant
 decisions have none. After any action the report is recomputed from the saved settings ("再診断").
+
+Counting units: READY / BLOCK / the count of each reason are journals (仕訳); the reasons themselves are items (項目).
+Neither is a CSV row nor a debit / credit line (明細行).
 """
 from __future__ import annotations
 
@@ -21,6 +24,8 @@ from PySide6.QtWidgets import (
 from accounting_converter.application import readiness_breakdown as breakdown
 from accounting_converter.application import resolution_report as rr
 from accounting_converter.infrastructure.local_diagnostic_log import log_local_exception
+
+from . import components as ui
 
 
 def where_text(item) -> str:
@@ -408,7 +413,9 @@ class ResolutionPanel(QWidget):
         self.can_do = can_do or (lambda item: False)
         self.report = None
         self.comparison = None
-        self.setAccessibleName("変換の準備状況（理由別）")
+        self.state = "idle"                  # idle (未診断) / loading (診断中) / error (失敗) / report
+        self._last_key = None
+        self.setAccessibleName("変換診断（理由別）")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self.summary = QLabel()
@@ -509,12 +516,29 @@ class ResolutionPanel(QWidget):
         layout.addWidget(split, 1)
 
     # ------------------------------------------------------------------ data
-    def show_error(self, text: str = "診断できませんでした。入力ファイルと会社設定を確認してください。") -> None:
+    def show_error(self, text: str = "診断できませんでした。入力ファイルと会社設定を確認してください。",
+                   next_text: str = "入力ファイルと会社設定を確認してください") -> None:
         """The screen must not invent a state it could not compute: everything from the last report is cleared."""
+        self.state = "error"
+        self._clear(text, next_text)
+
+    def show_loading(self, text: str = "診断中です。全仕訳を保存済みの設定で正式診断しています（保存はしません）。") -> None:
+        """While a diagnosis runs nothing from an earlier report stays on screen (it may be another selection's)."""
+        self.state = "loading"
+        self._clear(text, "診断が終わるまでお待ちください")
+
+    def show_idle(self, text: str = "未診断です。会社と弥生の仕訳データを選ぶと診断します。") -> None:
+        """Not diagnosed yet: the counts are unknown (never shown as 0)."""
+        self.state = "idle"
+        self._clear(text, "")
+
+    def _clear(self, text: str, next_text: str) -> None:
+        if self.report is not None:          # the reader's place is kept across a re-diagnosis (not its content)
+            self._last_key = self._current_key()
         self.report = None
         self.comparison = None
         self.summary.setText(escape(text))
-        self.next_action.setText("入力ファイルと会社設定を確認してください")
+        self.next_action.setText(next_text)
         self.alternative.setVisible(False)
         self.compare_button.setVisible(False)
         self.completed.setText("")
@@ -528,13 +552,16 @@ class ResolutionPanel(QWidget):
         self.why_no_button.setText("")
 
     def show_report(self, report, comparison, *, source_label: str, company_name: str) -> None:
-        keep = self._current_key()
+        keep = self._current_key() or self._last_key
+        self.state = "report"
         self.report, self.comparison = report, comparison
         self.summary.setText(
             f"{escape(source_label)} → JDL IBEX 出納帳35.5　|　会社設定: {escape(company_name)} "
             f"（{report.saved_limit or '未確認'}行）<br>"
             f"<span style='font-size:18px; font-weight:700'>正式診断: READY {report.ready:,} / {report.total:,}件</span>　"
-            f"BLOCK {report.blocked:,}件　|　この入力全体: {'変換できます' if report.blocked == 0 else '変換できません'}")
+            f"BLOCK {report.blocked:,}件　|　この入力全体: {'変換できます' if report.blocked == 0 else '変換できません'}<br>"
+            f"<small>件数はすべて仕訳の数です（CSVの行数・借貸の明細行数ではありません）。"
+            f"確認する理由: {len(report.items)}項目</small>")
         self.next_action.setText(next_priority(report))
         self.completed.setText(" / ".join(report.completed) if report.completed else "完了項目なし")
         alt = report.alternative
@@ -554,15 +581,15 @@ class ResolutionPanel(QWidget):
             if self.can_do(item):
                 action = "税理士承認・分割案を開く" if item.action == rr.ACT_SPLIT else item.action_label
             elif item.tax_accountant and item.technical_evidence:
-                action = "税理士判断・技術検証"
+                action = "税理士の確認待ち・JDLでの確認待ち"
             elif item.technical_evidence and report.awaiting_tax_decision(item):
                 waiting = len(report.awaiting_tax_decision(item))
-                action = ("税区分の確定待ち（試算）" if waiting == len(item.journals)
-                          else f"開発側で実機確認（{waiting}件は税区分の確定待ち）")
+                action = ("税区分の確定待ち（税理士の確認後に再診断）" if waiting == len(item.journals)
+                          else f"JDLでの確認待ち（{waiting}件は税区分の確定待ち）")
             elif item.technical_evidence:
-                action = "開発側で実機確認"
+                action = "JDLでの確認待ち（開発側で実機確認）"
             elif item.tax_accountant:
-                action = "税理士の判断で確認"
+                action = "税理士の確認待ち"
             else:
                 action = where_text(item) + "で確認"
             row = QListWidgetItem(f"{short_title(item)}　{len(item.journals)}件\n{action}")
@@ -664,21 +691,35 @@ class ResolutionPanel(QWidget):
 
 
 class ResolutionCenterDialog(QDialog):
-    """変換の準備状況 (read-only report + buttons into the existing screens). The body is a ResolutionPanel (the same
-    one the 変換診断 page shows); this dialog adds the footer and computes the report synchronously, as before."""
+    """変換診断（理由別） opened from the 対応の確認 dialog: the same ResolutionPanel as the 変換診断 page, inside the
+    confirmation flow, so the user can read why journals are BLOCK and jump to a tab WITHOUT closing that dialog (its
+    unsaved choices stay there; they are never saved here and are not part of this diagnosis).
+
+    The report is computed in the background (components.BackgroundTask, the page's mechanism): the dialog stays
+    responsive, a re-diagnosis started while one runs makes the running result stale, and closing joins the thread.
+    The company and source are fixed for the dialog's lifetime, so a result can never belong to another selection.
+
+    READY-only output writes a file from the SAVED settings: with unsaved choices in the opener it is not offered here
+    (the user saves first and continues on the 出力・照合 page). 税理士の判断・未移行の仕訳 is view / trial only."""
 
     _PANEL_ATTRIBUTES = (
         "summary", "next_action", "notice", "completed", "completed_toggle", "alternative", "compare_button",
         "item_list", "detail_scroll", "detail_page", "detail_layout", "detail_text", "context_toggle", "context_text",
         "tax_detail_toggle", "tax_detail", "action_button", "why_no_button", "show_details", "details")
 
+    READY_ONLY_LABEL = "READYの仕訳だけを出力…（全件移行ではありません）"
+    MIGRATION_LABEL = "税理士の判断・未移行の仕訳を開く…"
+    UNSAVED_READY_ONLY = ("未保存の変更があるため、READYの仕訳だけの出力はここでは行いません。"
+                          "保存してから「出力・照合」ページで行ってください。")
+
     def __init__(self, controller, company_id: str, source_path, callbacks: dict | None = None, parent=None,
                  *, unsaved_changes: bool = False) -> None:
         super().__init__(parent)
         self.controller, self.company_id, self.source_path = controller, company_id, source_path
         self.callbacks = callbacks or {}
+        self.unsaved_changes = unsaved_changes
         self.goto: str | None = None  # a tab key the opener should show after this dialog closes
-        self.setWindowTitle("変換の準備状況")
+        self.setWindowTitle("変換診断（理由別）")
         self.resize(1040, 700)
         if self.screen():
             size = self.screen().availableGeometry().size()
@@ -691,27 +732,43 @@ class ResolutionCenterDialog(QDialog):
         for name in self._PANEL_ATTRIBUTES:          # the names the existing callers and tests use
             setattr(self, name, getattr(self.panel, name))
         layout.addWidget(self.panel, 1)
+        self.unsaved_note = QLabel(self.UNSAVED_READY_ONLY)
+        self.unsaved_note.setObjectName("muted")
+        self.unsaved_note.setWordWrap(True)
+        self.unsaved_note.setVisible(False)
+        layout.addWidget(self.unsaved_note)
         footer = QHBoxLayout()
         footer.addWidget(self.action_button)
         self.status = QLabel()
         self.status.setObjectName("muted")
+        self.status.setWordWrap(True)
+        self.status.setAccessibleName("診断の状態")
         footer.addWidget(self.status, 1)
         # Separate mode, only when part of the input is READY and part is not; never the default conversion.
-        self.ready_only_button = QPushButton("READYのみ変換…（全件移行ではありません）")
+        self.ready_only_button = QPushButton(self.READY_ONLY_LABEL)
         self.ready_only_button.setVisible(False)
         self.ready_only_button.clicked.connect(self._open_ready_only)
         footer.addWidget(self.ready_only_button)
-        self.migration_button = QPushButton("承認・未移行の管理…")
+        self.migration_button = QPushButton(self.MIGRATION_LABEL)
+        self.migration_button.setToolTip("承認待ちの項目の試算と、未移行の仕訳の一覧を表示します（閲覧・試算のみ。承認はCLI）")
         self.migration_button.setVisible(False)
         self.migration_button.clicked.connect(self._open_migration_status)
         footer.addWidget(self.migration_button)
         self.rediagnose_button = QPushButton("再診断")
-        self.rediagnose_button.clicked.connect(self.refresh)
+        self.rediagnose_button.setToolTip("保存済みの設定で正式診断をやり直します（保存しません）")
+        self.rediagnose_button.clicked.connect(lambda _checked=False: self.refresh())
         close = QPushButton("閉じる")
         close.clicked.connect(self.accept)
         footer.addWidget(self.rediagnose_button)
         footer.addWidget(close)
         layout.addLayout(footer)
+        self.task = ui.BackgroundTask(self)
+        self.task.finished.connect(self._on_finished)
+        self.task.failed.connect(self._on_failed)
+        self.task.busy_changed.connect(self._on_busy)
+        self._generation = 0
+        self._pending = False
+        self._closed = False
         self.refresh()
 
     @property
@@ -722,27 +779,70 @@ class ResolutionCenterDialog(QDialog):
     def comparison(self):
         return self.panel.comparison
 
-    # ------------------------------------------------------------------ data
+    @property
+    def busy(self) -> bool:
+        return self.task.busy
+
+    # ------------------------------------------------------------------ data (background, read-only)
     def refresh(self) -> None:
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            report, comparison = self.controller.company_resolution_report(self.company_id, self.source_path)
-        except Exception as exc:  # the screen must not invent a state it could not compute
-            log_local_exception("company_resolution_report", exc)
-            QApplication.restoreOverrideCursor()
-            self.panel.show_error()
-            self.status.setText("正式診断を更新できませんでした。")
-            self.ready_only_button.setVisible(False)
-            self.migration_button.setVisible(False)
+        """Re-diagnose from the saved settings. The previous result is cleared first (it may predate a save)."""
+        if self._closed:
+            return                                 # a closed dialog never starts (or restarts) a diagnosis
+        self._generation += 1
+        self.panel.show_loading()
+        self.status.setText("診断中です…")
+        self.ready_only_button.setVisible(False)
+        self.migration_button.setVisible(False)
+        self.unsaved_note.setVisible(False)
+        self.rediagnose_button.setEnabled(False)
+        if self.task.busy:                         # the running result is stale: dropped, then run again
+            self.task.invalidate()
+            self._pending = True
             return
-        QApplication.restoreOverrideCursor()
+        key = (self.company_id, str(self.source_path), self._generation)
+        controller, company, source = self.controller, self.company_id, self.source_path
+        self.task.start(key, lambda: controller.company_resolution_report(company, source))
+
+    def _on_busy(self, busy: bool) -> None:
+        if self._closed:
+            return
+        if not busy and self._pending:
+            self._pending = False
+            self.refresh()
+            return
+        self.rediagnose_button.setEnabled(not busy)
+
+    def _on_finished(self, key, result) -> None:
+        if key[2] != self._generation:
+            return
+        report, comparison = result
         self.panel.show_report(report, comparison, source_label=report_source_label(self.source_path),
                                company_name=report_company_name(self.controller, self.company_id))
-        self.ready_only_button.setVisible(report.blocked > 0 and report.ready > 0
-                                          and hasattr(self.controller, "plan_yayoi_ready_only"))
+        can_ready_only = (report.blocked > 0 and report.ready > 0
+                          and hasattr(self.controller, "plan_yayoi_ready_only"))
+        self.ready_only_button.setVisible(can_ready_only and not self.unsaved_changes)
+        self.unsaved_note.setVisible(can_ready_only and self.unsaved_changes)
         self.migration_button.setVisible(report.blocked > 0 and hasattr(self.controller, "approval_items"))
         approved = not report.split_policy_problems
-        self.status.setText("再診断しました（保存済み設定）。" + ("伝票分割: 承認記録あり。" if approved else ""))
+        self.status.setText("診断しました（保存済みの設定）。" + ("伝票分割: 承認記録あり。" if approved else ""))
+
+    def _on_failed(self, key, error) -> None:
+        log_local_exception("company_resolution_report", error)
+        if key[2] != self._generation:
+            return
+        self.panel.show_error()
+        self.status.setText(f"正式診断ができませんでした（{type(error).__name__}）。何も保存していません。"
+                            "「再診断」でやり直せます。")
+
+    def done(self, result: int) -> None:
+        # Closed first: a re-diagnosis that was waiting for the running one (_pending) must not start afterwards, and
+        # the stale result that is still queued is dropped. The job touches no widget, so joining the thread cannot
+        # wait on the GUI (it ends when the diagnosis ends; the wait is that remaining time, never longer).
+        self._closed = True
+        self._pending = False
+        self._generation += 1
+        self.task.shutdown()
+        super().done(result)
 
     def _current_item(self):
         return self.panel._current_item()

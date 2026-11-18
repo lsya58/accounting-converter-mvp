@@ -163,6 +163,7 @@ class AccountingConverterMainWindow(QMainWindow):
         self.reasons_task.failed.connect(self._on_reasons_failed)
         self.reasons_task.busy_changed.connect(lambda _busy: self._render_reasons_state())
         self._reasons_key = None                    # request key of the report the panel shows
+        self._reasons_error_key = None              # request key whose diagnosis failed (the error stays shown)
         self._reasons_pending = False
         self.mapping_task = ui.BackgroundTask(self)  # 対応の確認 (read-only review of the selected company + source)
         self.mapping_task.finished.connect(self._on_mapping_finished)
@@ -383,6 +384,10 @@ class AccountingConverterMainWindow(QMainWindow):
         self.settings_action.clicked.connect(self._confirm_current_csv)
         mapping_row.addWidget(self.settings_action)
         mapping_row.addStretch(1)
+        self.review_to_diagnosis = ui.make_button(
+            "変換診断へ（理由別）", "subtle", description="変換診断ページを表示します（ページの切り替えのみ。保存しません）")
+        self.review_to_diagnosis.clicked.connect(lambda _checked=False: self.show_page(hv.NAV_DIAGNOSIS))
+        mapping_row.addWidget(self.review_to_diagnosis)
         mapping_layout.addLayout(mapping_row)
         # 対応の確認 on the page (Phase 3C-2): the same review the confirmation screens use, shown read-only and loaded
         # in the background. Its buttons open the existing screens directly (no intermediate dialog).
@@ -806,7 +811,17 @@ class AccountingConverterMainWindow(QMainWindow):
             if getattr(dialog, "saved", False):
                 self._after_saved_change()
             return
-        self._confirm_current_csv()              # the existing confirmation flow (saves only on its own confirmation)
+        # The existing confirmation flow (saves only on its own confirmation), opened at the tab the reason names,
+        # like the 要確認 page. The other reasons (row limit, information policy, company setting) use the whole flow.
+        tab = {"ACCOUNTS_TAB": "accounts", "SUBACCOUNTS_TAB": "subaccounts",
+               "DESCRIPTION_TAB": "descriptions"}.get(item.action)
+        if tab is not None:
+            self._confirm_current_csv(only="mapping", initial_tab=tab)
+        elif item.action == "TAX_REVIEW":
+            self._confirm_current_csv(only="tax")
+        else:
+            self._confirm_current_csv()
+        # Re-diagnosed every time: not every save changes the request key, so the result is never assumed current.
         self._after_saved_change()
 
     def _reason_compare(self) -> None:
@@ -1007,8 +1022,13 @@ class AccountingConverterMainWindow(QMainWindow):
         if key is None or not hasattr(self.controller, "company_resolution_report"):
             return
         key = ("reasons", *key[1:])
-        if not force and key == self._reasons_key:
-            return
+        if not force and key in (self._reasons_key, self._reasons_error_key):
+            return                                 # shown already (or failed: the user retries by the button)
+        if not force and self.reasons_task.busy and self.reasons_task._current == key:
+            return                                 # the same selection is being diagnosed: never run it twice
+        if force:
+            self._reasons_key = None               # the shown result may predate a save: shown as 診断中, not current
+        self._reasons_error_key = None
         if self.reasons_task.busy:
             self.reasons_task.invalidate()
             self._reasons_pending = True
@@ -1033,7 +1053,8 @@ class AccountingConverterMainWindow(QMainWindow):
         self._reasons_key = key
         self.reasons_panel.show_report(report, comparison, source_label=source_label, company_name=company_name)
         self.reasons_message.show_message(
-            "success", f"正式診断を表示しています（READY {report.ready:,} / BLOCK {report.blocked:,} / 全 {report.total:,}件）。")
+            "success", f"正式診断を表示しています（READY {report.ready:,}仕訳 / BLOCK {report.blocked:,}仕訳 / "
+            f"全 {report.total:,}仕訳）。")
         self._render_reasons_state()
 
     def _on_reasons_failed(self, key, error) -> None:
@@ -1041,6 +1062,7 @@ class AccountingConverterMainWindow(QMainWindow):
         if key != self._current_reasons_key():
             return
         self._reasons_key = None
+        self._reasons_error_key = key
         self.reasons_panel.show_error()
         self.reasons_message.show_message(
             "error", f"理由別の診断ができませんでした（{type(error).__name__}: {error}）。何も保存していません。"
@@ -1058,12 +1080,17 @@ class AccountingConverterMainWindow(QMainWindow):
         yayoi = hv.is_yayoi(self.controller.state)
         self.reasons_card.setVisible(yayoi)
         self.reasons_refresh_button.setEnabled(yayoi and not busy)
-        if yayoi and self._reasons_key != self._current_reasons_key():
-            # the panel still shows nothing or another selection's report: never leave it on screen
-            if self.reasons_panel.report is not None:
-                self.reasons_panel.show_error("会社・仕訳データ・設定が変わったため、前の診断結果は表示していません。")
+        current = self._current_reasons_key()
+        if yayoi and self._reasons_key != current:
+            # the panel shows nothing current: 診断中 / 失敗 / 未診断 are told apart (never an old result, never 0)
             if busy:
+                self.reasons_panel.show_loading()
                 self.reasons_message.show_message("info", "理由別に診断しています…（全仕訳を正式診断します。保存はしません）")
+            elif self._reasons_error_key is not None and self._reasons_error_key == current:
+                pass                                   # the failure and its cause stay on screen
+            else:
+                self.reasons_panel.show_idle("未診断です。「理由別の診断をやり直す」を押すと診断します。")
+                self.reasons_message.clear_message()
 
     # ------------------------------------------------------------------ home (read-only background diagnosis)
     def home_request_key(self):
@@ -2544,8 +2571,12 @@ class CompanyMappingUpdateDialog(QDialog):
         actions.addWidget(self.progress_label, 1)
         self.readiness_button = None
         if self.is_yayoi:
-            self.readiness_button = QPushButton("変換の準備状況…")
-            self.readiness_button.setToolTip("保存済みの設定で、変換できない仕訳の理由と対応方法を確認します（設定や承認は変更しません）")
+            # Kept as a dialog on purpose: it opens ON this dialog, so unsaved choices stay here (the page would
+            # require closing this dialog first). It diagnoses the SAVED settings only and says so.
+            self.readiness_button = QPushButton("変換診断（理由別）…")
+            self.readiness_button.setToolTip(
+                "保存済みの設定で、変換できない仕訳の理由と対応方法を確認します（設定や承認は変更しません）。"
+                "この画面の未保存の変更は残り、診断には含まれません")
             self.readiness_button.clicked.connect(self._open_resolution_center)
             actions.addWidget(self.readiness_button)
         actions.addWidget(cancel)

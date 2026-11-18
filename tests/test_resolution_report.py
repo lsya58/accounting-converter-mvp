@@ -314,7 +314,16 @@ class QtTest(unittest.TestCase):
             dialog.deleteLater()
             self.app.processEvents()
         self.addCleanup(cleanup)
+        self._settle(dialog)
         return dialog
+
+    def _settle(self, dialog):
+        """The 変換診断 dialog diagnoses in the background: wait until its result is on screen."""
+        if isinstance(dialog, ResolutionCenterDialog):
+            from tests.test_qt_components import wait_until
+
+            self.assertTrue(wait_until(lambda: not dialog.busy, 10000))
+            self.app.processEvents()
 
     def _report(self):
         entries = {"x:4012": entry(line(-1, "課対仕入10%｜適格｜100%")), "x:425": entry(line(1, "課対仕入10%｜区分記載｜控除不可"))}
@@ -414,7 +423,9 @@ class QtTest(unittest.TestCase):
         controller.company_resolution_report = lambda *a: (n.append(1), original(*a))[1]
         dialog.action_button.click()
         self.assertEqual(calls, ["tax"])
-        self.assertEqual(len(n), 1)  # re-diagnosed after the action
+        self._settle(dialog)
+        self.assertEqual(len(n), 1)  # re-diagnosed after the action (once)
+        self._select(dialog, "HUMAN:TAX_MAPPING")
         self._select(dialog, "HUMAN:ACCOUNT_MAPPING")
         dialog.action_button.click()
         self.assertEqual(dialog.goto, "accounts")
@@ -593,6 +604,135 @@ class QtTest(unittest.TestCase):
         self.assertIn("確認書1", part565)
         self.assertNotIn("確認書1", part3558)
         self.assertIn("別の仕訳の承認はこの仕訳に適用されません", part3558)
+
+    # ---------------------------------------------------------------- Phase 4B: the dialog inside 対応の確認
+    def test_ready_only_is_not_offered_over_unsaved_choices_and_the_labels_match_the_pages(self):
+        class WithBoth(FakeController):
+            def plan_yayoi_ready_only(self, company_id, source):
+                raise AssertionError("never computed by opening the diagnosis")
+
+            def approval_items(self, *args, **kwargs):
+                raise AssertionError("never computed by opening the diagnosis")
+
+        saved = self._own(ResolutionCenterDialog(WithBoth(self._report()), "c", Path("s"), {}, None))
+        self.assertFalse(saved.ready_only_button.isHidden())
+        self.assertTrue(saved.unsaved_note.isHidden())
+        self.assertIn("READYの仕訳だけを出力", saved.ready_only_button.text())
+        self.assertEqual(saved.migration_button.text(), "税理士の判断・未移行の仕訳を開く…")
+        self.assertEqual(saved.windowTitle(), "変換診断（理由別）")
+        unsaved = self._own(ResolutionCenterDialog(WithBoth(self._report()), "c", Path("s"), {}, None,
+                                                   unsaved_changes=True))
+        self.assertTrue(unsaved.ready_only_button.isHidden())     # a file from the SAVED settings: not over unsaved
+        self.assertFalse(unsaved.unsaved_note.isHidden())
+        self.assertIn("保存してから「出力・照合」", unsaved.unsaved_note.text())
+        self.assertFalse(unsaved.notice.isHidden())               # the diagnosis says it excludes the unsaved choices
+        self.assertIn("未保存の変更は含まれていません", unsaved.notice.text())
+        self.assertFalse(unsaved.migration_button.isHidden())     # view / trial only: kept
+
+    def test_the_dialog_diagnoses_in_the_background_and_shows_loading_and_failure_apart(self):
+        import threading
+
+        gate = threading.Event()
+
+        class Slow(FakeController):
+            def company_resolution_report(self, company_id, source):
+                gate.wait(10)
+                return self.report, None
+
+        dialog = ResolutionCenterDialog(Slow(self._report()), "c", Path("s"), {}, None)
+        self.addCleanup(lambda: (gate.set(), dialog.close(), dialog.deleteLater(), self.app.processEvents()))
+        self.assertTrue(dialog.busy)                              # the constructor returned while it runs
+        self.assertEqual(dialog.panel.state, "loading")
+        self.assertIsNone(dialog.report)
+        self.assertEqual(dialog.item_list.count(), 0)             # never a count before the result (never 0件)
+        self.assertFalse(dialog.rediagnose_button.isEnabled())
+        self.assertIn("診断中", dialog.summary.text())
+        gate.set()
+        self._settle(dialog)
+        self.assertEqual(dialog.panel.state, "report")
+        self.assertTrue(dialog.rediagnose_button.isEnabled())
+
+        class Broken(FakeController):
+            def company_resolution_report(self, company_id, source):
+                raise OSError("unreadable")
+
+        failed = self._own(ResolutionCenterDialog(Broken(self._report()), "c", Path("s"), {}, None))
+        self.assertEqual(failed.panel.state, "error")
+        self.assertIsNone(failed.report)
+        self.assertIn("OSError", failed.status.text())
+        self.assertTrue(failed.ready_only_button.isHidden())
+
+    def test_a_rediagnosis_during_a_run_drops_the_stale_result_and_runs_once_more(self):
+        import threading
+
+        gate, calls = threading.Event(), []
+        first, second = self._report(), rr.build_report({"x:1": frozenset()}, {})
+
+        class Changing(FakeController):
+            def company_resolution_report(self, company_id, source):
+                calls.append(1)
+                if len(calls) == 1:
+                    gate.wait(10)
+                    return first, None
+                return second, None
+
+        dialog = ResolutionCenterDialog(Changing(first), "c", Path("s"), {}, None)
+        self.addCleanup(lambda: (gate.set(), dialog.close(), dialog.deleteLater(), self.app.processEvents()))
+        dialog.refresh()                                          # e.g. after a save: the running result is stale
+        gate.set()
+        self._settle(dialog)
+        self.assertEqual(len(calls), 2)
+        self.assertIs(dialog.report, second)                      # never the result started before the save
+
+    def test_closing_during_a_diagnosis_joins_the_thread(self):
+        import threading
+
+        gate = threading.Event()
+
+        class Slow(FakeController):
+            def company_resolution_report(self, company_id, source):
+                gate.wait(10)
+                return self.report, None
+
+        dialog = ResolutionCenterDialog(Slow(self._report()), "c", Path("s"), {}, None)
+        self.addCleanup(lambda: (dialog.deleteLater(), self.app.processEvents()))
+        threading.Timer(0.2, gate.set).start()
+        dialog.reject()
+        self.assertFalse(dialog.busy)
+        self.app.processEvents()
+        self.assertIsNone(dialog.report)                          # the dropped result is not shown afterwards
+
+    def test_a_rediagnosis_waiting_for_the_running_one_does_not_start_after_closing(self):
+        import threading
+        import time
+
+        gate, calls = threading.Event(), []
+
+        class Counting(FakeController):
+            def company_resolution_report(self, company_id, source):
+                calls.append(1)
+                gate.wait(10)
+                return self.report, None
+
+        dialog = ResolutionCenterDialog(Counting(self._report()), "c", Path("s"), {}, None)
+        self.addCleanup(lambda: (gate.set(), dialog.deleteLater(), self.app.processEvents()))
+        dialog.refresh()                                          # waits for the running job (_pending)
+        threading.Timer(0.2, gate.set).start()
+        dialog.reject()
+        for _ in range(20):                                       # the queued result of the dropped job is delivered
+            self.app.processEvents()
+            time.sleep(0.02)
+        self.assertEqual(len(calls), 1)                           # no new diagnosis after closing
+        self.assertFalse(dialog.busy)
+        self.assertIsNone(dialog.report)
+
+    def test_the_selected_reason_stays_selected_after_a_rediagnosis(self):
+        dialog = self._own(ResolutionCenterDialog(FakeController(self._report()), "c", Path("s"), {}, None))
+        self._select(dialog, rr.NEGATIVE_KEY)
+        dialog.rediagnose_button.click()
+        self._settle(dialog)
+        self.assertEqual(dialog._current_item().key, rr.NEGATIVE_KEY)
+        self.assertIn("仕訳の数", dialog.summary.text())           # units: journals, not CSV rows / 明細行
 
 
 if __name__ == "__main__":
