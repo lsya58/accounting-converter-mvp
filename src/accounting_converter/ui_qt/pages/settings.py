@@ -120,7 +120,16 @@ class SettingsPage(QWidget):
         tone = "ready" if overview.needed and overview.confirmed >= overview.needed else "pending"
         row.addWidget(ui.MetricCard("確認済みの設定", f"{overview.confirmed:,} / {overview.needed:,} 項目",
                                     "確認が必要な設定のうち、確認済みの数", tone), 1)
-        return box
+        column = QWidget()
+        stack = QVBoxLayout(column)
+        stack.setContentsMargins(0, 0, 0, 0)
+        stack.setSpacing(6)
+        stack.addWidget(box)
+        self.count_note = ui.WrappingLabel(sv.COUNT_SCOPE_NOTE)
+        self.count_note.setObjectName("muted")
+        self.count_note.setAccessibleName("件数の範囲")
+        stack.addWidget(self.count_note)
+        return column
 
     def _next_steps(self, overview) -> QWidget:
         card = QFrame()

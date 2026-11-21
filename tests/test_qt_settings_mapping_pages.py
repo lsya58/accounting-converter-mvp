@@ -349,6 +349,18 @@ class MappingPanelTest(PagesTestBase):
         self.assertIn("2明細行", sign)
         self.assertIn("CLI", sign)
         self.assertEqual(panel.accountant_card.findChildren(QPushButton), [])
+        # Phase 5B: the summary is shown first, the full text is folded (and nothing is lost)
+        card = panel.accountant_card
+        self.assertIn("状態", card.summary.text())
+        self.assertIn("税区分 1項目", card.summary.text())
+        self.assertIn("2明細行", card.summary.text())
+        self.assertIn("未承認", card.summary.text())
+        self.assertFalse(card.details.isVisible())
+        card.details_section.set_expanded(True)
+        QApplication.processEvents()
+        self.assertTrue(card.details.isVisible())
+        self.assertIn("JDL実機の技術確認は済み", card.details.text())
+        self.assertIn("正式な確認の手順", card.details.text())
         self.assertNotIn("控除不可", text)                            # not in the JDL Evidence card
         tax_table = panel.tables[mv.G_TAX]
         states = {tax_table.item(r, 1).text(): tax_table.item(r, 0).text() for r in range(tax_table.rowCount())}

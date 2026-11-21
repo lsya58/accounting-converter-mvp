@@ -302,6 +302,9 @@ class MainWindowTest(unittest.TestCase):
             presentation = window.home_page.presentation
             button = window.nav.buttons[hv.NAV_REVIEW]
             label, description = hv.review_nav_text(presentation.review_settings, presentation.review_journals)
+            # the window may start narrow (compact rail: symbol + short name); the full words are always read aloud
+            self.assertEqual(button.accessibleName(), label.replace("\n", " "))
+            window.nav.set_compact(False, user=True)
             self.assertEqual(button.text(), label)
             self.assertIn("合計していません", button.toolTip())
             total = (presentation.review_settings or 0) + (presentation.review_journals or 0)

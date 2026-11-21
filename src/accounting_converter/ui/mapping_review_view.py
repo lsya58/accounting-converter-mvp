@@ -54,6 +54,8 @@ class ReviewRow:
     journals: int | None = None      # how many journals (仕訳) or journal lines (明細行, tax categories) use it
     unit: str = "仕訳"
     technical: str = ""              # codes for the collapsed technical section
+    evidence: str = ""               # the JDL technical Evidence id the item refers to ("" = none)
+    code: str = ""                   # the blocker code (decides what is missing; shown only in the details)
 
     @property
     def state_words(self) -> str:
@@ -150,6 +152,60 @@ def next_action(group: str, state: str, parent: str = "") -> str:
     return _NEXT[state].format(button=_BUTTON_WORDS.get(group, "確認"), parent=parent or "親科目")
 
 
+# ------------------------------------------------------------------ 税理士の確認待ち: summary first, details on demand
+_MISSING = {   # by blocker code: what is still missing (never "approved"; the record is per journal)
+    "YAYOI-JDL-TAX-NONCREDIT-TAX-ACCOUNTANT-SIGNOFF-REQUIRED": "税理士の判断と、正式なSIGNOFFの記録",
+    "YAYOI-JDL-TAX-NONCREDIT-JOURNAL-SCOPED": "記録のない仕訳についての税理士の判断と、正式なSIGNOFFの記録",
+    "YAYOI-JDL-TAX-NONCREDIT-APPROVAL-INVALID": "有効なSIGNOFFの記録（保存済みの記録が現在の会社設定・Evidenceと一致しません）",
+}
+ACCOUNTANT_NEXT = "税理士の判断の後、仕訳ごとにCLIの正式手順で記録します（この画面では記録できません）。"
+ACCOUNTANT_PROCEDURE = (
+    "1. 税理士が、対象の仕訳の取引の実態と、控除不可にした理由を確認します。",
+    "2. 了承された場合だけ、担当者がCLIの正式手順で仕訳ごとに記録します（承認台帳に残ります）。",
+    "3. 記録の後に「変換診断」で再診断します。記録のない仕訳・内容が変わった仕訳は変換しません（BLOCK）。",
+)
+
+
+@dataclass(frozen=True)
+class AccountantSummary:
+    """The 税理士の確認待ち card: a short summary (always shown) and the full details (collapsed). From the rows."""
+
+    state: str
+    target: str                       # e.g. 税区分 2項目
+    lines: tuple[str, ...]            # one per item: its name and the number of 明細行
+    evidence: str                     # 確認済み / 一部のみ / なし (in words, with the reason)
+    missing: str
+    next_action: str
+    details: tuple[tuple[str, tuple[tuple[str, str], ...]], ...]   # (item, ((label, text), ...))
+    procedure: tuple[str, ...] = ACCOUNTANT_PROCEDURE
+
+
+def accountant_summary(rows) -> AccountantSummary | None:
+    rows = tuple(rows)
+    if not rows:
+        return None
+    with_evidence = [r for r in rows if r.evidence]
+    if len(with_evidence) == len(rows):
+        evidence = "確認済み（JDL実機の技術確認。税理士の判断とは別です）"
+    elif with_evidence:
+        evidence = f"{len(with_evidence):,}項目のみ確認済み（ほかの項目は詳細を確認してください）"
+    else:
+        evidence = "記録がありません（詳細を確認してください）"
+    missing = list(dict.fromkeys(_MISSING.get(r.code, "税理士の確認（SIGNOFF）の記録") for r in rows))
+    details = []
+    for r in rows:
+        facts = [("税区分", r.source), ("対象", r.usage), ("状態", STATE_WORDS[r.state]),
+                 ("変換先の候補", r.candidate or "候補なし"), ("根拠と理由", r.reason or "—"),
+                 ("JDL技術Evidence", r.evidence or "なし"), ("不足", _MISSING.get(r.code, "税理士の確認（SIGNOFF）の記録")),
+                 ("確認コード", r.technical or "—")]
+        details.append((r.source, tuple(facts)))
+    return AccountantSummary(
+        state=STATE_WORDS[NEEDS_ACCOUNTANT] + "（未承認）",
+        target=f"税区分 {len(rows):,}項目",
+        lines=tuple(f"{r.source}: {r.usage}" for r in rows),
+        evidence=evidence, missing="／".join(missing), next_action=ACCOUNTANT_NEXT, details=tuple(details))
+
+
 def _sorted(rows) -> tuple[ReviewRow, ...]:
     return tuple(sorted(rows, key=lambda r: (_ORDER[r.state], r.parent, r.source)))
 
@@ -233,8 +289,9 @@ def _tax_rows(snapshot: MappingSnapshot) -> list[ReviewRow]:
                     state, default_reason = UNCONFIRMED, "確認の前に、表示されている理由を解決します。"
                 rows.append(ReviewRow(
                     G_TAX, item.source_value, state, reason=item.reason or default_reason,
+                    candidate="" if (item.target_display or "未確定") == "未確定" else item.target_display,
                     journals=item.affected_row_count or counts.get(item.source_value) or None, unit=UNIT_LINE,
-                    technical=f"{code} / {owner}"))
+                    technical=f"{code} / {owner}", evidence=str(item.evidence_id or ""), code=code))
     saved = dict(snapshot.saved_tax)
     for source, rows_used in snapshot.observed_tax:
         if source in pending:

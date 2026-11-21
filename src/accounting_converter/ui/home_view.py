@@ -21,6 +21,13 @@ NAV_ITEMS = (
     (NAV_HOME, "ホーム"), (NAV_IMPORT, "データ取込"), (NAV_DIAGNOSIS, "変換診断"),
     (NAV_REVIEW, "要確認"), (NAV_OUTPUT, "出力・照合"), (NAV_SETTINGS, "設定"),
 )
+# The compact navigation (narrow windows): a symbol and a short name per page. The full name is always the
+# accessible name and the tooltip; the symbol alone never carries the meaning.
+NAV_COMPACT = {
+    NAV_HOME: ("⌂", "ホーム"), NAV_IMPORT: ("⇩", "取込"), NAV_DIAGNOSIS: ("✓", "診断"),
+    NAV_REVIEW: ("!", "要確認"), NAV_OUTPUT: ("⇧", "出力"), NAV_SETTINGS: ("≡", "設定"),
+}
+NAV_PENDING_MARK = "●要対応"   # compact: something on the page waits (the counts are in the tooltip / reader)
 
 FORMAT_LABELS = {
     RecognizedFormat.MONEYFORWARD: "Money Forward",

@@ -36,6 +36,64 @@ def _clear(layout) -> None:
             _clear(item.layout())
 
 
+class AccountantWaitCard(QFrame):
+    """税理士の確認待ち (Phase 5B): the summary first (state, target, 明細行 per item, technical Evidence, what is missing,
+    next step); the full basis, candidate, tax notes, Evidence and procedure in a collapsed section. Nothing here
+    records a sign-off: there is no button (the disclosure is a tool button that only shows text)."""
+
+    TITLE = "税理士の確認待ち（JDL実機の技術確認とは別。確認の記録が必要です）"
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setObjectName("evidenceCard")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(6)
+        self.title = QLabel(self.TITLE)
+        self.title.setObjectName("detailCardTitle")
+        self.title.setWordWrap(True)
+        layout.addWidget(self.title)
+        self.summary = QLabel()
+        self.summary.setObjectName("keyValue")
+        self.summary.setWordWrap(True)
+        self.summary.setTextFormat(Qt.TextFormat.RichText)
+        self.summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.summary.setAccessibleName("税理士の確認待ちの要約")
+        layout.addWidget(self.summary)
+        self.lock = QLabel(mv.ACCOUNTANT_LOCK)
+        self.lock.setObjectName("muted")
+        self.lock.setWordWrap(True)
+        layout.addWidget(self.lock)
+        self.details_section, self.details = ui.collapsible_text(
+            "詳細を表示（根拠と理由の全文・変換先の候補・課税上の注意・Evidence・確認の手順）")
+        self.details.setAccessibleName("税理士の確認待ちの詳細")
+        layout.addWidget(self.details_section)
+        self._plain = ""
+
+    def show_summary(self, summary: mv.AccountantSummary) -> None:
+        facts = (("状態", summary.state), ("対象", summary.target), ("対象の明細行", "／".join(summary.lines)),
+                 ("JDL技術Evidence", summary.evidence), ("不足", summary.missing), ("次の操作", summary.next_action))
+        self.summary.setText("<table cellspacing='0' cellpadding='2'>" + "".join(
+            f"<tr><td style='padding-right:12px; white-space:nowrap'><b>{escape(k)}</b></td><td>{escape(v)}</td></tr>"
+            for k, v in facts) + "</table>")
+        parts, plain = [], [self.TITLE] + [f"{k}: {v}" for k, v in facts] + [mv.ACCOUNTANT_LOCK]
+        for item, item_facts in summary.details:
+            parts.append(f"<p><b>{escape(item)}</b><br>" + "<br>".join(
+                f"{escape(k)}: {escape(v)}" for k, v in item_facts) + "</p>")
+            plain += [item] + [f"{k}: {v}" for k, v in item_facts]
+        parts.append("<p><b>正式な確認の手順</b><br>" + "<br>".join(escape(t) for t in summary.procedure) + "</p>")
+        plain += list(summary.procedure)
+        self.details.setText("".join(parts))
+        self._plain = "\n".join(plain)
+        self.setAccessibleName(f"税理士の確認待ち {summary.target}")
+        self.setAccessibleDescription(" ".join(f"{k}: {v}" for k, v in facts))
+        self.setVisible(True)
+
+    def plain_text(self) -> str:
+        """Everything the card holds (summary, lock, details, procedure), for copying and tests."""
+        return self._plain
+
+
 DETAIL_PROMPT = "行を選ぶと（クリック、または↑↓キー）、根拠・理由の全文と次に必要な行動をここに表示します。"
 
 
@@ -127,8 +185,7 @@ class MappingReviewPanel(QWidget):
         self.evidence_card = ui.DetailCard("JDLでの確認待ち（実機での確認が必要。画面の操作では確認できません）")
         self.evidence_card.setObjectName("evidenceCard")
         layout.addWidget(self.evidence_card)
-        self.accountant_card = ui.DetailCard("税理士の確認待ち（JDL実機の技術確認とは別。確認の記録が必要です）")
-        self.accountant_card.setObjectName("evidenceCard")
+        self.accountant_card = AccountantWaitCard()
         layout.addWidget(self.accountant_card)
         self.notes = ui.WrappingLabel()
         self.notes.setObjectName("muted")
@@ -207,13 +264,9 @@ class MappingReviewPanel(QWidget):
             lines.append(mv.EVIDENCE_LOCK)
             self.evidence_card.set_lines(lines)
             self.evidence_card.setAccessibleName(f"JDLでの確認待ち {len(waiting):,}件")
-        accountant = view.accountant_waiting
-        if accountant:
-            lines = [f"{mv.GROUP_TITLES[r.group]}「{r.source}」: 対象 {r.usage}。根拠: {r.reason}" for r in accountant]
-            lines.append("次に必要な行動: 税理士が内容を確認し、確認（SIGNOFF）を仕訳ごとにCLIの正式手順で記録します。")
-            lines.append(mv.ACCOUNTANT_LOCK)
-            self.accountant_card.set_lines(lines)
-            self.accountant_card.setAccessibleName(f"税理士の確認待ち {len(accountant):,}件")
+        summary = mv.accountant_summary(view.accountant_waiting)
+        if summary is not None:
+            self.accountant_card.show_summary(summary)
         notes = list(view.notes)
         if view.journals:
             notes.append(f"元データの仕訳 {view.journals:,}仕訳が対象です。")

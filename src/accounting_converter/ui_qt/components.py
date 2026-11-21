@@ -197,7 +197,14 @@ class WrappingLabel(QLabel):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        needed = self.heightForWidth(self.width())
+        self.fit_height()
+
+    def setText(self, text: str) -> None:  # noqa: N802 - Qt name
+        super().setText(text)
+        self.fit_height()                    # new text, same width: its line count may differ
+
+    def fit_height(self) -> None:
+        needed = self.heightForWidth(self.width()) if self.width() > 0 else -1
         if needed > 0 and self.minimumHeight() != needed:
             self.setMinimumHeight(needed)
 
@@ -207,7 +214,8 @@ class MetricCard(QFrame):
     def __init__(self, label: str, value: str = "—", hint: str = "", tone: str = "neutral", parent=None) -> None:
         super().__init__(parent)
         self.setObjectName("metricCard")
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        # Minimum (not Fixed) height: a hint that wraps to more lines on a narrow card makes the card taller
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 8, 12, 8)
         layout.setSpacing(2)
@@ -215,9 +223,8 @@ class MetricCard(QFrame):
         self.label.setObjectName("metricCardLabel")
         self.value = QLabel(value)
         self.value.setObjectName("metricCardValue")
-        self.hint = QLabel(hint)
+        self.hint = WrappingLabel(hint)               # every line of the hint stays visible on narrow cards
         self.hint.setObjectName("metricCardHint")
-        self.hint.setWordWrap(True)
         for widget in (self.label, self.value, self.hint):
             layout.addWidget(widget)
         self._name = label

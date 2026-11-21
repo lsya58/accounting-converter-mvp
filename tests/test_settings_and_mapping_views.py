@@ -232,6 +232,40 @@ class MappingReviewViewTest(unittest.TestCase):
         self.assertEqual(len(actions), 4)                                        # never the same words for two states
         self.assertIn("CSVの行数ではなく", mv.COUNT_NOTE)
 
+    def test_the_accountant_card_summary_comes_from_the_rows_and_never_says_approved(self):
+        """Phase 5B: the summary (state, target, 明細行 per item, technical Evidence, missing, next) from the view model."""
+        signoff = "YAYOI-JDL-TAX-NONCREDIT-TAX-ACCOUNTANT-SIGNOFF-REQUIRED"
+        evidence = "EVID-SYNTHETIC-NONCREDIT"
+        tax_review = TaxMappingSetupReview(items=(
+            TaxMappingSetupItem("課対仕入10%｜区分記載｜控除不可", target_display="非仕入（税区空欄）※税理士確認後のみ",
+                                evidence_id=evidence, reason="技術確認は済み。申告上の扱いは税理士の確認が必要。区別はCSVに残りません。",
+                                action_owner="HUMAN", blocker_code=signoff, affected_row_count=3),
+            TaxMappingSetupItem("課対仕入8%（軽）｜区分記載｜控除不可", target_display="非仕入（税区空欄）※税理士確認後のみ",
+                                evidence_id=evidence, reason="技術確認は済み。", action_owner="HUMAN", blocker_code=signoff,
+                                affected_row_count=1),
+        ), context_compatible=True)
+        view = self.view(Review(), tax_review=tax_review, observed_tax=(
+            ("課対仕入10%｜区分記載｜控除不可", 3), ("課対仕入8%（軽）｜区分記載｜控除不可", 1)))
+        summary = mv.accountant_summary(view.accountant_waiting)
+        self.assertEqual(summary.target, "税区分 2項目")
+        self.assertEqual(summary.lines, ("課対仕入10%｜区分記載｜控除不可: 3明細行", "課対仕入8%（軽）｜区分記載｜控除不可: 1明細行"))
+        self.assertTrue(summary.evidence.startswith("確認済み"))
+        self.assertIn("税理士の判断と、正式なSIGNOFFの記録", summary.missing)
+        self.assertIn("仕訳ごと", summary.next_action)
+        self.assertIn("未承認", summary.state)
+        for text in (summary.state, summary.evidence, summary.missing, summary.next_action):
+            self.assertNotIn("承認済み", text)
+        facts = dict(summary.details[0][1])                      # nothing of the details is dropped
+        self.assertEqual(facts["変換先の候補"], "非仕入（税区空欄）※税理士確認後のみ")
+        self.assertIn("区別はCSVに残りません", facts["根拠と理由"])
+        self.assertEqual(facts["JDL技術Evidence"], evidence)
+        self.assertIn(signoff, facts["確認コード"])
+        self.assertTrue(any("CLI" in step for step in summary.procedure))
+        # without the technical Evidence id the summary says so (never 確認済み by default)
+        bare = mv.accountant_summary([replace(view.accountant_waiting[0], evidence="")])
+        self.assertFalse(bare.evidence.startswith("確認済み"))
+        self.assertIsNone(mv.accountant_summary(()))
+
     def test_an_accountant_signoff_wait_is_not_a_jdl_evidence_wait(self):
         """Company A's 控除不可: the JDL technical Evidence exists; what is missing is the accountant's sign-off."""
         signoff = "YAYOI-JDL-TAX-NONCREDIT-TAX-ACCOUNTANT-SIGNOFF-REQUIRED"

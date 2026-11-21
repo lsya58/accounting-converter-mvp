@@ -157,6 +157,10 @@ def _ratio_text(pair) -> str:
     return "未登録" if pair is not None and pair[1] == 0 else ""
 
 
+COUNT_SCOPE_NOTE = ("「確認済みの設定」は、この画面の設定の項目数です。税理士の確認待ち（税区分の項目・仕訳・明細行）は"
+                    "別の集計で、ここには含めず、合算もしません（「要確認」と「変換診断」で確認します）。")
+
+
 def build_settings_overview(facts: SettingsFacts | None) -> SettingsOverview:
     if facts is None:
         return SettingsOverview(
@@ -208,9 +212,9 @@ def _company(f: SettingsFacts) -> SettingSection:
         SettingRow("add", "会社の追加", "新しい会社を追加します", NOT_APPLICABLE, action=ACT_ADD_COMPANY,
                    action_label="会社を追加…",
                    impact="追加しても、他の会社の設定・READY/BLOCKは変わりません。"),
-        SettingRow("delete", "会社の削除", "この会社設定を削除します（対応設定と元のJDL設定は削除されません）",
-                   NOT_APPLICABLE, action=ACT_DELETE_COMPANY, action_label="削除…",
-                   impact="削除するとこの会社は選べなくなります。確認ダイアログで確定します。"),
+        SettingRow("delete", "会社の削除", "この会社設定を削除します（変換プロファイル・承認台帳・元のJDL設定ファイルは"
+                   "削除されません）", NOT_APPLICABLE, action=ACT_DELETE_COMPANY, action_label="削除…",
+                   impact="削除するとこの会社は選べなくなります。会社名を入力する確認ダイアログで確定します。"),
     )
     summary = f"{f.display_name or '（名称なし）'} ／ " + ("利用できます" if usable else "確認が必要です")
     return SettingSection("company", "会社の基本情報", summary, rows, _worst(rows))

@@ -449,6 +449,14 @@ QPushButton#navButton:checked {{
     border: 1px solid {TOKENS['border.default']}; border-left: 3px solid {TOKENS['accent']};
 }}
 QPushButton#navButton:focus {{ border: 2px solid {TOKENS['focus']}; }}
+QPushButton#navButton[compact="true"] {{ text-align: center; padding: 6px 2px; font-size: 12px; }}
+QPushButton#navToggle {{
+    text-align: left; padding: 4px 12px; border: 1px solid transparent; border-radius: 4px; background: transparent;
+    color: {TOKENS['text.secondary']};
+}}
+QPushButton#navToggle[compact="true"] {{ text-align: center; padding: 4px 2px; }}
+QPushButton#navToggle:hover {{ background: {TOKENS['accent.soft']}; }}
+QPushButton#navToggle:focus {{ border: 2px solid {TOKENS['focus']}; }}
 QFrame#contextBar {{ background: {TOKENS['bg.surface']}; border: none; border-bottom: 1px solid {TOKENS['border.default']}; }}
 QLabel#pageTitle {{ color: {TOKENS['text.primary']}; font-size: 20px; font-weight: 600; }}
 """

@@ -184,7 +184,7 @@ class AccountingConverterMainWindow(QMainWindow):
         row = QHBoxLayout(root)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(0)
-        self.nav = NavigationRail(hv.NAV_ITEMS, self)
+        self.nav = NavigationRail(hv.NAV_ITEMS, self, compact_items=hv.NAV_COMPACT, pending_mark=hv.NAV_PENDING_MARK)
         row.addWidget(self.nav)
         right = QWidget()
         right.setObjectName("page")
@@ -1206,6 +1206,12 @@ class AccountingConverterMainWindow(QMainWindow):
             except Exception:  # noqa: BLE001 - shown as 確認が必要 (never guessed)
                 context = None
         return SettingsDialog._tax_context_summary(context)
+
+    def resizeEvent(self, event) -> None:
+        """A narrow window gets the compact navigation (view only: the page, selection and settings stay)."""
+        super().resizeEvent(event)
+        if hasattr(self, "nav"):
+            self.nav.follow_width(self.width())
 
     def closeEvent(self, event) -> None:
         self.home_task.shutdown()
