@@ -22,7 +22,10 @@ from pathlib import Path
 from accounting_converter.adapters.input.freee.journal_csv import (
     BLANK_SIDES_KEY,
     COLUMN_ROLES,
+    DISPLAY_NUMBER_KEY,
     EVIDENCE_ID,
+    FILE_LEVEL_ISSUES,
+    NONBLANK_COLUMNS_KEY,
     OBSERVED_JOURNAL_SHAPES,
     PERIOD_END_FLAG_KEY,
     TAX_ACCOUNTING_METHOD_KEY,
@@ -34,6 +37,7 @@ from accounting_converter.adapters.input.freee.journal_csv import (
 )
 from accounting_converter.adapters.output.jdl.row_evidence import JDL_ROW_DESCRIPTION_VERIFIED_SHAPES
 from accounting_converter.domain.conversion_direction import direction_for
+from accounting_converter.domain.information_retention import RetentionInventory, RetentionStatus
 from accounting_converter.domain.journal import JournalEntry
 from accounting_converter.domain.journal_rows import ROW_ORDER_KEY, journal_physical_rows, physical_row_shape
 from accounting_converter.domain.source_information import closing_adjustment_marker, source_fields
@@ -77,6 +81,74 @@ def information_class(column: str) -> str:
     if base in _SYSTEM:
         return SYSTEM_METADATA
     return NO_JDL_COLUMN
+
+
+# --------------------------------------------------------------------------- field retention (freee -> JDL)
+# Common-model roles: (status, reason). RETAINED means "carried by the common model with a known meaning", never
+# "will be output as is"; the JDL mapping of every retained value is still a Human / Evidence decision.
+_ROLE_RETENTION: dict[Role, tuple[RetentionStatus, str]] = {
+    Role.DATE: (RetentionStatus.RETAINED, "COMMON_MODEL_DATE"),
+    Role.ACCOUNT: (RetentionStatus.RETAINED, "COMMON_MODEL_ACCOUNT"),
+    Role.AMOUNT: (RetentionStatus.RETAINED, "COMMON_MODEL_AMOUNT"),
+    Role.TAX_AMOUNT: (RetentionStatus.RETAINED, "COMMON_MODEL_TAX_AMOUNT"),
+    Role.TAX_RATE: (RetentionStatus.RETAINED, "COMMON_MODEL_TAX_RATE"),
+    Role.TAX_REDUCED: (RetentionStatus.RETAINED, "COMMON_MODEL_TAX_REDUCED"),
+    Role.ROW_DESCRIPTION: (RetentionStatus.RETAINED, "COMMON_MODEL_DESCRIPTION_COMPOSED_BY_FREEE"),
+    Role.SIDE_DESCRIPTION: (RetentionStatus.RETAINED, "COMMON_MODEL_DESCRIPTION"),
+    Role.TAX_CATEGORY: (RetentionStatus.TARGET_DESTINATION_UNCONFIRMED, "TAX_CATEGORY_JDL_MAPPING_UNCONFIRMED"),
+    Role.CLOSING: (RetentionStatus.TARGET_DESTINATION_UNCONFIRMED, "CLOSING_MARKER_JDL_UNVERIFIED"),
+    Role.DEPARTMENT: (RetentionStatus.TARGET_DESTINATION_UNCONFIRMED, "DEPARTMENT_JDL_MAPPING_UNCONFIRMED"),
+    Role.COUNTERPARTY: (RetentionStatus.TARGET_DESTINATION_UNCONFIRMED, "COUNTERPARTY_JDL_POLICY_UNCONFIRMED"),
+    Role.TAX_INCLUSION: (RetentionStatus.MEANING_UNCONFIRMED, "TAX_INCLUSION_JDL_MAPPING_UNVERIFIED"),
+    Role.TAX_ACCOUNTING_METHOD: (RetentionStatus.MEANING_UNCONFIRMED, "TAX_ACCOUNTING_METHOD_UNMAPPED"),
+    Role.PERIOD_END_FLAG: (RetentionStatus.MEANING_UNCONFIRMED, "PERIOD_END_FLAG_NOT_INTERPRETED"),
+    Role.DISPLAY_NUMBER: (RetentionStatus.AUDIT_ONLY, "DISPLAY_NUMBER_FILE_LOCAL"),
+    Role.RECORD_NUMBER: (RetentionStatus.AUDIT_ONLY, "DISPLAY_NUMBER_FILE_LOCAL"),
+}
+_CLASS_RETENTION: dict[str, RetentionStatus] = {
+    NO_JDL_COLUMN: RetentionStatus.UNSUPPORTED,
+    NEEDS_HUMAN_TRANSFORMATION: RetentionStatus.TARGET_DESTINATION_UNCONFIRMED,
+    MAPPING_AID: RetentionStatus.AUDIT_ONLY,
+    SOURCE_IDENTIFIER: RetentionStatus.AUDIT_ONLY,
+    SYSTEM_METADATA: RetentionStatus.AUDIT_ONLY,
+    PERSONAL_DATA: RetentionStatus.AUDIT_ONLY,
+}
+
+
+def field_retention(variant: FreeeJournalVariant, column: str, *, value_unobserved: bool = False,
+                    display_name_differs: bool = False) -> tuple[RetentionStatus, str]:
+    """(status, reason) of one freee column on the way to JDL. Unknown columns and unobserved values are
+    MEANING_UNCONFIRMED whatever their name suggests."""
+    role = COLUMN_ROLES.get(variant, {}).get(column)
+    if role is None:
+        return RetentionStatus.MEANING_UNCONFIRMED, "UNKNOWN_SOURCE_COLUMN"
+    if value_unobserved:
+        return RetentionStatus.MEANING_UNCONFIRMED, "VALUE_UNOBSERVED"
+    if role.role is Role.ACCOUNT_DISPLAY_NAME and display_name_differs:
+        return RetentionStatus.MEANING_UNCONFIRMED, "ACCOUNT_DISPLAY_NAME_DIFFERS"
+    if role.role in _ROLE_RETENTION:
+        return _ROLE_RETENTION[role.role]
+    klass = information_class(column)
+    return _CLASS_RETENTION[klass], klass
+
+
+@dataclass(frozen=True)
+class FreeeJournalResult:
+    """One journal of the file, located by file-local numbers only (no freee ID, account, amount or text)."""
+    display_number: str
+    rows: tuple[int, ...]  # parsed: every row of the journal; rejected: the rows where a problem was found
+    parsed: bool
+    reasons: tuple[str, ...]  # blockers (parsed) or FreeeIssue codes (rejected), sorted
+    shape: tuple[int, int, int] | None = None
+    closing: bool = False
+    compound: bool = False
+
+    def to_dict(self) -> dict:
+        return {
+            "display_number": self.display_number, "rows": list(self.rows), "parsed": self.parsed,
+            "reasons": list(self.reasons), "shape": None if self.shape is None else "{}D{}C/{}rows".format(*self.shape),
+            "closing": self.closing, "compound": self.compound,
+        }
 
 
 @dataclass(frozen=True)
@@ -140,6 +212,25 @@ class FreeeDiagnosis:
     blank_sides: Counter = field(default_factory=Counter)  # representation -> sides
     closing: Counter = field(default_factory=Counter)
     unobserved_value_columns: Counter = field(default_factory=Counter)  # column -> journals
+    retention: RetentionInventory = field(default_factory=RetentionInventory)
+    journals: list[FreeeJournalResult] = field(default_factory=list)  # file order: parsed and rejected
+
+    @property
+    def journals_read(self) -> int:
+        """Journals found in the file (parsed + rejected). 0 when the file itself could not be read."""
+        return len(self.parse.entries) + self.parse.rejected_journals if self.parse.file_readable else 0
+
+    @property
+    def journals_parsed(self) -> int:
+        return len(self.parse.entries) if self.parse.file_readable else 0
+
+    @property
+    def journals_rejected(self) -> int:
+        return self.parse.rejected_journals if self.parse.file_readable else 0
+
+    @property
+    def file_issues(self) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(i.code.value for i in self.parse.issues if i.code in FILE_LEVEL_ISSUES))
 
     @property
     def formal_ready(self) -> int:
@@ -194,6 +285,16 @@ class FreeeDiagnosis:
             },
             "shapes": {f"{d}D{c}C/{r}rows": n for (d, c, r), n in sorted(self.shapes.items())},
             "journals_simple_1d1c_or_shape_with_jdl_row_evidence": self.shapes_with_jdl_row_evidence,
+            "journals_read": self.journals_read,
+            "file_issues": list(self.file_issues),
+            "information_retention": {
+                status.value: {
+                    item.field: {"reason": item.reason, "journals": item.journals, "cells": item.values}
+                    for item in items
+                }
+                for status, items in self.retention.by_status().items()
+            },
+            "journals": [journal.to_dict() for journal in self.journals],
         }
 
 
@@ -283,6 +384,7 @@ def diagnose_parse_result(parse: FreeeParseResult) -> FreeeDiagnosis:
     if header is None or not parse.file_readable:
         return diagnosis
     has_description = _has_description(header.variant, header.columns)
+    _rejected_journals(diagnosis)
     for entry in parse.entries:
         diagnosis.journal_blockers[entry.id] = journal_blockers(
             entry, header_verified=header.verified, ready_allowed=direction.ready_allowed,
@@ -324,9 +426,59 @@ def diagnose_parse_result(parse: FreeeParseResult) -> FreeeDiagnosis:
         for column in {value.field for value in source_fields(entry) if value.known}:
             diagnosis.information_fields[column] += 1
         rows = journal_physical_rows(entry)
+        shape = None
         if rows is not None:
             shape = physical_row_shape(rows)
             diagnosis.shapes[shape] += 1
             if shape in JDL_ROW_DESCRIPTION_VERIFIED_SHAPES or (shape[2] == 1 and shape[:2] == (1, 1)):
                 diagnosis.shapes_with_jdl_row_evidence += 1
+        _add_retention(diagnosis.retention, header.variant, entry)
+        diagnosis.journals.append(FreeeJournalResult(
+            display_number=str(entry.metadata.get(DISPLAY_NUMBER_KEY) or ""),
+            rows=tuple(entry.metadata.get(ROW_ORDER_KEY, ()) or ()),
+            parsed=True,
+            reasons=diagnosis.journal_blockers[entry.id],
+            shape=shape,
+            closing=closing_adjustment_marker(entry) is not None,
+            compound=len(entry.lines) > 2,
+        ))
+    diagnosis.journals.sort(key=lambda journal: journal.rows[:1] or (0,))
     return diagnosis
+
+
+def _add_retention(inventory: RetentionInventory, variant: FreeeJournalVariant, entry: JournalEntry) -> None:
+    unobserved = set(entry.metadata.get(UNOBSERVED_VALUES_KEY, ()) or ())
+    differs = {
+        "借方決算書表示名" if line.side.value == "DEBIT" else "貸方決算書表示名"
+        for line in entry.lines
+        if line.metadata.get("freee_account_display_name") not in (None, line.account)
+    }
+    for column, cells in entry.metadata.get(NONBLANK_COLUMNS_KEY, ()) or ():
+        status, reason = field_retention(
+            variant, column, value_unobserved=column in unobserved, display_name_differs=column in differs,
+        )
+        inventory.add(column, status, reason, journals=1, values=cells)
+
+
+def _rejected_journals(diagnosis: FreeeDiagnosis) -> None:
+    """Rejected journals, grouped by the file-local display number they were reported with (rows always counted)."""
+    grouped: dict[tuple[str, int], set[str]] = {}
+    rows: dict[tuple[str, int], set[int]] = {}
+    order: list[tuple[str, int]] = []
+    current: tuple[str, int] | None = None
+    for issue in diagnosis.parse.issues:
+        if issue.code in FILE_LEVEL_ISSUES:
+            continue
+        number = str(issue.journal_number or "")
+        if current is None or current[0] != number or not number:
+            current = (number, issue.row_number or 0)
+            if current not in grouped:
+                order.append(current)
+        grouped.setdefault(current, set()).add(issue.code.value)
+        if issue.row_number is not None:
+            rows.setdefault(current, set()).add(issue.row_number)
+    for key in order:
+        diagnosis.journals.append(FreeeJournalResult(
+            display_number=key[0], rows=tuple(sorted(rows.get(key, ()))), parsed=False,
+            reasons=tuple(sorted(grouped[key])),
+        ))

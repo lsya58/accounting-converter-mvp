@@ -79,9 +79,11 @@ from accounting_converter.infrastructure.local_diagnostic_log import (
 from accounting_converter.ui import home_view as hv
 from accounting_converter.ui import mapping_review_view as mv
 from accounting_converter.ui import settings_view as sv
+from accounting_converter.ui import freee_trial_view as fv
 
 from . import components as ui
 from .bulk_review import BulkCandidateDialog, DescriptionRulesDialog
+from .freee_trial_dialog import FreeeTrialDiagnosisDialog
 from .navigation import NavigationRail
 from .pages import scroll_page
 from .pages.home import HomePage
@@ -260,6 +262,29 @@ class AccountingConverterMainWindow(QMainWindow):
         self.recognition_card.setObjectName("recognitionPanel")  # inset panel, not a nested card
         self.recognition_card.hide()
         file_layout.addWidget(self.recognition_card)
+        self.import_scope_label = ui.WrappingLabel("対応範囲\n" + "\n".join(f"・{line}" for line in fv.SCOPE_LINES))
+        self.import_scope_label.setObjectName("muted")
+        self.import_scope_label.setAccessibleName("対応範囲")
+        file_layout.addWidget(self.import_scope_label)
+        # freee: an independent trial path (E5A). It never selects the file in the main flow, never selects or
+        # touches a company setting and never enables any output.
+        freee_card, freee_layout = self._card(f"freee会計の仕訳帳CSV（{fv.TRIAL_BADGE}）")
+        freee_card.setAccessibleName(f"freee会計（{fv.TRIAL_BADGE}）")
+        self.freee_trial_card = freee_card
+        self.freee_trial_note = ui.WrappingLabel(fv.TRIAL_NOTE + "\n" + fv.PARSED_IS_NOT_READY)
+        self.freee_trial_note.setObjectName("muted")
+        freee_layout.addWidget(self.freee_trial_note)
+        freee_row = QHBoxLayout()
+        self.freee_trial_button = ui.make_button(
+            "freeeの仕訳帳CSVを試験診断する…",
+            description="freeeの仕訳帳CSV（新CSV・旧CSV）を選び、読み取りの診断結果を表示します（保存・出力しません）")
+        self.freee_trial_button.clicked.connect(self._choose_freee_trial)
+        freee_row.addWidget(self.freee_trial_button)
+        freee_row.addStretch(1)
+        freee_layout.addLayout(freee_row)
+        self.freee_trial_message = ui.MessageBar()
+        freee_layout.addWidget(self.freee_trial_message)
+        layout.addWidget(freee_card)
         next_row = QHBoxLayout()
         next_row.addStretch(1)
         self.import_next_button = ui.make_button(
@@ -588,6 +613,54 @@ class AccountingConverterMainWindow(QMainWindow):
     def _select_input(self, path: Path) -> None:
         self._render(self.controller.select_file(path))
         self._refresh_current_csv_readiness()
+        self._hint_freee_trial(path)
+
+    # ------------------------------------------------------------------ freee 試験診断 (E5A, independent)
+    def _hint_freee_trial(self, path: Path) -> None:
+        """A freee 仕訳帳CSV given to the main flow stays 未対応 there; only a hint to the trial path is added."""
+        state = self.controller.state
+        if (
+            state.file_recognition is not None
+            and state.file_recognition.format is RecognizedFormat.UNKNOWN
+            and fv.detect_freee_variant(path) is not None
+        ):
+            self.recognition_label.setText(
+                self.recognition_label.text()
+                + "\nfreeeの仕訳帳CSVのようです。freeeは試験対応のため、このページの「freeeの仕訳帳CSVを試験診断する…」"
+                "から診断だけができます（変換はできません）。"
+            )
+
+    def _choose_freee_trial(self) -> None:
+        filename, _ = QFileDialog.getOpenFileName(
+            self, "試験診断するfreeeの仕訳帳CSVを選択", "", "freee 仕訳帳CSV (*.csv);;All files (*)",
+        )
+        if filename:
+            self.open_freee_trial(Path(filename))
+
+    def freee_trial_view(self, path: Path) -> fv.FreeeTrialView:
+        """Reads the file only (application.freee_diagnosis). No controller state, no company setting."""
+        from accounting_converter.application.freee_diagnosis import diagnose_freee_journal_csv
+
+        return fv.present(diagnose_freee_journal_csv(path), path.name)
+
+    def open_freee_trial(self, path: Path) -> None:
+        self.freee_trial_message.clear_message()
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            view = self.freee_trial_view(path)
+        except Exception as exc:  # the diagnosis is read-only; any failure is shown, nothing changed
+            log_local_exception("freee_trial_diagnosis", exc)
+            self.freee_trial_message.show_message(
+                "error", "freeeの試験診断を実行できませんでした。ファイル・設定は変更していません。")
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.freee_trial_message.show_message(
+            "info" if view.readable else "warning",
+            f"{path.name}: {view.headline}",
+        )
+        self.freee_trial_dialog = FreeeTrialDiagnosisDialog(view, self)
+        self.freee_trial_dialog.exec()
 
     def _confirm_current_csv(self, *, only: str | None = None, initial_tab: str | None = None) -> None:
         """The existing confirmation flow (saves only on its own confirmation). `only` narrows it for a deep link

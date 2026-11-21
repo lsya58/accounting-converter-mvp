@@ -68,6 +68,9 @@ REGISTRATION_METHOD_KEY = "freee_registration_method"  # raw 登録した方法 
 LINE_SIDE_DESCRIPTION_KEY = "freee_side_description"  # raw 借方備考 / 貸方備考 (新CSV)
 LINE_DISPLAY_NAME_KEY = "freee_account_display_name"
 LINE_ACCOUNT_CODE_KEY = "freee_account_code"  # freee-side code column; NOT a JDL code
+# tuple[(column name, non-blank cells)] of one journal, in header order. Column NAMES and counts only (no values):
+# lets a diagnosis account for every non-blank cell, including the ones carried by the common model.
+NONBLANK_COLUMNS_KEY = "freee_nonblank_columns"
 
 BLANK_SIDE_NEW_ALL_EMPTY = "NEW_ALL_SIDE_COLUMNS_EMPTY"
 BLANK_SIDE_OLD_ZERO_PLACEHOLDER = "OLD_EMPTY_ACCOUNT_ZERO_AMOUNT_OUT_OF_SCOPE"
@@ -561,6 +564,7 @@ class _JournalBuilder:
         fields: list[SourceFieldValue] = []
         blank_sides: list[tuple[int, str, str]] = []
         unobserved: list[str] = []
+        nonblank: dict[str, int] = {}
         for row_number, record in rows:
             row_lines: list[JournalLine] = []
             row_problems: list[FreeeJournalIssue] = []
@@ -581,6 +585,7 @@ class _JournalBuilder:
                 value = record.get(name, "")
                 if not value:
                     continue
+                nonblank[name] = nonblank.get(name, 0) + 1
                 role = self.role(name)
                 if role is None:  # not in the observed header: kept verbatim, never interpreted
                     fields.append(SourceFieldValue(name, value, SourceFieldScope.ROW, row_number, known=False))
@@ -619,6 +624,7 @@ class _JournalBuilder:
                 DISPLAY_NUMBER_KEY: display,
                 JOURNAL_ID_KIND_KEY: self.id_column,
                 UNOBSERVED_VALUES_KEY: tuple(dict.fromkeys(unobserved)),
+                NONBLANK_COLUMNS_KEY: tuple((name, nonblank[name]) for name in self.header.columns if name in nonblank),
                 **({TAX_ACCOUNTING_METHOD_KEY: next(iter(methods))} if next(iter(methods)) else {}),
                 **({PERIOD_END_FLAG_KEY: first["期末日取引フラグ"]} if first.get("期末日取引フラグ") else {}),
                 **({REGISTRATION_METHOD_KEY: first["登録した方法"]} if first.get("登録した方法") else {}),
