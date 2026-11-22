@@ -26,8 +26,11 @@ from accounting_converter.adapters.input.freee.journal_csv import (
     EVIDENCE_ID,
     FILE_LEVEL_ISSUES,
     NONBLANK_COLUMNS_KEY,
-    OBSERVED_JOURNAL_SHAPES,
+    OBSERVATION_EVIDENCE_IDS,
+    OBSERVED_REGISTRATION_SOURCES,
+    OBSERVED_ROW_LAYOUTS,
     PERIOD_END_FLAG_KEY,
+    REGISTRATION_SOURCE_KEY,
     TAX_ACCOUNTING_METHOD_KEY,
     UNOBSERVED_VALUES_KEY,
     FreeeJournalCsvParser,
@@ -36,6 +39,8 @@ from accounting_converter.adapters.input.freee.journal_csv import (
     Role,
 )
 from accounting_converter.adapters.output.jdl.row_evidence import JDL_ROW_DESCRIPTION_VERIFIED_SHAPES
+# Source-independent: the 経過措置 ratio that applies on a date (same table and Human blocker as the Yayoi route).
+from accounting_converter.application.yayoi_credit_period import PERIOD_BLOCKER, applicable_ratio
 from accounting_converter.domain.conversion_direction import direction_for
 from accounting_converter.domain.information_retention import RetentionInventory, RetentionStatus
 from accounting_converter.domain.journal import JournalEntry
@@ -248,6 +253,7 @@ class FreeeDiagnosis:
             "ready_allowed": self.ready_allowed,
             "formal_ready": self.formal_ready,
             "evidence_id": EVIDENCE_ID,
+            "evidence_ids": list(OBSERVATION_EVIDENCE_IDS),
             "format": None if header is None else {
                 "variant": header.variant.value,
                 "encoding": header.encoding,
@@ -298,6 +304,11 @@ class FreeeDiagnosis:
         }
 
 
+def row_layout(rows) -> tuple[tuple[bool, bool], ...]:
+    """Per physical row: (debit side present, credit side present). Which side is blank matters."""
+    return tuple((row.debit is not None, row.credit is not None) for row in rows)
+
+
 def journal_blockers(entry: JournalEntry, *, header_verified: bool, ready_allowed: bool, has_description: bool,
                      variant_known: bool = True, header_observed: bool = False) -> tuple[str, ...]:
     found: set[str] = {"HUMAN:ACCOUNT_MAPPING"}  # freee has no confirmed mapping store
@@ -318,6 +329,11 @@ def journal_blockers(entry: JournalEntry, *, header_verified: bool, ready_allowe
         found.add("HUMAN:FREEE_TAX_ACCOUNTING_METHOD_UNKNOWN")
     if entry.metadata.get(UNOBSERVED_VALUES_KEY):
         found.add("SYSTEM_EVIDENCE:FREEE_VALUE_UNOBSERVED")
+    # 新CSV: 登録した方法 together with which source ID is filled (振替伝票ID / 取引ID). Other combinations
+    # (手動 with 振替伝票ID, both IDs, 自動で経理 …) were never exported.
+    source = entry.metadata.get(REGISTRATION_SOURCE_KEY)
+    if source is not None and tuple(source) not in OBSERVED_REGISTRATION_SOURCES:
+        found.add("SYSTEM_EVIDENCE:FREEE_REGISTRATION_SOURCE_UNOBSERVED")
     for line in entry.lines:
         info = line.tax_info
         hint = tax_hint(info.category if info is not None else None)
@@ -325,6 +341,9 @@ def journal_blockers(entry: JournalEntry, *, header_verified: bool, ready_allowe
             found.add("HUMAN:TAX_MAPPING")
             if hint.kind == "UNKNOWN":
                 found.add("SYSTEM_EVIDENCE:FREEE_TAX_CATEGORY_UNRECOGNISED")
+        # 経過措置 (控80 / 控70 …) whose ratio is not the one for the journal date: stop for the Human.
+        if hint.deduction_ratio is not None and int(hint.deduction_ratio) != applicable_ratio(entry.date):
+            found.add(PERIOD_BLOCKER)
         if info is not None:
             if hint.taxed:
                 if info.metadata.get("freee_tax_inclusion_raw"):
@@ -352,7 +371,7 @@ def journal_blockers(entry: JournalEntry, *, header_verified: bool, ready_allowe
     rows = journal_physical_rows(entry)
     if rows is None:
         found.add("SYSTEM_EVIDENCE:FREEE_ROW_DESCRIPTION_INCONSISTENT")  # 借方備考 != 貸方備考 in one row
-    elif physical_row_shape(rows) not in OBSERVED_JOURNAL_SHAPES:
+    elif row_layout(rows) not in OBSERVED_ROW_LAYOUTS:
         found.add("SYSTEM_EVIDENCE:FREEE_JOURNAL_SHAPE_UNOBSERVED")
     for value in source_fields(entry):
         if not value.known:

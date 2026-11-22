@@ -325,18 +325,25 @@ class NewCsvTest(unittest.TestCase):
         self.assertIn("HUMAN:DEPARTMENT_MAPPING", blockers)
 
     def test_unobserved_shapes_and_tax_categories_block(self):
-        two_by_two = (
-            _new("1", SYNTHETIC_ID_1, 1, 2, **_new_side("借方", "合成費用", "600"), **_new_side("貸方", "合成現金", "600")),
-            _new("1", SYNTHETIC_ID_1, 2, 2, **_new_side("借方", "合成費用", "400"), **_new_side("貸方", "合成現金", "400")),
+        # 2D2C and 2D1C (row 2 credit blank) are observed since E5B第1回; these layouts are still not.
+        credit_blank_on_row_1 = (
+            _new("1", SYNTHETIC_ID_2, 1, 2, **_new_side("借方", "合成費用", "600")),
+            _new("1", SYNTHETIC_ID_2, 2, 2, **_new_side("借方", "合成費用", "400"), **_new_side("貸方", "合成現金", "1000")),
         )
-        blank_credit = (
-            _new("1", SYNTHETIC_ID_2, 1, 2, **_new_side("借方", "合成費用", "600"), **_new_side("貸方", "合成現金", "1000")),
-            _new("1", SYNTHETIC_ID_2, 2, 2, **_new_side("借方", "合成費用", "400")),
+        one_by_three = (
+            _new("1", SYNTHETIC_ID_1, 1, 3, **_new_side("借方", "合成費用", "900"), **_new_side("貸方", "合成現金", "300")),
+            _new("1", SYNTHETIC_ID_1, 2, 3, **_new_side("貸方", "合成現金", "300")),
+            _new("1", SYNTHETIC_ID_1, 3, 3, **_new_side("貸方", "合成現金", "300")),
         )
-        for name, rows in (("2D2C", two_by_two), ("2D1C blank credit", blank_credit)):
+        three_by_three = tuple(
+            _new("1", SYNTHETIC_ID_3, line, 3, **_new_side("借方", "合成費用", "100"), **_new_side("貸方", "合成現金", "100"))
+            for line in (1, 2, 3)
+        )
+        for name, rows in (("2D1C credit blank on row 1", credit_blank_on_row_1), ("1D3C", one_by_three),
+                           ("3D3C", three_by_three)):
             with self.subTest(name):
                 result = parse(NEW_CSV_97_HEADER, rows)
-                self.assertEqual(result.accepted_rows, 2)  # read and kept, never dropped
+                self.assertEqual(result.accepted_rows, len(rows))  # read and kept, never dropped
                 blockers = diagnose_parse_result(result).journal_blockers[result.entries[0].id]
                 self.assertIn("SYSTEM_EVIDENCE:FREEE_JOURNAL_SHAPE_UNOBSERVED", blockers)
         reduced = list(new_rows()[0])

@@ -2,10 +2,11 @@
 
 Status: NOT a production input adapter (not an `InputAdapter`, not in `production_adapter_registry`).
 
-Evidence (EVIDENCE_ID below; private, not in Git — the originals hold an account e-mail address and
-freee internal IDs): one real export of each variant from a freee 個人事業主 test office, six
-hand-entered fictitious 振替伝票 (2026-11-15). docs/research/freee_journal_csv_public_spec.md §5
-lists what this sample settles and what it does not. From it:
+Evidence (private, not in Git — the originals hold an account e-mail address and freee internal IDs):
+real exports of each variant from one freee 個人事業主 test office — E4 (`E4_EVIDENCE_ID`, six
+hand-entered fictitious 振替伝票, 2026-11-15; research doc §5) and E5B第1回 (`E5B1_EVIDENCE_ID`, eight
+fictitious journals incl. two 取引の登録 on a test 口座, 2026-11-22; research doc §8). Each observed
+value / layout is registered with the Evidence that showed it (`OBSERVATIONS`). From them:
 
 - the exact headers (`OLD_CSV_29_HEADER`, `NEW_CSV_97_HEADER`) are OBSERVED. Observed is not
   verified: `VERIFIED_HEADER_FINGERPRINTS` stays empty, because column MEANINGS beyond what six
@@ -55,7 +56,7 @@ from accounting_converter.domain.source_information import (
 )
 
 SOURCE_FORMAT_PREFIX = "freee_journal_csv"
-EVIDENCE_ID = "EVID-FREEE-JOURNAL-CSV-REAL-EXPORT-20261115-001"
+# Evidence IDs (E4 / E5B第1回) and what each observed: see "observations, by Evidence" below.
 
 # Entry / line metadata keys (freee-specific; read by application.freee_diagnosis only).
 BLANK_SIDES_KEY = "freee_blank_sides"  # tuple[(row_number, "DEBIT"|"CREDIT", representation)]
@@ -65,6 +66,7 @@ UNOBSERVED_VALUES_KEY = "freee_unobserved_values"  # tuple[column names]: non-bl
 TAX_ACCOUNTING_METHOD_KEY = "freee_tax_accounting_method"  # raw 消費税経理処理方法 (新CSV)
 PERIOD_END_FLAG_KEY = "freee_period_end_flag"  # raw 期末日取引フラグ (新CSV), not interpreted
 REGISTRATION_METHOD_KEY = "freee_registration_method"  # raw 登録した方法 (新CSV)
+REGISTRATION_SOURCE_KEY = "freee_registration_source"  # (登録した方法, 振替伝票ID present, 取引ID present), 新CSV
 LINE_SIDE_DESCRIPTION_KEY = "freee_side_description"  # raw 借方備考 / 貸方備考 (新CSV)
 LINE_DISPLAY_NAME_KEY = "freee_account_display_name"
 LINE_ACCOUNT_CODE_KEY = "freee_account_code"  # freee-side code column; NOT a JDL code
@@ -197,41 +199,163 @@ _NEW_ROLES = {
     "承認者(仕訳承認)": Role.PERSONAL, "一次承認者(仕訳承認)": Role.PERSONAL,
 }
 
-# Columns with at least one non-blank value in the 2026-11-15 sample.
-_OLD_VALUES_OBSERVED = frozenset({
-    "", "取引日", "借方勘定科目", "借方金額", "借方税区分", "借方品目", "借方メモ", "貸方勘定科目", "貸方金額",
-    "貸方税区分", "摘要", "決算整理仕訳", "仕訳番号", "借方取引先", "作成日時", "借方勘定科目コード",
-    "貸方勘定科目コード", "更新日時", "承認状況", "作成者",
-})
-_NEW_VALUES_OBSERVED = frozenset({
-    "No", "取引日",
-    *(f"{prefix}{suffix}" for prefix in ("借方", "貸方") for suffix in (
-        "勘定科目", "決算書表示名", "勘定科目ショートカット１", "勘定科目ショートカット２（勘定科目コード）",
-        "金額", "税区分", "税金額", "内税・外税", "税率", "軽減税率有無", "備考",
-    )),
-    "借方取引先名", "借方品目", "借方メモ",
-    "決算整理仕訳", "作成日時", "更新日時", "承認状況(仕訳承認)", "作成者", "消費税経理処理方法", "振替伝票ID",
-    "仕訳ID", "仕訳番号", "期末日取引フラグ", "取引支払日", "仕訳行番号", "仕訳行数", "レコード番号", "登録した方法",
-})
+# --------------------------------------------------------------------------- observations, by Evidence
+# Every "observed" fact below belongs to the real export that showed it. An observation is not a
+# verification: it only lifts FREEE_VALUE_UNOBSERVED / FREEE_JOURNAL_SHAPE_UNOBSERVED; the Human mappings,
+# the unverified meanings and DIRECTION_NOT_PRODUCTION stay. Only what was in the files is listed.
 
+# A row layout: per physical row, (debit side present, credit side present).
+RowLayout = tuple[tuple[bool, bool], ...]
+# A registration source: (登録した方法, 振替伝票ID non-blank, 取引ID non-blank) of a 新CSV journal.
+RegistrationSource = tuple[str, bool, bool]
+
+
+@dataclass(frozen=True)
+class FreeeObservation:
+    evidence_id: str
+    exported: str  # what was exported, in words (no customer values)
+    header_fingerprints: frozenset[str]
+    columns_with_values: dict[FreeeJournalVariant, frozenset[str]]  # columns with >= 1 non-blank cell
+    value_sets: dict[str, frozenset[str]]  # enumerated columns, keyed without the 借方/貸方 prefix
+    row_layouts: frozenset[RowLayout]
+    registration_sources: frozenset[RegistrationSource]
+
+
+_BOTH, _DEBIT_ONLY, _CREDIT_ONLY = (True, True), (True, False), (False, True)
+_NEW_SIDE_OBSERVED_E4 = (
+    "勘定科目", "決算書表示名", "勘定科目ショートカット１", "勘定科目ショートカット２（勘定科目コード）",
+    "金額", "税区分", "税金額", "内税・外税", "税率", "軽減税率有無", "備考",
+)
+
+E4_EVIDENCE_ID = "EVID-FREEE-JOURNAL-CSV-REAL-EXPORT-20261115-001"
+E4_OBSERVATION = FreeeObservation(
+    evidence_id=E4_EVIDENCE_ID,
+    exported="個人事業主テスト事業所・税込経理・振替伝票6件（2026-11-15）。旧/新CSV・JDL9・弥生25",
+    header_fingerprints=frozenset({header_fingerprint(OLD_CSV_29_HEADER), header_fingerprint(NEW_CSV_97_HEADER)}),
+    columns_with_values={
+        FreeeJournalVariant.OLD_CSV: frozenset({
+            "", "取引日", "借方勘定科目", "借方金額", "借方税区分", "借方品目", "借方メモ", "貸方勘定科目", "貸方金額",
+            "貸方税区分", "摘要", "決算整理仕訳", "仕訳番号", "借方取引先", "作成日時", "借方勘定科目コード",
+            "貸方勘定科目コード", "更新日時", "承認状況", "作成者",
+        }),
+        FreeeJournalVariant.NEW_CSV: frozenset({
+            "No", "取引日",
+            *(f"{prefix}{suffix}" for prefix in ("借方", "貸方") for suffix in _NEW_SIDE_OBSERVED_E4),
+            "借方取引先名", "借方品目", "借方メモ",
+            "決算整理仕訳", "作成日時", "更新日時", "承認状況(仕訳承認)", "作成者", "消費税経理処理方法", "振替伝票ID",
+            "仕訳ID", "仕訳番号", "期末日取引フラグ", "取引支払日", "仕訳行番号", "仕訳行数", "レコード番号", "登録した方法",
+        }),
+    },
+    value_sets={
+        "決算整理仕訳": frozenset({"0", "1"}),
+        "期末日取引フラグ": frozenset({"0", "1"}),
+        "内税・外税": frozenset({"内税"}),
+        "税率": frozenset({"0", "10"}),
+        "軽減税率有無": frozenset({"0"}),
+        "消費税経理処理方法": frozenset({"税込経理"}),
+        "登録した方法": frozenset({"振替伝票"}),
+        "承認状況": frozenset({"なし"}),
+        "承認状況(仕訳承認)": frozenset({"なし"}),
+        "税区分": frozenset({"対象外", "課税売上10%", "課対仕入10%", "非課売上"}),
+    },
+    # 1D1C in one row; 1D2C over two rows with the debit side of row 2 blank.
+    row_layouts=frozenset({(_BOTH,), (_BOTH, _CREDIT_ONLY)}),
+    registration_sources=frozenset({("振替伝票", True, False)}),
+)
+
+# E5B 第1回 (before the switch to 税抜経理). Same headers as E4. Private record:
+# data/private/freee_e5b_20261122/acquisition_log.md (SHA-256, period, settings, per-journal state).
+E5B1_EVIDENCE_ID = "EVID-FREEE-JOURNAL-CSV-REAL-EXPORT-20261122-E5B1-001"
+E5B1_OBSERVATION = FreeeObservation(
+    evidence_id=E5B1_EVIDENCE_ID,
+    exported="同じテスト事業所・税込経理・一般課税（一括比例配分）・E5B-01〜08の8仕訳10行（2026-11-22）。"
+             "旧/新CSV・JDL9・弥生25。期間 2026-09-15〜2026-11-09",
+    header_fingerprints=frozenset({header_fingerprint(OLD_CSV_29_HEADER), header_fingerprint(NEW_CSV_97_HEADER)}),
+    columns_with_values={
+        FreeeJournalVariant.OLD_CSV: frozenset({
+            "", "取引日", "借方勘定科目", "借方金額", "借方税区分", "貸方勘定科目", "貸方金額", "貸方税区分", "摘要",
+            "決算整理仕訳", "仕訳番号", "作成日時", "借方勘定科目コード", "貸方勘定科目コード", "更新日時", "承認状況",
+            "作成者",
+        }),
+        FreeeJournalVariant.NEW_CSV: frozenset({
+            "No", "取引日",
+            *(f"{prefix}{suffix}" for prefix in ("借方", "貸方") for suffix in _NEW_SIDE_OBSERVED_E4),
+            "決算整理仕訳", "作成日時", "更新日時", "承認状況(仕訳承認)", "作成者", "消費税経理処理方法",
+            "取引ID",  # E5B-07 / E5B-08 (登録した方法 手動)
+            "振替伝票ID", "仕訳ID", "仕訳番号", "期末日取引フラグ", "取引支払日", "仕訳行番号", "仕訳行数", "レコード番号",
+            "登録した方法",
+        }),
+    },
+    value_sets={
+        "決算整理仕訳": frozenset({"0"}),
+        "期末日取引フラグ": frozenset({"0"}),
+        "内税・外税": frozenset({"内税"}),  # E5B-08 was planned 外税; 外税 is NOT observed
+        "税率": frozenset({"0", "8", "10"}),
+        "軽減税率有無": frozenset({"0", "1"}),
+        "消費税経理処理方法": frozenset({"税込経理"}),
+        "登録した方法": frozenset({"振替伝票", "手動"}),
+        "承認状況": frozenset({"なし"}),
+        "承認状況(仕訳承認)": frozenset({"なし"}),
+        # Exact names (full-width parentheses) as exported.
+        "税区分": frozenset({
+            "対象外", "課税売上10%", "課対仕入10%", "課対仕入8%（軽）", "課税売上8%（軽）",
+            "課対仕入（控80）10%", "課対仕入（控70）10%",
+        }),
+    },
+    # 1D1C; 2D1C with the credit side of row 2 blank (E5B-01); 2D2C with both sides on both rows (E5B-02).
+    row_layouts=frozenset({(_BOTH,), (_BOTH, _DEBIT_ONLY), (_BOTH, _BOTH)}),
+    # 振替伝票 -> 振替伝票ID only; 手動 (取引の登録, 口座) -> 取引ID only (口座振替ID blank).
+    registration_sources=frozenset({("振替伝票", True, False), ("手動", False, True)}),
+)
+
+OBSERVATIONS: tuple[FreeeObservation, ...] = (E4_OBSERVATION, E5B1_OBSERVATION)
+OBSERVATION_EVIDENCE_IDS: tuple[str, ...] = tuple(o.evidence_id for o in OBSERVATIONS)
+# Kept for existing readers: the Evidence of the observed HEADERS (E5B1 showed the same headers).
+EVIDENCE_ID = E4_EVIDENCE_ID
+
+
+def _union(sets) -> frozenset:
+    return frozenset().union(*sets)
+
+
+_OLD_VALUES_OBSERVED = _union(o.columns_with_values[FreeeJournalVariant.OLD_CSV] for o in OBSERVATIONS)
+_NEW_VALUES_OBSERVED = _union(o.columns_with_values[FreeeJournalVariant.NEW_CSV] for o in OBSERVATIONS)
 # Enumerated columns (keyed without the 借方/貸方 prefix): only these values were seen. Anything else is
-# read but reported as unobserved.
+# read but reported as unobserved (外税, 税抜経理, 控50, 輸出, 半角括弧の「8%(軽)」…).
 OBSERVED_VALUE_SETS: dict[str, frozenset[str]] = {
-    "決算整理仕訳": frozenset({"0", "1"}),
-    "期末日取引フラグ": frozenset({"0", "1"}),
-    "内税・外税": frozenset({"内税"}),
-    "税率": frozenset({"0", "10"}),
-    "軽減税率有無": frozenset({"0"}),
-    "消費税経理処理方法": frozenset({"税込経理"}),
-    "登録した方法": frozenset({"振替伝票"}),
-    "承認状況": frozenset({"なし"}),
-    "承認状況(仕訳承認)": frozenset({"なし"}),
-    # 借方/貸方税区分: the four names in the sample. Any other (課税売上8%(軽), 控80, 輸出 …) is unobserved.
-    "税区分": frozenset({"対象外", "課税売上10%", "課対仕入10%", "非課売上"}),
+    key: _union(o.value_sets.get(key, frozenset()) for o in OBSERVATIONS)
+    for key in dict.fromkeys(key for o in OBSERVATIONS for key in o.value_sets)
 }
-# (debit lines, credit lines, physical rows) seen in the sample: 1D1C in one row, and 1D2C over two rows
-# with the debit side of row 2 blank. Any other shape (2D2C, 1D3C, blank credit side …) is unobserved.
-OBSERVED_JOURNAL_SHAPES: frozenset[tuple[int, int, int]] = frozenset({(1, 1, 1), (1, 2, 2)})
+OBSERVED_ROW_LAYOUTS: frozenset[RowLayout] = _union(o.row_layouts for o in OBSERVATIONS)
+OBSERVED_REGISTRATION_SOURCES: frozenset[RegistrationSource] = _union(o.registration_sources for o in OBSERVATIONS)
+
+
+def _layout_shape(layout: RowLayout) -> tuple[int, int, int]:
+    return sum(d for d, _ in layout), sum(c for _, c in layout), len(layout)
+
+
+# (debit lines, credit lines, physical rows) of the observed layouts. The diagnosis checks the LAYOUT (which
+# side is blank on which row), not only this count: 2D1C with row 1's credit blank is still unobserved.
+OBSERVED_JOURNAL_SHAPES: frozenset[tuple[int, int, int]] = frozenset(
+    _layout_shape(layout) for layout in OBSERVED_ROW_LAYOUTS
+)
+
+
+def evidence_for_value(key: str, value: str) -> tuple[str, ...]:
+    """Evidence IDs that observed `value` in the enumerated column `key` (no 借方/貸方 prefix)."""
+    return tuple(o.evidence_id for o in OBSERVATIONS if value in o.value_sets.get(key, frozenset()))
+
+
+def evidence_for_column(variant: FreeeJournalVariant, column: str) -> tuple[str, ...]:
+    return tuple(o.evidence_id for o in OBSERVATIONS if column in o.columns_with_values.get(variant, frozenset()))
+
+
+def evidence_for_layout(layout: RowLayout) -> tuple[str, ...]:
+    return tuple(o.evidence_id for o in OBSERVATIONS if layout in o.row_layouts)
+
+
+def evidence_for_registration_source(source: RegistrationSource) -> tuple[str, ...]:
+    return tuple(o.evidence_id for o in OBSERVATIONS if source in o.registration_sources)
 
 
 def _roles(columns: tuple[str, ...], table: dict[str, Role], observed: frozenset[str]) -> dict[str, ColumnRole]:
@@ -610,7 +734,8 @@ class _JournalBuilder:
             metadata={
                 "source": SOURCE_FORMAT_PREFIX,
                 "evidence_level": "OBSERVED_REAL_EXPORT_SINGLE_SAMPLE",
-                "evidence_id": EVIDENCE_ID,
+                "evidence_id": EVIDENCE_ID,  # header Evidence (unchanged key)
+                "evidence_ids": OBSERVATION_EVIDENCE_IDS,  # every Evidence the observed ranges come from
                 "production_registry_enabled": False,
                 "freee_variant": self.variant.value,
                 "freee_header_fingerprint": self.header.fingerprint,
@@ -628,6 +753,10 @@ class _JournalBuilder:
                 **({TAX_ACCOUNTING_METHOD_KEY: next(iter(methods))} if next(iter(methods)) else {}),
                 **({PERIOD_END_FLAG_KEY: first["期末日取引フラグ"]} if first.get("期末日取引フラグ") else {}),
                 **({REGISTRATION_METHOD_KEY: first["登録した方法"]} if first.get("登録した方法") else {}),
+                **({REGISTRATION_SOURCE_KEY: (
+                    first.get("登録した方法", ""), bool(first.get("振替伝票ID", "").strip()),
+                    bool(first.get("取引ID", "").strip()),
+                )} if self.new else {}),
                 JOURNAL_CONTENT_IDENTITY_KEY: journal_content_identity(
                     self.header.source_format_key,
                     entry_date.isoformat(),

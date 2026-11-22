@@ -1,7 +1,7 @@
 # Current Evidence Status
 
-最終更新: 2026-11-22（正本の分担を明記。件数の変更なし）
-前回: 2026-11-11（会社Aの正式READY 2,479／BLOCK 35 を「弥生 会社A Pilot」節に追記。commit `b0ea842`）、その前: 2026-11-10（弥生 会社A Pilot-1／Pilot-2 を追記）
+最終更新: 2026-11-22（freee E5B第1回のEvidence IDを追加。会社A・MFの件数の変更なし）
+前回: 2026-11-22（正本の分担を明記。件数の変更なし）、その前: 2026-11-11（会社Aの正式READY 2,479／BLOCK 35 を「弥生 会社A Pilot」節に追記。commit `b0ea842`）、その前: 2026-11-10（弥生 会社A Pilot-1／Pilot-2 を追記）
 
 **Evidenceの有無・判定の正本です。** 実機操作の履歴の正本は [JDL実機検証履歴](jdl_real_evidence_log.md)。**弥生 会社Aの現在値**（元仕訳・正式READY・BLOCK・税理士承認・移行全体の状態）の正本は [PROJECT_STATUS.md](PROJECT_STATUS.md) §1 だけで、この文書の会社Aの件数は記録日付きの履歴です。MF→JDL（482件）の状態はこの文書の下表が正本です。README・製品文書・AGENTS.md はここへリンクし、件数を独自に持ちません。過去の実機操作は [JDL実機検証履歴](jdl_real_evidence_log.md)、調査時点の資料は `docs/research/` と各文書の履歴節に残します。矛盾する場合はこの文書とEvidence原本を優先します。
 
@@ -131,6 +131,7 @@ Pilot-1（45行）・Pilot-2（48行）を実機E2E PASSにする条件は、税
 | JDL→JDL | `VERIFIED_BY_REAL_IMPORT`, frozen | 1,158 journals / 1,271 rows。実Import PASS。会計判断reviewとbatch re-export strict comparisonは未完了 |
 | MF→JDL READY batch | `VERIFIED_BY_REAL_IMPORT_AND_REEXPORT` | 13 journals / 14 rows、P01-P07、unexpected diff 0、silent loss 0 |
 | MF→JDL 482 dataset | 上の Canonical current state を参照 | FY2026-05 real round-trip VERIFIED、FY2027-05 PENDING |
+| freee→JDL | `DIAGNOSE_ONLY`（正式READY 0、JDL出力無効） | freee側の実出力を観測しただけ（E4・E5B第1回）。JDL実機の往復なし。詳細は [docs/research/freee_journal_csv_public_spec.md](../research/freee_journal_csv_public_spec.md) §5・§8 |
 | 弥生→JDL | 会社B（インポート形式）は `VERIFIED_BY_REAL_IMPORT_AND_REEXPORT`。会社A（仕訳日記帳 汎用形式）のformal routeは未検証 | 会社B 80仕訳の全件往復 PASS。会社Aは合成target 3D3C/4D4Cのみ実機往復PASS、Human mappingとsource→formal E2Eは未完了。上の弥生の節を参照 |
 
 ## Key Evidence IDs
@@ -149,6 +150,8 @@ Pilot-1（45行）・Pilot-2（48行）を実機E2E PASSにする条件は、税
 | `EVID-MF-JDL-35-5-OUTPUR-ROW-DESC-ROUNDTRIP-001` | 同じ11件の127行別摘要保持 |
 | `EVID-MF-JDL-35-5-NONPUR-8571-1311-SUB0002-001` | 非課税仕入 8571→1311/0002 の1D1C実機往復（0876）。3181/0001と合わせ実482件の非課税仕入10/10 |
 | `EVID-MF-JDL-35-5-2D1C-PURCHASE10-ROUNDTRIP-001` / `...2D3C...` / `...10D9C...` / `...SALES10-ROUNDING-6121...` / `...SALES10-9251...` | 0877 final batch、5 case別strict PASS |
+| `EVID-FREEE-JOURNAL-CSV-REAL-EXPORT-20261115-001` | freee E4: テスト事業所の実出力4形式（振替伝票6件、税込経理）。freee側の観測のみ、JDL実機なし |
+| `EVID-FREEE-JOURNAL-CSV-REAL-EXPORT-20261122-E5B1-001` | freee E5B第1回: 同じ事業所の実出力4形式（8仕訳10行、税込経理・一般課税一括比例）。2D1C・2D2C・軽減8%・控80/控70・取引の登録（手動）を観測。外税は未取得。freee側の観測のみ、JDL実機なし |
 | `EVID-MF-JDL-35-5-REAL-482-FY2026-05-FULL-ROUNDTRIP-001` | 実データFY2026-05の378件 full real round-trip（0878） |
 
 ## 482-journal dataset（判定の根拠）

@@ -11,11 +11,17 @@ describes their structure and how it differs from what this application already 
   conversion: whether Yayoi imports it, and whether it means what a real Yayoi export means, is
   UNVERIFIED.
 
-Evidence: one real export of each (freee test office, six fictitious 振替伝票, 2026-11-15, private;
-EVIDENCE_ID of adapters.input.freee.journal_csv). Account / subaccount codes in the JDL file
-(1001, 0001, 9999 in the sample) are whatever the freee user typed into freee's export settings —
-test codes in the sample, never codes of a real JDL company. The report holds counts and codes of
-the FORMAT only: no accounts, codes, amounts or descriptions.
+Evidence: real exports of each (freee test office, private): E4 (six fictitious 振替伝票, 2026-11-15)
+and E5B第1回 (eight fictitious journals, 2026-11-22); IDs in adapters.input.freee.journal_csv.
+Account / subaccount codes in the JDL file come from freee's export settings: in E5B 1001 / 9999 were
+the values the settings screen showed by default and 8888 / 0001 were typed for the comparison. None
+is a code of a real JDL company, approved or verified for IBEX 35.5. The report holds counts and
+codes of the FORMAT only: no accounts, codes, amounts or descriptions.
+
+Information loss: in E5B the 経過措置 purchases (課対仕入（控80）10% / （控70）10%) came out with BLANK
+課区・税区 (JDL9) and a BLANK 税区分 (弥生25), while 対象外 is 0/0 resp. 対象外. A blank tax cell is
+therefore reported as lost information. It is never read as 対象外 and never filled with a guessed
+code; from one file alone the cause of a blank is not identified.
 """
 from __future__ import annotations
 
@@ -51,8 +57,15 @@ FREEE_JDL9_VS_JDL30_DIFFERENCES: tuple[str, ...] = (
     "TITLE_AND_END_RECORDS",  # ＜仕訳一覧＞ / ＜仕訳一覧終了＞ one-column records
     "CLOSING_AS_MONTH_13_DATE",  # 決算整理 dated YYYY13DD (sample: 20261331); meaning for the target unverified
     "DESCRIPTION_IS_COMPOSED",  # 取引先 品目 メモ 備考 joined by spaces (sample); relay rows may be blank
-    "CODES_FROM_FREEE_EXPORT_SETTINGS",  # codes are what the freee user typed; not target master codes
+    "CODES_FROM_FREEE_EXPORT_SETTINGS",  # codes come from freee's export settings; not target master codes
+    "TRANSITIONAL_CREDIT_TAX_CELLS_BLANK",  # E5B: 控80 / 控70 rows have blank 課区・税区 (not 0/0)
 )
+
+# Lost information (code -> what is lost). Counted, never repaired.
+INFORMATION_LOSS_CODES: dict[str, str] = {
+    "JDL9_TAX_CELLS_BLANK": "課区・税区とも空欄の行（E5Bでは控80・控70の仕入で観測）。対象外（0/0）とは別",
+    "YAYOI25_TAX_CATEGORY_BLANK": "勘定科目のある側の税区分が空欄（E5Bでは控80・控70の仕入で観測）。対象外とは別",
+}
 
 _DATE8 = re.compile(r"[0-9]{8}")
 _INT = re.compile(r"-?[0-9]+")
@@ -66,6 +79,7 @@ class FreeeOtherExportDiagnosis:
     counts: Counter = field(default_factory=Counter)
     values: dict[str, Counter] = field(default_factory=dict)  # product codes only (課区, 決算, タイプ …)
     differences: tuple[str, ...] = ()
+    information_loss: Counter = field(default_factory=Counter)  # INFORMATION_LOSS_CODES -> rows / sides
 
     def to_dict(self) -> dict:
         return {
@@ -78,6 +92,10 @@ class FreeeOtherExportDiagnosis:
             "counts": dict(sorted(self.counts.items())),
             "values": {name: dict(sorted(counter.items())) for name, counter in sorted(self.values.items())},
             "differences": list(self.differences),
+            "information_loss": {
+                code: {"count": count, "meaning": INFORMATION_LOSS_CODES[code]}
+                for code, count in sorted(self.information_loss.items())
+            },
         }
 
 
@@ -137,6 +155,10 @@ def diagnose_freee_jdl9(raw: bytes) -> FreeeOtherExportDiagnosis:
             if record[f"{side}補助"]:
                 result.counts[f"rows_with_{'debit' if side == '借方' else 'credit'}_subaccount"] += 1
         tax_pairs[f"{record['課区']}/{record['税区']}"] += 1
+        if not record["課区"] and not record["税区"]:
+            result.information_loss["JDL9_TAX_CELLS_BLANK"] += 1
+        elif not record["課区"] or not record["税区"]:
+            result.issues["TAX_CELL_PAIR_PARTIAL"] += 1  # never observed: one of the two blank
     return result
 
 
@@ -156,6 +178,7 @@ FREEE_YAYOI25_VS_EXISTING_YAYOI_IMPORT: tuple[str, ...] = (
     "BLANK_SIDE_IS_EMPTY_ACCOUNT_ZERO_AMOUNT_OUT_OF_SCOPE",  # 2101 row debit: "" / 対象外 / 0
     "DESCRIPTION_IS_COMPOSED",  # same composed 摘要 as the 旧CSV; can exceed the official 30 characters
     "CLOSING_IN_決算_COLUMN",  # 本決 (sample)
+    "TRANSITIONAL_CREDIT_TAX_CATEGORY_BLANK",  # E5B: 控80 / 控70 sides have a blank 税区分 (not 対象外)
     "NOT_FED_TO_EXISTING_YAYOI_READER",
 )
 
@@ -224,7 +247,11 @@ def diagnose_freee_yayoi25(raw: bytes) -> FreeeOtherExportDiagnosis:
             if record[f"{side}補助科目"]:
                 result.counts[f"{key}_sides_with_subaccount"] += 1
             category = record[f"{side}税区分"]
-            if category not in {"", "対象外"} and not category.startswith(("非課", "不課")):
+            if not category:
+                # Lost, not 対象外: counted neither as taxed nor as untaxed.
+                result.information_loss["YAYOI25_TAX_CATEGORY_BLANK"] += 1
+                continue
+            if category != "対象外" and not category.startswith(("非課", "不課")):
                 result.counts["taxed_sides"] += 1
                 if not record[f"{side}税金額"]:
                     result.counts["taxed_sides_with_blank_tax_amount"] += 1
