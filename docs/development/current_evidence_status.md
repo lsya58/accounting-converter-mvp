@@ -1,8 +1,9 @@
 # Current Evidence Status
 
-最終更新: 2026-11-10（弥生 会社A Pilot-1／Pilot-2 を追記）
+最終更新: 2026-11-22（正本の分担を明記。件数の変更なし）
+前回: 2026-11-11（会社Aの正式READY 2,479／BLOCK 35 を「弥生 会社A Pilot」節に追記。commit `b0ea842`）、その前: 2026-11-10（弥生 会社A Pilot-1／Pilot-2 を追記）
 
-**現在地の唯一の正本（single source of truth）です。** README・製品文書・AGENTS.md はここへリンクし、件数を独自に持ちません。過去の実機操作は [JDL実機検証履歴](jdl_real_evidence_log.md)、調査時点の資料は `docs/research/` と各文書の履歴節に残します。矛盾する場合はこの文書とEvidence原本を優先します。
+**Evidenceの有無・判定の正本です。** 実機操作の履歴の正本は [JDL実機検証履歴](jdl_real_evidence_log.md)。**弥生 会社Aの現在値**（元仕訳・正式READY・BLOCK・税理士承認・移行全体の状態）の正本は [PROJECT_STATUS.md](PROJECT_STATUS.md) §1 だけで、この文書の会社Aの件数は記録日付きの履歴です。MF→JDL（482件）の状態はこの文書の下表が正本です。README・製品文書・AGENTS.md はここへリンクし、件数を独自に持ちません。過去の実機操作は [JDL実機検証履歴](jdl_real_evidence_log.md)、調査時点の資料は `docs/research/` と各文書の履歴節に残します。矛盾する場合はこの文書とEvidence原本を優先します。
 
 ## Canonical current state（MF→JDL 実データ482件）
 
@@ -32,6 +33,8 @@ PASS条件: 104/104 journals、160/160 rows、missing 0、extra 0、unexpected 0
 会計期間はconverterのcapabilityとは別のtarget条件です。期外の日付をJDLが拒否しても、converterの失敗ではありません。
 
 ## 弥生 → JDL（2026-11-04 時点）
+
+この節の会社Aの件数（正式READY 0・157・998・2,475・2,480・2,481 や試算）は、各段落の日付時点の履歴です。現在値は [PROJECT_STATUS.md](PROJECT_STATUS.md) §1。
 
 顧問先2社の実データとJDL科目一覧PDFを取得。顧客の値はここに書かない。
 
@@ -108,7 +111,7 @@ PASS条件: 104/104 journals、160/160 rows、missing 0、extra 0、unexpected 0
 | 摘要末尾空白 | JDLが45行（44伝票）で削除。Evidence登録済み、**許容判断は未記録** | JDLが48行（44伝票）で削除（半角1×33・半角2×14・半角3×1）。半角3個は追加Evidence（`...PILOT2-DESCRIPTION-TRAILING-SPACE-REMOVED-001`）。**許容判断は未記録で、Pilot-1の判断は適用しない** |
 | 正式判定 | **`NORMALIZATION_ACCEPTANCE_PENDING`** | **`NORMALIZATION_ACCEPTANCE_PENDING`** |
 
-会社Aの正式READYは2,479/2,514（2026-11-11、伝票1240の税額0円を `EXPLICIT_TAX_ZERO_UNVERIFIED` でBLOCK。BLOCK 35。2026-11-10は負の金額の仕訳7519をBLOCKに訂正して2,480）。READYのみ変換で2,479仕訳・6,100行を出力できる（全件移行ではない。除外35件は未移行）。端数のある金額に書いた税額0は、FLOOR等の実機Evidence（いずれも税額>0）では許可しない（関係 `ZERO`、未登録）。
+会社Aの正式READYは2,479/2,514（記録日 2026-11-11。現在値は [PROJECT_STATUS.md](PROJECT_STATUS.md) §1。伝票1240の税額0円を `EXPLICIT_TAX_ZERO_UNVERIFIED` でBLOCK。BLOCK 35。2026-11-10は負の金額の仕訳7519をBLOCKに訂正して2,480）。READYのみ変換で2,479仕訳・6,100行を出力できる（全件移行ではない。除外35件は未移行）。端数のある金額に書いた税額0は、FLOOR等の実機Evidence（いずれも税額>0）では許可しない（関係 `ZERO`、未登録）。
 
 Pilot-1（45行）・Pilot-2（48行）を実機E2E PASSにする条件は、税理士による摘要末尾空白の許容判断を、それぞれの入力・再Exportファイルと対象明細に紐づけて記録することだけ（JDLの再操作は不要）。許容後の判定名は `PASS_WITH_ACCEPTED_NORMALIZATION`。
 
