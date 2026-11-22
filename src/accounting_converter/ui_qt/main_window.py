@@ -64,6 +64,7 @@ from accounting_converter.adapters.output.jdl import (
 )
 from accounting_converter.profiles.jdl_official import JdlTaxProcessingMode
 from accounting_converter.ui.controllers import AccountingConverterController
+from accounting_converter.ui.output_conflicts import conversion_output_paths, refusal_message
 from accounting_converter.ui.view_models import (
     AppState,
     RecognizedFormat,
@@ -83,6 +84,7 @@ from accounting_converter.ui import freee_trial_view as fv
 
 from . import components as ui
 from .bulk_review import BulkCandidateDialog, DescriptionRulesDialog
+from .file_dialogs import choose_new_file
 from .freee_trial_dialog import FreeeTrialDiagnosisDialog
 from .navigation import NavigationRail
 from .pages import scroll_page
@@ -791,16 +793,15 @@ class AccountingConverterMainWindow(QMainWindow):
             self._prepare_if_complete()
 
     def _choose_output(self) -> None:
-        filename, _ = QFileDialog.getSaveFileName(
-            self,
-            "JDL用CSVの保存先",
-            "",
-            "CSV files (*.csv)",
+        # No OS "replace?" question: conversions never overwrite (overwrite=False), so an existing CSV or audit
+        # record is refused here, once, and the previous choice is kept. The conversion still refuses it too.
+        output, existing = choose_new_file(
+            self, "JDL用CSVの保存先", "CSV files (*.csv)", related_paths=conversion_output_paths, suffix=".csv",
         )
-        if filename:
-            output = Path(filename)
-            if output.suffix.lower() != ".csv":
-                output = output.with_suffix(".csv")
+        if output is not None and existing:
+            QMessageBox.warning(self, "JDL用CSVの保存先", refusal_message(existing))
+            return
+        if output is not None:
             self._render(self.controller.select_output_file(output))
             if self.controller.state.selected_file:
                 self._refresh_current_csv_readiness()

@@ -18,8 +18,10 @@ from PySide6.QtWidgets import (
 
 from accounting_converter.application import yayoi_ready_only as ro
 from accounting_converter.infrastructure.local_diagnostic_log import log_local_exception
+from accounting_converter.ui.output_conflicts import refusal_message
 
 from . import components as ui
+from .file_dialogs import choose_new_file
 
 TITLE = "READYのみ変換（全件移行ではありません）"
 COLUMNS = ("元の行", "日付", "伝票No.", "借方金額合計", "除外の理由")
@@ -181,14 +183,14 @@ class ReadyOnlyConversionDialog(QDialog):
         if not self.ready_to_write():
             return
         plan = self.plan
-        path, _ = QFileDialog.getSaveFileName(self, "READYのみのJDL取込CSVを保存", "", "CSV (*.csv)")
-        if not path:
+        # No OS "replace?" question (it could never be honoured): the CSV and every companion file of the run
+        # are checked here, before the final question; the write step refuses existing files as well.
+        path, existing = choose_new_file(self, "READYのみのJDL取込CSVを保存", "CSV (*.csv)", related_paths=ro.run_paths)
+        if path is None:
             self.status.setText("保存先を選ばなかったため、出力しませんでした。")
             return
-        existing = [p.name for p in ro.run_paths(Path(path)) if p.exists()]
-        if existing:                                 # refused before the final question (the write refuses as well)
-            self.status.setText("出力していません: 既存のファイルは上書きしません（" + "、".join(existing)
-                                + "）。別の保存先を選択してください。")
+        if existing:
+            self.status.setText("出力していません: " + refusal_message(existing))
             return
         answer = QMessageBox.question(
             self, TITLE,

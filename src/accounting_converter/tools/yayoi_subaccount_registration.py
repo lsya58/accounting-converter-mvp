@@ -117,7 +117,8 @@ def write(args) -> int:
             row.suggested_new_name if row.category != reg.NOTATION_DIFF else "", "", "", "", "",
         ))
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text("﻿" + buffer.getvalue(), encoding="utf-8")
+    # newline="": the rows already end in CRLF; without it Windows writes CR CR LF (a blank row after each row).
+    args.output.write_text("﻿" + buffer.getvalue(), encoding="utf-8", newline="")
     print(json.dumps({"rows": len(rows), "by_category": dict(Counter(r.category for r in rows)),
                       "journals_per_category": {k: sum(r.journals for r in rows if r.category == k) for k in reg.ORDER},
                       "source_name_does_not_fit_jdl": sum(not r.source_name_fits_jdl for r in rows)},

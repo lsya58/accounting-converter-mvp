@@ -37,7 +37,10 @@ def generate_manifest(
         raise ValueError("git_commit must be a lowercase 40-character SHA-1")
 
     files = []
-    for path in sorted(candidate for candidate in artifact_dir.rglob("*") if candidate.is_file()):
+    # Ordered by the POSIX relative path string (case-sensitive, code point order), not by Path objects:
+    # Windows paths compare case-insensitively, so the order would differ between Windows and Linux.
+    candidates = [candidate for candidate in artifact_dir.rglob("*") if candidate.is_file()]
+    for path in sorted(candidates, key=lambda candidate: candidate.relative_to(artifact_dir).as_posix()):
         if path.name in EXCLUDED_NAMES:
             continue
         files.append(

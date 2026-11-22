@@ -30,8 +30,10 @@ from PySide6.QtWidgets import (
 )
 
 from accounting_converter.infrastructure.local_diagnostic_log import log_local_exception
+from accounting_converter.ui.output_conflicts import refusal_message
 
 from . import components as ui
+from .file_dialogs import choose_new_file
 
 TITLE = "承認・未移行の管理（閲覧・試算のみ）"
 TRACKER_COLUMNS = ("元の行", "伝票No.", "日付", "BLOCK理由", "税理士の判断", "技術的な問題", "対応状態", "次の作業")
@@ -814,15 +816,15 @@ class MigrationStatusDialog(QDialog):
         return True
 
     def _export(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(self, "未移行の一覧をCSVで保存", "", "CSV (*.csv)")
-        if path:
-            self.export_csv(Path(path))
+        path, _existing = choose_new_file(self, "未移行の一覧をCSVで保存", "CSV (*.csv)")
+        if path is not None:
+            self.export_csv(path)  # an existing file is refused there, once (and `xb` refuses it again)
 
     def export_csv(self, path: Path) -> bool:
         from accounting_converter.application import unmigrated_view as uv
 
         if path.exists():
-            QMessageBox.warning(self, TITLE, "既存のファイルは上書きしません。別の名前を選択してください。")
+            QMessageBox.warning(self, TITLE, refusal_message((path.name,)))
             return False
         with path.open("xb") as handle:
             handle.write(uv.rows_csv(self.rows))

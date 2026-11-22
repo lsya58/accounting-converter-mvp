@@ -87,7 +87,8 @@ def write_sheet(probe_dir: Path, output: Path, *, combined: bool = False) -> int
                 out.writerow(("SIGNOFF", manifest["batch"], case["case"],
                               "税理士: この書き方は弥生の控除不可と申告上同等か（済 / 空欄）", "", "", ""))
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text("﻿" + buffer.getvalue(), encoding="utf-8")
+    # newline="": the rows already end in CRLF; without it Windows writes CR CR LF (a blank row after each row).
+    output.write_text("﻿" + buffer.getvalue(), encoding="utf-8", newline="")
     print(json.dumps({"rows": buffer.getvalue().count("\r\n") - 1, "steps": steps}, ensure_ascii=False))
     return 0
 
