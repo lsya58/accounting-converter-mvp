@@ -14,7 +14,6 @@ reported as information, not applied.
 """
 from __future__ import annotations
 
-import re
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -29,6 +28,7 @@ from accounting_converter.adapters.input.freee.journal_csv import (
     OBSERVATION_EVIDENCE_IDS,
     OBSERVED_REGISTRATION_SOURCES,
     OBSERVED_ROW_LAYOUTS,
+    OBSERVED_TAX_LINE_LAYOUTS,
     PERIOD_END_FLAG_KEY,
     REGISTRATION_SOURCE_KEY,
     TAX_ACCOUNTING_METHOD_KEY,
@@ -40,6 +40,12 @@ from accounting_converter.adapters.input.freee.journal_csv import (
 )
 from accounting_converter.adapters.output.jdl.row_evidence import JDL_ROW_DESCRIPTION_VERIFIED_SHAPES
 # Source-independent: the 経過措置 ratio that applies on a date (same table and Human blocker as the Yayoi route).
+from accounting_converter.application.freee_tax_hint import FreeeTaxHint, tax_hint  # noqa: F401 - re-exported
+from accounting_converter.application.freee_tax_lines import (
+    TaxLineClassification,
+    TaxLineStatus,
+    classify_tax_lines,
+)
 from accounting_converter.application.yayoi_credit_period import PERIOD_BLOCKER, applicable_ratio
 from accounting_converter.domain.conversion_direction import direction_for
 from accounting_converter.domain.information_retention import RetentionInventory, RetentionStatus
@@ -156,50 +162,6 @@ class FreeeJournalResult:
         }
 
 
-@dataclass(frozen=True)
-class FreeeTaxHint:
-    """What the freee tax NAME suggests. A hint for the Human, never a mapping."""
-    kind: str  # SALES_TAXABLE / PURCHASE_TAXABLE / NON_TAXABLE_SALES / NON_TAXABLE_PURCHASE / EXPORT_SALES / OUT_OF_SCOPE / UNKNOWN
-    rate: str | None = None  # "10" / "8"
-    reduced: bool = False
-    deduction_ratio: str | None = None  # 経過措置 "80" / "50" / "30" ...
-    allocation: str | None = None  # 個別対応: 課税売上対応 / 共通対応 / 非課税売上対応
-
-    @property
-    def taxed(self) -> bool:
-        return self.kind in {"SALES_TAXABLE", "PURCHASE_TAXABLE"}
-
-
-_RATE = re.compile(r"(10|8)%")
-_DEDUCTION = re.compile(r"控(\d{2})")
-
-
-def tax_hint(name: str | None) -> FreeeTaxHint:
-    if not name:
-        return FreeeTaxHint("OUT_OF_SCOPE")
-    rate_match = _RATE.search(name)
-    rate = rate_match.group(1) if rate_match else None
-    reduced = "軽" in name
-    deduction = _DEDUCTION.search(name)
-    if name in {"対象外", "不課税"}:
-        return FreeeTaxHint("OUT_OF_SCOPE")
-    if name.startswith("輸出"):
-        return FreeeTaxHint("EXPORT_SALES")
-    if name.startswith("非課売上"):
-        return FreeeTaxHint("NON_TAXABLE_SALES")
-    if name.startswith("非課仕入"):
-        return FreeeTaxHint("NON_TAXABLE_PURCHASE")
-    if name.startswith("課税売上"):
-        return FreeeTaxHint("SALES_TAXABLE", rate, reduced)
-    for prefix, allocation in (("課対仕入", "課税売上対応"), ("共対仕入", "共通対応"), ("非対仕入", "非課税売上対応")):
-        if name.startswith(prefix):
-            return FreeeTaxHint(
-                "PURCHASE_TAXABLE", rate, reduced, deduction.group(1) if deduction else None,
-                allocation if prefix != "課対仕入" else None,
-            )
-    return FreeeTaxHint("UNKNOWN", rate, reduced)
-
-
 @dataclass
 class FreeeDiagnosis:
     parse: FreeeParseResult
@@ -213,6 +175,11 @@ class FreeeDiagnosis:
     tax: Counter = field(default_factory=Counter)  # explicit / zero / blank / absent tax amounts, by line
     tax_inclusion_raw: Counter = field(default_factory=Counter)  # 内税・外税 value -> lines (product vocabulary)
     tax_accounting_methods: Counter = field(default_factory=Counter)  # 消費税経理処理方法 -> journals
+    # 税抜経理 separate 仮払/仮受消費税 rows (application.freee_tax_lines): status -> journals, and the failed
+    # conditions of UNIDENTIFIED / UNDETERMINABLE journals (codes only). Tax rows are NOT in tax_categories.
+    tax_lines: Counter = field(default_factory=Counter)
+    tax_line_reasons: Counter = field(default_factory=Counter)
+    tax_line_classifications: dict[str, TaxLineClassification] = field(default_factory=dict)
     structure: Counter = field(default_factory=Counter)
     blank_sides: Counter = field(default_factory=Counter)  # representation -> sides
     closing: Counter = field(default_factory=Counter)
@@ -281,6 +248,8 @@ class FreeeDiagnosis:
             "tax_amounts": dict(sorted(self.tax.items())),
             "tax_inclusion_raw": dict(sorted(self.tax_inclusion_raw.items())),
             "tax_accounting_methods": dict(sorted(self.tax_accounting_methods.items())),
+            "tax_lines": dict(sorted(self.tax_lines.items())),
+            "tax_line_reasons": dict(sorted(self.tax_line_reasons.items())),
             "structure": dict(sorted(self.structure.items())),
             "blank_sides": dict(sorted(self.blank_sides.items())),
             "closing": dict(sorted(self.closing.items())),
@@ -334,7 +303,11 @@ def journal_blockers(entry: JournalEntry, *, header_verified: bool, ready_allowe
     source = entry.metadata.get(REGISTRATION_SOURCE_KEY)
     if source is not None and tuple(source) not in OBSERVED_REGISTRATION_SOURCES:
         found.add("SYSTEM_EVIDENCE:FREEE_REGISTRATION_SOURCE_UNOBSERVED")
-    for line in entry.lines:
+    # 税抜経理: the freee-generated 仮払/仮受消費税 row is not a taxable line of its own (never double counted).
+    # Identified only by the full observed structure; otherwise the journal blocks (freee_tax_lines).
+    tax_lines = classify_tax_lines(entry)
+    found.update(tax_lines.blockers())
+    for index, line in enumerate(entry.lines):
         info = line.tax_info
         hint = tax_hint(info.category if info is not None else None)
         if info is not None and info.category:
@@ -345,7 +318,9 @@ def journal_blockers(entry: JournalEntry, *, header_verified: bool, ready_allowe
         if hint.deduction_ratio is not None and int(hint.deduction_ratio) != applicable_ratio(entry.date):
             found.add(PERIOD_BLOCKER)
         if info is not None:
-            if hint.taxed:
+            if index == tax_lines.tax_line:
+                pass  # its amount IS the tax; base lines keep their own checks (税金額 blank -> TAX_AMOUNT_ABSENT)
+            elif hint.taxed:
                 if info.metadata.get("freee_tax_inclusion_raw"):
                     found.add("SYSTEM_EVIDENCE:FREEE_TAX_INCLUSION_MAPPING_UNVERIFIED")  # 内税/外税 -> JDL 税入力方法
                 else:
@@ -371,7 +346,10 @@ def journal_blockers(entry: JournalEntry, *, header_verified: bool, ready_allowe
     rows = journal_physical_rows(entry)
     if rows is None:
         found.add("SYSTEM_EVIDENCE:FREEE_ROW_DESCRIPTION_INCONSISTENT")  # 借方備考 != 貸方備考 in one row
-    elif row_layout(rows) not in OBSERVED_ROW_LAYOUTS:
+    elif row_layout(rows) not in (
+        OBSERVED_TAX_LINE_LAYOUTS if tax_lines.status is TaxLineStatus.IDENTIFIED else OBSERVED_ROW_LAYOUTS
+    ):
+        # A layout seen only with a tax row (E5B-2A 3D1C …) is not an observed layout for an ordinary journal.
         found.add("SYSTEM_EVIDENCE:FREEE_JOURNAL_SHAPE_UNOBSERVED")
     for value in source_fields(entry):
         if not value.known:
@@ -410,8 +388,18 @@ def diagnose_parse_result(parse: FreeeParseResult) -> FreeeDiagnosis:
             has_description=has_description, variant_known=header.variant is not FreeeJournalVariant.UNKNOWN,
             header_observed=header.observed,
         )
-        for line in entry.lines:
+        classification = classify_tax_lines(entry)
+        diagnosis.tax_line_classifications[entry.id] = classification
+        diagnosis.tax_lines[classification.status.value] += 1
+        if classification.aggregated:
+            diagnosis.tax_lines["AGGREGATED"] += 1
+        for reason in classification.reasons:
+            diagnosis.tax_line_reasons[reason] += 1
+        for index, line in enumerate(entry.lines):
             info = line.tax_info
+            if index == classification.tax_line:
+                diagnosis.tax["separate_tax_lines"] += 1  # not a taxable line: not in tax_categories
+                continue
             if info is None:
                 diagnosis.tax["lines_without_tax_cells"] += 1
                 continue

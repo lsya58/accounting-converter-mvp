@@ -11,8 +11,11 @@ describes their structure and how it differs from what this application already 
   conversion: whether Yayoi imports it, and whether it means what a real Yayoi export means, is
   UNVERIFIED.
 
-Evidence: real exports of each (freee test office, private): E4 (six fictitious 振替伝票, 2026-11-15)
-and E5B第1回 (eight fictitious journals, 2026-11-22); IDs in adapters.input.freee.journal_csv.
+Evidence: real exports of each (freee test office, private): E4 (six fictitious 振替伝票, 2026-11-15),
+E5B第1回 (eight fictitious journals, 税込経理, 2026-11-22) and E5B-2B (two journals registered under
+税抜経理, 2026-11-22); IDs in adapters.input.freee.journal_csv. Under 税抜経理 (E5B-2B) the JDL形式 kept the
+仮払/仮受消費税 as a separate row with the same 課区・税区 as its base row, while the 弥生形式 folded it back into
+one 税込 row with an explicit 税金額. Neither representation is verified for any target.
 Account / subaccount codes in the JDL file come from freee's export settings: in E5B 1001 / 9999 were
 the values the settings screen showed by default and 8888 / 0001 were typed for the comparison. None
 is a code of a real JDL company, approved or verified for IBEX 35.5. The report holds counts and
@@ -171,7 +174,7 @@ _YAYOI_DATE = re.compile(r"[0-9]{4}/[0-9]{2}/[0-9]{2}")
 
 FREEE_YAYOI25_VS_EXISTING_YAYOI_IMPORT: tuple[str, ...] = (
     "NO_HEADER_ROW",
-    "TAX_AMOUNT_COLUMNS_BLANK",  # 借方税金額 / 貸方税金額 empty on taxed sides (sample); never computed here
+    "TAX_AMOUNT_COLUMNS_BLANK",  # 税込経理 samples (E4, E5B第1回): 税金額 empty on taxed sides; never computed here
     "DUE_DATE_FILLED_WITH_TRANSACTION_DATE",  # 期日 = 取引日付 on every row (sample)
     "TYPE_3_ON_COMPOUND",  # タイプ 3 on 2110/2101 rows (sample)
     "SUBACCOUNT_CARRIES_FREEE_NAME",  # 借方補助科目 = 口座名 / 取引先名 (sample); Yayoi meaning unverified
@@ -255,6 +258,8 @@ def diagnose_freee_yayoi25(raw: bytes) -> FreeeOtherExportDiagnosis:
                 result.counts["taxed_sides"] += 1
                 if not record[f"{side}税金額"]:
                     result.counts["taxed_sides_with_blank_tax_amount"] += 1
+                else:
+                    result.counts["taxed_sides_with_tax_amount"] += 1  # E5B-2B (税抜経理): filled, never verified
     if open_compound:
         result.issues["COMPOUND_NOT_CLOSED"] += 1
     return result

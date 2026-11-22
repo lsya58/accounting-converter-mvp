@@ -17,6 +17,8 @@ from accounting_converter.adapters.input.freee import journal_csv as jc
 from accounting_converter.adapters.input.freee.journal_csv import (
     E4_EVIDENCE_ID,
     E5B1_EVIDENCE_ID,
+    E5B2A_EVIDENCE_ID,
+    E5B2B_EVIDENCE_ID,
     NEW_CSV_97_HEADER,
     OLD_CSV_29_HEADER,
     UNOBSERVED_VALUES_KEY,
@@ -29,6 +31,7 @@ from accounting_converter.application.freee_other_export_diagnosis import (
     diagnose_freee_jdl9,
     diagnose_freee_yayoi25,
 )
+from accounting_converter.application.freee_tax_lines import BLOCKER_UNIDENTIFIED
 from accounting_converter.application.yayoi_credit_period import PERIOD_BLOCKER
 from accounting_converter.domain.journal_rows import journal_physical_rows
 from accounting_converter.ui import freee_trial_view as fv
@@ -97,7 +100,8 @@ class EvidenceBindingTest(unittest.TestCase):
     def test_ids_are_distinct_and_e4_is_unchanged(self):
         self.assertEqual(E4_EVIDENCE_ID, "EVID-FREEE-JOURNAL-CSV-REAL-EXPORT-20261115-001")
         self.assertEqual(jc.EVIDENCE_ID, E4_EVIDENCE_ID)
-        self.assertEqual(jc.OBSERVATION_EVIDENCE_IDS, (E4_EVIDENCE_ID, E5B1_EVIDENCE_ID))
+        self.assertEqual(jc.OBSERVATION_EVIDENCE_IDS,
+                         (E4_EVIDENCE_ID, E5B1_EVIDENCE_ID, E5B2A_EVIDENCE_ID, E5B2B_EVIDENCE_ID))
         self.assertEqual({k: set(v) for k, v in jc.E4_OBSERVATION.value_sets.items()}, E4_VALUE_SETS)
         self.assertEqual(jc.E4_OBSERVATION.row_layouts, {(BOTH,), (BOTH, CREDIT_ONLY)})
         for key, values in E4_VALUE_SETS.items():  # the union never loses an E4 value
@@ -106,29 +110,33 @@ class EvidenceBindingTest(unittest.TestCase):
         self.assertEqual(jc.E5B1_OBSERVATION.header_fingerprints, jc.E4_OBSERVATION.header_fingerprints)
 
     def test_new_values_are_bound_to_e5b1_only(self):
+        # First seen in E5B第1回; seen again in E5B-2A (same journals re-exported). Never E4, never E5B-2B.
         for key, value in (("税区分", "課対仕入8%（軽）"), ("税区分", "課税売上8%（軽）"), ("税区分", "課対仕入（控80）10%"),
                            ("税区分", "課対仕入（控70）10%"), ("税率", "8"), ("軽減税率有無", "1"), ("登録した方法", "手動")):
             with self.subTest(value=value):
-                self.assertEqual(jc.evidence_for_value(key, value), (E5B1_EVIDENCE_ID,))
-        self.assertEqual(jc.evidence_for_value("税区分", "課対仕入10%"), (E4_EVIDENCE_ID, E5B1_EVIDENCE_ID))
+                self.assertEqual(jc.evidence_for_value(key, value), (E5B1_EVIDENCE_ID, E5B2A_EVIDENCE_ID))
+        self.assertEqual(jc.evidence_for_value("税区分", "課対仕入10%"),
+                         (E4_EVIDENCE_ID, E5B1_EVIDENCE_ID, E5B2A_EVIDENCE_ID, E5B2B_EVIDENCE_ID))
+        self.assertEqual(jc.evidence_for_value("消費税経理処理方法", "税抜経理"), (E5B2A_EVIDENCE_ID, E5B2B_EVIDENCE_ID))
         self.assertEqual(jc.evidence_for_value("税区分", "非課売上"), (E4_EVIDENCE_ID,))
         self.assertEqual(jc.evidence_for_value("決算整理仕訳", "1"), (E4_EVIDENCE_ID,))
-        self.assertEqual(jc.evidence_for_column(FreeeJournalVariant.NEW_CSV, "取引ID"), (E5B1_EVIDENCE_ID,))
+        self.assertEqual(jc.evidence_for_column(FreeeJournalVariant.NEW_CSV, "取引ID"), (E5B1_EVIDENCE_ID, E5B2A_EVIDENCE_ID))
         self.assertEqual(jc.evidence_for_column(FreeeJournalVariant.NEW_CSV, "借方品目"), (E4_EVIDENCE_ID,))
         self.assertEqual(jc.evidence_for_layout((BOTH, DEBIT_ONLY)), (E5B1_EVIDENCE_ID,))
         self.assertEqual(jc.evidence_for_layout((BOTH, BOTH)), (E5B1_EVIDENCE_ID,))
         self.assertEqual(jc.evidence_for_layout((BOTH, CREDIT_ONLY)), (E4_EVIDENCE_ID,))
-        self.assertEqual(jc.evidence_for_registration_source(("手動", False, True)), (E5B1_EVIDENCE_ID,))
-        for value in ("外税", "税抜経理", "課対仕入（控50）10%", "課対仕入8%(軽)", "5", "2", "自動で経理"):
+        self.assertEqual(jc.evidence_for_registration_source(("手動", False, True)), (E5B1_EVIDENCE_ID, E5B2A_EVIDENCE_ID))
+        for value in ("外税", "課対仕入（控50）10%", "課対仕入8%(軽)", "5", "2", "自動で経理"):
             for key in ("内税・外税", "消費税経理処理方法", "税区分", "税率", "軽減税率有無", "登録した方法"):
                 self.assertEqual(jc.evidence_for_value(key, value), (), (key, value))
         self.assertEqual(jc.evidence_for_column(FreeeJournalVariant.NEW_CSV, "口座振替ID"), ())
 
     def test_entries_and_report_name_both_evidence_ids(self):
         result = parse(NEW_CSV_97_HEADER, e5b_like_rows())
-        self.assertEqual(result.entries[0].metadata["evidence_ids"], (E4_EVIDENCE_ID, E5B1_EVIDENCE_ID))
+        ids = (E4_EVIDENCE_ID, E5B1_EVIDENCE_ID, E5B2A_EVIDENCE_ID, E5B2B_EVIDENCE_ID)
+        self.assertEqual(result.entries[0].metadata["evidence_ids"], ids)
         report = diagnose_parse_result(result).to_dict()
-        self.assertEqual(report["evidence_ids"], [E4_EVIDENCE_ID, E5B1_EVIDENCE_ID])
+        self.assertEqual(report["evidence_ids"], list(ids))
         self.assertEqual(report["formal_ready"], 0)
 
 
@@ -174,13 +182,17 @@ class StillBlockedTest(unittest.TestCase):
     def test_unobserved_values_still_block(self):
         base = e5b_like_rows()[4]  # reduced 8 % purchase
         index = NEW_CSV_97_HEADER.index
-        for column, value in (("借方内税・外税", "外税"), ("消費税経理処理方法", "税抜経理"), ("借方税区分", "課対仕入8%(軽)"),
+        for column, value in (("借方内税・外税", "外税"), ("借方税区分", "課対仕入8%(軽)"),
                               ("借方税区分", "課対仕入（控50）10%"), ("借方税率", "5"), ("借方軽減税率有無", "2"),
                               ("登録した方法", "自動で経理"), ("口座振替ID", "5500000001"), ("借方部門", "合成部門")):
             with self.subTest(column=column, value=value):
                 row = list(base)
                 row[index(column)] = value
                 self.assertIn(UNOBSERVED, self._blockers([tuple(row)]))
+        # 税抜経理 is observed since E5B-2A, but a 税抜経理 journal without its tax row still blocks.
+        row = list(base)
+        row[index("消費税経理処理方法")] = "税抜経理"
+        self.assertIn(BLOCKER_UNIDENTIFIED, self._blockers([tuple(row)]))
 
     def test_old_csv_unobserved_tax_category_still_blocks(self):
         row = _old("1", "50001", "2026/11/04", 借方勘定科目="合成費用", 借方金額="110", 借方税区分="課対仕入（控50）10%",

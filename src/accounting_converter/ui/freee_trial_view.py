@@ -17,7 +17,12 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from accounting_converter.adapters.input.freee.journal_csv import FreeeJournalVariant, classify_header, decode
+from accounting_converter.adapters.input.freee.journal_csv import (
+    OBSERVED_VALUE_SETS,
+    FreeeJournalVariant,
+    classify_header,
+    decode,
+)
 from accounting_converter.application.freee_diagnosis import FreeeDiagnosis, tax_hint
 from accounting_converter.domain.information_retention import RETENTION_ORDER, RetentionStatus
 from accounting_converter.ui.home_view import Metric
@@ -83,6 +88,10 @@ REASON_LABELS = {
     "HUMAN:TRANSITIONAL_CREDIT_PERIOD": "経過措置の控除割合（控80・控70など）が取引日の期間と合っていません（税理士の確認が必要）",
     "SYSTEM_EVIDENCE:FREEE_TAX_ACCOUNTING_METHOD_UNMAPPED": "freeeの消費税経理処理方法とJDL会社の設定の対応が未確認です",
     "HUMAN:FREEE_TAX_ACCOUNTING_METHOD_UNKNOWN": "税込経理・税抜経理が分かりません（旧CSVには列がありません）",
+    "SYSTEM_EVIDENCE:FREEE_TAX_LINE_JDL_UNVERIFIED": "税抜経理の仮払・仮受消費税の行をJDLでどう表すか未決定です（人の判断とJDLでの確認が必要）",
+    "SYSTEM_EVIDENCE:FREEE_TAX_LINE_AGGREGATED": "1行の消費税が複数の明細にまとめられています（明細ごとに按分しません）",
+    "SYSTEM_EVIDENCE:FREEE_TAX_LINE_UNIDENTIFIED": "税抜経理の仕訳ですが、消費税の行を観測済みの形で特定できません",
+    "SYSTEM_EVIDENCE:FREEE_TAX_LINE_UNDETERMINABLE": "旧CSVでは、消費税の行と同じ形の行を通常の明細と区別できないため止めています（消費税の行と確定したわけではありません）",
     # mapping / information
     "HUMAN:ACCOUNT_MAPPING": "freeeの勘定科目をJDLの科目へ対応付ける判断が必要です",
     "HUMAN:ACCOUNT_DISPLAY_NAME_DIFFERS": "勘定科目と決算書表示名が異なります（置き換えません）",
@@ -338,6 +347,13 @@ def _tax_lines(diagnosis: FreeeDiagnosis) -> tuple[str, ...]:
                      + "（JDLの税入力方法との対応は未確認）")
     elif tax.get("tax_amount_column_absent"):
         lines.append("内税・外税: このCSVには列がありません（不明）")
+    if tax.get("separate_tax_lines"):
+        lines.append(f"消費税の行（税抜経理の仮払・仮受消費税）: {_n(tax['separate_tax_lines'])}行。課税の明細としては数えません")
+    if diagnosis.tax_lines.get("UNIDENTIFIED"):
+        lines.append(f"税抜経理で消費税の行を観測済みの形として特定できない仕訳: {_n(diagnosis.tax_lines['UNIDENTIFIED'])}仕訳（停止）")
+    if diagnosis.tax_lines.get("UNDETERMINABLE"):
+        lines.append(f"旧CSVで消費税の行と同じ形の行がある仕訳: {_n(diagnosis.tax_lines['UNDETERMINABLE'])}仕訳"
+                     "（通常の明細かもしれず、区別できないため保守的に停止。消費税の行とは確定していません）")
     methods = {k: v for k, v in diagnosis.tax_accounting_methods.items()}
     if methods:
         lines.append("消費税経理処理方法: " + "、".join(
@@ -352,7 +368,7 @@ def _tax_rows(diagnosis: FreeeDiagnosis) -> tuple[tuple[str, str, str], ...]:
         kind = _TAX_KIND_LABELS.get(hint.kind, hint.kind)
         if hint.rate:
             kind += f" {hint.rate}%" + ("（軽減）" if hint.reduced else "")
-        observed = name in {"対象外", "課税売上10%", "課対仕入10%", "非課売上"}
+        observed = name in OBSERVED_VALUE_SETS["税区分"]
         kind += "　名前からの参考。JDLへの対応は確認が必要" + ("" if observed else "　※観測していない税区分")
         rows.append((name or "（空欄）", f"{_n(count)}明細", kind))
     return tuple(rows)
@@ -371,7 +387,9 @@ def _shape_text(journal) -> str:
 
 
 _MAIN_REASON_PRIORITY = (
+    "SYSTEM_EVIDENCE:FREEE_TAX_LINE_UNIDENTIFIED", "SYSTEM_EVIDENCE:FREEE_TAX_LINE_UNDETERMINABLE",
     "SYSTEM_EVIDENCE:FREEE_JOURNAL_SHAPE_UNOBSERVED", "SYSTEM_EVIDENCE:FREEE_VALUE_UNOBSERVED",
+    "SYSTEM_EVIDENCE:FREEE_TAX_LINE_AGGREGATED", "SYSTEM_EVIDENCE:FREEE_TAX_LINE_JDL_UNVERIFIED",
     "SYSTEM_EVIDENCE:FREEE_REGISTRATION_SOURCE_UNOBSERVED", "HUMAN:TRANSITIONAL_CREDIT_PERIOD",
     "SYSTEM_EVIDENCE:UNKNOWN_SOURCE_COLUMN", "SYSTEM_EVIDENCE:FREEE_HEADER_NOT_OBSERVED",
     "SYSTEM_EVIDENCE:FREEE_ROW_DESCRIPTION_INCONSISTENT", "SYSTEM_EVIDENCE:FREEE_TAX_AMOUNT_ABSENT",

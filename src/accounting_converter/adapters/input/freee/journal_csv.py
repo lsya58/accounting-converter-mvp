@@ -5,7 +5,9 @@ Status: NOT a production input adapter (not an `InputAdapter`, not in `productio
 Evidence (private, not in Git — the originals hold an account e-mail address and freee internal IDs):
 real exports of each variant from one freee 個人事業主 test office — E4 (`E4_EVIDENCE_ID`, six
 hand-entered fictitious 振替伝票, 2026-11-15; research doc §5) and E5B第1回 (`E5B1_EVIDENCE_ID`, eight
-fictitious journals incl. two 取引の登録 on a test 口座, 2026-11-22; research doc §8). Each observed
+fictitious journals incl. two 取引の登録 on a test 口座, 2026-11-22; research doc §8), E5B-2A (the same
+eight re-exported after the switch to 税抜経理; §9) and E5B-2B (two journals registered under 税抜経理,
+all four formats; §10). Each observed
 value / layout is registered with the Evidence that showed it (`OBSERVATIONS`). From them:
 
 - the exact headers (`OLD_CSV_29_HEADER`, `NEW_CSV_97_HEADER`) are OBSERVED. Observed is not
@@ -15,7 +17,7 @@ value / layout is registered with the Evidence that showed it (`OBSERVATIONS`). 
   variant is kept verbatim (SourceFieldValue known=False) and blocks;
 - a column whose VALUES were all blank in the sample (部門, セグメント, 取引先コード, 管理番号 …) may be
   read, but a non-blank value is reported as unobserved; so is any value outside the small value sets
-  seen for enumerated columns (決算整理仕訳 0/1, 内税・外税 内税, 消費税経理処理方法 税込経理, …);
+  seen for enumerated columns (決算整理仕訳 0/1, 内税・外税 内税, 消費税経理処理方法 税込経理・税抜経理, …);
 - the 旧CSV leading column (header "") and the 新CSV "No" / "レコード番号" are DISPLAY numbers: the same
   journal was 1 in a one-journal export and 5 in the six-journal one. They group rows inside one file
   only and are never an identity. The journal identity is 仕訳ID (新CSV) / 仕訳番号 (旧CSV);
@@ -56,7 +58,7 @@ from accounting_converter.domain.source_information import (
 )
 
 SOURCE_FORMAT_PREFIX = "freee_journal_csv"
-# Evidence IDs (E4 / E5B第1回) and what each observed: see "observations, by Evidence" below.
+# Evidence IDs (E4 / E5B第1回 / E5B-2A / E5B-2B) and what each observed: see "observations, by Evidence" below.
 
 # Entry / line metadata keys (freee-specific; read by application.freee_diagnosis only).
 BLANK_SIDES_KEY = "freee_blank_sides"  # tuple[(row_number, "DEBIT"|"CREDIT", representation)]
@@ -217,8 +219,13 @@ class FreeeObservation:
     header_fingerprints: frozenset[str]
     columns_with_values: dict[FreeeJournalVariant, frozenset[str]]  # columns with >= 1 non-blank cell
     value_sets: dict[str, frozenset[str]]  # enumerated columns, keyed without the 借方/貸方 prefix
-    row_layouts: frozenset[RowLayout]
+    row_layouts: frozenset[RowLayout]  # journals WITHOUT a freee-generated consumption-tax row
     registration_sources: frozenset[RegistrationSource]
+    # 税抜経理 only: full layouts (incl. the separate 仮払/仮受消費税 row) of journals whose tax row was observed,
+    # and the (side, account, freee code) of those rows. Kept apart from `row_layouts`: a layout seen only
+    # with a tax row is NOT an observed layout for an ordinary journal. See application.freee_tax_lines.
+    tax_line_layouts: frozenset[RowLayout] = frozenset()
+    tax_line_accounts: frozenset[tuple[str, str, str]] = frozenset()
 
 
 _BOTH, _DEBIT_ONLY, _CREDIT_ONLY = (True, True), (True, False), (False, True)
@@ -308,7 +315,83 @@ E5B1_OBSERVATION = FreeeObservation(
     registration_sources=frozenset({("振替伝票", True, False), ("手動", False, True)}),
 )
 
-OBSERVATIONS: tuple[FreeeObservation, ...] = (E4_OBSERVATION, E5B1_OBSERVATION)
+# E5B-2A: the same eight journals (not edited: 更新日時 unchanged) re-exported as 新CSV after the office was
+# switched to 税抜経理. Only the 新CSV was exported. 10 rows became 18: freee appended one 仮払消費税 / 仮受消費税
+# row per journal (one row for two lines of the same 税区分 in E5B-01 / 02); 税金額 blank on every side.
+E5B2A_EVIDENCE_ID = "EVID-FREEE-JOURNAL-CSV-REAL-EXPORT-20261122-E5B2A-001"
+_NEW_SIDE_OBSERVED_TAX_EXCLUSIVE = tuple(s for s in _NEW_SIDE_OBSERVED_E4 if s != "税金額")
+_NEW_COLUMNS_TAX_EXCLUSIVE = (
+    "No", "取引日", *(f"{prefix}{suffix}" for prefix in ("借方", "貸方") for suffix in _NEW_SIDE_OBSERVED_TAX_EXCLUSIVE),
+    "決算整理仕訳", "作成日時", "更新日時", "承認状況(仕訳承認)", "作成者", "消費税経理処理方法", "振替伝票ID", "仕訳ID",
+    "仕訳番号", "期末日取引フラグ", "取引支払日", "仕訳行番号", "仕訳行数", "レコード番号", "登録した方法",
+)
+_TAX_LINE_ACCOUNTS = frozenset({("DEBIT", "仮払消費税", "181"), ("CREDIT", "仮受消費税", "361")})
+E5B2A_OBSERVATION = FreeeObservation(
+    evidence_id=E5B2A_EVIDENCE_ID,
+    exported="同じテスト事業所を税抜経理に変更後、E5B-01〜08を新CSVのみ再出力（18行、2026-11-22）。"
+             "期間 2026-09-15〜2026-11-09",
+    header_fingerprints=frozenset({header_fingerprint(NEW_CSV_97_HEADER)}),
+    columns_with_values={FreeeJournalVariant.NEW_CSV: frozenset({*_NEW_COLUMNS_TAX_EXCLUSIVE, "取引ID"})},
+    value_sets={
+        "決算整理仕訳": frozenset({"0"}),
+        "期末日取引フラグ": frozenset({"0"}),
+        "内税・外税": frozenset({"内税"}),
+        "税率": frozenset({"0", "8", "10"}),
+        "軽減税率有無": frozenset({"0", "1"}),
+        "消費税経理処理方法": frozenset({"税抜経理"}),
+        "登録した方法": frozenset({"振替伝票", "手動"}),
+        "承認状況(仕訳承認)": frozenset({"なし"}),
+        "税区分": frozenset({
+            "対象外", "課税売上10%", "課対仕入10%", "課対仕入8%（軽）", "課税売上8%（軽）",
+            "課対仕入（控80）10%", "課対仕入（控70）10%",
+        }),
+    },
+    row_layouts=frozenset(),  # every journal had a tax row
+    registration_sources=frozenset({("振替伝票", True, False), ("手動", False, True)}),
+    # 1D1C + debit tax row; 1D1C + credit tax row; 2D1C + debit tax row (E5B-01); 2D2C + credit tax row (E5B-02).
+    tax_line_layouts=frozenset({
+        (_BOTH, _DEBIT_ONLY), (_BOTH, _CREDIT_ONLY), (_BOTH, _DEBIT_ONLY, _DEBIT_ONLY), (_BOTH, _BOTH, _CREDIT_ONLY),
+    }),
+    tax_line_accounts=_TAX_LINE_ACCOUNTS,
+)
+
+# E5B-2B: E5B-09 (売上) / E5B-10 (仕入) newly registered as 振替伝票 while the office was 税抜経理; all four
+# formats exported (period 2026-11-20〜2026-11-21). The 新CSV rows have the same structure as E5B-2A.
+E5B2B_EVIDENCE_ID = "EVID-FREEE-JOURNAL-CSV-REAL-EXPORT-20261122-E5B2B-001"
+E5B2B_OBSERVATION = FreeeObservation(
+    evidence_id=E5B2B_EVIDENCE_ID,
+    exported="同じテスト事業所・税抜経理で新規登録したE5B-09・10の2仕訳4行（2026-11-22）。"
+             "旧/新CSV・JDL9・弥生25。期間 2026-11-20〜2026-11-21",
+    header_fingerprints=frozenset({header_fingerprint(OLD_CSV_29_HEADER), header_fingerprint(NEW_CSV_97_HEADER)}),
+    columns_with_values={
+        FreeeJournalVariant.OLD_CSV: frozenset({
+            "", "取引日", "借方勘定科目", "借方金額", "借方税区分", "貸方勘定科目", "貸方金額", "貸方税区分", "摘要",
+            "決算整理仕訳", "仕訳番号", "作成日時", "借方勘定科目コード", "貸方勘定科目コード", "更新日時", "承認状況",
+            "作成者",
+        }),
+        FreeeJournalVariant.NEW_CSV: frozenset(_NEW_COLUMNS_TAX_EXCLUSIVE),
+    },
+    value_sets={
+        "決算整理仕訳": frozenset({"0"}),
+        "期末日取引フラグ": frozenset({"0"}),
+        "内税・外税": frozenset({"内税"}),
+        "税率": frozenset({"0", "10"}),
+        "軽減税率有無": frozenset({"0"}),
+        "消費税経理処理方法": frozenset({"税抜経理"}),
+        "登録した方法": frozenset({"振替伝票"}),
+        "承認状況": frozenset({"なし"}),
+        "承認状況(仕訳承認)": frozenset({"なし"}),
+        "税区分": frozenset({"対象外", "課税売上10%", "課対仕入10%"}),
+    },
+    row_layouts=frozenset(),
+    registration_sources=frozenset({("振替伝票", True, False)}),
+    tax_line_layouts=frozenset({(_BOTH, _DEBIT_ONLY), (_BOTH, _CREDIT_ONLY)}),
+    tax_line_accounts=_TAX_LINE_ACCOUNTS,
+)
+
+OBSERVATIONS: tuple[FreeeObservation, ...] = (
+    E4_OBSERVATION, E5B1_OBSERVATION, E5B2A_OBSERVATION, E5B2B_OBSERVATION,
+)
 OBSERVATION_EVIDENCE_IDS: tuple[str, ...] = tuple(o.evidence_id for o in OBSERVATIONS)
 # Kept for existing readers: the Evidence of the observed HEADERS (E5B1 showed the same headers).
 EVIDENCE_ID = E4_EVIDENCE_ID
@@ -318,16 +401,19 @@ def _union(sets) -> frozenset:
     return frozenset().union(*sets)
 
 
-_OLD_VALUES_OBSERVED = _union(o.columns_with_values[FreeeJournalVariant.OLD_CSV] for o in OBSERVATIONS)
-_NEW_VALUES_OBSERVED = _union(o.columns_with_values[FreeeJournalVariant.NEW_CSV] for o in OBSERVATIONS)
+_OLD_VALUES_OBSERVED = _union(o.columns_with_values.get(FreeeJournalVariant.OLD_CSV, frozenset()) for o in OBSERVATIONS)
+_NEW_VALUES_OBSERVED = _union(o.columns_with_values.get(FreeeJournalVariant.NEW_CSV, frozenset()) for o in OBSERVATIONS)
 # Enumerated columns (keyed without the 借方/貸方 prefix): only these values were seen. Anything else is
-# read but reported as unobserved (外税, 税抜経理, 控50, 輸出, 半角括弧の「8%(軽)」…).
+# read but reported as unobserved (外税, 控50, 輸出, 半角括弧の「8%(軽)」…). 税抜経理 (E5B-2A/2B) is observed, but
+# a 税抜経理 journal is only accepted with its tax row identified by application.freee_tax_lines.
 OBSERVED_VALUE_SETS: dict[str, frozenset[str]] = {
     key: _union(o.value_sets.get(key, frozenset()) for o in OBSERVATIONS)
     for key in dict.fromkeys(key for o in OBSERVATIONS for key in o.value_sets)
 }
 OBSERVED_ROW_LAYOUTS: frozenset[RowLayout] = _union(o.row_layouts for o in OBSERVATIONS)
 OBSERVED_REGISTRATION_SOURCES: frozenset[RegistrationSource] = _union(o.registration_sources for o in OBSERVATIONS)
+OBSERVED_TAX_LINE_LAYOUTS: frozenset[RowLayout] = _union(o.tax_line_layouts for o in OBSERVATIONS)
+OBSERVED_TAX_LINE_ACCOUNTS: frozenset[tuple[str, str, str]] = _union(o.tax_line_accounts for o in OBSERVATIONS)
 
 
 def _layout_shape(layout: RowLayout) -> tuple[int, int, int]:
@@ -352,6 +438,10 @@ def evidence_for_column(variant: FreeeJournalVariant, column: str) -> tuple[str,
 
 def evidence_for_layout(layout: RowLayout) -> tuple[str, ...]:
     return tuple(o.evidence_id for o in OBSERVATIONS if layout in o.row_layouts)
+
+
+def evidence_for_tax_line_layout(layout: RowLayout) -> tuple[str, ...]:
+    return tuple(o.evidence_id for o in OBSERVATIONS if layout in o.tax_line_layouts)
 
 
 def evidence_for_registration_source(source: RegistrationSource) -> tuple[str, ...]:
