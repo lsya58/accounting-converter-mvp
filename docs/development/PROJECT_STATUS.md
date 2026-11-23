@@ -5,6 +5,11 @@
 最終更新: 2026-11-22（正本の分担を明記し、§1 を現在値と履歴の試算に分けた。値は2026-11-21のAppDataコピー再計算で確認、2026-11-11から不変）
 前回: 2026-11-11（READYのみ2,480仕訳の実機往復はFAIL: 税額1件。13月の照合に対応。税額0のEvidence適用を修正し正式READY 2,479／BLOCK 35）
 
+### JDL往復照合GUI Phase 1 のWindows実画面検証（2026-11-23、commit `4d6eb50`。詳細: [jdl_real_evidence_log.md](jdl_real_evidence_log.md) の「JDL往復照合GUI Phase 1」）
+- 会社B（`company-yayoi-act`）だけを読み込んだ隔離環境で、既存Evidence `EVID-YAYOI-JDL-35-5-COMPANYB-202603-FULL-ROUNDTRIP-001` のファイルを照合。総合判定 PASS、80仕訳／86行、欠落・余分・説明できない差分0、既知の正規化454、監査記録・決算整理一致。要約の上書き拒否も実画面で確認。新しいEvidenceではない（JDL再操作なし）。
+- 実AppData・`HKCU\Software\AccountingConverter`・Evidence原本・EXEは変化なし。`HKCU\Software\QtProject`（ファイル選択ダイアログの履歴）は変更あり（想定どおり、値は未特定）。照合中の操作無効化などは実画面で未検証。
+- 会社Aの現在値（正式READY 2,479／BLOCK 35）・freee正式READY 0・会計判定・JDL30列出力は変更なし。
+
 ### READYのみ2,480仕訳の実機往復（2026-11-11、未commit。詳細: [ready_only_windows_trial.md](ready_only_windows_trial.md) 第7章）
 - Windows EXE出力をJDL検証用複製へ「決算整理を含む」で取込・再Export。2,480/2,480仕訳・6,102/6,102行、欠落・重複・余分0、決算整理9行（20261331）保持、監査2,397項目PASS、摘要末尾空白588行は既存Evidenceの並び（許容判断は未記録）。
 - **正式判定 FAIL**: 説明できない差分1（売上・10%・外税・科目9251の1円行、消費税 0→1）。既存Evidenceで説明できない（原因の整理は次の「修正」項）。許容・書き換えはしていない。

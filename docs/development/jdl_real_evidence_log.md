@@ -49,7 +49,38 @@
 | 2026-11-10 / 2026-05-01〜05-29（実データ） | 会社A Pilot-2 実データ往復（174仕訳・434行、Windows EXE変換）。摘要末尾空白の追加Evidence `EVID-YAYOI-JDL-35-5-BUDDIES-PILOT2-DESCRIPTION-TRAILING-SPACE-REMOVED-001`（`application/jdl_description_trailing_space.py` の `EVIDENCE_PILOT2`。Pilot-1のEvidenceは書き換えず別エントリ。状態 TECHNICAL_VERIFIED_INFORMATION_LOSS_PENDING_USER_ACCEPTANCE） | source: private 弥生仕訳日記帳 `YAYOI_PILOT2_20260501_20260529.txt`（`source.txt` から伝票単位で抽出、SHA-256 `bda13d49d2bf1051eac1851243cc265b6abebdc36c299fd6cfed64920cfe2f89`） / formal: private `BUDDIES_PILOT2_20260501-0529_JDL_IMPORT.csv`（SHA-256 `3170b96da93279cfcb52b5ee1ce37618ac7e152998143cec78096710fb4a89ec`）と監査記録 `….csv.audit.json`（`75cf06f8…`、同名で対応） / re-export: private `BUDDIES_PILOT2_20260501-0529_JDL_REEXPORT.csv`（出力期間 20260501〜20260529、SHA-256 `68b6d272b7d454c1f674815fedcda3918221ded43453dd882574a881402b44a2`） | 本番会社でHuman取込・再Export。`yayoi_roundtrip_check`: 174/174仕訳・434/434行、欠落・重複・余分0、金額・借貸・日付・科目・補助・税区分・税額・構造・決算区分一致、既知正規化2,059セル。差分は摘要48行（44伝票）の末尾空白だけ: 半角1×33・半角2×14（Pilot-1のEvidenceの範囲）と、**半角3×1（仕訳番号67695・伝票1939・2026-05-12。どのEvidenceにも無かった並びで、一度はFAIL）**。先頭・途中の空白と他の文字は不変。追加Evidenceは半角3個の並びだけを登録。説明できない差分0。監査137項目（70仕訳、親科目のみの補助53組すべて利用者確認済み、うちPilot-1に無い7組8項目）PASS。判定 NORMALIZATION_ACCEPTANCE_PENDING（利用者の許容判断なし） | 会社A・JDL 35.5 公式仕訳CSV・同じ税務設定・16行。Pilot-1のエントリ（半角1・半角2・全角1）と合わせ、末尾の空白の並びがこの4種のときだけ。半角4個以上・全角2個以上・タブ・半角全角の混在・一部だけ削除・先頭/途中の変化は UNEXPECTED_CHANGE のまま。許容判断は行の内容と2ファイルのSHA-256に紐づけて別途記録（Pilot-1・Pilot-2は別々） | NO |
 | 2026-11-11 / 2025-08-01〜2026-07-31（実データ・READYのみ） | 会社A READYのみ変換の実機往復（2,480仕訳・6,102行、Windows EXE変換、除外34仕訳は未移行）。**新しいEvidenceの登録なし** | source: private `source.txt`（SHA-256 `7ab406cb9d0c88b3ecac07e55d2586808bdd4e2368df058aeb014e623d0c14a8`。EXEは `バディーズCSV.txt` の名前で読んだため、照合は同一バイトの同名隔離コピーで行う） / formal: private `ready_only_2480/BUDDIES_READY_ONLY_2480_20250801-20260731_JDL_IMPORT.csv`（`2032c145…`）・`.audit.json`（`bce783cf…`）・`.excluded.csv`（`b036ed63…`）・`.ready_only.json`（`d5e5a6b5…`） / re-export: private `BUDDIES_READY_ONLY_2480_JDL_REEXPORT.csv`（出力期間 20250801〜20260731、決算整理を含む、`95ef5e4f…`） | 検証用複製にHuman取込（通常期間指定では13月9行が「指定日付範囲外」、「決算整理を含む」で取込）・再Export。`verify_ready_only_output` PASS。`yayoi_roundtrip_check --ready-only`: 2,480/2,480仕訳・6,102/6,102行、欠落・重複・余分0、原本↔CSV一致、監査1,176仕訳・2,397項目PASS。**決算整理6仕訳9行は日付20261331のまま保持**（照合ツールの13月対応後、置換コピーなしで確認）。既知正規化28,785セル、摘要末尾空白588行（半角1×387・半角2×190・全角1×8・半角3×3、すべて既存Evidenceの並び）。**説明できない差分1: 貸方 売上・10%・外税・科目9251の1円行で、取込CSVの消費税0が再Exportで1**。判定 FAIL | 税額0→1は既存Evidenceの範囲外（`TX-S10-9251-FLOOR` は切捨て値100の行で、切捨て値0は未観測）。原因未確定（売上切上げでのJDL再計算の可能性はあるが根拠不足）。Evidenceにしない・許容しない。同日修正: 端数のある金額に書いた税額0は関係 `ZERO`（未登録）としてBLOCK（`EXPLICIT_TAX_ZERO_UNVERIFIED`）。正式READY 2,479。この行の判定はFAILのまま（新しい2,479の出力は未取込） | NO（同じ取込の再実施は不要） |
 
-## JDL往復照合GUI Phase 1 の適用範囲と将来課題（記録）
-- 適用範囲：弥生インポート形式かつ JDL実機Evidenceのある会社B（company-yayoi-act）のみ。他の会社はインポート形式でも「未対応」（`jdl_roundtrip_review.EVIDENCE_COMPANY_IDS`）。会社BのEvidenceを他社の承認として流用しない。会社A・MF・freeeは対象外。
+## JDL往復照合GUI Phase 1（記録。新しい実機Evidenceではない）
+
+### 適用範囲
+- 弥生インポート形式かつ JDL実機Evidenceのある会社B（`company-yayoi-act`、表示名 `yayoi-act`）のみ。他の会社はインポート形式でも「未対応」（`jdl_roundtrip_review.EVIDENCE_COMPANY_IDS`）。会社BのEvidenceを他社の承認として流用しない。会社A（仕訳日記帳）・MF・freeeは対象外。
+- 判定は既存CLIと同じ `yayoi_roundtrip_check.run_check()`。GUIは判定を上げない（PENDING・読取エラー・未照合はPASSにしない）。許容記録・税理士承認は作らない。
 - 出力CSVと再出力CSVが内容完全一致の場合は「未照合」にする（同じファイルの誤指定防止）。「同一内容＝JDL未経由」とは断定しない（JDLの再出力がバイト一致する可能性がある）。判定は緩和しない。
-- 将来課題：再出力がJDLを経由したことを確認する出所確認方式（例：JDL出力時刻・件数・ヘッダ等のEvidence化）の検討。
+
+### Windows実画面検証（2026-11-23、commit `4d6eb50`）
+既存Evidence `EVID-YAYOI-JDL-35-5-COMPANYB-202603-FULL-ROUNDTRIP-001`（2026-11-03取得）のファイルを使ったGUIの実画面確認。JDL実機の再操作・Evidenceの再取得はしていない。新しいEvidence IDは発行しない。既存Evidenceの結果は変更しない。
+
+| 項目 | 内容 |
+|---|---|
+| EXE | `accounting-converter-mvp-ready-only\dist\AccountingConverter\AccountingConverter.exe`（release_manifest の commit `4d6eb50`、SHA-256 `60debfd6…`、検証前後で一致） |
+| 環境 | Windows側の一時隔離フォルダ。`LOCALAPPDATA`・`ACCOUNTING_CONVERTER_SETTINGS_FILE`・`TEMP`/`TMP` を起動プロセスだけ差し替え。会社設定は `company-yayoi-act` 1社と必要なprofile 1本のコピーだけ。パスの調整なし |
+| 入力（コピー、SHA-256は原本と一致） | source `source.txt`（`7ac94294…`）／ 出力CSV `act_202603_formal_jdl.csv`（`97426c9a…`）／ 監査記録 `.audit.json`（`50fc9393…`、CSVと同じフォルダ）／ 再出力 `act_reexport_202603_after_formal.csv`（`4f3e2404…`）。会社設定 `company.json`（`41b04277…`）・`jdl-context.json`（`7eced1f5…`）・profile（`0a3b482d…`） |
+| 画面で確認できたこと | 会社一覧は `yayoi-act` のみ。元データを弥生インポート形式の80仕訳として認識。出力CSV・再出力CSVをGUIで選択。**総合判定 PASS**。80仕訳／86行の一致、欠落0・余分0・説明できない差分0、既知の正規化454、監査記録・決算整理とも一致。要約JSONの保存と、同じ名前での保存時の上書き拒否 |
+| 終了後の確認 | 実AppData 143ファイル変更なし。`HKCU\Software\AccountingConverter` 変更なし。Evidence原本7ファイルのSHA-256一致。EXEのSHA-256一致 |
+| 隔離できなかったもの | `HKCU\Software\QtProject\OrganizationDefaults\FileDialog` は変更あり。Qtのファイル選択ダイアログの履歴（最後に開いたフォルダ等）として事前に想定したもの。個々の変更値は未特定。Windows自体のファイル選択履歴（ComDlg32）も未確認 |
+| 判定の位置づけ | GUIの表示がCLIと同じ判定（PASS）を示すことの確認。会社Bの往復Evidence自体は2026-11-03の記録のまま |
+
+### 未検証（Phase 1）
+- 照合中に会社選択欄・ファイル選択ボタン・「照合する」が無効になる様子（80仕訳ではすぐ終わるため実画面では未確認。offscreenのQtテストでは確認済み）。
+- 照合中にアプリを閉じたときの動き。
+- 大きなデータでの照合中の画面の応答。
+- 読取エラー・FAIL・PENDING・未照合の実画面表示（offscreenのQtテストと合成データのテストだけ）。
+- 別の画面サイズ・DPIでの見え方。
+- QtProject のレジストリ変更の具体的な値。
+
+### Phase 2・3 と将来の課題
+- **許可の根拠**: 会社IDの固定許可リストは事務所導入で使えない（登録し直すとIDが変わる）。元データの形式とJDLの設定をEvidenceの範囲と照らす方式へ。範囲内の会社を自動で許可するかはHuman・税理士の判断が必要。全会社へ無条件には広げない。
+- **再出力の出所確認**: 再出力がJDLを経由したことの確認方式（JDL出力時刻・件数・見出し等のEvidence化など）。
+- **Phase 2（MF）**: 元データ↔出力CSVの照合段階がない。取り違え防止の材料（出力の再生成とバイト一致など）を別に設計する。
+- **Phase 3（会社A・仕訳日記帳）**: 摘要末尾空白の PENDING を実データ（Pilot-1・Pilot-2）で表示確認。READYのみ出力のmanifest自動検出を実データで確認（2,480の往復はFAIL: 税額1件のまま）。許容記録は表示だけ（記録は `data/private` のCLIのみ）。照合時間。
+- **表示の制約**: 差分詳細は既存の戻り値の最初の20件だけ（全件の内訳は `compare()` の拡張が必要）。重複と余分を区別しない。比較は行の順番どおりなので、1行ずれると以降も差分に見える。不均衡な再出力は読取エラー。
+- **Qtのダイアログ履歴**: 実レジストリに書かせないには製品コードの変更が必要。
