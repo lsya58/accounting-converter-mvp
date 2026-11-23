@@ -85,6 +85,7 @@ from accounting_converter.ui import freee_trial_view as fv
 from . import components as ui
 from .bulk_review import BulkCandidateDialog, DescriptionRulesDialog
 from .file_dialogs import choose_new_file
+from .roundtrip_card import RoundTripCard
 from .freee_trial_dialog import FreeeTrialDiagnosisDialog
 from .navigation import NavigationRail
 from .pages import scroll_page
@@ -477,6 +478,11 @@ class AccountingConverterMainWindow(QMainWindow):
         self.ready_only_scope_label.setWordWrap(True)
         convert_layout.addWidget(self.ready_only_scope_label)
         layout.addWidget(convert_card)
+        # JDL往復照合 (Phase 1: 弥生インポート形式 only; read-only, existing check, no acceptance / approval)
+        self.roundtrip_card = RoundTripCard(
+            self.controller, base_key=self.home_request_key, selection=self._roundtrip_selection,
+            lock_selection=lambda locked: self.company_combo.setEnabled(not locked))
+        layout.addWidget(self.roundtrip_card)
         self.runs_card, runs_layout = self._card("READY-only出力（この元データ）")
         self.runs_message = QLabel()
         self.runs_message.setObjectName("muted")
@@ -1287,7 +1293,16 @@ class AccountingConverterMainWindow(QMainWindow):
         if hasattr(self, "nav"):
             self.nav.follow_width(self.width())
 
+    def _roundtrip_selection(self):
+        state = self.controller.state
+        source = Path(state.selected_file) if state.selected_file else None
+        company = state.selected_company_setting_id
+        text = self.company_combo.currentText() if company else ""
+        return company, text, source
+
     def closeEvent(self, event) -> None:
+        if hasattr(self, "roundtrip_card"):
+            self.roundtrip_card.release()           # its check is dropped, never blocks; joined below
         self.home_task.shutdown()
         self.reasons_task.shutdown()
         self.mapping_task.shutdown()
@@ -1426,6 +1441,8 @@ class AccountingConverterMainWindow(QMainWindow):
         self._render_home()
         self._render_reasons_state()
         self._render_mapping_state()
+        if hasattr(self, "roundtrip_card"):
+            self.roundtrip_card.refresh()          # a result for another company / source is no longer shown
 
     def _render_pages(self, state: AppState, presentation) -> None:
         """The page-specific texts and which Yayoi-only actions are usable (others say why they are not)."""

@@ -287,6 +287,25 @@ def check(source: Path, profile, context, candidate: Path, reexport: Path | None
     return result
 
 
+def run_check(source: Path, profile, context, company_id: str, candidate: Path, reexport: Path | None, *,
+              acceptance: Path | None = None, ready_only: bool = False) -> dict:
+    """What the command line runs once the company is resolved; the screen calls the same function.
+
+    ready_only: the candidate is a READY-only output. Its files are verified first (manifest, company, source and
+    output SHA-256); if that fails nothing is compared and {"verdict": "FAIL", "ready_only_files": …} comes back."""
+    journal_ids = None
+    if ready_only:
+        from accounting_converter.application import yayoi_ready_only as ro
+
+        verification = ro.verify_ready_only_output(source, candidate, profile, context, company_id)
+        if verification["verdict"] != "PASS":
+            return {"verdict": "FAIL", "ready_only_files": verification}
+        manifest = json.loads(ro.manifest_path_for(candidate).read_text(encoding="utf-8"))
+        journal_ids = ro.ready_ids_from_manifest(manifest, source, profile)
+    return check(source, profile, context, candidate, reexport, journal_ids=journal_ids,
+                 company_setting_id=company_id, acceptance=acceptance)
+
+
 RECORD_SCHEMA = "jdl-description-trailing-space-record-v1"
 
 
@@ -317,20 +336,11 @@ def main() -> int:
     args = parser.parse_args()
     profiles = ConversionProfileStore(args.company_store / "profiles")
     resolved = CompanySettingStore(args.company_store / "companies", profiles).resolve(args.company_id)
-    journal_ids = None
-    if args.ready_only:
-        from accounting_converter.application import yayoi_ready_only as ro
-
-        verification = ro.verify_ready_only_output(args.source, args.candidate, resolved.profile, resolved.context,
-                                                   args.company_id)
-        if verification["verdict"] != "PASS":
-            print(json.dumps({"verdict": "FAIL", "ready_only_files": verification}, ensure_ascii=False, indent=2))
-            return 1
-        manifest = json.loads(ro.manifest_path_for(args.candidate).read_text(encoding="utf-8"))
-        journal_ids = ro.ready_ids_from_manifest(manifest, args.source, resolved.profile)
-    result = check(args.source, resolved.profile, resolved.context, args.candidate, args.reexport,
-                   journal_ids=journal_ids,
-                   company_setting_id=args.company_id, acceptance=args.acceptance)
+    result = run_check(args.source, resolved.profile, resolved.context, args.company_id, args.candidate, args.reexport,
+                       acceptance=args.acceptance, ready_only=args.ready_only)
+    if "ready_only_files" in result:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 1
     if args.record_out is not None and "description_trailing_space_loss" in result:
         write_record(result, args.record_out)
     loss = result.get("description_trailing_space_loss")

@@ -1071,6 +1071,33 @@ class AccountingConverterController:
         return {"plan": plan, "items": items, "rows": uv.build_rows(plan, items), "ready": plan.ready_count,
                 "blocked": plan.excluded_count, "total": plan.total_journals, "source": source}
 
+    # ------------------------------------------------------------------ JDL round-trip check (Phase 1, read-only)
+    def jdl_roundtrip_route(self, company_id) -> tuple[bool, str | None]:
+        """(can this company use the screen's round-trip check, reason code when not). Reads the setting only."""
+        from accounting_converter.application import jdl_roundtrip_review as rr
+
+        if not company_id:
+            return False, "COMPANY_SETTING_NOT_AVAILABLE"
+        try:
+            resolved = self.company_store.resolve(company_id)
+        except Exception:  # noqa: BLE001 - an unreadable setting is simply not available here
+            return False, "COMPANY_SETTING_NOT_AVAILABLE"
+        if not resolved.available or resolved.profile is None:
+            return False, "COMPANY_SETTING_NOT_AVAILABLE"
+        if rr.route_of(resolved.profile, company_id) is None:
+            return False, rr.unsupported_reason(resolved.profile)
+        return True, None
+
+    def jdl_roundtrip_review(self, company_id, source_path, candidate_path, reexport_path):
+        """The existing round-trip check (tools.yayoi_roundtrip_check.run_check) for the screen. Writes nothing."""
+        from accounting_converter.application import jdl_roundtrip_review as rr
+
+        try:
+            resolved = self.company_store.resolve(company_id)
+        except Exception:  # noqa: BLE001
+            resolved = None
+        return rr.review(resolved, company_id, Path(source_path), Path(candidate_path), Path(reexport_path))
+
     def home_yayoi_overview(self, company_id, source_path):
         """Read-only (ホーム): the counts and the migration state for one Yayoi source, from the same production paths
         the D2 screen uses (unmigrated_overview, the approval ledger, the READY-only run next to the source).
