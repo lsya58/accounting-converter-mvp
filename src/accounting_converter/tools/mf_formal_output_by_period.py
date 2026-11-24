@@ -15,7 +15,7 @@ import hashlib
 import io
 import json
 import tempfile
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from accounting_converter.adapters.input.moneyforward import MoneyForwardInputAdapter
@@ -29,6 +29,44 @@ from accounting_converter.tools.mf_formal_readiness import _input_profile, _subs
 def fiscal_year_end(day: date, month: int, last_day: int) -> date:
     end = date(day.year, month, last_day)
     return end if day <= end else date(day.year + 1, month, last_day)
+
+
+def period_bounds(period_end: date) -> tuple[date, date]:
+    """(first day, last day) of the fiscal year ending on period_end: the days d with fiscal_year_end(d) == period_end."""
+    previous_end = date(period_end.year - 1, period_end.month, period_end.day)
+    return previous_end + timedelta(days=1), period_end
+
+
+def _convert_rows(source: Path, rows: set[int], output: Path, profile, context):
+    """The normal MoneyForwardConversionWorkflow on whole source records `rows` (a subset keeps every physical row of
+    each journal, so no journal is split). The subset is written to a TemporaryDirectory, removed on exit."""
+    with tempfile.TemporaryDirectory() as directory:
+        subset = Path(directory) / source.name
+        subset.write_bytes(_subset_csv(source, rows))
+        workflow = MoneyForwardConversionWorkflow()
+        prepared = workflow.prepare(
+            input_path=subset, output_path=output, profile=profile,
+            context=context, company_setting_validated=True,
+        )
+        result = workflow.execute(prepared)
+    return prepared, result
+
+
+def regenerate_period(source: Path, profile, context, period_end: date, output: Path) -> dict:
+    """The formal output of ONE fiscal year (all source journals dated in period_bounds(period_end)), made exactly as
+    generate() makes it. Counts only (no customer values). `output` must not exist (the workflow never overwrites)."""
+    start, end = period_bounds(period_end)
+    entries = tuple(MoneyForwardInputAdapter().read(source, _input_profile()))
+    period_entries = [entry for entry in entries if start <= entry.date <= end]
+    rows = {n for e in period_entries for n in e.metadata.get("physical_row_numbers", ())}
+    item = {"period": [start.isoformat(), end.isoformat()], "source_journals_total": len(entries),
+            "source_journals": len(period_entries), "source_physical_rows": len(rows),
+            "readiness": None, "status": None}
+    if not period_entries:
+        return item
+    prepared, result = _convert_rows(source, rows, output, profile, context)
+    item.update(readiness=prepared.summary.readiness.value, status=result.status.value if result else None)
+    return item
 
 
 def generate(source: Path, store: Path, company_id: str, output_dir: Path, *, fy_end_month: int, fy_end_day: int) -> dict:
@@ -45,15 +83,7 @@ def generate(source: Path, store: Path, company_id: str, output_dir: Path, *, fy
     for end, period_entries in sorted(periods.items()):
         rows = {n for e in period_entries for n in e.metadata.get("physical_row_numbers", ())}
         output = output_dir / f"mf_formal_jdl_FY{end:%Y-%m}.csv"
-        with tempfile.TemporaryDirectory() as directory:
-            subset = Path(directory) / source.name
-            subset.write_bytes(_subset_csv(source, rows))
-            workflow = MoneyForwardConversionWorkflow()
-            prepared = workflow.prepare(
-                input_path=subset, output_path=output, profile=resolved.profile,
-                context=resolved.context, company_setting_validated=resolved.available,
-            )
-            result = workflow.execute(prepared)
+        prepared, result = _convert_rows(source, rows, output, resolved.profile, resolved.context)
         item = {
             "fiscal_year_end": end.isoformat(),
             "period": [min(e.date for e in period_entries).isoformat(), max(e.date for e in period_entries).isoformat()],

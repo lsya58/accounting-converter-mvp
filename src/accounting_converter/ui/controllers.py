@@ -1084,18 +1084,52 @@ class AccountingConverterController:
             return False, "COMPANY_SETTING_NOT_AVAILABLE"
         if not resolved.available or resolved.profile is None:
             return False, "COMPANY_SETTING_NOT_AVAILABLE"
+        from accounting_converter.application import mf_roundtrip_review as mf
+
+        if mf.is_moneyforward(resolved.profile):  # Phase 2: only with an explicit pilot entry (disabled by default)
+            entry, reason = mf.route_status(resolved, self._jdl_roundtrip_pilot_file())
+            return (True, None) if entry is not None else (False, reason)
         if rr.route_of(resolved.profile, company_id) is None:
             return False, rr.unsupported_reason(resolved.profile)
         return True, None
 
-    def jdl_roundtrip_review(self, company_id, source_path, candidate_path, reexport_path):
-        """The existing round-trip check (tools.yayoi_roundtrip_check.run_check) for the screen. Writes nothing."""
-        from accounting_converter.application import jdl_roundtrip_review as rr
+    def _jdl_roundtrip_pilot_file(self) -> Path:
+        from accounting_converter.application import jdl_roundtrip_pilot as pilot
+
+        return pilot.pilot_path(self.company_store.root_dir)
+
+    def jdl_roundtrip_period(self, company_id) -> str | None:
+        """The fiscal year end (MM-DD) of an enabled Money Forward pilot company, else None (no period to choose)."""
+        from accounting_converter.application import mf_roundtrip_review as mf
 
         try:
-            resolved = self.company_store.resolve(company_id)
+            resolved = self.company_store.resolve(company_id) if company_id else None
         except Exception:  # noqa: BLE001
-            resolved = None
+            return None
+        if resolved is None or not mf.is_moneyforward(resolved.profile):
+            return None
+        entry, _reason = mf.route_status(resolved, self._jdl_roundtrip_pilot_file())
+        return entry.fiscal_year_end if entry is not None else None
+
+    def jdl_roundtrip_review(self, company_id, source_path, candidate_path, reexport_path, *, period_end=None):
+        """The existing round-trip check for the screen. Writes nothing.
+
+        弥生インポート形式 (Phase 1): tools.yayoi_roundtrip_check.run_check. Money Forward pilot (Phase 2):
+        regeneration binding + tools.mf_full_e2e_compare.compare, for the fiscal year ending on `period_end`."""
+        from accounting_converter.application import jdl_roundtrip_review as rr
+        from accounting_converter.application import mf_roundtrip_review as mf
+
+        def resolve():
+            try:
+                return self.company_store.resolve(company_id)
+            except Exception:  # noqa: BLE001
+                return None
+
+        resolved = resolve()
+        if resolved is not None and resolved.available and mf.is_moneyforward(resolved.profile):
+            return mf.review(resolve, company_id, Path(source_path), Path(candidate_path),
+                             Path(reexport_path) if reexport_path else None, period_end,
+                             self._jdl_roundtrip_pilot_file())
         return rr.review(resolved, company_id, Path(source_path), Path(candidate_path), Path(reexport_path))
 
     def home_yayoi_overview(self, company_id, source_path):

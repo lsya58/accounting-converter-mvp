@@ -96,6 +96,10 @@ class RoundTripReview:
     trailing_space: dict = field(default_factory=dict)  # counts and Evidence IDs only, never the descriptions
     date_ranges: dict = field(default_factory=dict)
     audit_found_by: str | None = None
+    # Phase 2 (Money Forward) only; empty for the Phase 1 route, whose summary is unchanged.
+    period: dict = field(default_factory=dict)          # the fiscal year chosen on screen (independent of the CSV)
+    regeneration: dict = field(default_factory=dict)    # source + current setting -> regenerated CSV vs candidate
+    evidence_reference: dict = field(default_factory=dict)  # recorded result, only when every recorded file matches
 
     @property
     def is_pass(self) -> bool:
@@ -124,6 +128,8 @@ class RoundTripReview:
             "trailing_space": self.trailing_space,
             "date_ranges": self.date_ranges,
             "audit_found_by": self.audit_found_by,
+            **({"period": self.period, "regeneration": self.regeneration,
+                "evidence_reference": self.evidence_reference} if (self.period or self.regeneration) else {}),
         }
 
 

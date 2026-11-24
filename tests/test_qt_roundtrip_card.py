@@ -51,6 +51,9 @@ class Controller:
     def jdl_roundtrip_route(self, company_id):
         return self.supported, self.reason
 
+    def jdl_roundtrip_period(self, company_id):
+        return None  # 弥生 (Phase 1): no fiscal year to choose
+
     def jdl_roundtrip_review(self, company_id, source, candidate, reexport):
         self.calls.append((company_id, source, candidate, reexport))
         self.gate.wait(30)
@@ -59,8 +62,7 @@ class Controller:
         return self.result
 
 
-@unittest.skipUnless(PYSIDE6_AVAILABLE, "PySide6 is not installed")
-class RoundTripCardTest(unittest.TestCase):
+class _CardBase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
@@ -94,6 +96,10 @@ class RoundTripCardTest(unittest.TestCase):
         self.assertTrue(wait_until(lambda: not card.task.busy, 30000))
         QApplication.processEvents()
 
+
+
+@unittest.skipUnless(PYSIDE6_AVAILABLE, "PySide6 is not installed")
+class RoundTripCardTest(_CardBase):
     def test_unsupported_company_and_missing_files_cannot_run(self):
         controller = Controller(supported=False, reason="ROUTE_NOT_YAYOI_IMPORT_FORMAT")
         card = self._card(controller)
@@ -213,6 +219,78 @@ class RoundTripCardTest(unittest.TestCase):
         self.assertTrue(wait_until(lambda: task not in ui._RUNNING, 30000))
         QApplication.processEvents()
         self.assertIsNone(card.current_review())
+
+
+class MfController(Controller):
+    """A Money Forward pilot company (Phase 2): a fiscal year end is offered, the period is passed on."""
+
+    def __init__(self, result=None, fiscal_year_end="05-31"):
+        super().__init__(result)
+        self.fiscal_year_end = fiscal_year_end
+
+    def jdl_roundtrip_period(self, company_id):
+        return self.fiscal_year_end
+
+    def jdl_roundtrip_review(self, company_id, source, candidate, reexport, *, period_end=None):
+        self.calls.append((company_id, source, candidate, reexport, period_end))
+        self.gate.wait(30)
+        return self.result
+
+
+@unittest.skipUnless(PYSIDE6_AVAILABLE, "PySide6 is not installed")
+class MoneyForwardCardTest(_CardBase):
+    """Phase 2 on the same card: the fiscal year is chosen on screen, the re-export is optional."""
+
+    def _mf_card(self, controller, *, reexport=True):
+        card = self._card(controller)
+        if not reexport:
+            card.reexport = None
+        card.refresh()
+        return card
+
+    def test_the_year_must_be_chosen_and_no_default_is_selected(self):
+        from datetime import date
+
+        controller = MfController(review(rr.PASS, regeneration={"byte_identical": True}))
+        card = self._mf_card(controller)
+        self.assertFalse(card.period_combo.isHidden())
+        self.assertIsNone(card.period_combo.currentData())               # no default year
+        self.assertIsNone(card.selected_period_end())
+        self.assertFalse(card.run_button.isEnabled())
+        self.assertFalse(card.run())
+        self.assertIn("決算期", card.scope_label.text())
+        self.assertIn("税理士の承認ではありません", card.guidance.text())
+        self.assertNotIn(".audit.json", card.guidance.text())
+        index = card.period_combo.findData("2026-05-31")
+        self.assertGreater(index, 0)
+        self.assertEqual(card.period_combo.itemText(index), "FY2026-05（2025-06-01〜2026-05-31）")
+        card.period_combo.setCurrentIndex(index)
+        self.assertEqual(card.selected_period_end(), date(2026, 5, 31))
+        self.assertTrue(card.run_button.isEnabled())
+        self.assertTrue(card.run())
+        self._wait(card)
+        self.assertEqual(controller.calls[-1][-1], date(2026, 5, 31))      # the chosen year is passed on
+        self.assertEqual(card.current_review().state, rr.PASS)
+        self.assertIn("過去に使った設定", card.message.text())
+        card.period_combo.setCurrentIndex(card.period_combo.findData("2027-05-31"))
+        self.assertIsNone(card.current_review())                          # another year: the result is not shown
+
+    def test_without_a_reexport_only_the_regeneration_runs_and_it_is_not_a_pass(self):
+        controller = MfController(review(rr.NOT_RUN, reasons=("REEXPORT_NOT_SELECTED",),
+                                         regeneration={"byte_identical": True}, reexport={}))
+        card = self._mf_card(controller, reexport=False)
+        card.period_combo.setCurrentIndex(card.period_combo.findData("2027-05-31"))
+        self.assertIn("再現だけ", card.reexport_label.text())
+        self.assertTrue(card.run())
+        self._wait(card)
+        self.assertIsNone(controller.calls[-1][3])
+        self.assertFalse(card.current_review().is_pass)
+        self.assertIn("未照合", card.badge.text())
+
+    def test_a_yayoi_company_has_no_year_to_choose(self):
+        card = self._card(Controller(review(rr.PASS)))
+        self.assertTrue(card.period_combo.isHidden())
+        self.assertIn(".audit.json", card.guidance.text())
 
 
 @unittest.skipUnless(PYSIDE6_AVAILABLE, "PySide6 is not installed")

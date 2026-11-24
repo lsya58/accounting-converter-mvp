@@ -48,6 +48,21 @@ REASON_TEXT = {
     "JDL_ROUNDTRIP_FAIL": "元データ・出力CSV・再出力のどこかに説明できない差分があります（下の件数を確認してください）。",
     "CLOSING_ROWS_FAIL": "決算整理（13月）の行が期待と一致しません。",
     "VERDICT_NOT_PASS": "照合が合格していません。",
+    # Phase 2 (Money Forward pilot)
+    "ROUTE_NOT_MONEYFORWARD": "Money Forwardの仕訳帳CSV（19列）の会社ではありません。",
+    "PILOT_NOT_ENABLED": "Money Forwardの照合はパイロット用です。この環境では有効になっていません（既定は無効）。",
+    "PILOT_FILE_INVALID": "パイロットの有効化設定を読み取れないため、照合は使えません。",
+    "PILOT_COMPANY_NOT_LISTED": "この会社はMoney Forward照合のパイロット対象ではありません。",
+    "PILOT_SETTING_CHANGED": "パイロットを有効にした後で会社設定（対応・JDL設定など）が変わっているため、照合できません。",
+    "PERIOD_NOT_SELECTED": "対象の決算期を選んでください（出力CSVの日付からは決めません）。",
+    "PERIOD_NOT_FISCAL_YEAR_END": "選んだ期末日が、この会社の決算日と一致しません。",
+    "CANDIDATE_OUTSIDE_PERIOD": "出力CSVに、選んだ決算期の外の仕訳が含まれています。",
+    "SOURCE_HAS_NO_JOURNALS_IN_PERIOD": "元データに、選んだ決算期の仕訳がありません。",
+    "REGENERATION_NOT_READY": "選んだ決算期の元データを現在の会社設定で変換できません（READYになりません）。",
+    "CANDIDATE_NOT_REPRODUCED": "出力CSVが、元データと現在の会社設定から作り直した内容と一致しません（期首・期末の仕訳の欠落、"
+                                "別の元データ・会社・決算期のCSV、出力後の設定変更などが考えられます）。照合していません。",
+    "REEXPORT_NOT_SELECTED": "再出力CSVが選ばれていないため、JDLとの往復は照合していません（出力CSVの再現だけ確認しました）。",
+    "SETTING_CHANGED_DURING_CHECK": "照合中に会社設定が変更されました。結果は使えません。もう一度照合してください。",
 }
 
 CATEGORY_TEXT = {
@@ -62,13 +77,37 @@ GUIDANCE = (
     "再出力CSVは、JDLで出力CSVを取り込んだ後、同じ期間をJDLから書き出したものを選んでください。",
     "照合はファイルを読むだけで、元データ・出力CSV・再出力・会社設定は変更しません。",
 )
+GUIDANCE_MF = (
+    "対象の決算期を選んでください。元データのうちその期の全仕訳を、現在の会社設定で作り直して出力CSVと比べます。",
+    "出力CSVは、選んだ決算期の分だけを含むファイルを選んでください。",
+    "再出力CSVは、JDLで出力CSVを取り込んだ後、同じ期間をJDLから書き出したものを選んでください（未選択なら再現の確認だけ）。",
+    "照合はファイルを読むだけで、元データ・出力CSV・再出力・会社設定は変更しません。",
+    "パイロットの有効化は税理士の承認ではありません。",
+)
+MF_PASS_TEXT = ("PASS：出力CSVは、選んだ元データと現在の会社設定から再現でき、JDL再出力CSVとデータが整合しました"
+                "（既知の正規化だけ）。過去に使った設定や、JDLへの取込操作そのものの証明ではありません。")
+JDL_ROUTE_NOTE = "できません（再出力CSVがJDLから書き出されたことは、このアプリでは確認できません）"
 POSITION_NOTE = ("比較は行の順番どおりに行います。途中で1行ずれると、それ以降の行もすべて差分に見えます。"
                  "最初の差分の位置から確認してください。重複した行は「余分」に含まれ、区別していません。")
 
 
 def headline(review: rr.RoundTripReview) -> tuple[str, str, str, str]:
     level, badge, words, text = STATE_TEXT.get(review.state, STATE_TEXT[rr.FAIL])
+    if review.state == rr.PASS and review.regeneration:
+        text = MF_PASS_TEXT
     return level, badge, words, text
+
+
+def guidance(moneyforward: bool) -> tuple[str, ...]:
+    return GUIDANCE_MF if moneyforward else GUIDANCE
+
+
+def period_label(end) -> str:
+    """'FY2026-05（2025-06-01〜2026-05-31）' for the fiscal year ending on `end` (a date)."""
+    from accounting_converter.tools.mf_formal_output_by_period import period_bounds
+
+    start, last = period_bounds(end)
+    return f"FY{last:%Y-%m}（{start.isoformat()}〜{last.isoformat()}）"
 
 
 def reason_lines(review: rr.RoundTripReview) -> tuple[str, ...]:
@@ -86,9 +125,35 @@ def _pair(value) -> str:
     return " / ".join(f"{v:,}" for v in value) if isinstance(value, (list, tuple)) else "—"
 
 
-def count_rows(review: rr.RoundTripReview) -> tuple[tuple[str, str], ...]:
+def _mf_rows(review: rr.RoundTripReview) -> list[tuple[str, str]]:
     rows: list[tuple[str, str]] = []
-    for role, label in (("source", "元データ"), ("candidate", "出力CSV")):
+    if review.period:
+        rows.append(("対象の決算期（画面で選択）", f"{review.period['start']}〜{review.period['end']}"))
+    regen = review.regeneration
+    if regen:
+        rows.append(("元データ（対象期の仕訳 / 行）",
+                     f"{regen.get('source_journals_in_period', 0):,} / {regen.get('source_physical_rows_in_period', 0):,}"))
+        rows.append(("① 元データ→出力CSV：現在の会社設定で作り直した内容との一致",
+                     "バイト単位で一致" if regen.get("byte_identical") else "一致しない（照合していません）"))
+        if regen.get("candidate_journals_outside_period"):
+            rows.append(("出力CSVのうち対象期の外の仕訳", f"{regen['candidate_journals_outside_period']:,}"))
+    if review.reexport:
+        rows.append(("② 出力CSV→再出力：データの整合性", "整合" if review.state == rr.PASS else "整合しない"))
+    elif regen:
+        rows.append(("② 出力CSV→再出力：データの整合性", "照合していません"))
+    reference = review.evidence_reference
+    rows.append(("③ 既存Evidenceとの一致（参考）",
+                 f"{reference['evidence_id']}（元データ・決算期・出力CSV・再出力が記録と一致。会社設定は記録に含まれません）"
+                 if reference else "記録と一致する結果はありません"))
+    rows.append(("④ JDLを経由したことの独立した証明", JDL_ROUTE_NOTE))
+    rows.append(("JDLに入らない情報", "MFは監査記録の対象外（保持できない情報がある仕訳は変換時に止めます）"))
+    return rows
+
+
+def count_rows(review: rr.RoundTripReview) -> tuple[tuple[str, str], ...]:
+    rows: list[tuple[str, str]] = _mf_rows(review) if (review.regeneration or review.period) else []
+    roles = (("candidate", "出力CSV"),) if review.regeneration else (("source", "元データ"), ("candidate", "出力CSV"))
+    for role, label in roles:
         item = review.counts.get(role)
         if isinstance(item, dict):
             rows.append((f"{label}（仕訳 / 行）", f"{item.get('journals', 0):,} / {item.get('physical_rows', 0):,}"))
