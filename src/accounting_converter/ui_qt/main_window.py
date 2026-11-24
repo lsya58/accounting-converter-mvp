@@ -480,7 +480,7 @@ class AccountingConverterMainWindow(QMainWindow):
         layout.addWidget(convert_card)
         # JDL往復照合 (Phase 1: 弥生インポート形式 only; read-only, existing check, no acceptance / approval)
         self.roundtrip_card = RoundTripCard(
-            self.controller, base_key=self.home_request_key, selection=self._roundtrip_selection,
+            self.controller, base_key=self.roundtrip_request_key, selection=self._roundtrip_selection,
             lock_selection=lambda locked: self.company_combo.setEnabled(not locked))
         layout.addWidget(self.roundtrip_card)
         self.runs_card, runs_layout = self._card("READY-only出力（この元データ）")
@@ -1175,9 +1175,21 @@ class AccountingConverterMainWindow(QMainWindow):
     # ------------------------------------------------------------------ home (read-only background diagnosis)
     def home_request_key(self):
         """(company, source path, source size + mtime, saved-setting fingerprints) or None when not a Yayoi source."""
-        state = self.controller.state
-        if not hv.is_yayoi(state):
+        if not hv.is_yayoi(self.controller.state):
             return None
+        return self._selection_request_key()
+
+    def roundtrip_request_key(self):
+        """The same key for the JDL roundtrip card, for any source format (Money Forward pilot included).
+
+        Whether a format can be checked is decided by the controller's route (and again by the service), not here.
+        """
+        if not self.controller.state.selected_file:
+            return None
+        return self._selection_request_key()
+
+    def _selection_request_key(self):
+        state = self.controller.state
         path = Path(state.selected_file)
         try:
             stat = path.stat()

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Callable
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QComboBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from accounting_converter.application import jdl_roundtrip_review as rr
 from accounting_converter.ui import roundtrip_view as rv
@@ -24,6 +24,7 @@ from accounting_converter.ui.output_conflicts import refusal_message
 
 from . import components as ui
 from .file_dialogs import choose_new_file
+from .widgets import WheelSafeComboBox
 
 TITLE = "JDLへの取込結果の照合（読み取りのみ）"
 
@@ -49,7 +50,7 @@ class RoundTripCard(QFrame):
         self.reexport: Path | None = None
         self.result: tuple | None = None          # (request key, RoundTripReview)
         self._route: tuple | None = None          # (company id, supported, reason)
-        self._period: tuple | None = None         # (company id, fiscal year end MM-DD or None): Money Forward pilot only
+        self._period: tuple | None = None         # ((company id, source), fiscal year end MM-DD or None): MF pilot only
         # No Qt parent: the window's destruction must not destroy a running thread (see BackgroundTask.release).
         self.task = ui.BackgroundTask()
         self.task.finished.connect(self._on_finished)
@@ -83,7 +84,8 @@ class RoundTripCard(QFrame):
         self.candidate_button.clicked.connect(self._choose_candidate)
         self.reexport_button.clicked.connect(self._choose_reexport)
         # Money Forward pilot: the fiscal year is chosen here, never taken from the candidate CSV. No default.
-        self.period_combo = QComboBox()
+        # Wheel-scrolling the page over the box must not pick a fiscal year (it starts on the placeholder).
+        self.period_combo = WheelSafeComboBox()
         self.period_combo.setAccessibleName("対象の決算期")
         self.period_combo.currentIndexChanged.connect(lambda _index: self.refresh())
         self.period_caption = QLabel("対象の決算期")
@@ -183,12 +185,14 @@ class RoundTripCard(QFrame):
 
     def _period_fy(self) -> str | None:
         """The Money Forward pilot's fiscal year end (MM-DD) for the selected company, else None."""
-        company_id = self._selection()[0]
+        company_id, _text, source = self._selection()
         if not company_id:
             return None
-        if self._period is None or self._period[0] != company_id:
+        owner = (company_id, str(source) if source else None)
+        if self._period is None or self._period[0] != owner:
+            # Another company or source: the list is rebuilt and the choice goes back to the placeholder.
             fiscal_year_end = self.controller.jdl_roundtrip_period(company_id)
-            self._period = (company_id, fiscal_year_end)
+            self._period = (owner, fiscal_year_end)
             self._fill_periods(fiscal_year_end)
         return self._period[1]
 
@@ -274,17 +278,20 @@ class RoundTripCard(QFrame):
             label.setToolTip(str(path) if path else "")
         supported, reason = self._route_for(company_id) if company_id else (False, "COMPANY_SETTING_NOT_AVAILABLE")
         busy = self.task.busy
+        # One condition for both the button and the "照合できます" text (run() checks the same again).
+        ready = supported and source is not None and self.request_key() is not None
         if not supported:
             self.scope_label.setText("未対応: " + rv.REASON_TEXT.get(reason or "", "この会社では使えません。"))
         elif moneyforward and (source is None or self.candidate is None or self.selected_period_end() is None):
             self.scope_label.setText("元データ・対象の決算期・出力CSVがそろうと照合できます（MFパイロット）。")
         elif not moneyforward and (source is None or self.candidate is None or self.reexport is None):
             self.scope_label.setText("元データ・出力CSV・再出力CSVの3つがそろうと照合できます。")
+        elif not ready:
+            self.scope_label.setText("元データの状態を確認できないため、まだ照合できません。データ取込で選び直してください。")
         elif moneyforward:
             self.scope_label.setText("照合できます（Money Forwardパイロット。パイロットの有効化は税理士の承認ではありません）。")
         else:
             self.scope_label.setText("照合できます（弥生インポート形式）。")
-        ready = supported and source is not None and self.request_key() is not None
         self.run_button.setEnabled(ready and not busy)
         self.candidate_button.setEnabled(not busy)
         self.reexport_button.setEnabled(not busy)

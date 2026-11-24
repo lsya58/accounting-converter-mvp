@@ -287,6 +287,47 @@ class MoneyForwardCardTest(_CardBase):
         self.assertFalse(card.current_review().is_pass)
         self.assertIn("未照合", card.badge.text())
 
+    def test_wheel_scrolling_over_the_year_box_does_not_choose_a_year(self):
+        # Windows screen check: the box showed the last year (FY2020-05) after the page was wheel-scrolled over it.
+        from PySide6.QtCore import QPoint, QPointF, Qt
+        from PySide6.QtGui import QWheelEvent
+
+        card = self._mf_card(MfController(review(rr.PASS)))
+        for _ in range(12):
+            event = QWheelEvent(QPointF(5, 5), QPointF(5, 5), QPoint(0, 0), QPoint(0, -120), Qt.MouseButton.NoButton,
+                                Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False)
+            card.period_combo.wheelEvent(event)
+        self.assertEqual(card.period_combo.currentIndex(), 0)
+        self.assertIsNone(card.selected_period_end())
+        self.assertFalse(card.run_button.isEnabled())
+
+    def test_another_source_or_company_goes_back_to_no_year(self):
+        card = self._mf_card(MfController(review(rr.PASS)))
+        card.period_combo.setCurrentIndex(card.period_combo.findData("2026-05-31"))
+        self.assertTrue(card.run_button.isEnabled())
+        self.source = self.root / "other-source.csv"
+        self.source.write_bytes(b"other")
+        card.refresh()
+        self.assertIsNone(card.selected_period_end())
+        self.assertFalse(card.run_button.isEnabled())
+        card.period_combo.setCurrentIndex(card.period_combo.findData("2026-05-31"))
+        self.company = "company-other"
+        card.refresh()
+        self.assertIsNone(card.selected_period_end())
+        self.assertFalse(card.run_button.isEnabled())
+
+    def test_ready_text_is_shown_only_when_the_button_can_run(self):
+        card = RoundTripCard(MfController(review(rr.PASS)), base_key=lambda: None,
+                             selection=lambda: (self.company, "MF（合成）", self.source), lock_selection=self.locks.append)
+        self.addCleanup(card.deleteLater)
+        self.addCleanup(card.release)
+        card.candidate = self.candidate
+        card.refresh()
+        card.period_combo.setCurrentIndex(card.period_combo.findData("2026-05-31"))
+        self.assertFalse(card.run_button.isEnabled())
+        self.assertNotIn("照合できます", card.scope_label.text())
+        self.assertFalse(card.run())
+
     def test_a_yayoi_company_has_no_year_to_choose(self):
         card = self._card(Controller(review(rr.PASS)))
         self.assertTrue(card.period_combo.isHidden())
@@ -318,6 +359,53 @@ class MainWindowRoundTripTest(unittest.TestCase):
             with mock.patch.object(card, "release", wraps=card.release) as released:
                 window.close()
             self.assertTrue(released.called)
+
+    def test_a_moneyforward_source_can_run_through_the_window_wiring(self):
+        # Windows screen check: "照合できます" was shown but the button stayed disabled, because the card used the
+        # Yayoi-only home key (None for any other format). The roundtrip key does not depend on the format.
+        from datetime import date
+
+        from accounting_converter.ui_qt import main_window as mw
+        from tests.test_unmigrated_view import Env
+
+        with tempfile.TemporaryDirectory() as directory:
+            env = Env(directory, write=False)
+            window = mw.AccountingConverterMainWindow(env.controller)
+            self.addCleanup(window.deleteLater)
+            self.addCleanup(window.home_task.shutdown)
+            window.company_combo.setCurrentIndex(window.company_combo.findData("company-yayoi"))
+            window._select_input(env.run.source)
+            card = window.roundtrip_card
+            calls = []
+            candidate = Path(directory) / "jdl.csv"
+            candidate.write_bytes(b"x")
+
+            def fake_review(company_id, source, cand, reexport, *, period_end=None):
+                calls.append(period_end)
+                return rr.RoundTripReview(rr.NOT_RUN, company_id, reasons=("REEXPORT_NOT_SELECTED",))
+
+            # A Money Forward source stands in: not Yayoi, so the home overview key is None (unchanged).
+            with mock.patch.object(mw.hv, "is_yayoi", return_value=False), \
+                    mock.patch.object(env.controller, "jdl_roundtrip_route", return_value=(True, None), create=True), \
+                    mock.patch.object(env.controller, "jdl_roundtrip_period", return_value="05-31", create=True), \
+                    mock.patch.object(env.controller, "jdl_roundtrip_review", side_effect=fake_review, create=True):
+                self.assertIsNone(window.home_request_key())
+                card._route = card._period = None
+                card.candidate = candidate
+                card.refresh()
+                self.assertIsNone(card.selected_period_end())            # first shown: no year
+                self.assertFalse(card.run_button.isEnabled())
+                card.period_combo.setCurrentIndex(card.period_combo.findData("2026-05-31"))
+                self.assertIn("照合できます", card.scope_label.text())
+                self.assertTrue(card.run_button.isEnabled())
+                self.assertTrue(card.run())
+                from tests.test_qt_components import wait_until
+
+                self.assertTrue(wait_until(lambda: not card.task.busy, 30000))
+                QApplication.processEvents()
+                self.assertEqual(calls, [date(2026, 5, 31)])
+                self.assertIn("未照合", card.badge.text())
+            window.close()
 
 
 if __name__ == "__main__":
