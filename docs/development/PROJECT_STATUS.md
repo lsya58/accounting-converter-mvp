@@ -5,6 +5,13 @@
 最終更新: 2026-11-22（正本の分担を明記し、§1 を現在値と履歴の試算に分けた。値は2026-11-21のAppDataコピー再計算で確認、2026-11-11から不変）
 前回: 2026-11-11（READYのみ2,480仕訳の実機往復はFAIL: 税額1件。13月の照合に対応。税額0のEvidence適用を修正し正式READY 2,479／BLOCK 35）
 
+### JDL往復照合GUI Phase 2（Money Forward）のWindows実画面検証（commit `ac71e5b` 実装・`8ab9ae3` GUI修正。詳細: [jdl_real_evidence_log.md](jdl_real_evidence_log.md) の「JDL往復照合GUI Phase 2」）
+- **完了範囲**: パイロット設定で明示的に有効にしたMF実会社1社だけ（既定は無効。有効化は税理士の承認ではない）。決算期は画面で選択（初期は未選択）。出力CSVを元データから作り直してバイト一致した場合だけ、JDL再出力と照合する。
+- 隔離環境で既存Evidence `EVID-MF-JDL-35-5-REAL-482-FY2026-05-FULL-ROUNDTRIP-001` のファイルを照合。FY2026-05 は総合判定 PASS（再生成一致、378仕訳／479行、説明できない差分0、既知の正規化2,442、Evidence IDの参考表示）。FY2027-05 は再生成一致（104仕訳／160行）、再出力なしで未照合。パイロットON／OFF、要約の上書き拒否も確認。新しいEvidenceではない（JDL再操作なし）。
+- 実AppData・`HKCU\Software\AccountingConverter` は変化なし。`HKCU\Software\QtProject` は変更あり（想定どおり、値は未特定）。
+- 未検証: FY2027-05のJDL往復、他のMF会社・決算日、照合中の操作無効化の実画面。改善課題（GUI。会計判定の不具合とは断定しない）: 決算期を変えても前期の再出力CSVの選択が残る。ファイル選択を解除する手段がない。
+- 会社Aの現在値（正式READY 2,479／BLOCK 35）・freee正式READY 0・会計判定・JDL30列出力は変更なし。
+
 ### JDL往復照合GUI Phase 1 のWindows実画面検証（2026-11-23、commit `4d6eb50`。詳細: [jdl_real_evidence_log.md](jdl_real_evidence_log.md) の「JDL往復照合GUI Phase 1」）
 - 会社B（`company-yayoi-act`）だけを読み込んだ隔離環境で、既存Evidence `EVID-YAYOI-JDL-35-5-COMPANYB-202603-FULL-ROUNDTRIP-001` のファイルを照合。総合判定 PASS、80仕訳／86行、欠落・余分・説明できない差分0、既知の正規化454、監査記録・決算整理一致。要約の上書き拒否も実画面で確認。新しいEvidenceではない（JDL再操作なし）。
 - 実AppData・`HKCU\Software\AccountingConverter`・Evidence原本・EXEは変化なし。`HKCU\Software\QtProject`（ファイル選択ダイアログの履歴）は変更あり（想定どおり、値は未特定）。照合中の操作無効化などは実画面で未検証。
